@@ -1,0 +1,27 @@
+{
+  "name": "xr-live",
+  "version": "1.0.0",
+  "description": "HTML-First Spatial Computing, 6DoF WebXR, Hand Gestures, and AI-Driven XR on top of three-live",
+  "main": "dist/xr-live.cjs",
+  "module": "dist/xr-live.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": [
+    "dist/*.js",
+    "dist/*.cjs"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/xr-live.js",
+      "require": "./dist/xr-live.cjs"
+    }
+  },
+  "dependencies": {
+    "three-live": "1.0.0"
+  },
+  "scripts": {
+    "build": "node ../scripts/build.js --xr-live",
+    "test": "node ../scripts/build.js --test-xr-live"
+  },
+  "license": "Apache-2.0"
+}

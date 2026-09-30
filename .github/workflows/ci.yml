@@ -1,0 +1,294 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-js:
+    name: JavaScript & TypeScript Suite (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [18.x, 20.x, 22.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages and bundles
+        run: npm run build
+
+      - name: Run test suites
+        run: npm test
+
+      - name: Verify bundle size limits
+        if: runner.os == 'Linux'
+        run: |
+          node -e '
+            const fs = require("fs");
+            const zlib = require("zlib");
+            const files = [
+              "dist/three-live.min.js",
+              "three-live/dist/three-live.min.js",
+              "three-live/dist/three-live-full.min.js",
+              "xr-live/dist/xr-live.min.js"
+            ];
+            for (const f of files) {
+              if (fs.existsSync(f)) {
+                const raw = fs.readFileSync(f);
+                const gz = zlib.gzipSync(raw, { level: 9 });
+                console.log(`${f}: raw ${raw.length} B, gzip ${gz.length} B`);
+                if (gz.length > 30000) {
+                  console.error(`ERROR: ${f} exceeds 30 KB budget (${gz.length} B)`);
+                  process.exit(1);
+                }
+              }
+            }
+          '
+
+  test-rust:
+    name: Rust Compiler Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rustfmt check
+        run: cargo fmt --manifest-path compiler/Cargo.toml -- --check
+
+      - name: Cargo check (default & JNI features)
+        run: |
+          cargo check --manifest-path compiler/Cargo.toml --all-targets
+          cargo check --manifest-path compiler/Cargo.toml --features jni
+
+      # The debug profile is the primary gate: it is the only one where `overflow-checks`
+      # and `debug_assert!` are live, which matters for a crate doing offset and size
+      # arithmetic over untrusted input.
+      - name: Run compiler unit tests (debug, with JNI)
+        run: cargo test --manifest-path compiler/Cargo.toml --features jni -- --test-threads=1
+
+      # Release must also be tested, because several behaviours exist *only* in this profile:
+      #   * `panic = "unwind"` is set in `[profile.release]` alone, so every `catch_unwind`
+      #     FFI/JNI firewall in lib.rs, ffi.rs and jni.rs is exercised by nothing otherwise.
+      #   * `lto`, `codegen-units = 1` and `opt-level = 3` are release-only, and this crate
+      #     has `unsafe` FFI, so optimizer-sensitive bugs surface nowhere else.
+      #   * The SECURITY_3D_*_CEILING_MS release values are the real product constraints;
+      #     their debug counterparts are far too loose to act as regression tripwires.
+      #   * It is what actually ships in the AAR, the xcframework and the wasm bundle.
+      # Runtime is ~2s; the cost is the LTO build, and the release CLI build below reuses it.
+      - name: Run compiler unit tests (release, with JNI)
+        run: cargo test --manifest-path compiler/Cargo.toml --features jni --release -- --test-threads=1
+
+      - name: Build release CLI binary
+        run: cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli
+
+  test-android:
+    name: Android Library Suite (Ubuntu, Java 17)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # gradle-version must be set explicitly. setup-gradle defaults to 'wrapper', and
+      # gradle/wrapper/gradle-wrapper.jar is deliberately not checked in, so without this the
+      # steps below would silently fall back to whatever Gradle the runner image happens to ship.
+      # Keep in sync with gradle/wrapper/gradle-wrapper.properties.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Run Android unit tests
+        run: gradle :mobile:android:testReleaseUnitTest --stacktrace
+
+      - name: Assemble Android release AAR
+        run: gradle :mobile:android:assembleRelease --stacktrace
+
+      # The example app is not shipped, but it is the first thing a new user runs, and it is the
+      # only consumer of the library's public API. Compiling it here is what catches breakage in
+      # the Filament integration (and in our own API surface) before it reaches HEAD.
+      - name: Assemble Compose example app
+        run: gradle :mobile:examples:android_compose:assembleRelease --stacktrace
+
+  test-swift:
+    name: Swift Package Suite (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The SwiftPM target needs its own copy of the C header. A divergence between the two
+      # copies is an ABI bug that no compiler would catch, so assert they are identical.
+      - name: Check C header is in sync
+        run: bash scripts/sync_c_header.sh --check
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-visionos, aarch64-apple-visionos-sim, aarch64-apple-tvos, aarch64-apple-tvos-sim
+
+      - name: Build XCFramework
+        run: bash scripts/build_ios_xcframework.sh
+
+      # Deliberately uses the root manifest with no --package-path. This is the manifest
+      # every external consumer resolves, so it is the one CI must exercise.
+      - name: Build Swift package
+        run: swift build
+
+      - name: Run Swift package tests
+        run: swift test
+
+      # `swift build` only covers the macOS host, where `canImport(UIKit)` is false and the
+      # whole of QuickLookHelper.swift is preprocessed away. These steps are what actually
+      # type-check the iOS-only and visionOS-only code paths.
+      - name: Compile for iOS
+        run: |
+          xcodebuild -scheme ThreeLiveCompiler \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/xcodebuild-ios \
+            build
+
+      - name: Compile for visionOS
+        run: |
+          if xcodebuild -showsdks | grep -q -- '-sdk xros'; then
+            xcodebuild -scheme ThreeLiveCompiler \
+              -destination 'generic/platform=visionOS' \
+              -derivedDataPath .build/xcodebuild-visionos \
+              build
+          else
+            echo "::warning::visionOS SDK unavailable on this runner; skipping visionOS compile check"
+          fi
+
+      - name: Compile for tvOS
+        run: |
+          if xcodebuild -showsdks | grep -q -- '-sdk appletvos'; then
+            xcodebuild -scheme ThreeLiveCompiler \
+              -destination 'generic/platform=tvOS' \
+              -derivedDataPath .build/xcodebuild-tvos \
+              build
+          else
+            echo "::warning::tvOS SDK unavailable on this runner; skipping tvOS compile check"
+          fi
+
+      - name: Check release checksum pin
+        run: |
+          if grep -q '^let releaseChecksum = "0\{64\}"$' Package.swift; then
+            echo "::warning::Package.swift still carries the placeholder release checksum. \
+            This is expected before the first release; the release workflow pins it via \
+            scripts/update_spm_binary_target.sh."
+          else
+            echo "Release checksum is pinned."
+          fi
+
+  build-ios-example:
+    name: iOS Example App (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build XCFramework
+        run: bash scripts/build_ios_xcframework.sh
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: mobile/examples/ios_swiftui
+        run: xcodegen generate
+
+      - name: Build example app
+        working-directory: mobile/examples/ios_swiftui
+        run: |
+          xcodebuild -project ThreeLiveDemo.xcodeproj \
+            -scheme ThreeLiveDemo \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/xcodebuild \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+
+
+

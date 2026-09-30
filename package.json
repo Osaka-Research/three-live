@@ -1,0 +1,127 @@
+{
+  "name": "three-live-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AI-First Native 3D & XR Monorepo: three-live 3D/AR engine, xr-live spatial computing suite, and native Rust/Android/iOS compiler",
+  "author": "Google LLC",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/google/three-live.git"
+  },
+  "bugs": {
+    "url": "https://github.com/google/three-live/issues"
+  },
+  "homepage": "https://github.com/google/three-live#readme",
+  "keywords": [
+    "threejs",
+    "3d",
+    "webgl2",
+    "gltf",
+    "glb",
+    "web-component",
+    "custom-elements",
+    "ar",
+    "usdz",
+    "webxr",
+    "spatial-computing",
+    "pbr"
+  ],
+  "workspaces": [
+    "three-live",
+    "xr-live",
+    "compiler"
+  ],
+  "main": "three-live/dist/three-live.cjs",
+  "module": "three-live/dist/three-live.js",
+  "types": "three-live.d.ts",
+  "sideEffects": [
+    "three-live/dist/*.js",
+    "three-live/dist/*.cjs",
+    "xr-live/dist/*.js",
+    "xr-live/dist/*.cjs"
+  ],
+  "exports": {
+    ".": {
+      "types": "./three-live.d.ts",
+      "import": "./three-live/dist/three-live.js",
+      "require": "./three-live/dist/three-live.cjs"
+    },
+    "./full": {
+      "types": "./three-live.d.ts",
+      "import": "./three-live/dist/three-live-full.js",
+      "require": "./three-live/dist/three-live-full.cjs"
+    },
+    "./view": {
+      "types": "./three-live/dist/three-view.d.ts",
+      "import": "./three-live/dist/three-view.js",
+      "require": "./three-live/dist/three-view.cjs"
+    },
+    "./author": {
+      "types": "./three-live/dist/three-author.d.ts",
+      "import": "./three-live/dist/three-author.js",
+      "require": "./three-live/dist/three-author.cjs"
+    },
+    "./xr": {
+      "types": "./three-live/dist/three-xr.d.ts",
+      "import": "./three-live/dist/three-xr.js",
+      "require": "./three-live/dist/three-xr.cjs"
+    },
+    "./xr-live": {
+      "types": "./xr-live/dist/index.d.ts",
+      "import": "./xr-live/dist/xr-live.js",
+      "require": "./xr-live/dist/xr-live.cjs"
+    },
+    "./xr-live-viewer": {
+      "types": "./xr-live/dist/xr-live-viewer.d.ts",
+      "import": "./xr-live/dist/xr-live-viewer.js",
+      "require": "./xr-live/dist/xr-live-viewer.cjs"
+    },
+    "./xr-live-extras": {
+      "types": "./xr-live/dist/xr-live-extras.d.ts",
+      "import": "./xr-live/dist/xr-live-extras.js",
+      "require": "./xr-live/dist/xr-live-extras.cjs"
+    },
+    "./xr-live-full": {
+      "types": "./xr-live/dist/xr-live-full.d.ts",
+      "import": "./xr-live/dist/xr-live-full.js",
+      "require": "./xr-live/dist/xr-live-full.cjs"
+    },
+    "./viewer": {
+      "types": "./three-live.d.ts",
+      "import": "./three-live/dist/three-live-viewer.js",
+      "require": "./three-live/dist/three-live-viewer.cjs"
+    },
+    "./extras": {
+      "types": "./three-live/dist/three-live-extras.d.ts",
+      "import": "./three-live/dist/three-live-extras.js",
+      "require": "./three-live/dist/three-live-extras.cjs"
+    },
+    "./animation": {
+      "types": "./three-live/dist/three-live-animation.d.ts",
+      "import": "./three-live/dist/three-live-animation.js",
+      "require": "./three-live/dist/three-live-animation.cjs"
+    },
+    "./element": {
+      "types": "./three-live/dist/three-live-element.d.ts",
+      "import": "./three-live/dist/three-live-element.js",
+      "require": "./three-live/dist/three-live-element.cjs"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.js",
+    "dev": "node scripts/build.js && python3 -m http.server 8888 --directory examples",
+    "test": "node scripts/build.js --test",
+    "doctor": "make doctor",
+    "build:rust": "make rust",
+    "build:ios": "make ios",
+    "build:android": "make android",
+    "demo:web": "make web-demo",
+    "demo:ios": "make ios-demo",
+    "demo:android": "make android-demo"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,737 @@
+<!--
+Copyright 2026 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>three-live — AI-First Native 3D &amp; AR</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
+  <script src="./three-live.js"></script>
+  <style>
+    :root {
+      --bg-primary: #090d16;
+      --bg-secondary: #111827;
+      --bg-card: #1f293d;
+      --border-color: rgba(255, 255, 255, 0.1);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-purple: #a855f7;
+      --accent-emerald: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      max-width: 1200px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-badge {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 20px;
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(56, 189, 248, 0.35);
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .tagline {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--accent-blue);
+    }
+
+    .subtitle {
+      color: var(--text-secondary);
+      font-size: 13.5px;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      color: var(--accent-blue);
+    }
+
+    .pill.green {
+      color: var(--accent-emerald);
+      border-color: rgba(16, 185, 129, 0.25);
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+    }
+
+    @media (min-width: 900px) {
+      .main-grid {
+        grid-template-columns: 2fr 1fr;
+      }
+    }
+
+    .viewer-card {
+      background: var(--bg-secondary);
+      border-radius: 16px;
+      border: 1px solid var(--border-color);
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    three-live {
+      width: 100%;
+      height: 520px;
+      display: block;
+      background: radial-gradient(circle at 50% 35%, #1e293b 0%, #090d16 100%);
+    }
+
+    .viewer-toolbar {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      z-index: 10;
+    }
+
+    .tool-badge {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border-color);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: monospace;
+      color: var(--text-primary);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    button {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    button.primary:hover {
+      background: linear-gradient(135deg, #0369a1, #1d4ed8);
+    }
+
+    .inspector-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: monospace;
+    }
+
+    .inspector-table td {
+      padding: 6px 4px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .inspector-table td.label {
+      color: var(--text-secondary);
+      width: 45%;
+    }
+
+    .inspector-table td.val {
+      color: var(--accent-blue);
+      text-align: right;
+    }
+
+    .slider-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-blue);
+    }
+
+    textarea {
+      width: 100%;
+      height: 120px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: #a5f3fc;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px;
+      resize: vertical;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: var(--accent-blue);
+    }
+
+    .status-msg {
+      font-size: 11px;
+      color: var(--accent-emerald);
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Header -->
+  <header>
+    <div class="logo-group">
+      <div class="logo-badge">3L</div>
+      <div>
+        <h1>three-live <span class="tagline">AI-First Native 3D &amp; AR</span></h1>
+        <div class="subtitle">On-device JIT compiler turning live, AI-generated Three.js into native Android Filament, iOS RealityKit, and WebXR.</div>
+      </div>
+    </div>
+    <div class="pills">
+      <span class="pill green">38.6 KB min.gz</span>
+      <span class="pill">Zero Dependencies</span>
+      <span class="pill">WebGL2 PBR</span>
+      <span class="pill">Apple USDZ + WebXR</span>
+    </div>
+  </header>
+
+  <!-- Main 3D Viewport & Side Panel -->
+  <div class="main-grid">
+    <!-- Viewport Container -->
+    <div class="viewer-card">
+      <div class="viewer-toolbar">
+        <span class="tool-badge" id="camera-badge">θ: 0.60, φ: 0.35</span>
+        <span class="tool-badge" id="mesh-badge">Click sub-mesh to pick</span>
+      </div>
+
+      <!-- Canonical <three-live> Web Component -->
+      <three-live
+        id="viewer"
+        allow-client-scripts
+        camera-controls
+        ar
+        ar-modes="quick-look webxr scene-viewer"
+        exposure="1.2"
+        auto-rotate>
+      </three-live>
+    </div>
+
+    <!-- Controls Sidebar -->
+    <div class="sidebar">
+      <!-- Preset Scenes -->
+      <div class="card">
+        <div class="card-title">Preset Scenes</div>
+        <div class="btn-row">
+          <button id="btn-artifact" class="primary">Artifact</button>
+          <button id="btn-torus">Torus Knot</button>
+          <button id="btn-crystal">Crystal Gem</button>
+          <button id="btn-spheres">Spheres</button>
+        </div>
+      </div>
+
+      <!-- Camera & Interaction -->
+      <div class="card">
+        <div class="card-title">Camera & Lights</div>
+        <div class="btn-row">
+          <button id="btn-reset">Reset</button>
+          <button id="btn-top">Top</button>
+          <button id="btn-front">Front</button>
+          <button id="btn-spin">Toggle Spin</button>
+        </div>
+        <div class="slider-group" style="margin-top: 6px;">
+          <div class="slider-label">
+            <span>Studio Environment Intensity</span>
+            <span id="env-val">1.2x</span>
+          </div>
+          <input type="range" id="slider-env" min="0" max="3" step="0.1" value="1.2">
+        </div>
+      </div>
+
+      <!-- Mesh Color-ID Inspector -->
+      <div class="card">
+        <div class="card-title">Mesh Inspector</div>
+        <table class="inspector-table">
+          <tr>
+            <td class="label">Selected Mesh</td>
+            <td class="val" id="insp-name">None</td>
+          </tr>
+          <tr>
+            <td class="label">Hit Coordinates</td>
+            <td class="val" id="insp-pos">--</td>
+          </tr>
+          <tr>
+            <td class="label">Surface Normal</td>
+            <td class="val" id="insp-norm">--</td>
+          </tr>
+          <tr>
+            <td class="label">Distance</td>
+            <td class="val" id="insp-dist">--</td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Spatial & AR Actions -->
+      <div class="card">
+        <div class="card-title">Spatial & AR (zero server)</div>
+        <div class="btn-row">
+          <button id="btn-ar" class="primary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            </svg>
+            Launch AR
+          </button>
+          <button id="btn-dl-usdz">Save .usdz</button>
+          <button id="btn-dl-glb">Save .glb</button>
+        </div>
+        <div class="status-msg" id="ar-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Procedural Three.js Code Transcoder -->
+  <div class="card" style="margin-top: 4px;">
+    <div class="card-title">
+      <span>Three.js code to compile live on-device</span>
+      <button id="btn-compile" class="primary" style="padding: 4px 10px; font-size: 12px;">Compile & View</button>
+    </div>
+    <textarea id="code-editor" spellcheck="false">// 1. Central Core
+const core = new THREE.Mesh(
+  new THREE.SphereGeometry(0.85, 32, 24),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
+);
+core.name = "QuantumCore";
+scene.add(core);
+
+// 2. Inner Orbit Ring
+const ring1 = new THREE.Mesh(
+  new THREE.TorusGeometry(1.45, 0.09, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.85, roughness: 0.2 })
+);
+ring1.name = "InnerOrbitRing";
+ring1.rotation.x = 1.1;
+scene.add(ring1);
+
+// 3. Outer Orbit Ring
+const ring2 = new THREE.Mesh(
+  new THREE.TorusGeometry(1.95, 0.06, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.7, roughness: 0.3 })
+);
+ring2.name = "OuterOrbitRing";
+ring2.rotation.y = 0.9;
+ring2.rotation.z = 0.4;
+scene.add(ring2);
+
+// 4. Sensor Arrays (Satellites)
+const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
+const sat1 = new THREE.Mesh(satGeo, satMat);
+sat1.name = "SensorArray_A";
+sat1.position.set(1.4, 0.5, 0);
+scene.add(sat1);
+
+const sat2 = new THREE.Mesh(satGeo, satMat);
+sat2.name = "SensorArray_B";
+sat2.position.set(-1.4, -0.5, 0);
+scene.add(sat2);
+
+// 5. Pedestal Base
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.8, 2.0, 0.25, 32),
+  new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.4, roughness: 0.6 })
+);
+base.name = "PedestalBase";
+base.position.set(0, -1.6, 0);
+scene.add(base);
+</textarea>
+  </div>
+</div>
+
+<script>
+  const ThreeLiveBundle = Object.assign({}, window.THREE || {}, window.ThreeLive || window.ThreeLiveBundle || {});
+  const el = document.getElementById("viewer");
+  const cameraBadge = document.getElementById("camera-badge");
+  const meshBadge = document.getElementById("mesh-badge");
+  const inspName = document.getElementById("insp-name");
+  const inspPos = document.getElementById("insp-pos");
+  const inspNorm = document.getElementById("insp-norm");
+  const inspDist = document.getElementById("insp-dist");
+  const sliderEnv = document.getElementById("slider-env");
+  const envVal = document.getElementById("env-val");
+  const arStatus = document.getElementById("ar-status");
+  const codeEditor = document.getElementById("code-editor");
+
+  let currentGLBBuffer = null;
+
+  // 1. Preset Procedural Scene Code Definitions
+  const PRESET_SCRIPTS = {
+    artifact: `// 1. Central Core
+const core = new THREE.Mesh(
+  new THREE.SphereGeometry(0.85, 32, 24),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
+);
+core.name = "QuantumCore";
+scene.add(core);
+
+// 2. Inner Orbit Ring
+const ring1 = new THREE.Mesh(
+  new THREE.TorusGeometry(1.45, 0.09, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.85, roughness: 0.2 })
+);
+ring1.name = "InnerOrbitRing";
+ring1.rotation.x = 1.1;
+scene.add(ring1);
+
+// 3. Outer Orbit Ring
+const ring2 = new THREE.Mesh(
+  new THREE.TorusGeometry(1.95, 0.06, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.7, roughness: 0.3 })
+);
+ring2.name = "OuterOrbitRing";
+ring2.rotation.y = 0.9;
+ring2.rotation.z = 0.4;
+scene.add(ring2);
+
+// 4. Sensor Arrays (Satellites)
+const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
+const sat1 = new THREE.Mesh(satGeo, satMat);
+sat1.name = "SensorArray_A";
+sat1.position.set(1.4, 0.5, 0);
+scene.add(sat1);
+
+const sat2 = new THREE.Mesh(satGeo, satMat);
+sat2.name = "SensorArray_B";
+sat2.position.set(-1.4, -0.5, 0);
+scene.add(sat2);
+
+// 5. Pedestal Base
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.8, 2.0, 0.25, 32),
+  new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.4, roughness: 0.6 })
+);
+base.name = "PedestalBase";
+base.position.set(0, -1.6, 0);
+scene.add(base);`,
+
+    torus: `// Ruby Torus Knot
+const mesh = new THREE.Mesh(
+  new THREE.TorusKnotGeometry(0.9, 0.28, 128, 24),
+  new THREE.MeshStandardMaterial({ color: 0xf43f5e, metalness: 0.95, roughness: 0.12 })
+);
+mesh.name = "RubyTorusKnot";
+scene.add(mesh);`,
+
+    crystal: `// Emerald Crystal Gem
+const mesh = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.0, 1.2, 2.2, 6),
+  new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.8, roughness: 0.15 })
+);
+mesh.name = "EmeraldGem";
+scene.add(mesh);`,
+
+    spheres: `// Five Orbital Spheres
+const colors = [0xef4444, 0xf59e0b, 0x10b981, 0x3b82f6, 0x8b5cf6];
+for (let i = 0; i < 5; i++) {
+  const angle = (i / 5) * Math.PI * 2;
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.45, 24, 16),
+    new THREE.MeshStandardMaterial({ color: colors[i], metalness: 0.9, roughness: 0.2 })
+  );
+  sphere.name = \`Sphere_\${i + 1}\`;
+  sphere.position.set(Math.cos(angle) * 1.3, Math.sin(angle) * 0.4, Math.sin(angle) * 1.3);
+  scene.add(sphere);
+}`
+  };
+
+  async function selectPreset(presetId) {
+    const presetButtons = {
+      artifact: document.getElementById("btn-artifact"),
+      torus: document.getElementById("btn-torus"),
+      crystal: document.getElementById("btn-crystal"),
+      spheres: document.getElementById("btn-spheres"),
+    };
+
+    Object.entries(presetButtons).forEach(([id, btn]) => {
+      if (btn) {
+        if (id === presetId) {
+          btn.classList.add("primary");
+        } else {
+          btn.classList.remove("primary");
+        }
+      }
+    });
+
+    const code = PRESET_SCRIPTS[presetId];
+    if (code) {
+      codeEditor.value = code;
+      try {
+        currentGLBBuffer = await el.executeScript(code);
+      } catch (err) {
+        if (arStatus) arStatus.textContent = err.message;
+      }
+    }
+  }
+
+  async function loadSceneBuffer(buf) {
+    currentGLBBuffer = buf;
+    await el.loadModel(buf);
+  }
+
+  // Event Listeners for <three-live>
+  el.addEventListener("meshclick", (e) => {
+    const hit = e.detail;
+    inspName.textContent = hit.meshName || `Mesh #${hit.meshIndex}`;
+    inspPos.textContent = `[${hit.hitPoint.map(n => n.toFixed(2)).join(", ")}]`;
+    inspNorm.textContent = `[${hit.normal.map(n => n.toFixed(2)).join(", ")}]`;
+    inspDist.textContent = `${hit.distance.toFixed(3)}m`;
+    meshBadge.textContent = `Selected: ${hit.meshName}`;
+    el.selectedMesh = hit.meshName;
+  });
+
+  el.addEventListener("camera-change", (e) => {
+    const { theta = 0, phi = 0, distance = 3 } = e.detail || {};
+    cameraBadge.textContent = `θ: ${theta.toFixed(2)}, φ: ${phi.toFixed(2)}, d: ${distance.toFixed(1)}`;
+  });
+
+  el.addEventListener("ar-status", (e) => {
+    const status = e.detail?.status;
+    if (status === "session-started") {
+      arStatus.textContent = "AR active / launching...";
+    } else if (status === "not-presenting") {
+      arStatus.textContent = "AR session finished.";
+    } else if (status === "failed") {
+      const msg = e.detail?.error?.message || "AR not supported on this device";
+      arStatus.textContent = `AR notice: ${msg}`;
+    }
+  });
+
+  const btnSpin = document.getElementById("btn-spin");
+  function syncSpinButton() {
+    btnSpin.textContent = el.autoRotate ? "Pause Spin" : "Start Spin";
+  }
+
+  // UI Button Handlers
+  document.getElementById("btn-artifact").addEventListener("click", () => selectPreset("artifact"));
+  document.getElementById("btn-torus").addEventListener("click", () => selectPreset("torus"));
+  document.getElementById("btn-crystal").addEventListener("click", () => selectPreset("crystal"));
+  document.getElementById("btn-spheres").addEventListener("click", () => selectPreset("spheres"));
+
+  document.getElementById("btn-reset").addEventListener("click", () => el.resetCamera());
+  document.getElementById("btn-top").addEventListener("click", () => {
+    el.autoRotate = false;
+    syncSpinButton();
+    el.setCamera(0, 85);
+  });
+  document.getElementById("btn-front").addEventListener("click", () => {
+    el.autoRotate = false;
+    syncSpinButton();
+    el.setCamera(0, 0);
+  });
+  btnSpin.addEventListener("click", () => {
+    el.autoRotate = !el.autoRotate;
+    syncSpinButton();
+  });
+
+  sliderEnv.addEventListener("input", (e) => {
+    const val = parseFloat(e.target.value);
+    envVal.textContent = `${val.toFixed(1)}x`;
+    el.exposure = val;
+  });
+
+  // Spatial & AR Handlers
+  document.getElementById("btn-ar").addEventListener("click", () => {
+    arStatus.textContent = "Launching AR mode...";
+    el.activateAR().then((res) => {
+      if (res && !res.success) {
+        arStatus.textContent = `AR notice: ${res.error?.message || 'AR unavailable on this device'}`;
+      } else if (res) {
+        arStatus.textContent = `AR active (${res.mode})!`;
+      }
+    }).catch(err => {
+      arStatus.textContent = `AR notice: ${err.message}`;
+    });
+  });
+
+  document.getElementById("btn-dl-usdz").addEventListener("click", () => {
+    if (!currentGLBBuffer) return;
+    try {
+      const usdzBlob = ThreeLiveBundle.createUSDZBlob(currentGLBBuffer);
+      const url = URL.createObjectURL(usdzBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "three_live_model.usdz";
+      a.click();
+      URL.revokeObjectURL(url);
+      arStatus.textContent = "USDZ generated (64-byte aligned)!";
+    } catch (err) {
+      arStatus.textContent = `USDZ error: ${err.message}`;
+    }
+  });
+
+  document.getElementById("btn-dl-glb").addEventListener("click", () => {
+    if (!currentGLBBuffer) return;
+    const blob = new Blob([currentGLBBuffer], { type: "model/gltf-binary" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "three_live_model.glb";
+    a.click();
+    URL.revokeObjectURL(url);
+    arStatus.textContent = "GLB binary downloaded!";
+  });
+
+  // Live Procedural Compiler
+  document.getElementById("btn-compile").addEventListener("click", async () => {
+    try {
+      currentGLBBuffer = await el.executeScript(codeEditor.value);
+      arStatus.textContent = "Procedural script compiled & loaded!";
+    } catch (err) {
+      arStatus.textContent = err.message;
+    }
+  });
+
+  // Initial Load
+  window.addEventListener("DOMContentLoaded", () => {
+    selectPreset("artifact");
+    syncSpinButton();
+  });
+</script>
+
+</body>
+</html>

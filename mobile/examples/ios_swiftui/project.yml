@@ -1,0 +1,76 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# XcodeGen project definition for the Three-Live iOS demo.
+#
+# The .xcodeproj and Info.plist are generated rather than committed, so that this file stays
+# the single reviewable source of truth for the app's configuration:
+#
+#     brew install xcodegen
+#     xcodegen generate
+#     open ThreeLiveDemo.xcodeproj
+
+name: ThreeLiveDemo
+
+options:
+  bundleIdPrefix: com.google.threelive
+  deploymentTarget:
+    iOS: '15.0'
+  createIntermediateGroups: true
+
+packages:
+  ThreeLiveCompiler:
+    # The repository root, which is where Package.swift lives. Building the demo therefore
+    # exercises the same manifest that external consumers resolve.
+    path: ../../..
+
+targets:
+  ThreeLiveDemo:
+    type: application
+    platform: iOS
+    sources:
+      - path: .
+        excludes:
+          - project.yml
+          - README.md
+          - Info.plist
+          - .build
+          - '*.xcodeproj'
+    dependencies:
+      - package: ThreeLiveCompiler
+        product: ThreeLiveCompiler
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Three-Live
+        CFBundleShortVersionString: '1.0'
+        CFBundleVersion: '1'
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Required. AR Quick Look uses the device camera to place models in the real world,
+        # and Apple rejects submissions that reach the camera without a purpose string.
+        NSCameraUsageDescription: >-
+          Three-Live uses the camera to place your compiled 3D models into the room around
+          you with AR Quick Look.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.google.threelive.demo
+        SWIFT_VERSION: '5.9'
+        TARGETED_DEVICE_FAMILY: '1,2'
+        ENABLE_USER_SCRIPT_SANDBOXING: 'NO'

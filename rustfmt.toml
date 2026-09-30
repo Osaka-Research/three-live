@@ -1,0 +1,6 @@
+# Pin the formatting style so `cargo fmt --check` in CI and the formatter used in
+# Google's internal mirror agree. Without this file rustfmt falls back to
+# `use_small_heuristics = "Default"`, which splits call chains that the internal
+# formatter keeps on one line, leaving the two permanently fighting over the tree.
+use_small_heuristics = "Max"
+newline_style = "Unix"

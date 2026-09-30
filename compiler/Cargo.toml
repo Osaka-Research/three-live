@@ -1,0 +1,74 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[package]
+name = "three-live-compiler"
+version = "1.0.0"
+edition = "2021"
+description = "High-performance procedural Three.js to binary glTF 2.0 (GLB) compiler powered by Boa"
+license = "Apache-2.0"
+include = [
+    "src/**/*",
+    "include/**/*",
+    "build.rs",
+    "assets/three-author-engine.min.js",
+    "Cargo.toml",
+]
+
+[[bin]]
+name = "three-live-cli"
+path = "src/main.rs"
+# `src/main.rs` uses `clap`, which is only pulled in by the `cli` feature. Without
+# this, `--no-default-features` builds (e.g. wasm32) still try to compile the binary
+# and fail on the missing import.
+required-features = ["cli"]
+
+[lib]
+name = "three_live_compiler"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+boa_engine = "0.21"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.4", features = ["derive"], optional = true }
+jni = { version = "0.21", optional = true }
+
+# Unconditional on wasm32 rather than feature-gated: `src/time.rs` needs `Date.now()`
+# on that target no matter which features are selected, because
+# `std::time::Instant::now()` panics there.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+# Transitive dependency of `boa_engine`. Since 0.3 it refuses to build for
+# `wasm32-unknown-unknown` unless the top-level crate names a backend, so it has to be
+# declared here even though we never call it directly. Also requires
+# `RUSTFLAGS='--cfg getrandom_backend="wasm_js"'`; see `build_wasm.sh`.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+# Retained as a no-op marker so existing `--features wasm` invocations keep working.
+# The wasm module and its bindings are now selected by `target_arch` directly.
+wasm = []
+jni = ["dep:jni"]
+
+[dev-dependencies]
+serde_json = "1.0"
+
+

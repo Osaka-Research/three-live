@@ -1,0 +1,1674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>&lt;xr-live&gt; Spatial Computing Playground</title>
+  <style>
+    :root {
+      --bg: #080b12;
+      --panel: #0f1522;
+      --panel-alt: #141c2e;
+      --border: #1e293b;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-2: #a855f7;
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 10px 20px;
+      background: rgba(15, 21, 34, 0.92);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      z-index: 20;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tag-pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: var(--accent);
+    }
+
+    .size-pill {
+      font-size: 11px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(34, 197, 94, 0.14);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      color: #86efac;
+      font-weight: 600;
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-link {
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 5px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      transition: all 0.15s ease;
+    }
+
+    .nav-link:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 440px 1fr;
+      flex: 1;
+      min-height: 0;
+    }
+
+    body.xr-immersive-active header {
+      display: none;
+    }
+
+    body.xr-immersive-active .workspace {
+      grid-template-columns: 1fr;
+    }
+
+    body.xr-immersive-active .sidebar {
+      display: none;
+    }
+
+    /* Left Control Sidebar */
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 14px;
+      gap: 12px;
+    }
+
+    .mode-switcher {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      background: var(--bg);
+      padding: 5px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .mode-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid transparent;
+      border-radius: 7px;
+      padding: 8px 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: center;
+      line-height: 1.25;
+    }
+
+    .mode-btn:hover {
+      color: var(--text);
+    }
+
+    .mode-btn.active {
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(168, 85, 247, 0.2));
+      color: #fff;
+      border-color: rgba(56, 189, 248, 0.55);
+      box-shadow: 0 2px 10px rgba(56, 189, 248, 0.15);
+    }
+
+    .card {
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+      margin: 0;
+    }
+
+    .card-desc {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .guide-list {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 11.5px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    .guide-list li strong {
+      color: #38bdf8;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button.action-btn {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid #334155;
+      border-radius: 7px;
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    button.action-btn:hover {
+      border-color: var(--accent);
+      background: #263449;
+    }
+
+    button.action-btn.primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border-color: #38bdf8;
+      color: #fff;
+    }
+
+    button.action-btn.primary:hover {
+      filter: brightness(1.1);
+    }
+
+    button.action-btn.purple {
+      background: linear-gradient(135deg, #7e22ce, #4f46e5);
+      border-color: #c084fc;
+      color: #fff;
+    }
+
+    button.action-btn.danger {
+      background: linear-gradient(135deg, #dc2626, #991b1b);
+      border-color: #f87171;
+      color: #fff;
+    }
+
+    .slider-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
+    .slider-label strong {
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .mode-panel {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .mode-panel.active {
+      display: flex;
+    }
+
+    /* Depth Grid & AI Inspector */
+    .capture-grid-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .capture-preview-box {
+      background: #05080f;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px;
+      text-align: center;
+    }
+
+    .capture-preview-box img {
+      width: 100%;
+      height: 120px;
+      object-fit: cover;
+      border-radius: 5px;
+      background: #0b1220;
+      display: block;
+    }
+
+    .capture-caption {
+      font-size: 10.5px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .depth-heatmap {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 2px;
+      background: #05080f;
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .depth-cell {
+      aspect-ratio: 1;
+      border-radius: 2px;
+      font-size: 8px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.9);
+      font-weight: 600;
+    }
+
+    pre.json-output {
+      margin: 0;
+      background: #05080f;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      color: #a5f3fc;
+      max-height: 150px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+
+    textarea.code-editor {
+      width: 100%;
+      min-height: 120px;
+      background: #05080f;
+      color: #e2e8f0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.4;
+      resize: vertical;
+    }
+
+    /* Right Viewport Area */
+    .viewport-pane {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at 50% 35%, #162238 0%, #070a10 80%);
+      overflow: hidden;
+    }
+
+    xr-live {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Immersive Headset Visor Overlay */
+    .xr-visor-overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 15;
+      box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.85);
+      border: 2px solid rgba(56, 189, 248, 0.25);
+    }
+
+    body.xr-immersive-active .xr-visor-overlay {
+      display: block;
+    }
+
+    /* Stereo SBS Divider */
+    .xr-stereo-divider {
+      display: none;
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      background: rgba(56, 189, 248, 0.45);
+      z-index: 16;
+      pointer-events: none;
+    }
+
+    body.xr-stereo-sbs .xr-stereo-divider {
+      display: block;
+    }
+
+    /* Center Gaze Reticle */
+    .xr-reticle {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid rgba(56, 189, 248, 0.85);
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.5);
+      pointer-events: none;
+      z-index: 18;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.1s ease, border-color 0.1s ease;
+    }
+
+    .xr-reticle::after {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #38bdf8;
+    }
+
+    .xr-reticle.hit {
+      border-color: #22c55e;
+      transform: translate(-50%, -50%) scale(1.25);
+      box-shadow: 0 0 18px rgba(34, 197, 94, 0.7);
+    }
+
+    .xr-reticle.hit::after {
+      background: #22c55e;
+    }
+
+    body.xr-immersive-active .xr-reticle {
+      display: flex;
+    }
+
+    .xr-reticle-label {
+      position: absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 11px;
+      background: rgba(8, 11, 18, 0.85);
+      color: #86efac;
+      padding: 2px 7px;
+      border-radius: 5px;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+
+    /* Virtual Left & Right 6DoF Hand Controllers in Immersive Mode */
+    .xr-virtual-hands {
+      display: none;
+      position: absolute;
+      left: 18%;
+      right: 18%;
+      bottom: 62px;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 17;
+    }
+
+    body.xr-immersive-active .xr-virtual-hands {
+      display: flex;
+    }
+
+    .xr-hand-pod {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(168, 85, 247, 0.55);
+      border-radius: 12px;
+      padding: 8px 14px;
+      color: #f8fafc;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 11px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      transition: transform 0.12s ease;
+    }
+
+    /* Top Viewport HUD */
+    .hud-top {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      pointer-events: none;
+      gap: 10px;
+      z-index: 20;
+    }
+
+    .hud-card {
+      pointer-events: auto;
+      background: rgba(10, 15, 26, 0.85);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 11.5px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .stat-value {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-weight: 700;
+      font-size: 12px;
+      color: #f8fafc;
+    }
+
+    .gesture-badge {
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(168, 85, 247, 0.22);
+      border: 1px solid rgba(168, 85, 247, 0.55);
+      color: #e9d5ff;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-weight: 700;
+      font-size: 11.5px;
+    }
+
+    /* Floating Spatial HTML Slot Overlay Preview */
+    .spatial-ui-card {
+      position: absolute;
+      right: 18px;
+      bottom: 68px;
+      width: 250px;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      border-radius: 14px;
+      padding: 12px 14px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+      z-index: 19;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .spatial-ui-card:hover {
+      border-color: #38bdf8;
+    }
+
+    .spatial-slot-tag {
+      font-size: 9.5px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      color: #38bdf8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Bottom Controls Hint Bar */
+    .hud-bottom {
+      position: absolute;
+      bottom: 14px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    .kbd-hint {
+      pointer-events: auto;
+      background: rgba(10, 15, 26, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 11.5px;
+      color: var(--muted);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    kbd {
+      background: #1e293b;
+      border: 1px solid #475569;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 10.5px;
+      color: #f8fafc;
+    }
+  </style>
+  <script src="./xr-live.min.js"></script>
+  <script src="./xr-live-extras.min.js"></script>
+  <script>
+    window.THREE = Object.assign({}, window.XRLive?.THREE, window.XRLive, window.XRLiveExtras);
+  </script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>
+        <span class="tag-pill">&lt;xr-live&gt;</span>
+        Spatial Computing Playground
+      </h1>
+      <span class="size-pill">54.8 KB gz (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span>
+    </div>
+    <div class="header-links">
+      <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
+      <button class="action-btn" onclick="exportScene('usdz')">Export .usdz</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar">
+      <div class="mode-switcher">
+        <button class="mode-btn active" id="tab-ballpit" onclick="switchMode('ballpit')">
+          1. Ballpit<br>Physics Lab
+        </button>
+        <button class="mode-btn" id="tab-workbench" onclick="switchMode('workbench')">
+          2. Spatial UI &amp;<br>6DoF Traits
+        </button>
+        <button class="mode-btn" id="tab-perception" onclick="switchMode('perception')">
+          3. Gemini AI &amp;<br>WebMCP Depth
+        </button>
+      </div>
+
+      <!-- MODE 1: BALLPIT LAB -->
+      <div class="mode-panel active" id="panel-ballpit">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Ballpit Lab</h2>
+            <span class="tag-pill">XRHeightfieldPhysics</span>
+          </div>
+          <ol class="guide-list">
+            <li><strong>Click any sphere</strong> in the 3D viewport (or press <kbd>Space</kbd>) to blast it upward.</li>
+            <li>Click <strong>Enter XR</strong> in the top-right to walk around in 1st-person 6DoF Headset Mode (<kbd>WASD</kbd> + <kbd>QE</kbd> + Gaze Reticle).</li>
+            <li>Drag the <strong>Gravity</strong> slider to negative/positive values for Zero-G floating.</li>
+          </ol>
+          <div class="btn-row">
+            <button class="action-btn primary" onclick="launchBall()">Launch Ball (Space)</button>
+            <button class="action-btn purple" onclick="rainBalls(14)">Rain All 14 Spheres</button>
+            <button class="action-btn" id="btn-fountain" onclick="toggleFountain()">Auto-Fountain: ON</button>
+          </div>
+
+          <div class="slider-row">
+            <div class="slider-label">
+              <span>Gravity (m/s&sup2;)</span>
+              <strong id="val-gravity">-9.81 m/s&sup2;</strong>
+            </div>
+            <input type="range" id="slider-gravity" min="-15" max="3" step="0.25" value="-9.81" oninput="updatePhysicsParams()">
+          </div>
+
+          <div class="slider-row">
+            <div class="slider-label">
+              <span>Restitution (Bounciness)</span>
+              <strong id="val-restitution">0.84</strong>
+            </div>
+            <input type="range" id="slider-restitution" min="0.1" max="0.98" step="0.02" value="0.84" oninput="updatePhysicsParams()">
+          </div>
+
+          <div class="btn-row">
+            <button class="action-btn" onclick="playEarconDemo('bounce')">Test Bounce Audio</button>
+            <button class="action-btn" onclick="playEarconDemo('grab')">Test Grab Audio</button>
+            <button class="action-btn" onclick="playEarconDemo('snap')">Test Snap Audio</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODE 2: SPATIAL WORKBENCH & AR<->VR TRANSITIONS -->
+      <div class="mode-panel" id="panel-workbench">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Spatial Workbench</h2>
+            <span class="tag-pill">XRTraitSystem</span>
+          </div>
+          <ol class="guide-list">
+            <li>Demonstrates 6DoF spatial traits: <code>grab</code>, <code>scale</code>, <code>billboard</code>, and <code>anchor</code>.</li>
+            <li>Drag the <strong>AR Passthrough &harr; VR Skybox Blend</strong> slider below to fade between transparent AR and full VR skyboxes.</li>
+            <li>Press <kbd>G</kbd> or click <strong>Cycle Hand Gesture</strong> to simulate 25-joint hand tracking poses.</li>
+          </ol>
+          <div class="btn-row">
+            <button class="action-btn primary" onclick="pulseTraitObjects()">Pulse Grabbable Artifacts</button>
+            <button class="action-btn" onclick="cycleHandGesture()">Cycle Hand Gesture (G)</button>
+          </div>
+
+          <div class="slider-row">
+            <div class="slider-label">
+              <span>AR Passthrough &harr; VR Skybox Blend</span>
+              <strong id="val-vrblend">0% (AR Passthrough)</strong>
+            </div>
+            <input type="range" id="slider-vrblend" min="0" max="100" step="1" value="0" oninput="updateVRBlend(this.value)">
+          </div>
+
+          <div class="btn-row">
+            <button class="action-btn" onclick="setVRSkyboxPreset(0.06, 0.09, 0.22, 'Deep Nebula')">Deep Nebula VR</button>
+            <button class="action-btn" onclick="setVRSkyboxPreset(0.24, 0.08, 0.18, 'Sunset Horizon')">Sunset Horizon VR</button>
+            <button class="action-btn" onclick="setVRSkyboxPreset(0, 0, 0, 'AR Passthrough')">Return to AR</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODE 3: GEMINI PERCEPTION & WEBMCP INSPECTOR -->
+      <div class="mode-panel" id="panel-perception">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Gemini Multimodal &amp; WebMCP</h2>
+            <span class="tag-pill">captureViewFrame()</span>
+          </div>
+          <ol class="guide-list">
+            <li>Click <strong>Capture Viewport + 8&times;8 Depth</strong> to snapshot the live RGB frame + metric depth grid.</li>
+            <li>Click <strong>MCP: Scene Graph</strong> or <strong>MCP: Spawn Object</strong> to run WebMCP spatial agent tools.</li>
+          </ol>
+          <div class="btn-row">
+            <button class="action-btn primary" onclick="runCaptureFrame()">Capture Viewport + 8&times;8 Depth</button>
+            <button class="action-btn purple" onclick="runWebMCPTool('get_spatial_scene_graph')">MCP: Scene Graph</button>
+            <button class="action-btn" onclick="runWebMCPTool('spawn_spatial_object')">MCP: Spawn Object</button>
+          </div>
+
+          <div class="capture-grid-wrap">
+            <div class="capture-preview-box">
+              <img id="capture-img" alt="Viewport capture preview" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=">
+              <div class="capture-caption" id="capture-meta">Click "Capture Viewport"</div>
+            </div>
+            <div>
+              <div class="depth-heatmap" id="depth-heatmap"></div>
+              <div class="capture-caption">8&times;8 Metric Depth Grid (meters)</div>
+            </div>
+          </div>
+
+          <pre class="json-output" id="mcp-output">// Click any WebMCP tool above to inspect live agent JSON payloads...</pre>
+        </div>
+      </div>
+
+      <!-- LIVE SCENE CODE INSPECTOR -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">Live &lt;script type="text/three"&gt; Source</h2>
+          <button class="action-btn" style="padding: 3px 8px; font-size: 11px;" onclick="applyEditorScript()">Run Script</button>
+        </div>
+        <textarea class="code-editor" id="scene-editor" spellcheck="false"></textarea>
+      </div>
+    </aside>
+
+    <!-- RIGHT VIEWPORT -->
+    <main class="viewport-pane">
+      <div class="xr-visor-overlay"></div>
+      <div class="xr-stereo-divider"></div>
+
+      <!-- Center Gaze Reticle (shown in Immersive Mode) -->
+      <div class="xr-reticle" id="xr-reticle">
+        <div class="xr-reticle-label" id="xr-reticle-label">Gaze Ray Ready</div>
+      </div>
+
+      <!-- Virtual Left & Right 6DoF Hand Controllers (shown in Immersive Mode) -->
+      <div class="xr-virtual-hands" id="xr-virtual-hands">
+        <div class="xr-hand-pod" id="xr-left-hand">
+          <div style="color:#38bdf8;font-size:10px;">LEFT 6DoF HAND</div>
+          <div id="xr-left-pose">Pos: [-0.20, 1.35, -0.50]</div>
+        </div>
+        <div class="xr-hand-pod" id="xr-right-hand">
+          <div style="color:#c084fc;font-size:10px;">RIGHT 6DoF HAND</div>
+          <div id="xr-right-pose">Pos: [+0.20, 1.35, -0.50]</div>
+        </div>
+      </div>
+
+      <div class="hud-top">
+        <div class="hud-card">
+          <div class="stat-item">
+            <span class="stat-label">Active Mode</span>
+            <span class="stat-value" id="hud-mode">Ballpit Lab</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Dynamic Bodies</span>
+            <span class="stat-value" id="hud-bodies">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Collisions</span>
+            <span class="stat-value" id="hud-collisions">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Head Pose (m)</span>
+            <span class="stat-value" id="hud-pose">0.0, 1.6, 2.2</span>
+          </div>
+        </div>
+
+        <div class="hud-card">
+          <span class="stat-label">Hand Gesture:</span>
+          <span class="gesture-badge" id="hud-gesture">open-palm</span>
+          <button class="action-btn" id="btn-stereo" style="display:none; padding: 5px 9px; font-size: 11px;" onclick="toggleStereoSBS()">Stereo SBS: OFF</button>
+          <button class="action-btn primary" id="btn-enter-xr" style="padding: 5px 10px; font-size: 11px;" onclick="toggleXRSession()">Enter XR</button>
+        </div>
+      </div>
+
+      <!-- THE <xr-live> ELEMENT -->
+      <xr-live
+        id="xr-viewer"
+        allow-client-scripts
+        camera-controls
+        shadow-intensity="0.7"
+        exposure="1.05"
+        xr-mode="auto"
+        xr-depth="occlusion-physics"
+        xr-hands="gestures"
+        xr-simulator="living-room"
+        sound-feedback>
+      </xr-live>
+
+      <div
+        class="spatial-ui-card"
+        data-xr-traits="grab scale billboard"
+        data-xr-anchor="table">
+        <div class="spatial-slot-tag">
+          <span>&lt;div slot="spatial"&gt;</span>
+          <span>Billboard + Grab</span>
+        </div>
+        <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: #f8fafc;">
+          Spatial UI Card
+        </div>
+        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 8px; line-height: 1.35;">
+          Live HTML DOM projected into 3D space with UV raycast forwarding &amp; TurnToFace billboarding.
+        </div>
+        <div class="btn-row">
+          <button class="action-btn primary" style="padding: 4px 8px; font-size: 11px;" onclick="launchBall()">+ Launch Sphere</button>
+          <button class="action-btn" style="padding: 4px 8px; font-size: 11px;" onclick="cycleHandGesture()">Gesture</button>
+        </div>
+      </div>
+
+      <div class="hud-bottom">
+        <div class="kbd-hint" id="kbd-hint-bar">
+          <span><kbd>Click Sphere</kbd> Impulse</span>
+          <span><kbd>Click + Drag</kbd> Orbit</span>
+          <span><kbd>Space</kbd> Launch</span>
+          <span><kbd>G</kbd> Cycle Gesture</span>
+          <span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> Modes</span>
+        </div>
+        <div class="kbd-hint" id="status-toast">
+          Ready — Ballpit Lab active
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const xrEl = document.getElementById('xr-viewer');
+    const editorEl = document.getElementById('scene-editor');
+    const GESTURES = ['open-palm', 'pinch', 'point', 'fist', 'thumbs-up'];
+    let gestureIdx = 0;
+    let currentMode = 'ballpit';
+    let bounceCount = 0;
+    let autoFountain = true;
+    let nextFountainAt = performance.now() + 2200;
+
+    // Immersive Desktop XR Simulator state
+    let immersiveSimActive = false;
+    let stereoSBS = false;
+    const keysHeld = new Set();
+    let simHeadPos = [0.0, 0.35, 2.4];
+
+    const PRESET_SCRIPTS = {
+      ballpit: `// Ballpit Lab: Room & Heightfield Physics
+const scene = new THREE.Scene();
+
+// Pedestal & Room Reference Floor Grid
+const floor = new THREE.Mesh(
+  new THREE.BoxGeometry(3.4, 0.08, 3.4),
+  new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.35, metalness: 0.2 })
+);
+floor.name = 'Room_Floor';
+floor.position.set(0, -0.85, 0);
+scene.add(floor);
+
+// Tabletop Surface Anchor Target
+const table = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.65, 0.55, 0.08, 32),
+  new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.2, metalness: 0.6 })
+);
+table.name = 'Pedestal_Table';
+table.position.set(0, -0.25, 0);
+scene.add(table);
+
+// Colorful Dynamic Ballpit Spheres (userData.xr.physics = 'dynamic')
+const palette = [0x38bdf8, 0xa855f7, 0x22c55e, 0xf59e0b, 0xec4899, 0x6366f1];
+for (let i = 0; i < 14; i++) {
+  const radius = 0.11 + (i % 3) * 0.03;
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 24, 24),
+    new THREE.MeshStandardMaterial({
+      color: palette[i % palette.length],
+      roughness: 0.18,
+      metalness: 0.25
+    })
+  );
+  ball.name = 'Ball_' + (i + 1);
+  const angle = (i / 14) * Math.PI * 2;
+  const ring = 0.25 + (i % 4) * 0.18;
+  ball.position.set(
+    Math.cos(angle) * ring,
+    0.35 + i * 0.14,
+    Math.sin(angle) * ring
+  );
+  ball.userData.xr = {
+    physics: 'dynamic',
+    traits: ['grab', 'scale']
+  };
+  scene.add(ball);
+}
+
+return scene;`,
+
+      workbench: `// Spatial Workbench: 6DoF Grab, Scale & Capsule Billboard
+const scene = new THREE.Scene();
+
+// Workbench Pedestal
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.9, 1.0, 0.08, 36),
+  new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.5 })
+);
+base.name = 'Workbench_Pedestal';
+base.position.set(0, -0.65, 0);
+scene.add(base);
+
+// 1. Grabbable & Scalable Hero Torus Knot Artifact
+const artifact = new THREE.Mesh(
+  new THREE.TorusKnotGeometry(0.28, 0.085, 96, 20),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.15, metalness: 0.75 })
+);
+artifact.name = 'Torus_Knot_Artifact';
+artifact.position.set(-0.45, 0.1, 0);
+artifact.userData.xr = {
+  traits: ['grab', 'scale'],
+  anchor: 'table'
+};
+scene.add(artifact);
+
+// 2. Capsule Billboard Indicator Gem (TurnToFace Y-axis locked)
+const gem = new THREE.Mesh(
+  new THREE.CylinderGeometry(0, 0.24, 0.42, 6),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, roughness: 0.2, metalness: 0.4 })
+);
+gem.name = 'Billboard_Gem';
+gem.position.set(0.45, 0.15, 0);
+gem.userData.xr = {
+  traits: ['grab', 'billboard'],
+  anchor: 'table'
+};
+scene.add(gem);
+
+// 3. Floating Dynamic Moon Orbiter
+const orb = new THREE.Mesh(
+  new THREE.SphereGeometry(0.14, 24, 24),
+  new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.2, metalness: 0.3 })
+);
+orb.name = 'Dynamic_Orbiter';
+orb.position.set(0, 0.55, 0);
+orb.userData.xr = {
+  physics: 'dynamic',
+  traits: ['grab', 'scale']
+};
+scene.add(orb);
+
+return scene;`,
+
+      perception: `// Gemini Spatial Perception & Depth Occlusion Scene
+const scene = new THREE.Scene();
+
+// Near, Mid, and Far Depth Reference Pillars for 8x8 Metric Depth Grid
+const depths = [
+  { pos: [-0.55, -0.1, 0.55], color: 0x22c55e, h: 0.7 },
+  { pos: [0.0, 0.0, 0.0], color: 0x38bdf8, h: 0.95 },
+  { pos: [0.6, 0.1, -0.65], color: 0xa855f7, h: 1.2 }
+];
+
+depths.forEach((d, idx) => {
+  const pillar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.28, d.h, 0.28),
+    new THREE.MeshStandardMaterial({ color: d.color, roughness: 0.25, metalness: 0.4 })
+  );
+  pillar.name = 'Depth_Pillar_' + (idx + 1);
+  pillar.position.set(d.pos[0], d.pos[1], d.pos[2]);
+  pillar.userData.xr = { traits: ['grab', 'scale'] };
+  scene.add(pillar);
+});
+
+return scene;`
+    };
+
+    function setToast(msg) {
+      document.getElementById('status-toast').textContent = msg;
+    }
+
+    let lastCompiledGLB = null;
+
+    async function switchMode(mode) {
+      currentMode = mode;
+      ['ballpit', 'workbench', 'perception'].forEach((m) => {
+        document.getElementById('tab-' + m).classList.toggle('active', m === mode);
+        document.getElementById('panel-' + m).classList.toggle('active', m === mode);
+      });
+
+      const titles = {
+        ballpit: 'Ballpit Lab',
+        workbench: 'Spatial Workbench',
+        perception: 'Gemini AI & Depth'
+      };
+      document.getElementById('hud-mode').textContent = titles[mode];
+
+      editorEl.value = PRESET_SCRIPTS[mode];
+      setToast('Switched to ' + titles[mode]);
+      await applyEditorScript();
+
+      if (mode === 'perception') {
+        setTimeout(() => runCaptureFrame(), 250);
+      }
+    }
+
+    async function applyEditorScript() {
+      try {
+        const code = editorEl.value;
+        lastCompiledGLB = await xrEl.executeScript(code);
+        if (xrEl.simulator && xrEl.simulator.room) {
+          xrEl.simulator.room.floorY = -0.80;
+          xrEl.simulator.room.tableY = -0.20;
+        }
+        bounceCount = 0;
+        updatePhysicsParams();
+        const viewer = xrEl.viewer;
+        if (viewer && Array.isArray(viewer.meshes)) {
+          viewer.meshes.forEach((m, i) => {
+            const traits = m?.extras?.xr || m?.userData?.xr;
+            if (traits?.physics === 'dynamic' && xrEl.physics?.setVelocity) {
+              const angle = (i / 14) * Math.PI * 2;
+              xrEl.physics.setVelocity(
+                m,
+                Math.cos(angle) * 0.9,
+                1.2 + (i % 4) * 0.5,
+                Math.sin(angle) * 0.9
+              );
+            }
+          });
+        }
+      } catch (err) {
+        setToast('Script error: ' + err.message);
+      }
+    }
+
+    function toggleFountain() {
+      autoFountain = !autoFountain;
+      const btn = document.getElementById('btn-fountain');
+      btn.textContent = 'Auto-Fountain: ' + (autoFountain ? 'ON' : 'OFF');
+      setToast('Auto-Fountain ' + (autoFountain ? 'enabled' : 'paused'));
+    }
+
+    function toggleStereoSBS() {
+      stereoSBS = !stereoSBS;
+      document.body.classList.toggle('xr-stereo-sbs', stereoSBS);
+      document.getElementById('btn-stereo').textContent = 'Stereo SBS: ' + (stereoSBS ? 'ON' : 'OFF');
+      setToast('Stereo Side-by-Side view: ' + (stereoSBS ? 'ON' : 'OFF'));
+    }
+
+    async function toggleXRSession() {
+      if (immersiveSimActive) {
+        exitImmersiveSimulator();
+        return;
+      }
+
+      // 1. Try real WebXR first if a hardware headset or emulator is active
+      try {
+        const report = await xrEl.enterSpatialAR();
+        if (report?.platform === 'webxr') {
+          setToast('Hardware WebXR Session Active!');
+          return;
+        }
+      } catch (_) {}
+
+      // 2. Otherwise launch built-in Immersive Desktop XR Simulator Mode!
+      enterImmersiveSimulator();
+    }
+
+    function enterImmersiveSimulator() {
+      immersiveSimActive = true;
+      document.body.classList.add('xr-immersive-active');
+      const btn = document.getElementById('btn-enter-xr');
+      btn.textContent = 'Exit XR (Esc)';
+      btn.classList.add('danger');
+      btn.classList.remove('primary');
+      document.getElementById('btn-stereo').style.display = 'inline-flex';
+      document.getElementById('kbd-hint-bar').innerHTML =
+        '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Walk</span>' +
+        '<span><kbd>Q</kbd><kbd>E</kbd> Up/Down</span>' +
+        '<span><kbd>Drag</kbd> Look</span>' +
+        '<span><kbd>Space</kbd> / <kbd>Click</kbd> Gaze Fire</span>' +
+        '<span><kbd>G</kbd> Gesture</span>' +
+        '<span><kbd>Esc</kbd> Exit XR</span>';
+      if (xrEl.viewer) xrEl.viewer.resize();
+      xrEl.audioController?.playEarcon?.('snap');
+      setToast('Immersive Desktop XR Simulator active — use WASD/QE to walk & gaze reticle to interact!');
+    }
+
+    function exitImmersiveSimulator() {
+      immersiveSimActive = false;
+      stereoSBS = false;
+      document.body.classList.remove('xr-immersive-active', 'xr-stereo-sbs');
+      const btn = document.getElementById('btn-enter-xr');
+      btn.textContent = 'Enter XR';
+      btn.classList.remove('danger');
+      btn.classList.add('primary');
+      document.getElementById('btn-stereo').style.display = 'none';
+      document.getElementById('kbd-hint-bar').innerHTML =
+        '<span><kbd>Click Sphere</kbd> Impulse</span>' +
+        '<span><kbd>Click + Drag</kbd> Orbit</span>' +
+        '<span><kbd>Space</kbd> Launch</span>' +
+        '<span><kbd>G</kbd> Cycle Gesture</span>' +
+        '<span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> Modes</span>';
+      if (xrEl.viewer) xrEl.viewer.resize();
+      setToast('Exited Immersive XR Session');
+    }
+
+    let currentGazeHit = null;
+    let lastPointerClientX = null;
+    let lastPointerClientY = null;
+
+    const GESTURE_ACTION_LABELS = {
+      'open-palm': 'Force Push',
+      'pinch': 'Levitate Hold',
+      'point': 'Rocket Launch',
+      'fist': 'Ground Slam',
+      'thumbs-up': 'Scale 1.35x',
+      'spread': '360° Scatter'
+    };
+
+    xrEl.addEventListener('pointermove', (e) => {
+      lastPointerClientX = e.clientX;
+      lastPointerClientY = e.clientY;
+    });
+
+    xrEl.addEventListener('pointerleave', () => {
+      lastPointerClientX = null;
+      lastPointerClientY = null;
+    });
+
+    const STATIC_SURFACES = new Set(['Room_Floor', 'Pedestal_Table', 'Workbench_Pedestal']);
+
+    function executeGestureOnHit(hit) {
+      const viewer = xrEl.viewer;
+      if (!viewer || !Array.isArray(viewer.meshes) || !hit) return;
+      const mesh = viewer.meshes[hit.meshIndex];
+      if (!mesh) return;
+
+      const name = hit.meshName || ('Mesh #' + hit.meshIndex);
+
+      // Clicking a static room surface (floor / pedestal table) keeps the surface anchored
+      // and sends a ripple shockwave through dynamic objects resting near the hit point!
+      if (STATIC_SURFACES.has(name)) {
+        let affected = 0;
+        viewer.meshes.forEach((other) => {
+          if (STATIC_SURFACES.has(other.name)) return;
+          const b = xrEl.physics?.getOrCreateBody?.(other);
+          if (!b) return;
+          const ox = other.transform[12] - hit.hitPoint[0];
+          const oz = other.transform[14] - hit.hitPoint[2];
+          const dist = Math.hypot(ox, oz);
+          if (dist < 1.35) {
+            const strength = (1 - dist / 1.35) * 3.4;
+            xrEl.physics.setVelocity(
+              other,
+              (ox / (dist || 1)) * strength * 0.7,
+              2.6 + strength,
+              (oz / (dist || 1)) * strength * 0.7
+            );
+            affected++;
+          }
+        });
+        xrEl.audioController?.playEarcon?.('bounce');
+        setToast('Surface Ripple at ' + name + ' [' + hit.hitPoint.map((v) => v.toFixed(2)).join(', ') + '] — launched ' + affected + ' objects!');
+        return;
+      }
+
+      if (!mesh.userData) mesh.userData = {};
+      if (!mesh.userData.xr) mesh.userData.xr = {};
+      if (!mesh.userData.xr.physics) mesh.userData.xr.physics = 'dynamic';
+
+      const gesture = GESTURES[gestureIdx] || 'open-palm';
+
+      if (gesture === 'open-palm') {
+        // Radial Force Push away from camera + shockwave to nearby spheres
+        const dx = hit.hitPoint[0];
+        const dz = hit.hitPoint[2];
+        const len = Math.hypot(dx, dz) || 1;
+        if (xrEl.physics?.setVelocity) {
+          xrEl.physics.setVelocity(mesh, (dx / len) * 3.8, 2.6, (dz / len) * 3.8);
+          viewer.meshes.forEach((other) => {
+            if (other === mesh) return;
+            const b = xrEl.physics.getOrCreateBody?.(other);
+            if (!b) return;
+            const ox = other.transform[12] - hit.hitPoint[0];
+            const oz = other.transform[14] - hit.hitPoint[2];
+            const dist = Math.hypot(ox, oz);
+            if (dist < 0.85) {
+              const s = (1 - dist / 0.85) * 3.2;
+              xrEl.physics.setVelocity(other, (ox / (dist || 1)) * s, 2.2, (oz / (dist || 1)) * s);
+            }
+          });
+        }
+        xrEl.audioController?.playEarcon?.('snap');
+        setToast('[open-palm • Force Push] Blasted ' + name + ' & nearby objects!');
+      } else if (gesture === 'pinch') {
+        // Precision Levitate: lift smoothly into mid-air with gentle float
+        mesh.transform[13] += 0.55;
+        if (xrEl.physics?.setVelocity) {
+          xrEl.physics.setVelocity(mesh, 0, 1.1, 0);
+        }
+        xrEl.audioController?.playEarcon?.('grab');
+        setToast('[pinch • Levitate] Lifted ' + name + ' +0.55m into mid-air!');
+      } else if (gesture === 'point') {
+        // High-velocity upward Laser Rocket Launch
+        if (xrEl.physics?.setVelocity) {
+          xrEl.physics.setVelocity(
+            mesh,
+            (Math.random() - 0.5) * 0.8,
+            5.4,
+            (Math.random() - 0.5) * 0.8
+          );
+        }
+        xrEl.audioController?.playEarcon?.('grab');
+        setToast('[point • Rocket Launch] Launched ' + name + ' straight up at 5.4 m/s!');
+      } else if (gesture === 'fist') {
+        // Gravity Ground Slam downward for a huge high-restitution bounce
+        mesh.transform[13] = Math.max(mesh.transform[13], 0.85);
+        if (xrEl.physics?.setVelocity) {
+          xrEl.physics.setVelocity(mesh, 0, -6.8, 0);
+        }
+        xrEl.audioController?.playEarcon?.('bounce');
+        setToast('[fist • Ground Slam] Slammed ' + name + ' downward at -6.8 m/s!');
+      } else if (gesture === 'thumbs-up') {
+        // Scale 3D mesh transform matrix by 1.35x (cycles back if > 2.2x)
+        const curScale = Math.hypot(mesh.transform[0], mesh.transform[1], mesh.transform[2]) || 1;
+        const factor = curScale > 2.1 ? (1 / curScale) : 1.35;
+        for (let c = 0; c < 3; c++) {
+          mesh.transform[c * 4 + 0] *= factor;
+          mesh.transform[c * 4 + 1] *= factor;
+          mesh.transform[c * 4 + 2] *= factor;
+        }
+        if (xrEl.physics?.setVelocity) {
+          xrEl.physics.setVelocity(mesh, 0, 2.2, 0);
+        }
+        xrEl.audioController?.playEarcon?.('snap');
+        setToast('[thumbs-up • Scale] Scaled ' + name + ' to ' + (curScale * factor).toFixed(2) + 'x!');
+      } else if (gesture === 'spread') {
+        // 360° Anti-Gravity Scatter across all dynamic objects
+        viewer.meshes.forEach((m, idx) => {
+          const traits = m?.extras?.xr || m?.userData?.xr;
+          if (traits?.physics === 'dynamic' && xrEl.physics?.setVelocity) {
+            const ang = (idx / Math.max(1, viewer.meshes.length)) * Math.PI * 2;
+            xrEl.physics.setVelocity(m, Math.cos(ang) * 3.2, 3.8 + (idx % 3) * 0.6, Math.sin(ang) * 3.2);
+          }
+        });
+        xrEl.audioController?.playEarcon?.('snap');
+        setToast('[spread • 360° Scatter] Triggered anti-gravity scatter across all objects!');
+      }
+    }
+
+    // Clicking directly on a 3D mesh executes the active hand gesture action on it
+    xrEl.addEventListener('meshClick', (e) => {
+      executeGestureOnHit(e.detail);
+    });
+
+    // In Immersive Simulator mode, clicking anywhere executes the active gesture on the reticle target
+    xrEl.addEventListener('click', () => {
+      if (immersiveSimActive && currentGazeHit) {
+        executeGestureOnHit(currentGazeHit);
+      }
+    });
+
+    // Physics step, 6DoF headset locomotion, gaze raycast & telemetry loop
+    let lastTime = performance.now();
+    function tickPlayground(now) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+
+      const viewer = xrEl.viewer;
+      if (viewer && Array.isArray(viewer.meshes)) {
+        if (xrEl.simulator && xrEl.simulator.room) {
+          xrEl.simulator.room.floorY = -0.80;
+          xrEl.simulator.room.tableY = -0.20;
+        }
+
+        // Step 6DoF WASD + Q/E headset locomotion (drives real 3D camera + simulator head pose)
+        const theta = typeof viewer.currTheta === 'number' ? viewer.currTheta : 0.6;
+        const phi = typeof viewer.currPhi === 'number' ? viewer.currPhi : 0.35;
+        const dist = typeof viewer.currDistance === 'number' ? viewer.currDistance : 2.5;
+        const fwdX = -Math.sin(theta);
+        const fwdZ = -Math.cos(theta);
+        const rightX = Math.cos(theta);
+        const rightZ = -Math.sin(theta);
+
+        let moveX = 0;
+        let moveY = 0;
+        let moveZ = 0;
+        const speed = 2.4 * dt;
+        if (keysHeld.has('KeyW')) { moveX += fwdX * speed; moveZ += fwdZ * speed; }
+        if (keysHeld.has('KeyS')) { moveX -= fwdX * speed; moveZ -= fwdZ * speed; }
+        if (keysHeld.has('KeyA')) { moveX -= rightX * speed; moveZ -= rightZ * speed; }
+        if (keysHeld.has('KeyD')) { moveX += rightX * speed; moveZ += rightZ * speed; }
+        if (keysHeld.has('KeyE')) { moveY += speed; }
+        if (keysHeld.has('KeyQ')) { moveY -= speed; }
+
+        const baseTarget = viewer.customTarget
+          ? [...viewer.customTarget]
+          : (viewer.bounds ? [...viewer.bounds.center] : [0, 0, 0]);
+
+        if (moveX !== 0 || moveY !== 0 || moveZ !== 0) {
+          baseTarget[0] += moveX;
+          baseTarget[1] += moveY;
+          baseTarget[2] += moveZ;
+          viewer.customTarget = baseTarget;
+        }
+
+        const eyePos = [
+          baseTarget[0] + dist * Math.cos(phi) * Math.sin(theta),
+          baseTarget[1] + dist * Math.sin(phi),
+          baseTarget[2] + dist * Math.cos(phi) * Math.cos(theta),
+        ];
+
+        if (xrEl.simulator) {
+          xrEl.simulator.headPosition = [...eyePos];
+          xrEl.simulator.headYaw = -theta;
+          xrEl.simulator.headPitch = -phi;
+        }
+
+        document.getElementById('hud-pose').textContent =
+          eyePos.map((v) => v.toFixed(2)).join(', ');
+
+        // Continuous 6DoF Hand/Gaze Raycast + 3D Emissive Hover Highlight
+        const canvas = viewer.canvas;
+        if (canvas && typeof viewer.raycastFromScreenPoint === 'function') {
+          const rect = canvas.getBoundingClientRect();
+          const hasPointer = lastPointerClientX !== null && lastPointerClientY !== null;
+          const aimX = hasPointer ? lastPointerClientX : (rect.left + rect.width * 0.5);
+          const aimY = hasPointer ? lastPointerClientY : (rect.top + rect.height * 0.5);
+          const hit = hasPointer ? viewer.raycastFromScreenPoint(aimX, aimY) : null;
+          currentGazeHit = hit;
+
+          // Highlight targeted mesh in 3D via ThreeLiveViewer's emissive selection shader
+          viewer.selectedMeshName = hit ? (hit.meshName || '') : '';
+
+          if (immersiveSimActive) {
+            document.getElementById('xr-left-pose').textContent =
+              'Pos: [' + (eyePos[0] - 0.22 * rightX + 0.5 * fwdX).toFixed(2) + ', ' + (eyePos[1] - 0.25).toFixed(2) + ', ' + (eyePos[2] - 0.22 * rightZ + 0.5 * fwdZ).toFixed(2) + ']';
+            document.getElementById('xr-right-pose').textContent =
+              'Pos: [' + (eyePos[0] + 0.22 * rightX + 0.5 * fwdX).toFixed(2) + ', ' + (eyePos[1] - 0.25).toFixed(2) + ', ' + (eyePos[2] + 0.22 * rightZ + 0.5 * fwdZ).toFixed(2) + ']';
+
+            const reticle = document.getElementById('xr-reticle');
+            const label = document.getElementById('xr-reticle-label');
+            // Position reticle at live hand/pointer ray location
+            reticle.style.left = (aimX - rect.left) + 'px';
+            reticle.style.top = (aimY - rect.top) + 'px';
+            const gesture = GESTURES[gestureIdx] || 'open-palm';
+            const actionName = GESTURE_ACTION_LABELS[gesture] || gesture;
+            if (hit) {
+              reticle.classList.add('hit');
+              const name = hit.meshName || ('Mesh #' + hit.meshIndex);
+              label.textContent = name + ' (' + hit.distance.toFixed(2) + 'm) • [' + gesture + ': ' + actionName + ']';
+            } else {
+              reticle.classList.remove('hit');
+              label.textContent = 'Aim Hand Ray • [' + gesture + ': ' + actionName + ']';
+            }
+          }
+        }
+
+        if (currentMode === 'ballpit' && autoFountain && now > nextFountainAt) {
+          nextFountainAt = now + 2200;
+          launchBall();
+        }
+
+        const prevVy = viewer.meshes.map((m) => {
+          const b = xrEl.physics?.getOrCreateBody?.(m);
+          return b ? b.velocity[1] : 0;
+        });
+
+        xrEl.stepSpatialFrame(dt, viewer);
+        if (typeof viewer.update === 'function') viewer.update(0);
+        viewer.render();
+
+        let dynamicCount = 0;
+        viewer.meshes.forEach((m, idx) => {
+          const traits = m?.extras?.xr || m?.userData?.xr;
+          if (traits?.physics === 'dynamic') {
+            dynamicCount++;
+            const b = xrEl.physics?.getOrCreateBody?.(m);
+            if (b && prevVy[idx] < -0.3 && b.velocity[1] > 0.05) {
+              bounceCount++;
+            }
+          }
+        });
+
+        document.getElementById('hud-bodies').textContent = String(dynamicCount);
+        document.getElementById('hud-collisions').textContent = String(bounceCount);
+      }
+
+      requestAnimationFrame(tickPlayground);
+    }
+
+    function launchBall() {
+      const viewer = xrEl.viewer;
+      if (!viewer || !Array.isArray(viewer.meshes)) return;
+
+      const dynamicMeshes = viewer.meshes.filter((m) => {
+        const xr = m?.extras?.xr || m?.userData?.xr;
+        return xr?.physics === 'dynamic';
+      });
+
+      if (dynamicMeshes.length === 0) {
+        return;
+      }
+
+      const target = dynamicMeshes[Math.floor(Math.random() * dynamicMeshes.length)];
+      const vx = (Math.random() - 0.5) * 2.2;
+      const vy = 3.2 + Math.random() * 1.6;
+      const vz = (Math.random() - 0.5) * 2.2;
+      xrEl.physics.setVelocity(target, vx, vy, vz);
+      xrEl.audioController?.playEarcon?.('grab');
+      setToast('Launched sphere with impulse (' + vx.toFixed(1) + ', ' + vy.toFixed(1) + ', ' + vz.toFixed(1) + ') m/s');
+    }
+
+    function rainBalls(count) {
+      const viewer = xrEl.viewer;
+      if (!viewer || !Array.isArray(viewer.meshes)) return;
+      let launched = 0;
+      for (const m of viewer.meshes) {
+        const xr = m?.extras?.xr || m?.userData?.xr;
+        if (xr?.physics === 'dynamic') {
+          xrEl.physics.setVelocity(
+            m,
+            (Math.random() - 0.5) * 3.0,
+            2.8 + Math.random() * 2.4,
+            (Math.random() - 0.5) * 3.0
+          );
+          launched++;
+          if (launched >= count) break;
+        }
+      }
+      xrEl.audioController?.playEarcon?.('bounce');
+      setToast('Rained ' + launched + ' dynamic spheres across the room');
+    }
+
+    function updatePhysicsParams() {
+      const g = parseFloat(document.getElementById('slider-gravity').value);
+      const r = parseFloat(document.getElementById('slider-restitution').value);
+      document.getElementById('val-gravity').textContent = g.toFixed(2) + ' m/s²';
+      document.getElementById('val-restitution').textContent = r.toFixed(2);
+
+      if (xrEl.physics) {
+        xrEl.physics.gravity = [0, g, 0];
+        const viewer = xrEl.viewer;
+        if (viewer && Array.isArray(viewer.meshes)) {
+          for (const m of viewer.meshes) {
+            const body = xrEl.physics.getOrCreateBody(m);
+            if (body) body.restitution = r;
+          }
+        }
+      }
+    }
+
+    function playEarconDemo(type) {
+      xrEl.audioController?.playEarcon?.(type);
+      setToast('Played 3D WebAudio earcon: ' + type);
+    }
+
+    function pulseTraitObjects() {
+      const viewer = xrEl.viewer;
+      if (!viewer || !Array.isArray(viewer.meshes)) return;
+      for (const m of viewer.meshes) {
+        const xr = m?.extras?.xr || m?.userData?.xr;
+        if (xr?.traits) {
+          xrEl.physics.setVelocity(m, (Math.random() - 0.5) * 1.2, 2.2, (Math.random() - 0.5) * 1.2);
+        }
+      }
+      xrEl.audioController?.playEarcon?.('snap');
+      setToast('Pulsed 6DoF grabbable & billboarded objects');
+    }
+
+    function cycleHandGesture() {
+      gestureIdx = (gestureIdx + 1) % GESTURES.length;
+      const g = GESTURES[gestureIdx];
+      document.getElementById('hud-gesture').textContent = g;
+      xrEl.audioController?.playEarcon?.('snap');
+      setToast('Simulated 25-joint hand gesture: ' + g);
+    }
+
+    function updateVRBlend(val) {
+      const pct = parseInt(val, 10);
+      const blend = pct / 100;
+      document.getElementById('val-vrblend').textContent =
+        pct === 0 ? '0% (AR Passthrough)' : pct + '% VR Immersion';
+
+      if (pct === 0) {
+        xrEl.transitionToAR({ duration: 0.25 });
+      } else {
+        xrEl.transitionToVR({
+          duration: 0.25,
+          skyboxColor: [0.06 * blend, 0.09 * blend, 0.22 * blend]
+        });
+      }
+    }
+
+    function setVRSkyboxPreset(r, g, b, label) {
+      if (r === 0 && g === 0 && b === 0) {
+        document.getElementById('slider-vrblend').value = 0;
+        document.getElementById('val-vrblend').textContent = '0% (AR Passthrough)';
+        xrEl.transitionToAR({ duration: 0.35 });
+      } else {
+        document.getElementById('slider-vrblend').value = 100;
+        document.getElementById('val-vrblend').textContent = '100% (' + label + ')';
+        xrEl.transitionToVR({ duration: 0.35, skyboxColor: [r, g, b] });
+      }
+      setToast('Environment transition: ' + label);
+    }
+
+    async function runCaptureFrame() {
+      const frame = await xrEl.captureViewFrame({
+        format: 'image/png',
+        includeDepth: true
+      });
+
+      if (frame && frame.dataUrl) {
+        document.getElementById('capture-img').src = frame.dataUrl;
+      }
+      const headPos = frame?.headPosition || [0, 1.6, 2.2];
+      const depthGrid = frame?.depthGridMeters || [];
+      document.getElementById('capture-meta').textContent =
+        'Captured ' + (frame?.width || 0) + '×' + (frame?.height || 0);
+
+      renderDepthGrid(depthGrid);
+      document.getElementById('mcp-output').textContent = JSON.stringify(
+        {
+          resolution: (frame?.width || 0) + 'x' + (frame?.height || 0),
+          headPosition: headPos.map((v) => Number(v.toFixed(2))),
+          depthGridMeters_row0: depthGrid.slice(0, 8)
+        },
+        null,
+        2
+      );
+      setToast('Captured RGB frame + 8×8 metric depth grid');
+    }
+
+    function renderDepthGrid(grid) {
+      const container = document.getElementById('depth-heatmap');
+      container.innerHTML = '';
+      const values = grid.length === 64 ? grid : Array.from({ length: 64 }, (_, i) => 1.2 + (i % 8) * 0.35);
+      values.forEach((d) => {
+        const cell = document.createElement('div');
+        cell.className = 'depth-cell';
+        const norm = Math.max(0, Math.min(1, (d - 0.5) / 4.0));
+        const hue = Math.round((1 - norm) * 210);
+        cell.style.background = 'hsl(' + hue + ', 78%, 38%)';
+        cell.textContent = d.toFixed(1);
+        container.appendChild(cell);
+      });
+    }
+
+    async function runWebMCPTool(toolName) {
+      const viewer = xrEl.viewer;
+      const meshes = viewer?.meshes || [];
+      let payload = {};
+      if (toolName === 'get_spatial_scene_graph') {
+        payload = {
+          tool: 'get_spatial_scene_graph',
+          meshCount: meshes.length,
+          nodes: meshes.slice(0, 6).map((m, i) => ({
+            id: m.name || 'mesh_' + i,
+            traits: m?.extras?.xr || m?.userData?.xr || {}
+          }))
+        };
+      } else if (toolName === 'spawn_spatial_object') {
+        launchBall();
+        payload = {
+          tool: 'spawn_spatial_object',
+          status: 'spawned_and_impulsed',
+          activeBodies: meshes.length
+        };
+      }
+      document.getElementById('mcp-output').textContent = JSON.stringify(payload, null, 2);
+      setToast('Executed WebMCP tool: ' + toolName);
+    }
+
+    async function exportScene(format) {
+      const glb = lastCompiledGLB || (await xrEl.executeScript(editorEl.value));
+      if (!glb) return;
+      const blob =
+        format === 'usdz'
+          ? window.THREE.createUSDZBlob(glb)
+          : new Blob([glb], { type: 'model/gltf-binary' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'xr-live-' + currentMode + '.' + format;
+      a.click();
+      setToast('Exported scene as .' + format);
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.target === editorEl) return;
+      keysHeld.add(e.code);
+      if (e.code === 'Escape' && immersiveSimActive) {
+        exitImmersiveSimulator();
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        launchBall();
+      } else if (e.key === 'g' || e.key === 'G') {
+        cycleHandGesture();
+      } else if (e.key === '1') {
+        switchMode('ballpit');
+      } else if (e.key === '2') {
+        switchMode('workbench');
+      } else if (e.key === '3') {
+        switchMode('perception');
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keysHeld.delete(e.code);
+    });
+
+    // Boot initial Ballpit scene
+    renderDepthGrid([]);
+    switchMode('ballpit');
+    requestAnimationFrame(tickPlayground);
+  </script>
+</body>
+</html>

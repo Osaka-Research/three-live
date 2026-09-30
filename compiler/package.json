@@ -1,0 +1,47 @@
+{
+  "name": "@three-live/compiler-wasm",
+  "version": "0.1.0",
+  "description": "WebAssembly compiler translating procedural Three.js scene scripts into binary glTF 2.0 (GLB)",
+  "main": "pkg/node/three_live_compiler.js",
+  "module": "pkg/web/three_live_compiler.js",
+  "types": "pkg/web/three_live_compiler.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/web/three_live_compiler.d.ts",
+      "import": "./pkg/web/three_live_compiler.js",
+      "require": "./pkg/node/three_live_compiler.js",
+      "default": "./pkg/web/three_live_compiler.js"
+    },
+    "./web": {
+      "types": "./pkg/web/three_live_compiler.d.ts",
+      "import": "./pkg/web/three_live_compiler.js"
+    },
+    "./node": {
+      "types": "./pkg/node/three_live_compiler.d.ts",
+      "require": "./pkg/node/three_live_compiler.js"
+    }
+  },
+  "files": [
+    "pkg/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "./build_wasm.sh",
+    "build:web": "wasm-pack build --target web --out-dir pkg/web -- --features wasm",
+    "build:node": "wasm-pack build --target nodejs --out-dir pkg/node -- --features wasm",
+    "build:bundler": "wasm-pack build --target bundler --out-dir pkg/bundler -- --features wasm",
+    "test": "echo 'Compiler tests run via cargo test'"
+  },
+  "keywords": [
+    "threejs",
+    "gltf",
+    "glb",
+    "webassembly",
+    "wasm",
+    "3d",
+    "three-live"
+  ],
+  "author": "Google LLC",
+  "license": "Apache-2.0"
+}

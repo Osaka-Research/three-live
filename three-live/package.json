@@ -1,0 +1,69 @@
+{
+  "name": "three-live",
+  "version": "1.0.0",
+  "description": "Ultra-lightweight 3D, WebXR, and procedural Three.js runtime in under 30 KB gzip",
+  "main": "dist/three-live.cjs",
+  "module": "dist/three-live.js",
+  "types": "dist/index.d.ts",
+  "sideEffects": [
+    "dist/*.js",
+    "dist/*.cjs"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/three-live.js",
+      "require": "./dist/three-live.cjs"
+    },
+    "./full": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/three-live-full.js",
+      "require": "./dist/three-live-full.cjs"
+    },
+    "./view": {
+      "types": "./dist/three-view.d.ts",
+      "import": "./dist/three-view.js",
+      "require": "./dist/three-view.cjs"
+    },
+    "./author": {
+      "types": "./dist/three-author.d.ts",
+      "import": "./dist/three-author.js",
+      "require": "./dist/three-author.cjs"
+    },
+    "./xr": {
+      "types": "./dist/three-xr.d.ts",
+      "import": "./dist/three-xr.js",
+      "require": "./dist/three-xr.cjs"
+    },
+    "./convert": {
+      "types": "./dist/three-convert.d.ts",
+      "import": "./dist/three-convert.js",
+      "require": "./dist/three-convert.cjs"
+    },
+    "./viewer": {
+      "types": "./dist/three-live-viewer.d.ts",
+      "import": "./dist/three-live-viewer.js",
+      "require": "./dist/three-live-viewer.cjs"
+    },
+    "./extras": {
+      "types": "./dist/three-live-extras.d.ts",
+      "import": "./dist/three-live-extras.js",
+      "require": "./dist/three-live-extras.cjs"
+    },
+    "./animation": {
+      "types": "./dist/three-live-animation.d.ts",
+      "import": "./dist/three-live-animation.js",
+      "require": "./dist/three-live-animation.cjs"
+    },
+    "./element": {
+      "types": "./dist/three-live-element.d.ts",
+      "import": "./dist/three-live-element.js",
+      "require": "./dist/three-live-element.cjs"
+    }
+  },
+  "scripts": {
+    "build": "node ../scripts/build.js --three-live",
+    "test": "node ../scripts/build.js --test-three-live"
+  },
+  "license": "Apache-2.0"
+}

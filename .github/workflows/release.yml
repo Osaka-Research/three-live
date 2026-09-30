@@ -1,0 +1,389 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Release & Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-binaries:
+    name: Build Native CLI Binaries (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: three-live-cli-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+            artifact_name: three-live-cli-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: three-live-cli-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: three-live-cli-macos-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact_name: three-live-cli-windows-x86_64.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build with Cargo
+        if: ${{ !matrix.use_cross }}
+        run: cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target ${{ matrix.target }}
+
+      - name: Build with Cross
+        if: ${{ matrix.use_cross }}
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+          cross build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target ${{ matrix.target }}
+
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            target/${{ matrix.target }}/release/three-live-cli
+            target/${{ matrix.target }}/release/three-live-cli.exe
+
+  build-android:
+    name: Build Android AAR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Keep in sync with gradle/wrapper/gradle-wrapper.properties; see the note in ci.yml.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Set up Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android AAR
+        run: bash scripts/build_android_aar.sh
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      # Guard against shipping a Java-only AAR: without the cross-compiled .so files every
+      # ThreeCompiler call throws UnsatisfiedLinkError at runtime.
+      - name: Verify AAR contains native libraries
+        run: |
+          aar=$(ls mobile/android/build/outputs/aar/*-release.aar)
+          echo "Inspecting ${aar}"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "${aar}" | grep -q "jni/${abi}/libthree_live_compiler.so" \
+              || { echo "::error::AAR is missing jni/${abi}/libthree_live_compiler.so"; exit 1; }
+          done
+          echo "All three ABIs present."
+
+      # if-no-files-found defaults to 'warn', which previously let this job go green while
+      # uploading nothing at all.
+      - name: Upload Android AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-live-compiler-release-aar
+          path: mobile/android/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
+      # Runs here rather than in a separate job: publication must happen on a runner that has the
+      # cross-compiled .so files, otherwise it produces a Java-only AAR. This currently targets
+      # mavenLocal, which validates the POM and publication wiring end to end. Point it at the
+      # real repository (and add credentials) when one is provisioned.
+      - name: Publish Android AAR to Maven Local
+        run: gradle :mobile:android:publishReleasePublicationToMavenLocal --stacktrace
+
+  build-ios:
+    name: Build Apple XCFramework
+    runs-on: macos-latest
+    outputs:
+      checksum: ${{ steps.package_xcframework.outputs.checksum }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-visionos, aarch64-apple-visionos-sim, aarch64-apple-tvos, aarch64-apple-tvos-sim
+
+      # A release must never ship a partial framework, so a missing SDK is a hard failure
+      # here even though it is only a warning for local development builds.
+      - name: Build XCFramework
+        env:
+          THREE_LIVE_REQUIRE_ALL_PLATFORMS: '1'
+        run: bash scripts/build_ios_xcframework.sh
+
+      - name: Verify XCFramework completeness
+        run: bash scripts/verify_xcframework.sh mobile/ios/ThreeLiveCompiler.xcframework 7
+
+      - name: Zip XCFramework & Compute Checksum
+        id: package_xcframework
+        run: |
+          cd mobile/ios
+          zip -r -y ThreeLiveCompiler.xcframework.zip ThreeLiveCompiler.xcframework
+          CHECKSUM=$(swift package compute-checksum ThreeLiveCompiler.xcframework.zip)
+          echo "XCFramework SHA-256 Checksum: ${CHECKSUM}"
+          echo "checksum=${CHECKSUM}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload iOS XCFramework Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ThreeLiveCompiler.xcframework.zip
+          path: mobile/ios/ThreeLiveCompiler.xcframework.zip
+          if-no-files-found: error
+
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-binaries, build-android, build-ios]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Stage Release Assets
+        run: |
+          mkdir -p dist-release
+          find release-artifacts -type f -exec cp {} dist-release/ \;
+          ls -la dist-release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm:
+    name: Publish NPM Packages
+    runs-on: ubuntu-latest
+    needs: [build-binaries]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies & build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish three-live monorepo packages
+        run: npm publish --workspaces --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-crates:
+    name: Publish Crates.io
+    runs-on: ubuntu-latest
+    needs: [build-binaries]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Build embedded JS engine asset
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo Publish
+        run: cargo publish --manifest-path compiler/Cargo.toml
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+  # The SHA-256 of a release artifact cannot be known until the artifact exists, so the
+  # manifest committed on the tag is necessarily stale. This pins the real values and moves
+  # the tag to the corrected commit. Without this, `.binaryTarget(url:checksum:)` would keep
+  # the placeholder checksum and no external consumer could resolve the package at all.
+  pin-spm-manifest:
+    name: Pin SPM Binary Target
+    runs-on: ubuntu-latest
+    needs: [build-ios, github-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Pin release tag and checksum into Package.swift
+        env:
+          TAG: ${{ github.ref_name }}
+          CHECKSUM: ${{ needs.build-ios.outputs.checksum }}
+        run: bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}"
+
+      - name: Commit and move tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Package.swift; then
+            echo "Package.swift is already pinned for ${TAG}; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Package.swift
+          git commit -m "chore: pin ThreeLiveCompiler.xcframework checksum for ${TAG}"
+          git tag -f "${TAG}"
+          git push --force origin "refs/tags/${TAG}"
+
+  # End-to-end proof that the published package is installable. This resolves the release
+  # over the network, verifies the binary target checksum, links the XCFramework, and runs
+  # the compiler -- the exact path an external user takes.
+  verify-spm-consumption:
+    name: Verify SPM Consumption
+    runs-on: macos-latest
+    needs: [pin-spm-manifest]
+    steps:
+      - name: Resolve and run the published package as an external consumer
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          WORKDIR="$(mktemp -d)"
+          mkdir -p "${WORKDIR}/Sources/ConsumerProbe"
+          cd "${WORKDIR}"
+
+          cat > Sources/ConsumerProbe/main.swift <<'SWIFT'
+          import Foundation
+          import ThreeLiveCompiler
+
+          let script = """
+          const mesh = new THREE.Mesh(
+              new THREE.BoxGeometry(1, 1, 1),
+              new THREE.MeshStandardMaterial({ color: 0xffffff })
+          );
+          scene.add(mesh);
+          """
+
+          let glb = try ThreeCompiler.compileSync(script)
+          guard Array(glb.prefix(4)) == [0x67, 0x6C, 0x54, 0x46] else {
+              fatalError("Resolved package did not produce a valid GLB container")
+          }
+          print("Consumed ThreeLiveCompiler successfully: \(glb.count) bytes of GLB")
+          SWIFT
+
+          cat > Package.swift <<MANIFEST
+          // swift-tools-version: 5.9
+          import PackageDescription
+
+          let package = Package(
+              name: "ConsumerProbe",
+              platforms: [.macOS(.v12)],
+              dependencies: [
+                  .package(url: "https://github.com/google/three-live.git", exact: "${VERSION}")
+              ],
+              targets: [
+                  .executableTarget(
+                      name: "ConsumerProbe",
+                      dependencies: [.product(name: "ThreeLiveCompiler", package: "three-live")]
+                  )
+              ]
+          )
+          MANIFEST
+
+          swift run
+
+
