@@ -56,21 +56,11 @@ You are authoring 3D / Spatial Computing scenes using Google's `three-live` and 
 
 | DO (Supported & Fast)               | DO NOT (Unsupported / Anti-Pattern)   |
 | :---------------------------------- | :------------------------------------ |
-| Use `new                            | Do NOT use `THREE.ShaderMaterial` or  |
-: THREE.MeshStandardMaterial({ color, : custom GLSL strings in scripts        :
-: metalness, roughness })`            :                                       :
-| Add objects to the global `scene`   | Do NOT instantiate `new               |
-: (`scene.add(mesh)`)                 : THREE.WebGLRenderer()` or call        :
-:                                     : `renderer.render()`                   :
-| Set `mesh.userData.xrTraits =       | Do NOT write manual WebXR session     |
-: ['grab', 'scale', 'billboard']`     : setup (`navigator.xr.requestSession`) :
-| Use `<div slot="spatial"            | Do NOT try to access `window` or      |
-: data-position="x y z"               : `document` inside sandboxed `<script  :
-: data-xr-traits="grab billboard">`   : type="text/three">`                   :
-: for spatial HTML UI                 :                                       :
-| Load external `.glb` files via      | Do NOT use `new                       |
-: `<three-live src="...">` or         : THREE.GLTFLoader().load(...)` inside  :
-: `<xr-anchor src="...">`             : procedural scripts                    :
+| Use `new THREE.MeshStandardMaterial({ color, metalness, roughness })` | Do NOT use `THREE.ShaderMaterial` or custom GLSL strings in scripts |
+| Add objects to the global `scene` (`scene.add(mesh)`) | Do NOT instantiate `new THREE.WebGLRenderer()` or call `renderer.render()` |
+| Set `mesh.userData.xrTraits = ['grab', 'scale', 'billboard']` | Do NOT write manual WebXR session setup (`navigator.xr.requestSession`) |
+| Use `<div slot="spatial" data-position="x y z" data-xr-traits="grab billboard">` for spatial HTML UI | Do NOT try to access `window` or `document` inside sandboxed `<script type="text/three">` |
+| Load external `.glb` files via `<three-live src="...">` or `<xr-anchor src="...">` | Do NOT use `new THREE.GLTFLoader().load(...)` inside procedural scripts |
 
 ### Permissive Fallback Shims & Diagnostic Warnings (JS & Rust Compiler)
 

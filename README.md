@@ -31,32 +31,14 @@ LLMs excel at generating Three.js code. Three-Live compiles it on-device in a sa
 
 ## `<three-live>` vs. `<xr-live>` at a Glance
 
-| Capability              | `<three-live>`          | `<xr-live>` (extends     |
-:                         :                         : `<three-live>`)          :
+| Capability | `<three-live>` | `<xr-live>` (extends `<three-live>`) |
 | :---------------------- | :---------------------- | :----------------------- |
-| **Primary Use Case**    | 3D product viewers,     | Interactive 6DoF WebXR,  |
-:                         : procedural scenes,      : spatial UI cards,        :
-:                         : 1-tap AR handoff        : depth/physics, hand      :
-:                         :                         : tracking                 :
-| **Procedural `<script   | Yes (sandboxed Web      | Yes (inherits full       |
-: type="text/three">`**   : Worker JIT compiler)    : `three-author` JIT       :
-:                         :                         : compiler +               :
-:                         :                         : `userData.xrTraits`)     :
-| **Mobile AR / XR**      | Universal AR handoff    | Native Android XR        |
-:                         : (Quick Look, Scene      : (`SceneCore`),           :
-:                         : Viewer, WebXR)          : iOS/visionOS             :
-:                         :                         : (`RealityKit`), & WebXR  :
-| **Spatial Interaction** | Orbit controls, mesh    | Declarative traits       |
-:                         : picking, 3D surface     : (`grab`, `scale`,        :
-:                         : hotspots                : `billboard`, `anchor`) + :
-:                         :                         : 25-joint hands           :
-| **Spatial HTML UI**     | 2D screen-space overlay | True 3D textured &       |
-:                         : hotspots                : raycastable HTML cards   :
-:                         : (`slot="hotspot-*"`)    : (`<div slot="spatial">`) :
-| **Default Bundle        | **`< 38 KB gz`**        | **`< 49 KB gz`**         |
-: Budget**                : (`three-live.min.js`)   : (`xr-live.min.js`) /     :
-:                         :                         : **`< 61 KB gz`**         :
-:                         :                         : (`xr-live-full.min.js`)  :
+| **Primary Use Case** | 3D product viewers, procedural scenes, 1-tap AR handoff | Interactive 6DoF WebXR, spatial UI cards, depth/physics, hand tracking |
+| **Procedural `<script type="text/three">`** | Yes (sandboxed Web Worker JIT compiler) | Yes (inherits full `three-author` JIT compiler + `userData.xrTraits`) |
+| **Mobile AR / XR** | Universal AR handoff (Quick Look, Scene Viewer, WebXR) | Native Android XR (`SceneCore`), iOS/visionOS (`RealityKit`), & WebXR |
+| **Spatial Interaction** | Orbit controls, mesh picking, 3D surface hotspots | Declarative traits (`grab`, `scale`, `billboard`, `anchor`) + 25-joint hands |
+| **Spatial HTML UI** | 2D screen-space overlay hotspots (`slot="hotspot-*"`) | True 3D textured & raycastable HTML cards (`<div slot="spatial">`) |
+| **Default Bundle Budget** | **`< 38 KB gz`** (`three-live.min.js`) | **`< 49 KB gz`** (`xr-live.min.js`) / **`< 61 KB gz`** (`xr-live-full.min.js`) |
 
 ---
 
@@ -149,54 +131,17 @@ three-live-cli convert scene.js -o output.glb
 Every bundle targets `es2020`, strips full license blocks
 (`--legal-comments=none`), and emits a single 4-line SPDX header:
 
-| Family           | Bundle File                       | Enforced       | Included Capabilities       |
-:                  :                                   : Budget         :                             :
-:                  :                                   : (`.min.js.gz`) :                             :
+| Family | Bundle File | Enforced Budget (`.min.js.gz`) | Included Capabilities |
 | :--------------- | :-------------------------------- | :------------: | :-------------------------- |
-| **`three-live`** | **`three-live-viewer.min.js`**    | **`< 22 KB     | Lean `.glb`/`.usdz` WebGL2  |
-:                  :                                   : gz`**          : PBR viewer, TRS animations, :
-:                  :                                   :                : orbit controls, AR          :
-:                  :                                   :                : packager.                   :
-|                  | **`three-live.min.js`**           | **`< 38 KB     | Standard `<three-live>` +   |
-:                  :                                   : gz`**          : **`three-author`**          :
-:                  :                                   :                : (`<script                   :
-:                  :                                   :                : type="text/three">`) + AR   :
-:                  :                                   :                : packager.                   :
-|                  | **`three-live-extras.min.js`**    | **`< 7.5 KB    | Add-on plugin: PBR Next     |
-:                  :                                   : gz`**          : extensions, HDRI/SH         :
-:                  :                                   :                : irradiance, contact         :
-:                  :                                   :                : shadows, 3D hotspots.       :
-|                  | **`three-live-animation.min.js`** | **`< 5.5 KB    | Add-on plugin: 64-joint GPU |
-:                  :                                   : gz`**          : skeletal skinning, morph    :
-:                  :                                   :                : targets, animation          :
-:                  :                                   :                : cross-fading.               :
-|                  | **`three-live-full.min.js`**      | **`< 48 KB     | All-in-one 3D bundle        |
-:                  :                                   : gz`**          : (`three-live` + `extras` +  :
-:                  :                                   :                : `animation`, all 8 plugins  :
-:                  :                                   :                : auto-registered).           :
-| **`xr-live`**    | **`xr-live-viewer.min.js`**       | **`< 38 KB     | Lean `.glb`/`.usdz` WebXR   |
-:                  :                                   : gz`**          : viewer + spatial traits     :
-:                  :                                   :                : (`grab`, `scale`,           :
-:                  :                                   :                : `billboard`, `anchor`),     :
-:                  :                                   :                : `<div slot="spatial">`,     :
-:                  :                                   :                : mobile AR bridge.           :
-|                  | **`xr-live.min.js`**              | **`< 49 KB     | Standard `<xr-live>` +      |
-:                  :                                   : gz`**          : **`three-author`**          :
-:                  :                                   :                : (`<script                   :
-:                  :                                   :                : type="text/three">`) +      :
-:                  :                                   :                : runtime USDZ/GLB compiler.  :
-|                  | **`xr-live-extras.min.js`**       | **`< 7.5 KB    | Add-on plugin: Deep XR      |
-:                  :                                   : gz`**          : (`XRDepthManager`,          :
-:                  :                                   :                : `XRHeightfieldPhysics`,     :
-:                  :                                   :                : 25-joint                    :
-:                  :                                   :                : `XRHandGestureClassifier`), :
-:                  :                                   :                : `XRDesktopSimulator`,       :
-:                  :                                   :                : Spatial Audio, Skybox,      :
-:                  :                                   :                : WebMCP tools.               :
-|                  | **`xr-live-full.min.js`**         | **`< 61 KB     | All-in-one 3D & XR bundle   |
-:                  :                                   : gz`**          : (`three-live-full` +        :
-:                  :                                   :                : `xr-live` +                 :
-:                  :                                   :                : `xr-live-extras`).          :
+| **`three-live`** | **`three-live-viewer.min.js`** | **`< 22 KB gz`** | Lean `.glb`/`.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, AR packager. |
+|  | **`three-live.min.js`** | **`< 38 KB gz`** | Standard `<three-live>` + **`three-author`** (`<script type="text/three">`) + AR packager. |
+|  | **`three-live-extras.min.js`** | **`< 7.5 KB gz`** | Add-on plugin: PBR Next extensions, HDRI/SH irradiance, contact shadows, 3D hotspots. |
+|  | **`three-live-animation.min.js`** | **`< 5.5 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading. |
+|  | **`three-live-full.min.js`** | **`< 48 KB gz`** | All-in-one 3D bundle (`three-live` + `extras` + `animation`, all 8 plugins auto-registered). |
+| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 38 KB gz`** | Lean `.glb`/`.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, mobile AR bridge. |
+|  | **`xr-live.min.js`** | **`< 49 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ/GLB compiler. |
+|  | **`xr-live-extras.min.js`** | **`< 7.5 KB gz`** | Add-on plugin: Deep XR (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, WebMCP tools. |
+|  | **`xr-live-full.min.js`** | **`< 61 KB gz`** | All-in-one 3D & XR bundle (`three-live-full` + `xr-live` + `xr-live-extras`). |
 
 --------------------------------------------------------------------------------
 
@@ -204,42 +149,9 @@ Every bundle targets `es2020`, strips full license blocks
 
 | Guide                                          | Audience | Contents           |
 | :--------------------------------------------- | :------- | :----------------- |
-| **[`docs/three-live.md`](docs/three-live.md)** | Web &    | Complete           |
-:                                                : Mobile   : `<three-live>`     :
-:                                                : Devs     : reference\:        :
-:                                                :          : attributes,        :
-:                                                :          : `<model-viewer>`   :
-:                                                :          : drop-in JS API,    :
-:                                                :          : DOM events, 3D     :
-:                                                :          : hotspots, PBR Next :
-:                                                :          : & HDRI,            :
-:                                                :          : animations, and    :
-:                                                :          : sandboxing.        :
-| **[`docs/xr-live.md`](docs/xr-live.md)**       | Spatial  | Complete           |
-:                                                : & XR     : `<xr-live>` &      :
-:                                                : Devs     : Native Mobile      :
-:                                                :          : Spatial guide\:    :
-:                                                :          : declarative traits :
-:                                                :          : (`grab`, `scale`,  :
-:                                                :          : `billboard`,       :
-:                                                :          : `anchor`), spatial :
-:                                                :          : DOM cards (`<div   :
-:                                                :          : slot="spatial">`), :
-:                                                :          : depth/physics,     :
-:                                                :          : 25-joint hand      :
-:                                                :          : tracking, desktop  :
-:                                                :          : simulator, and     :
-:                                                :          : Android XR /       :
-:                                                :          : RealityKit         :
-:                                                :          : bridges.           :
-| **[`docs/llm-guide.md`](docs/llm-guide.md)**   | LLMs &   | Copy-paste system  |
-:                                                : Agents   : prompt snippet,    :
-:                                                :          : strict `THREE.*`   :
-:                                                :          : allowlist, scene   :
-:                                                :          : quotas, and        :
-:                                                :          : zero-hallucination :
-:                                                :          : few-shot           :
-:                                                :          : templates.         :
+| **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
+| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & Native Mobile Spatial guide: declarative traits (`grab`, `scale`, `billboard`, `anchor`), spatial DOM cards (`<div slot="spatial">`), depth/physics, 25-joint hand tracking, desktop simulator, and Android XR / RealityKit bridges. |
+| **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, strict `THREE.*` allowlist, scene quotas, and zero-hallucination few-shot templates. |
 
 ---
 

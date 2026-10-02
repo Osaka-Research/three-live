@@ -73,58 +73,17 @@ following spatial attributes:
 
 | Element       | Attribute        | Type      | Default       | Description        |
 | :------------ | :--------------- | :-------- | :------------ | :----------------- |
-| `<xr-live>`   | `xr-mode`        | `string`  | `"inline-ar"` | Session mode:      |
-:               :                  :           :               : `"inline-ar"`      :
-:               :                  :           :               : (passthrough AR),  :
-:               :                  :           :               : `"immersive-vr"`,  :
-:               :                  :           :               : or `"inline"`.     :
-| `<xr-live>`   | `xr-depth`       | `boolean` | `false`       | Enables WebXR      |
-:               :                  :           :               : real-world depth   :
-:               :                  :           :               : sensing            :
-:               :                  :           :               : (`depth-sensing`), :
-:               :                  :           :               : shader occlusion,  :
-:               :                  :           :               : and heightfield    :
-:               :                  :           :               : physics terrain    :
-:               :                  :           :               : extraction.        :
-| `<xr-live>`   | `xr-hands`       | `boolean` | `false`       | Enables 25-joint   |
-:               :                  :           :               : WebXR hand         :
-:               :                  :           :               : tracking           :
-:               :                  :           :               : (`hand-tracking`)  :
-:               :                  :           :               : and gesture        :
-:               :                  :           :               : classification.    :
-| `<xr-live>`   | `xr-simulator`   | `boolean` | `false`       | Enables desktop    |
-:               :                  :           :               : 6DoF               :
-:               :                  :           :               : keyboard/mouse     :
-:               :                  :           :               : simulator          :
-:               :                  :           :               : (`WASD` + mouse    :
-:               :                  :           :               : look + synthetic   :
-:               :                  :           :               : rays).             :
-| `<xr-live>`   | `xr-profile`     | `string`  | `"auto"`      | Device profile     |
-:               :                  :           :               : hint               :
-:               :                  :           :               : (`"android-xr"`,   :
-:               :                  :           :               : `"vision-os"`,     :
-:               :                  :           :               : `"quest"`,         :
-:               :                  :           :               : `"mobile-ar"`).    :
-| `<xr-anchor>` | `name`           | `string`  | —             | Unique identifier  |
-:               :                  :           :               : for the spatial    :
-:               :                  :           :               : anchor / node.     :
-| `<xr-anchor>` | `src`            | `string`  | —             | Optional `.glb`    |
-:               :                  :           :               : model URL attached :
-:               :                  :           :               : to this anchor.    :
-| `<xr-anchor>` | `position`       | `string`  | `"0 0 0"`     | Initial 3D world   |
-:               :                  :           :               : position `"x y z"` :
-:               :                  :           :               : in meters.         :
-| `<xr-anchor>` | `rotation`       | `string`  | `"0 0 0"`     | Euler rotation     |
-:               :                  :           :               : `"rx ry rz"` in    :
-:               :                  :           :               : degrees.           :
-| `<xr-anchor>` | `scale`          | `string`  | `"1 1 1"`     | Scale vector `"sx  |
-:               :                  :           :               : sy sz"`.           :
-| `<xr-anchor>` | `data-xr-traits` | `string`  | —             | Space-separated    |
-:               :                  :           :               : spatial traits\:   :
-:               :                  :           :               : `"grab"`,          :
-:               :                  :           :               : `"scale"`,         :
-:               :                  :           :               : `"billboard"`,     :
-:               :                  :           :               : `"anchor"`.        :
+| `<xr-live>` | `xr-mode` | `string` | `"inline-ar"` | Session mode: `"inline-ar"` (passthrough AR), `"immersive-vr"`, or `"inline"`. |
+| `<xr-live>` | `xr-depth` | `boolean` | `false` | Enables WebXR real-world depth sensing (`depth-sensing`), shader occlusion, and heightfield physics terrain extraction. |
+| `<xr-live>` | `xr-hands` | `boolean` | `false` | Enables 25-joint WebXR hand tracking (`hand-tracking`) and gesture classification. |
+| `<xr-live>` | `xr-simulator` | `boolean` | `false` | Enables desktop 6DoF keyboard/mouse simulator (`WASD` + mouse look + synthetic rays). |
+| `<xr-live>` | `xr-profile` | `string` | `"auto"` | Device profile hint (`"android-xr"`, `"vision-os"`, `"quest"`, `"mobile-ar"`). |
+| `<xr-anchor>` | `name` | `string` | — | Unique identifier for the spatial anchor / node. |
+| `<xr-anchor>` | `src` | `string` | — | Optional `.glb` model URL attached to this anchor. |
+| `<xr-anchor>` | `position` | `string` | `"0 0 0"` | Initial 3D world position `"x y z"` in meters. |
+| `<xr-anchor>` | `rotation` | `string` | `"0 0 0"` | Euler rotation `"rx ry rz"` in degrees. |
+| `<xr-anchor>` | `scale` | `string` | `"1 1 1"` | Scale vector `"sx sy sz"`. |
+| `<xr-anchor>` | `data-xr-traits` | `string` | — | Space-separated spatial traits: `"grab"`, `"scale"`, `"billboard"`, `"anchor"`. |
 
 --------------------------------------------------------------------------------
 
@@ -136,16 +95,10 @@ Spatial traits work identically across **WebXR**, **Mobile Web AR**, and
 
 | Trait           | Behavior                                                   |
 | :-------------- | :--------------------------------------------------------- |
-| **`grab`**      | Allows 6DoF single-hand pinch / controller trigger         |
-:                 : grabbing and direct spatial manipulation with smooth       :
-:                 : spring damping.                                            :
-| **`scale`**     | Enables two-handed pinch-to-scale (or scroll/pinch gesture |
-:                 : scaling) around the object's pivot.                        :
-| **`billboard`** | Smoothly orients the object toward the user's active XR    |
-:                 : camera / head pose around the world Y-axis.                :
-| **`anchor`**    | Pins the object to a persistent world surface hit-test     |
-:                 : anchor (`XRAnchor` on WebXR, `AnchorEntity` on RealityKit, :
-:                 : `Anchor` on Android XR SceneCore).                         :
+| **`grab`** | Allows 6DoF single-hand pinch / controller trigger grabbing and direct spatial manipulation with smooth spring damping. |
+| **`scale`** | Enables two-handed pinch-to-scale (or scroll/pinch gesture scaling) around the object's pivot. |
+| **`billboard`** | Smoothly orients the object toward the user's active XR camera / head pose around the world Y-axis. |
+| **`anchor`** | Pins the object to a persistent world surface hit-test anchor (`XRAnchor` on WebXR, `AnchorEntity` on RealityKit, `Anchor` on Android XR SceneCore). |
 
 ### Authoring Traits in `<script type="text/three">`
 

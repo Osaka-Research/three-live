@@ -64,146 +64,33 @@ bundles and entry points.
 
 | Attribute              | Type       | Bundle               | Description         |
 | :--------------------- | :--------- | :------------------- | :------------------ |
-| `src`                  | `string`   | `three-live-viewer`+ | URL or path to      |
-:                        :            :                      : binary `.glb`       :
-:                        :            :                      : model.              :
-| `ios-src`              | `string`   | `three-live-viewer`+ | Optional URL or     |
-:                        :            :                      : path to Apple       :
-:                        :            :                      : `.usdz` model for   :
-:                        :            :                      : iOS Quick Look      :
-:                        :            :                      : (auto-transcoded    :
-:                        :            :                      : from GLB if         :
-:                        :            :                      : omitted).           :
-| `poster`               | `string`   | `three-live-viewer`+ | URL to a            |
-:                        :            :                      : placeholder image   :
-:                        :            :                      : shown before 3D     :
-:                        :            :                      : rendering           :
-:                        :            :                      : initializes.        :
-| `scale`                | `string`   | `three-live-viewer`+ | Uniform or per-axis |
-:                        :            :                      : scale multiplier    :
-:                        :            :                      : `"x y z"` (e.g. `"2 :
-:                        :            :                      : 2 2"`).             :
-| `camera-orbit`         | `string`   | `three-live-viewer`+ | Initial camera      |
-:                        : (str/JSON) :                      : orbit angles and    :
-:                        :            :                      : distance\: `"30deg  :
-:                        :            :                      : 20deg 3m"` or       :
-:                        :            :                      : `{"theta"\: 30,     :
-:                        :            :                      : "phi"\: 20,         :
-:                        :            :                      : "zoom"\: 1.0}`.     :
-| `camera-target`        | `string`   | `three-live-viewer`+ | Orbit center        |
-:                        :            :                      : coordinate `"x y    :
-:                        :            :                      : z"` (e.g. `"0m 1.5m :
-:                        :            :                      : 0m"`, defaults to   :
-:                        :            :                      : model bounding      :
-:                        :            :                      : center).            :
-| `min-camera-orbit`     | `string`   | `three-live-viewer`+ | Lower bounds for    |
-:                        :            :                      : camera orbit\:      :
-:                        :            :                      : `"theta phi         :
-:                        :            :                      : radius"` (e.g.      :
-:                        :            :                      : `"-45deg 0deg 1m"`  :
-:                        :            :                      : or `"auto 0deg      :
-:                        :            :                      : auto"`).            :
-| `max-camera-orbit`     | `string`   | `three-live-viewer`+ | Upper bounds for    |
-:                        :            :                      : camera orbit (e.g.  :
-:                        :            :                      : `"auto 90deg auto"` :
-:                        :            :                      : prevents orbiting   :
-:                        :            :                      : beneath the ground  :
-:                        :            :                      : plane).             :
-| `field-of-view`        | `string`   | `three-live-viewer`+ | Vertical field of   |
-:                        :            :                      : view angle (e.g.    :
-:                        :            :                      : `"45deg"`, clamps   :
-:                        :            :                      : between `10deg` and :
-:                        :            :                      : `90deg`).           :
-| `selected-mesh`        | `string`   | `three-live-viewer`+ | Name of the         |
-:                        :            :                      : sub-mesh to         :
-:                        :            :                      : highlight.          :
-| `camera-controls`      | `boolean`  | `three-live-viewer`+ | Enables interactive |
-:                        :            :                      : orbit/pan/zoom      :
-:                        :            :                      : camera controls     :
-:                        :            :                      : (disabled by        :
-:                        :            :                      : default unless      :
-:                        :            :                      : `camera-controls`   :
-:                        :            :                      : is present,         :
-:                        :            :                      : matching            :
-:                        :            :                      : `<model-viewer>`).  :
-| `ar`                   | `boolean`  | `three-live-viewer`+ | Enables the         |
-:                        :            :                      : augmented reality   :
-:                        :            :                      : launcher button.    :
-| `ar-modes`             | `string`   | `three-live-viewer`+ | Space-delimited AR  |
-:                        :            :                      : modes\:             :
-:                        :            :                      : `quick-look`,       :
-:                        :            :                      : `scene-viewer`,     :
-:                        :            :                      : `webxr`.            :
-| `ar-scale`             | `string`   | `three-live-viewer`+ | Controls whether    |
-:                        :            :                      : the model can be    :
-:                        :            :                      : scaled in AR\:      :
-:                        :            :                      : `"auto"` (default)  :
-:                        :            :                      : or `"fixed"`.       :
-| `ar-placement`         | `string`   | `three-live-viewer`+ | Controls AR surface |
-:                        :            :                      : placement mode\:    :
-:                        :            :                      : `"floor"` (default) :
-:                        :            :                      : or `"wall"`.        :
-| `script-src`           | `string`   | `three-live`+        | URL or path to a    |
-:                        :            :                      : server-generated    :
-:                        :            :                      : procedural Three.js :
-:                        :            :                      : scene script.       :
-| `sandbox`              | `string`   | `three-live`+        | Mandatory sandbox   |
-:                        :            :                      : mode (`"worker"` or :
-:                        :            :                      : `"iframe"`).        :
-:                        :            :                      : Default\:           :
-:                        :            :                      : `"worker"`.         :
-| `allow-client-scripts` | `boolean`  | `three-live`+        | Explicit opt-in     |
-:                        :            :                      : allowing            :
-:                        :            :                      : client-modified     :
-:                        :            :                      : script strings via  :
-:                        :            :                      : `executeScript()`   :
-:                        :            :                      : or inline           :
-:                        :            :                      : `<script>`.         :
-| `exposure`             | `number`   | `three-live-viewer`+ | Exposure / lighting |
-:                        :            :                      : multiplier for      :
-:                        :            :                      : ambient/environment :
-:                        :            :                      : light intensity     :
-:                        :            :                      : (default\: `1.0`).  :
-| `environment-image`    | `string`   | `three-live-extras`  | Equirectangular     |
-:                        :            :                      : `.hdr`/`.pic`       :
-:                        :            :                      : radiance map or LDR :
-:                        :            :                      : environment image   :
-:                        :            :                      : for ambient         :
-:                        :            :                      : reflections and SH  :
-:                        :            :                      : irradiance.         :
-| `skybox-image`         | `string`   | `three-live-extras`  | Visible background  |
-:                        :            :                      : equirectangular     :
-:                        :            :                      : skybox image URL    :
-:                        :            :                      : rendered behind the :
-:                        :            :                      : 3D scene.           :
-| `shadow-intensity`     | `number`   | `three-live-extras`  | Ground contact      |
-:                        :            :                      : shadow opacity from :
-:                        :            :                      : `0.0` (off) to      :
-:                        :            :                      : `1.0` (default\:    :
-:                        :            :                      : `0.7`).             :
-| `shadow-softness`      | `number`   | `three-live-extras`  | Radial Gaussian     |
-:                        :            :                      : blur falloff of     :
-:                        :            :                      : contact shadow from :
-:                        :            :                      : `0.0` (hard) to     :
-:                        :            :                      : `1.0` (soft).       :
-| `tone-mapping`         | `string`   | `three-live-viewer`+ | Tone mapping mode:  |
-:                        :            :                      : `"neutral"`         :
-:                        :            :                      : (default, Khronos   :
-:                        :            :                      : PBR Neutral for     :
-:                        :            :                      : commerce),          :
-:                        :            :                      : `"reinhard"`, or    :
-:                        :            :                      : `"none"`.           :
-| `autoplay`             | `boolean`  | `three-live-viewer`+ | Automatically       |
-:                        :            :                      : starts keyframe     :
-:                        :            :                      : animation playback  :
-:                        :            :                      : on model load.      :
-| `animation-name`       | `string`   | `three-live-viewer`+ | Name of specific    |
-:                        :            :                      : glTF animation clip :
-:                        :            :                      : to play (defaults   :
-:                        :            :                      : to first clip).     :
-| `auto-rotate`          | `boolean`  | `three-live-viewer`+ | Automatically       |
-:                        :            :                      : rotates the camera  :
-:                        :            :                      : around the model.   :
+| `src` | `string` | `three-live-viewer`+ | URL or path to binary `.glb` model. |
+| `ios-src` | `string` | `three-live-viewer`+ | Optional URL or path to Apple `.usdz` model for iOS Quick Look (auto-transcoded from GLB if omitted). |
+| `poster` | `string` | `three-live-viewer`+ | URL to a placeholder image shown before 3D rendering initializes. |
+| `scale` | `string` | `three-live-viewer`+ | Uniform or per-axis scale multiplier `"x y z"` (e.g. `"2 2 2"`). |
+| `camera-orbit` | `string` (str/JSON) | `three-live-viewer`+ | Initial camera orbit angles and distance: `"30deg 20deg 3m"` or `{"theta": 30, "phi": 20, "zoom": 1.0}`. |
+| `camera-target` | `string` | `three-live-viewer`+ | Orbit center coordinate `"x y z"` (e.g. `"0m 1.5m 0m"`, defaults to model bounding center). |
+| `min-camera-orbit` | `string` | `three-live-viewer`+ | Lower bounds for camera orbit: `"theta phi radius"` (e.g. `"-45deg 0deg 1m"` or `"auto 0deg auto"`). |
+| `max-camera-orbit` | `string` | `three-live-viewer`+ | Upper bounds for camera orbit (e.g. `"auto 90deg auto"` prevents orbiting beneath the ground plane). |
+| `field-of-view` | `string` | `three-live-viewer`+ | Vertical field of view angle (e.g. `"45deg"`, clamps between `10deg` and `90deg`). |
+| `selected-mesh` | `string` | `three-live-viewer`+ | Name of the sub-mesh to highlight. |
+| `camera-controls` | `boolean` | `three-live-viewer`+ | Enables interactive orbit/pan/zoom camera controls (disabled by default unless `camera-controls` is present, matching `<model-viewer>`). |
+| `ar` | `boolean` | `three-live-viewer`+ | Enables the augmented reality launcher button. |
+| `ar-modes` | `string` | `three-live-viewer`+ | Space-delimited AR modes: `quick-look`, `scene-viewer`, `webxr`. |
+| `ar-scale` | `string` | `three-live-viewer`+ | Controls whether the model can be scaled in AR: `"auto"` (default) or `"fixed"`. |
+| `ar-placement` | `string` | `three-live-viewer`+ | Controls AR surface placement mode: `"floor"` (default) or `"wall"`. |
+| `script-src` | `string` | `three-live`+ | URL or path to a server-generated procedural Three.js scene script. |
+| `sandbox` | `string` | `three-live`+ | Mandatory sandbox mode (`"worker"` or `"iframe"`). Default: `"worker"`. |
+| `allow-client-scripts` | `boolean` | `three-live`+ | Explicit opt-in allowing client-modified script strings via `executeScript()` or inline `<script>`. |
+| `exposure` | `number` | `three-live-viewer`+ | Exposure / lighting multiplier for ambient/environment light intensity (default: `1.0`). |
+| `environment-image` | `string` | `three-live-extras` | Equirectangular `.hdr`/`.pic` radiance map or LDR environment image for ambient reflections and SH irradiance. |
+| `skybox-image` | `string` | `three-live-extras` | Visible background equirectangular skybox image URL rendered behind the 3D scene. |
+| `shadow-intensity` | `number` | `three-live-extras` | Ground contact shadow opacity from `0.0` (off) to `1.0` (default: `0.7`). |
+| `shadow-softness` | `number` | `three-live-extras` | Radial Gaussian blur falloff of contact shadow from `0.0` (hard) to `1.0` (soft). |
+| `tone-mapping` | `string` | `three-live-viewer`+ | Tone mapping mode: `"neutral"` (default, Khronos PBR Neutral for commerce), `"reinhard"`, or `"none"`. |
+| `autoplay` | `boolean` | `three-live-viewer`+ | Automatically starts keyframe animation playback on model load. |
+| `animation-name` | `string` | `three-live-viewer`+ | Name of specific glTF animation clip to play (defaults to first clip). |
+| `auto-rotate` | `boolean` | `three-live-viewer`+ | Automatically rotates the camera around the model. |
 
 --------------------------------------------------------------------------------
 
@@ -234,19 +121,11 @@ JavaScript configurators, hotspot managers, and AR launchers:
 
 | Event           | Detail Payload             | Description                   |
 | :-------------- | :------------------------- | :---------------------------- |
-| `load`          | `{ model: GLBData }`       | Fired when the 3D model or    |
-:                 :                            : procedural scene finishes     :
-:                 :                            : loading.                      :
-| `error`         | `{ error: Error }`         | Fired if model loading or     |
-:                 :                            : script execution fails.       :
-| `camera-change` | `{ theta, phi, distance }` | Fired whenever the camera     |
-:                 :                            : orbit changes.                :
-| `ar-status`     | `{ status:                 | Fired when AR session status  |
-:                 : 'session-started' |        : transitions (`<model-viewer>` :
-:                 : 'not-presenting' |         : standard).                    :
-:                 : 'failed', error? }`        :                               :
-| `meshclick`     | `{ meshName, hitPoint,     | Fired when a user clicks or   |
-:                 : normal, distance }`        : taps a sub-mesh.              :
+| `load` | `{ model: GLBData }` | Fired when the 3D model or procedural scene finishes loading. |
+| `error` | `{ error: Error }` | Fired if model loading or script execution fails. |
+| `camera-change` | `{ theta, phi, distance }` | Fired whenever the camera orbit changes. |
+| `ar-status` | `{ status: 'session-started' \| 'not-presenting' \| 'failed', error? }` | Fired when AR session status transitions (`<model-viewer>` standard). |
+| `meshclick` | `{ meshName, hitPoint, normal, distance }` | Fired when a user clicks or taps a sub-mesh. |
 
 --------------------------------------------------------------------------------
 
