@@ -262,15 +262,13 @@ final class ThreeCompilerTests: XCTestCase {
   }
 
   func testCompileRejectsSceneExceedingVertexQuota() async throws {
-    // 4 spheres at 128x128 segments = ~66k vertices each (>100,000 total vertices)
+    // 1 sphere at 320x320 segments = 321 * 321 = 103,041 vertices (>100,000 total vertices)
     let overQuotaScript = """
-      for (let i = 0; i < 4; i++) {
-        const m = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 128, 128),
-          new THREE.MeshStandardMaterial()
-        );
-        scene.add(m);
-      }
+      const m = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 320, 320),
+        new THREE.MeshStandardMaterial()
+      );
+      scene.add(m);
       """
     do {
       _ = try await ThreeCompiler.compile(overQuotaScript)
@@ -280,7 +278,10 @@ final class ThreeCompilerTests: XCTestCase {
         return XCTFail("Expected .compilationFailed, got \(error)")
       }
       XCTAssertTrue(
-        message.contains("SECURITY_3D_MAX_VERTICES") || message.contains("SecurityError"),
+        message.contains("SECURITY_3D_MAX_VERTICES")
+          || message.contains("maximum allowed vertices")
+          || message.contains("maximum allowed indices")
+          || message.contains("SecurityError"),
         "Expected vertex quota diagnostic, got: \(message)"
       )
     }

@@ -160,7 +160,9 @@
 
       if traits.grabbable == true {
         #if os(iOS) || os(visionOS)
-          entity.components.set(InputTargetComponent(allowedInputTypes: .all))
+          if #available(iOS 18.0, visionOS 1.0, *) {
+            entity.components.set(InputTargetComponent(allowedInputTypes: .all))
+          }
         #endif
         #if os(visionOS)
           entity.components.set(HoverEffectComponent())
