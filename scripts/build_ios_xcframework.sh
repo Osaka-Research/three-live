@@ -68,29 +68,29 @@ build_target x86_64-apple-ios
 build_target aarch64-apple-darwin
 build_target x86_64-apple-darwin
 
-# Optional platforms, gated on SDK availability.
+# Optional platforms, gated on both Xcode SDK and rustup prebuilt std availability.
 BUILD_VISIONOS=0
-if has_sdk xros; then
+if has_sdk xros && rustup target add aarch64-apple-visionos aarch64-apple-visionos-sim 2>/dev/null; then
     BUILD_VISIONOS=1
     build_target aarch64-apple-visionos
     build_target aarch64-apple-visionos-sim
 elif [[ "${REQUIRE_ALL}" == "1" ]]; then
-    echo "Error: visionOS SDK (xros) not installed, but THREE_LIVE_REQUIRE_ALL_PLATFORMS=1." >&2
+    echo "Error: visionOS SDK/target not installed, but THREE_LIVE_REQUIRE_ALL_PLATFORMS=1." >&2
     exit 1
 else
-    echo "  ! visionOS SDK not found; skipping visionOS slices." >&2
+    echo "  ! visionOS SDK or Rust std target not found; skipping visionOS slices." >&2
 fi
 
 BUILD_TVOS=0
-if has_sdk appletvos; then
+if has_sdk appletvos && rustup target add aarch64-apple-tvos aarch64-apple-tvos-sim 2>/dev/null; then
     BUILD_TVOS=1
     build_target aarch64-apple-tvos
     build_target aarch64-apple-tvos-sim
 elif [[ "${REQUIRE_ALL}" == "1" ]]; then
-    echo "Error: tvOS SDK (appletvos) not installed, but THREE_LIVE_REQUIRE_ALL_PLATFORMS=1." >&2
+    echo "Error: tvOS SDK/target not installed, but THREE_LIVE_REQUIRE_ALL_PLATFORMS=1." >&2
     exit 1
 else
-    echo "  ! tvOS SDK not found; skipping tvOS slices." >&2
+    echo "  ! tvOS SDK or Rust std target not found; skipping tvOS slices." >&2
 fi
 
 # fat_library <output-subdir> <rust-target>...

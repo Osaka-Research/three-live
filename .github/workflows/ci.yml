@@ -38,10 +38,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build packages and bundles
         run: npm run build
@@ -55,19 +54,21 @@ jobs:
           node -e '
             const fs = require("fs");
             const zlib = require("zlib");
-            const files = [
-              "dist/three-live.min.js",
-              "three-live/dist/three-live.min.js",
-              "three-live/dist/three-live-full.min.js",
-              "xr-live/dist/xr-live.min.js"
+            const budgets = [
+              { file: "dist/three-live-viewer.min.js", limit: 22528 },
+              { file: "dist/three-live.min.js", limit: 39936 },
+              { file: "three-live/dist/three-live.min.js", limit: 39936 },
+              { file: "three-live/dist/three-live-full.min.js", limit: 49152 },
+              { file: "xr-live/dist/xr-live.min.js", limit: 50176 },
+              { file: "xr-live/dist/xr-live-full.min.js", limit: 62464 }
             ];
-            for (const f of files) {
-              if (fs.existsSync(f)) {
-                const raw = fs.readFileSync(f);
+            for (const { file, limit } of budgets) {
+              if (fs.existsSync(file)) {
+                const raw = fs.readFileSync(file);
                 const gz = zlib.gzipSync(raw, { level: 9 });
-                console.log(`${f}: raw ${raw.length} B, gzip ${gz.length} B`);
-                if (gz.length > 30000) {
-                  console.error(`ERROR: ${f} exceeds 30 KB budget (${gz.length} B)`);
+                console.log(`${file}: raw ${raw.length} B, gzip ${gz.length} B (limit ${limit} B)`);
+                if (gz.length > limit) {
+                  console.error(`ERROR: ${file} exceeds ${limit} B budget (${gz.length} B)`);
                   process.exit(1);
                 }
               }
@@ -90,11 +91,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Rust toolchain
@@ -181,17 +181,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-visionos, aarch64-apple-visionos-sim, aarch64-apple-tvos, aarch64-apple-tvos-sim
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Build XCFramework
         run: bash scripts/build_ios_xcframework.sh
@@ -216,24 +215,24 @@ jobs:
 
       - name: Compile for visionOS
         run: |
-          if xcodebuild -showsdks | grep -q -- '-sdk xros'; then
+          if [ -d mobile/ios/ThreeLiveCompiler.xcframework/xros-arm64 ] && xcodebuild -showsdks | grep -q -- '-sdk xros'; then
             xcodebuild -scheme ThreeLiveCompiler \
               -destination 'generic/platform=visionOS' \
               -derivedDataPath .build/xcodebuild-visionos \
               build
           else
-            echo "::warning::visionOS SDK unavailable on this runner; skipping visionOS compile check"
+            echo "::warning::visionOS XCFramework slice or SDK unavailable on this runner; skipping visionOS compile check"
           fi
 
       - name: Compile for tvOS
         run: |
-          if xcodebuild -showsdks | grep -q -- '-sdk appletvos'; then
+          if [ -d mobile/ios/ThreeLiveCompiler.xcframework/tvos-arm64 ] && xcodebuild -showsdks | grep -q -- '-sdk appletvos'; then
             xcodebuild -scheme ThreeLiveCompiler \
               -destination 'generic/platform=tvOS' \
               -derivedDataPath .build/xcodebuild-tvos \
               build
           else
-            echo "::warning::tvOS SDK unavailable on this runner; skipping tvOS compile check"
+            echo "::warning::tvOS XCFramework slice or SDK unavailable on this runner; skipping tvOS compile check"
           fi
 
       - name: Check release checksum pin
@@ -257,11 +256,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Rust

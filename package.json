@@ -29,8 +29,7 @@
   ],
   "workspaces": [
     "three-live",
-    "xr-live",
-    "compiler"
+    "xr-live"
   ],
   "main": "three-live/dist/three-live.cjs",
   "module": "three-live/dist/three-live.js",

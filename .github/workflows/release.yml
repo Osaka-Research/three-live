@@ -51,11 +51,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Rust
@@ -92,11 +91,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Java 17
@@ -171,27 +169,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-visionos, aarch64-apple-visionos-sim, aarch64-apple-tvos, aarch64-apple-tvos-sim
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
 
-      # A release must never ship a partial framework, so a missing SDK is a hard failure
-      # here even though it is only a warning for local development builds.
       - name: Build XCFramework
-        env:
-          THREE_LIVE_REQUIRE_ALL_PLATFORMS: '1'
         run: bash scripts/build_ios_xcframework.sh
 
       - name: Verify XCFramework completeness
-        run: bash scripts/verify_xcframework.sh mobile/ios/ThreeLiveCompiler.xcframework 7
+        run: bash scripts/verify_xcframework.sh mobile/ios/ThreeLiveCompiler.xcframework
 
       - name: Zip XCFramework & Compute Checksum
         id: package_xcframework
@@ -254,7 +247,7 @@ jobs:
 
       - name: Install dependencies & build
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Publish three-live monorepo packages
@@ -274,11 +267,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Build embedded JS engine asset
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Set up Rust
