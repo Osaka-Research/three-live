@@ -112,10 +112,7 @@ const BaseElement =
     ? HTMLElement
     : (class {} as typeof HTMLElement);
 
-if (
-  typeof CustomEvent === 'undefined' &&
-  typeof Event !== 'undefined'
-) {
+if (typeof CustomEvent === 'undefined' && typeof Event !== 'undefined') {
   (globalThis as Record<string, unknown>)['CustomEvent'] = class<
     T = unknown,
   > extends Event {
