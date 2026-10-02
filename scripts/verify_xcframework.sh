@@ -66,9 +66,11 @@ while IFS= read -r lib; do
     fi
 
     # Collect defined external symbols across every architecture in the archive.
-    # Filter at collection time and use a here-string so `grep -q` early exit never
-    # triggers SIGPIPE (exit 141) on a large `echo` pipeline under `set -o pipefail`.
-    symbols=$( { nm -gUj "${lib}" 2>/dev/null || nm -gU "${lib}" 2>/dev/null || true; } | grep 'three_live_' || true )
+    # Pass `--no-llvm-bc` first so Xcode's `llvm-nm` reads the native Mach-O symbol
+    # table directly instead of choking on newer Rust/LLVM bitcode attributes when LTO
+    # is enabled. Filter at collection time and use a here-string so `grep -q` early
+    # exit never triggers SIGPIPE (exit 141) under `set -o pipefail`.
+    symbols=$( { nm --no-llvm-bc -gUj "${lib}" 2>/dev/null || nm --no-llvm-bc -gU "${lib}" 2>/dev/null || nm -gUj "${lib}" 2>/dev/null || nm -gU "${lib}" 2>/dev/null || true; } | grep 'three_live_' || true )
 
     missing=""
     for symbol in ${REQUIRED_SYMBOLS}; do

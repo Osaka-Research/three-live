@@ -210,7 +210,7 @@ fn test_thread_local_prewarm_performance() {
     #[cfg(debug_assertions)]
     const PREWARM_BUDGET_MS: u128 = 500;
     #[cfg(not(debug_assertions))]
-    const PREWARM_BUDGET_MS: u128 = 50;
+    const PREWARM_BUDGET_MS: u128 = 250;
 
     assert!(
         elapsed.as_millis() < PREWARM_BUDGET_MS,

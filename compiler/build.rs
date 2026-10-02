@@ -54,7 +54,7 @@ fn main() {
                 .arg("--define:IS_DEV=false")
                 .arg("--define:ENABLE_NATIVE_HOOKS=true")
                 .arg("--define:ENABLE_SERVER_EXTRACT=true")
-                .arg("--define:SECURITY_3D_EXECUTION_CEILING_MS=50")
+                .arg("--define:SECURITY_3D_EXECUTION_CEILING_MS=250")
                 .arg("--define:SECURITY_3D_INTERRUPT_CHECK_OPCODES=10000")
                 .arg("--define:SECURITY_3D_MAX_HEAP_BYTES=16777216")
                 .arg("--define:SECURITY_3D_MAX_VERTICES=100000")

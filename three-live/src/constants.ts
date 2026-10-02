@@ -17,7 +17,7 @@
  * Execution limits, ceilings, and quotas for three-live.
  */
 
-export const SECURITY_3D_EXECUTION_CEILING_MS = 50;
+export const SECURITY_3D_EXECUTION_CEILING_MS = 250;
 export const SECURITY_3D_INTERRUPT_CHECK_OPCODES = 10000;
 export const SECURITY_3D_MAX_HEAP_BYTES = 16 * 1024 * 1024;
 export const SECURITY_3D_MAX_VERTICES = 100000;
