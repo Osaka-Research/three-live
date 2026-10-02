@@ -3,4 +3,4 @@
 # `use_small_heuristics = "Default"`, which splits call chains that the internal
 # formatter keeps on one line, leaving the two permanently fighting over the tree.
 use_small_heuristics = "Max"
-newline_style = "Unix"
+newline_style = "Auto"

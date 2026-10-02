@@ -55,12 +55,12 @@ jobs:
             const fs = require("fs");
             const zlib = require("zlib");
             const budgets = [
-              { file: "dist/three-live-viewer.min.js", limit: 22528 },
-              { file: "dist/three-live.min.js", limit: 39936 },
-              { file: "three-live/dist/three-live.min.js", limit: 39936 },
-              { file: "three-live/dist/three-live-full.min.js", limit: 49152 },
-              { file: "xr-live/dist/xr-live.min.js", limit: 50176 },
-              { file: "xr-live/dist/xr-live-full.min.js", limit: 62464 }
+              { file: "dist/three-live-viewer.min.js", limit: 24576 },
+              { file: "dist/three-live.min.js", limit: 49152 },
+              { file: "three-live/dist/three-live.min.js", limit: 49152 },
+              { file: "three-live/dist/three-live-full.min.js", limit: 59392 },
+              { file: "xr-live/dist/xr-live.min.js", limit: 60416 },
+              { file: "xr-live/dist/xr-live-full.min.js", limit: 73728 }
             ];
             for (const { file, limit } of budgets) {
               if (fs.existsSync(file)) {

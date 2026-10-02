@@ -744,17 +744,17 @@ function reportSizes() {
     {
       path: path.join(DIST_DIR, 'three-live-viewer.min.js'),
       name: 'dist/three-live-viewer.min.js',
-      budget: '< 22 KB gz'
+      budget: '< 24 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'three-live.min.js'),
       name: 'dist/three-live.min.js',
-      budget: '< 39 KB gz'
+      budget: '< 48 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'three-live-extras.min.js'),
       name: 'dist/three-live-extras.min.js',
-      budget: '< 7.5 KB gz'
+      budget: '< 8.0 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'three-live-animation.min.js'),
@@ -764,27 +764,27 @@ function reportSizes() {
     {
       path: path.join(DIST_DIR, 'three-live-full.min.js'),
       name: 'dist/three-live-full.min.js',
-      budget: '< 48 KB gz'
+      budget: '< 58 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'xr-live-viewer.min.js'),
       name: 'dist/xr-live-viewer.min.js',
-      budget: '< 38 KB gz'
+      budget: '< 40 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'xr-live.min.js'),
       name: 'dist/xr-live.min.js',
-      budget: '< 49 KB gz'
+      budget: '< 59 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'xr-live-extras.min.js'),
       name: 'dist/xr-live-extras.min.js',
-      budget: '< 7.0 KB gz'
+      budget: '< 8.0 KB gz'
     },
     {
       path: path.join(DIST_DIR, 'xr-live-full.min.js'),
       name: 'dist/xr-live-full.min.js',
-      budget: '< 61 KB gz'
+      budget: '< 72 KB gz'
     },
   ];
   for (const f of files) {

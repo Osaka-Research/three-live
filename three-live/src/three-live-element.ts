@@ -112,6 +112,21 @@ const BaseElement =
     ? HTMLElement
     : (class {} as typeof HTMLElement);
 
+if (
+  typeof CustomEvent === 'undefined' &&
+  typeof Event !== 'undefined'
+) {
+  (globalThis as Record<string, unknown>)['CustomEvent'] = class<
+    T = unknown,
+  > extends Event {
+    readonly detail: T;
+    constructor(type: string, eventInitDict?: CustomEventInit<T>) {
+      super(type, eventInitDict);
+      this.detail = (eventInitDict?.detail ?? null) as T;
+    }
+  };
+}
+
 export class ThreeLiveElement extends BaseElement {
   public static readonly observedAttributes = [
     'src',

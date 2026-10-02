@@ -66,11 +66,13 @@ while IFS= read -r lib; do
     fi
 
     # Collect defined external symbols across every architecture in the archive.
-    symbols=$(nm -gUj "${lib}" 2>/dev/null || nm -gU "${lib}" 2>/dev/null || true)
+    # Filter at collection time and use a here-string so `grep -q` early exit never
+    # triggers SIGPIPE (exit 141) on a large `echo` pipeline under `set -o pipefail`.
+    symbols=$( { nm -gUj "${lib}" 2>/dev/null || nm -gU "${lib}" 2>/dev/null || true; } | grep 'three_live_' || true )
 
     missing=""
     for symbol in ${REQUIRED_SYMBOLS}; do
-        if ! echo "${symbols}" | grep -qx -- "${symbol}"; then
+        if ! grep -Eq "(^|[[:space:]])${symbol}$" <<< "${symbols}"; then
             missing="${missing} ${symbol}"
         fi
     done
