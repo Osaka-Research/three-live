@@ -53,9 +53,14 @@ help:
 doctor:
 	@echo "=== Three-Live Toolchain Doctor ($(UNAME_S)) ==="
 	@if command -v node >/dev/null 2>&1; then \
-		echo "  [OK]   node:          $$(node --version)"; \
+		NODE_MAJOR=$$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0); \
+		if [ "$$NODE_MAJOR" -ge 20 ] 2>/dev/null; then \
+			echo "  [OK]   node:          $$(node --version)"; \
+		else \
+			echo "  [WARN] node:          $$(node --version) (Node.js >= 20 required — https://nodejs.org)"; \
+		fi; \
 	else \
-		echo "  [MISS] node:          Install Node.js >= 18 (https://nodejs.org)"; \
+		echo "  [MISS] node:          Install Node.js >= 20 (https://nodejs.org)"; \
 	fi
 	@if [ -f node_modules/esbuild/package.json ] || command -v esbuild >/dev/null 2>&1 || [ -n "$${ESBUILD_BINARY:-}" ]; then \
 		echo "  [OK]   esbuild:       Available"; \
