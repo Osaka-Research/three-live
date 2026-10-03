@@ -73,10 +73,10 @@ doctor:
 		else \
 			echo "  [MISS] xcodebuild:    Install Xcode from the Mac App Store"; \
 		fi; \
-		if command -v xcodegen >/dev/null 2>&1; then \
-			echo "  [OK]   xcodegen:      $$(xcodegen --version)"; \
+		if command -v xcodegen >/dev/null 2>&1 || [ -x "$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen" ]; then \
+			echo "  [OK]   xcodegen:      Available"; \
 		else \
-			echo "  [MISS] xcodegen:      Run 'brew install xcodegen' (needed for 'make ios-demo')"; \
+			echo "  [INFO] xcodegen:      Will be downloaded automatically to .build/xcodegen on 'make ios-demo'"; \
 		fi; \
 	else \
 		echo "  [SKIP] iOS/Xcode:     macOS required for XCFramework & Xcode demo builds"; \
@@ -143,12 +143,18 @@ ios-demo: engine-asset
 		exit 1; \
 	fi
 	bash scripts/build_ios_xcframework.sh
-	@if ! command -v xcodegen >/dev/null 2>&1; then \
-		echo "Error: xcodegen is required to generate ThreeLiveDemo.xcodeproj." >&2; \
-		echo "Install via: brew install xcodegen" >&2; \
-		exit 1; \
-	fi
-	cd mobile/examples/ios_swiftui && xcodegen generate && open ThreeLiveDemo.xcodeproj
+	@XCODEGEN_BIN=$$(command -v xcodegen || true); \
+	if [ -z "$$XCODEGEN_BIN" ] && [ -x "$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen" ]; then \
+		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
+	fi; \
+	if [ -z "$$XCODEGEN_BIN" ]; then \
+		echo "--> Downloading standalone xcodegen binary to .build/xcodegen (no Homebrew required)..."; \
+		mkdir -p "$(CURDIR)/.build/xcodegen"; \
+		curl -fsSL https://github.com/yonaskolb/XcodeGen/releases/latest/download/xcodegen.zip -o "$(CURDIR)/.build/xcodegen/xcodegen.zip" && \
+		unzip -qo "$(CURDIR)/.build/xcodegen/xcodegen.zip" -d "$(CURDIR)/.build/xcodegen" && \
+		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
+	fi; \
+	cd mobile/examples/ios_swiftui && "$$XCODEGEN_BIN" generate && open ThreeLiveDemo.xcodeproj
 
 android: engine-asset
 	@if command -v rustup >/dev/null 2>&1; then \
