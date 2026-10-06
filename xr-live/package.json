@@ -2,6 +2,17 @@
   "name": "xr-live",
   "version": "1.0.0",
   "description": "HTML-First Spatial Computing, 6DoF WebXR, Hand Gestures, and AI-Driven XR on top of three-live",
+  "author": "Google LLC",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/google/three-live.git",
+    "directory": "xr-live"
+  },
+  "homepage": "https://google.github.io/three-live/",
+  "bugs": {
+    "url": "https://github.com/google/three-live/issues"
+  },
   "main": "dist/xr-live.cjs",
   "module": "dist/xr-live.js",
   "types": "dist/index.d.ts",
@@ -22,6 +33,5 @@
   "scripts": {
     "build": "node ../scripts/build.js --xr-live",
     "test": "node ../scripts/build.js --test-xr-live"
-  },
-  "license": "Apache-2.0"
+  }
 }

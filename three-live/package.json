@@ -2,6 +2,17 @@
   "name": "three-live",
   "version": "1.0.0",
   "description": "Ultra-lightweight 3D, WebXR, and procedural Three.js runtime in under 30 KB gzip",
+  "author": "Google LLC",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/google/three-live.git",
+    "directory": "three-live"
+  },
+  "homepage": "https://google.github.io/three-live/",
+  "bugs": {
+    "url": "https://github.com/google/three-live/issues"
+  },
   "main": "dist/three-live.cjs",
   "module": "dist/three-live.js",
   "types": "dist/index.d.ts",
@@ -64,6 +75,5 @@
   "scripts": {
     "build": "node ../scripts/build.js --three-live",
     "test": "node ../scripts/build.js --test-three-live"
-  },
-  "license": "Apache-2.0"
+  }
 }
