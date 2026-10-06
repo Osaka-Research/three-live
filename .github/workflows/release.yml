@@ -72,13 +72,21 @@ jobs:
           cargo install cross --git https://github.com/cross-rs/cross
           cross build --manifest-path compiler/Cargo.toml --release --bin three-live-cli --target ${{ matrix.target }}
 
+      - name: Rename binary to target artifact name
+        shell: bash
+        run: |
+          if [ -f "target/${{ matrix.target }}/release/three-live-cli.exe" ]; then
+            cp "target/${{ matrix.target }}/release/three-live-cli.exe" "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
+          else
+            cp "target/${{ matrix.target }}/release/three-live-cli" "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}"
+          fi
+
       - name: Upload Binary Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: |
-            target/${{ matrix.target }}/release/three-live-cli
-            target/${{ matrix.target }}/release/three-live-cli.exe
+          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          if-no-files-found: error
 
   build-android:
     name: Build Android AAR
