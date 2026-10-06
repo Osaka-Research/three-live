@@ -18,6 +18,8 @@ version = "1.0.0"
 edition = "2021"
 description = "High-performance procedural Three.js to binary glTF 2.0 (GLB) compiler powered by Boa"
 license = "Apache-2.0"
+repository = "https://github.com/google/three-live"
+homepage = "https://google.github.io/three-live/"
 include = [
     "src/**/*",
     "include/**/*",
