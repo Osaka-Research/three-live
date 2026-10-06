@@ -213,6 +213,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Build Web JS bundles
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
       - name: Download all built artifacts
         uses: actions/download-artifact@v4
         with:
@@ -220,14 +230,22 @@ jobs:
 
       - name: Stage Release Assets
         run: |
-          mkdir -p dist-release
+          mkdir -p dist-release web-bundle/three-live web-bundle/xr-live
           find release-artifacts -type f -exec cp {} dist-release/ \;
+          cp dist/*.js dist/*.min.js dist/three-live-sandbox.html web-bundle/
+          cp three-live/dist/*.js three-live/dist/*.min.js three-live/dist/*.cjs three-live/dist/*.d.ts web-bundle/three-live/
+          cp xr-live/dist/*.js xr-live/dist/*.min.js xr-live/dist/*.cjs xr-live/dist/*.d.ts web-bundle/xr-live/
+          (cd web-bundle && zip -r ../dist-release/three-live-web-dist.zip .)
+          cp dist/three-live.min.js dist/three-live-viewer.min.js dist/three-live-sandbox.html dist-release/
+          cp three-live/dist/three-live-full.min.js dist-release/
+          cp xr-live/dist/xr-live.min.js xr-live/dist/xr-live-full.min.js dist-release/
           ls -la dist-release
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist-release/*
+          body_path: CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -251,9 +269,14 @@ jobs:
           npm run build
 
       - name: Publish three-live monorepo packages
-        run: npm publish --workspaces --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::notice::NPM_TOKEN secret is not configured yet; skipping npm registry publish."
+            exit 0
+          fi
+          npm publish --workspaces --access public
 
   publish-crates:
     name: Publish Crates.io
@@ -277,9 +300,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cargo Publish
-        run: cargo publish --manifest-path compiler/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::notice::CRATES_IO_TOKEN secret is not configured yet; skipping crates.io publish."
+            exit 0
+          fi
+          cargo publish --manifest-path compiler/Cargo.toml
 
   # The SHA-256 of a release artifact cannot be known until the artifact exists, so the
   # manifest committed on the tag is necessarily stale. This pins the real values and moves
@@ -304,9 +332,10 @@ jobs:
           CHECKSUM: ${{ needs.build-ios.outputs.checksum }}
         run: bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}"
 
-      - name: Commit and move tag
+      - name: Commit, move tag, and update main
         env:
           TAG: ${{ github.ref_name }}
+          CHECKSUM: ${{ needs.build-ios.outputs.checksum }}
         run: |
           set -euo pipefail
           if git diff --quiet -- Package.swift; then
@@ -319,6 +348,16 @@ jobs:
           git commit -m "chore: pin ThreeLiveCompiler.xcframework checksum for ${TAG}"
           git tag -f "${TAG}"
           git push --force origin "refs/tags/${TAG}"
+
+          # Also update Package.swift on main so main carries the latest release checksum
+          git fetch origin main
+          git checkout -B main origin/main
+          bash scripts/update_spm_binary_target.sh "${TAG}" "${CHECKSUM}"
+          if ! git diff --quiet -- Package.swift; then
+            git add Package.swift
+            git commit -m "chore: pin ThreeLiveCompiler.xcframework checksum for ${TAG} [skip ci]"
+            git push origin HEAD:refs/heads/main || echo "::warning::Could not push Package.swift update to main"
+          fi
 
   # End-to-end proof that the published package is installable. This resolves the release
   # over the network, verifies the binary target checksum, links the XCFramework, and runs
@@ -333,6 +372,12 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          ASSET_URL="https://github.com/google/three-live/releases/download/${TAG}/ThreeLiveCompiler.xcframework.zip"
+          if ! curl -fsSLI "${ASSET_URL}" >/dev/null 2>&1; then
+            echo "::notice::Release asset ${ASSET_URL} is not anonymously reachable yet (repository is currently private). Unauthenticated SwiftPM consumption probe will run once the repository is public."
+            exit 0
+          fi
+
           VERSION="${TAG#v}"
           WORKDIR="$(mktemp -d)"
           mkdir -p "${WORKDIR}/Sources/ConsumerProbe"
@@ -377,5 +422,6 @@ jobs:
           MANIFEST
 
           swift run
+
 
 

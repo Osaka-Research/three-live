@@ -19,13 +19,29 @@ limitations under the License.
 # Three-Live
 
 [![CI](https://github.com/google/three-live/actions/workflows/ci.yml/badge.svg)](https://github.com/google/three-live/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/google/three-live?include_prereleases&label=Release)](https://github.com/google/three-live/releases)
+[![Status: Developer Preview](https://img.shields.io/badge/Status-Developer%20Preview%20(Alpha)-orange.svg)](#project-status-developer-preview)
+[![Live Playground](https://img.shields.io/badge/Demo-Live%20Playground-brightgreen.svg)](https://google.github.io/three-live/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![NPM Version](https://img.shields.io/npm/v/three-live.svg)](https://www.npmjs.com/package/three-live)
-[![Crates.io](https://img.shields.io/crates/v/three-live-compiler.svg)](https://crates.io/crates/three-live-compiler)
 
 **AI-First Native 3D & AR:** On-device JIT compiler turning live, AI-generated Three.js into native Android Filament, iOS RealityKit, and WebXR.
 
 LLMs excel at generating Three.js code. Three-Live compiles it on-device in a sandbox and renders natively with Google Filament and Scene Viewer on Android, Apple RealityKit and Quick Look on iOS, and WebGL2 and WebXR on Web.
+
+> **Live Interactive Playgrounds (No Build Required):**
+> - **[Playground Hub](https://google.github.io/three-live/)** — Launch either studio in your desktop or mobile browser
+> - **[`<three-live>` 3D & AR Studio](https://google.github.io/three-live/three/)** — Procedural Three.js editor, PBR inspector, and 1-tap USDZ / GLB / AR export (`< 48 KB gz`)
+> - **[`<xr-live>` Spatial Computing Studio](https://google.github.io/three-live/xr/)** — 6DoF WebXR, spatial HTML `<div slot="spatial">` cards, depth physics, and hand tracking (`< 59 KB gz`)
+
+---
+
+## Project Status: Developer Preview
+
+Three-Live is currently in **Developer Preview (Alpha)**. It is an experimental open-source library exploring AI-driven procedural 3D and spatial computing across Web, Android, and Apple platforms.
+
+- **Prebuilt Distributions:** Standalone Web JS bundles (`three-live-web-dist.zip`), the Apple XCFramework (`ThreeLiveCompiler.xcframework.zip`), the Android release AAR (`three-live-compiler-release.aar`), and native `three-live-cli` binaries for macOS, Linux, and Windows are published on **[GitHub Releases](https://github.com/google/three-live/releases)**.
+- **Package Registries:** Direct consumption via **Swift Package Manager**, **GitHub Releases**, and **GitHub Pages CDN** works today (see [Installation & JS Bundles](#installation--js-bundles)). Publishing to public package registries (`npm`, `Crates.io`, and Maven) is planned for a future release.
+- **Release Notes:** See **[`CHANGELOG.md`](CHANGELOG.md)** for full release history and architectural notes.
 
 ---
 
@@ -118,13 +134,24 @@ three-live-cli convert scene.js -o output.glb
 
 ### Package Installation
 
--   **Web (npm):** `npm install three-live`
--   **Android (Gradle):**
-    `implementation("com.google.threelive:compiler:1.0.0")`
--   **iOS (Swift Package Manager):** `.package(url:
-    "https://github.com/google/three-live", from: "1.0.0")`
--   **Rust CLI / Crate:** `cargo install three-live-compiler` / `cargo add
-    three-live-compiler`
+-   **Web (CDN / Prebuilt Release / Source):**
+    -   **Hosted ES Module (`<script>`):**
+        ```html
+        <script type="module" src="https://google.github.io/three-live/dist/three-live.min.js"></script>
+        ```
+    -   **Prebuilt Bundle Archive:** Download `three-live-web-dist.zip` from **[GitHub Releases](https://github.com/google/three-live/releases)**.
+    -   **From Source:** `git clone https://github.com/google/three-live.git && cd three-live && npm install && npm run build` *(public `npm` registry publishing is planned for a future release)*.
+-   **iOS, macOS & visionOS (Swift Package Manager):**
+    ```swift
+    .package(url: "https://github.com/google/three-live.git", from: "1.0.0")
+    ```
+    *(Automatically resolves the prebuilt, checksum-pinned `ThreeLiveCompiler.xcframework.zip` from GitHub Releases—no local Rust or Node.js toolchain required).*
+-   **Android (Prebuilt Release AAR / Source):**
+    -   **Prebuilt AAR:** Download `three-live-compiler-release.aar` (includes `arm64-v8a`, `armeabi-v7a`, and `x86_64` JNI `.so` libraries) from **[GitHub Releases](https://github.com/google/three-live/releases)** into `app/libs/` and add `implementation(files("libs/three-live-compiler-release.aar"))`.
+    -   **From Source:** Run `make android` (or `bash scripts/build_android_aar.sh`).
+-   **Rust CLI (`three-live-cli`) & Crate:**
+    -   **Prebuilt Binaries:** Download standalone binaries for macOS (`arm64` / `x86_64`), Linux (`x86_64` / `aarch64`), and Windows (`x86_64.exe`) from **[GitHub Releases](https://github.com/google/three-live/releases)**.
+    -   **From Source:** Run `make rust` (`npm run build && cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli`).
 
 ### JS Bundles & Enforced Size Budgets (`es2020`, `SPDX-License-Identifier: Apache-2.0`)
 
@@ -152,6 +179,7 @@ Every bundle targets `es2020`, strips full license blocks
 | **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
 | **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & Native Mobile Spatial guide: declarative traits (`grab`, `scale`, `billboard`, `anchor`), spatial DOM cards (`<div slot="spatial">`), depth/physics, 25-joint hand tracking, desktop simulator, and Android XR / RealityKit bridges. |
 | **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, strict `THREE.*` allowlist, scene quotas, and zero-hallucination few-shot templates. |
+| **[`CHANGELOG.md`](CHANGELOG.md)** | All Users | Release notes and architectural summary for the Developer Preview release. |
 
 ---
 
