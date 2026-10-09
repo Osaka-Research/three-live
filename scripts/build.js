@@ -536,30 +536,6 @@ function buildThreeLive() {
       sandboxHtmlSrc,
       path.join(ROOT_DIR, 'examples/three/three-live-sandbox.html'));
 
-  // Auto-update exact gzipped size badge in demo index.html files
-  const zlib = require('zlib');
-  const defaultMinPath = path.join(tlDist, 'three-live.min.js');
-  if (fs.existsSync(defaultMinPath)) {
-    const gzBytes = zlib.gzipSync(fs.readFileSync(defaultMinPath), { level: 9 }).length;
-    const sizeLabel = `${(gzBytes / 1024).toFixed(1)} KB min.gz`;
-    const demoHtmlPaths = [
-      path.join(ROOT_DIR, 'examples/three/index.html'),
-      path.join(THREE_LIVE_DIR, 'examples/index.html'),
-    ];
-    for (const htmlPath of demoHtmlPaths) {
-      if (fs.existsSync(htmlPath)) {
-        const html = fs.readFileSync(htmlPath, 'utf8');
-        const updated = html.replace(
-          /<span class="pill green">[^<]*min\.gz<\/span>/,
-          `<span class="pill green">${sizeLabel}</span>`
-        );
-        if (updated !== html) {
-          fs.writeFileSync(htmlPath, updated);
-        }
-      }
-    }
-  }
-
   try {
     fs.mkdirSync('/tmp/three-live-cache', { recursive: true });
     fs.copyFileSync(
@@ -736,6 +712,25 @@ function buildXRLive() {
 }
 
 /**
+ * Stamps the gzipped size of the bundles each demo loads into the hub page and
+ * the demo pages, so every page shows the same, current number.
+ */
+function stampDemoSizes() {
+  const {stampBundleSizes} = require('./stamp_bundle_sizes');
+  stampBundleSizes(
+      {
+        'three-live.min.js': path.join(DIST_DIR, 'three-live.min.js'),
+        'xr-live.min.js': path.join(DIST_DIR, 'xr-live.min.js'),
+      },
+      [
+        path.join(ROOT_DIR, 'examples/index.html'),
+        path.join(ROOT_DIR, 'examples/three/index.html'),
+        path.join(ROOT_DIR, 'examples/xr/index.html'),
+        path.join(THREE_LIVE_DIR, 'examples/index.html'),
+      ]);
+}
+
+/**
  * Prints raw and gzipped sizes for every published bundle and enforces the
  * gzip budgets. The README lists these same budgets as `< N KB gz` ceilings,
  * so exceeding one fails the build rather than letting the docs go stale.
@@ -849,6 +844,7 @@ if (args.includes('--test-three-live') || args.includes('--test-core')) {
 } else {
   buildThreeLive();
   buildXRLive();
+  stampDemoSizes();
   reportSizes();
   console.log(
       '=== Successfully built all three-live and xr-live JS/TS packages! ===');
