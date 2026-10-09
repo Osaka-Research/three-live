@@ -31,6 +31,10 @@ import {
   type MeshDecoder,
   type OrbitLimits,
 } from './three-view';
+import {
+  CLIENT_SCRIPTS_DISABLED_ERROR,
+  CLIENT_SCRIPTS_DISABLED_TOAST,
+} from './messages';
 
 export type {DecoderType, MeshDecoder, OrbitLimits};
 
@@ -1608,15 +1612,10 @@ export class ThreeLiveElement extends BaseElement {
     }
     if (!this.allowClientScripts) {
       const error = new Error(
-        'SecurityError: Client-modified script compilation (Use Case 1) is ' +
-          'disabled by default to satisfy strict CSP and Trusted Types ' +
-          'requirements. Use script-src="..." or loadScriptFromSrc(url) for ' +
-          'server-generated scripts (Use Case 2), or explicitly opt in via ' +
-          'ThreeLiveElement.allowClientScripts = true (or the ' +
-          'allow-client-scripts attribute).',
+        CLIENT_SCRIPTS_DISABLED_ERROR,
       );
       this.showToast(
-        'Security Error: client-side scripts require allow-client-scripts opt-in.',
+        CLIENT_SCRIPTS_DISABLED_TOAST,
       );
       this.dispatchEvent(
         new CustomEvent('error', {

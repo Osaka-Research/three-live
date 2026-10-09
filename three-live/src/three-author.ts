@@ -42,6 +42,10 @@ import {
   mat4LookAt,
   mat4Multiply,
 } from './three-view';
+import {
+  CLIENT_SCRIPTS_DISABLED_ERROR,
+  CLIENT_SCRIPTS_DISABLED_TOAST,
+} from './messages';
 
 declare const SECURITY_3D_MAX_CONCURRENT_TASKS: number;
 declare const SECURITY_3D_MAX_HEAP_BYTES: number;
@@ -1388,34 +1392,46 @@ export class TextureLoader {
   }
 }
 
+/** Returns `value` as a number, or `fallback` when it is undefined. */
+function numberOr(value: unknown, fallback: number): number {
+  return value !== undefined ? Number(value) : fallback;
+}
+
+/** Returns `value` as a boolean, or `fallback` when it is undefined. */
+function booleanOr(value: unknown, fallback: boolean): boolean {
+  return value !== undefined ? Boolean(value) : fallback;
+}
+
 export class Material {
-  public name: string = '';
+  // All fields are assigned in the constructor; initializers here would only
+  // be overwritten (and would ship twice in the bundle).
+  public name: string;
   public color: Color;
   public emissive: Color;
-  public emissiveIntensity: number = 1.0;
-  public roughness: number = 0.5;
-  public metalness: number = 0.1;
-  public opacity: number = 1.0;
-  public transparent: boolean = false;
-  public wireframe: boolean = false;
-  public side: number = 2; // 2 = DoubleSide
-  public doubleSided: boolean = true;
-  public map: Texture | string | null = null;
+  public emissiveIntensity: number;
+  public roughness: number;
+  public metalness: number;
+  public opacity: number;
+  public transparent: boolean;
+  public wireframe: boolean;
+  public side: number; // 2 = DoubleSide
+  public doubleSided: boolean;
+  public map: Texture | string | null;
 
   // Luxury PBR / Physical Material extensions
-  public clearcoat: number = 0.0;
-  public clearcoatRoughness: number = 0.0;
-  public sheen: number = 0.0;
+  public clearcoat: number;
+  public clearcoatRoughness: number;
+  public sheen: number;
   public sheenColor: Color;
-  public sheenRoughness: number = 0.0;
-  public transmission: number = 0.0;
-  public thickness: number = 0.0;
+  public sheenRoughness: number;
+  public transmission: number;
+  public thickness: number;
   public attenuationColor: Color;
-  public attenuationDistance: number = Infinity;
-  public ior: number = 1.5;
-  public dispersion: number = 0.0;
-  public iridescence: number = 0.0;
-  public iridescenceIOR: number = 1.3;
+  public attenuationDistance: number;
+  public ior: number;
+  public dispersion: number;
+  public iridescence: number;
+  public iridescenceIOR: number;
 
   constructor(params: Record<string, any> = {}) {
     this.name = params.name || '';
@@ -1425,56 +1441,35 @@ export class Material {
     this.emissive = new Color(
       params.emissive !== undefined ? params.emissive : 0x000000,
     );
-    this.emissiveIntensity =
-      params.emissiveIntensity !== undefined
-        ? Number(params.emissiveIntensity)
-        : 1.0;
-    this.roughness =
-      params.roughness !== undefined ? Number(params.roughness) : 0.5;
-    this.metalness =
-      params.metalness !== undefined ? Number(params.metalness) : 0.1;
-    this.opacity = params.opacity !== undefined ? Number(params.opacity) : 1.0;
-    this.transparent =
-      params.transparent !== undefined ? Boolean(params.transparent) : false;
-    this.wireframe =
-      params.wireframe !== undefined ? Boolean(params.wireframe) : false;
-    this.side = params.side !== undefined ? Number(params.side) : 2;
-    this.doubleSided =
-      params.doubleSided !== undefined ? Boolean(params.doubleSided) : true;
+    this.emissiveIntensity = numberOr(params.emissiveIntensity, 1.0);
+    this.roughness = numberOr(params.roughness, 0.5);
+    this.metalness = numberOr(params.metalness, 0.1);
+    this.opacity = numberOr(params.opacity, 1.0);
+    this.transparent = booleanOr(params.transparent, false);
+    this.wireframe = booleanOr(params.wireframe, false);
+    this.side = numberOr(params.side, 2);
+    this.doubleSided = booleanOr(params.doubleSided, true);
     this.map = params.map || null;
 
-    this.clearcoat =
-      params.clearcoat !== undefined ? Number(params.clearcoat) : 0.0;
-    this.clearcoatRoughness =
-      params.clearcoatRoughness !== undefined
-        ? Number(params.clearcoatRoughness)
-        : 0.0;
-    this.sheen = params.sheen !== undefined ? Number(params.sheen) : 0.0;
+    this.clearcoat = numberOr(params.clearcoat, 0.0);
+    this.clearcoatRoughness = numberOr(params.clearcoatRoughness, 0.0);
+    this.sheen = numberOr(params.sheen, 0.0);
     this.sheenColor = new Color(
       params.sheenColor !== undefined ? params.sheenColor : 0x000000,
     );
-    this.sheenRoughness =
-      params.sheenRoughness !== undefined ? Number(params.sheenRoughness) : 0.0;
-    this.transmission =
-      params.transmission !== undefined ? Number(params.transmission) : 0.0;
-    this.thickness =
-      params.thickness !== undefined ? Number(params.thickness) : 0.0;
+    this.sheenRoughness = numberOr(params.sheenRoughness, 0.0);
+    this.transmission = numberOr(params.transmission, 0.0);
+    this.thickness = numberOr(params.thickness, 0.0);
     this.attenuationColor = new Color(
       params.attenuationColor !== undefined
         ? params.attenuationColor
         : 0xffffff,
     );
-    this.attenuationDistance =
-      params.attenuationDistance !== undefined
-        ? Number(params.attenuationDistance)
-        : Infinity;
-    this.ior = params.ior !== undefined ? Number(params.ior) : 1.5;
-    this.dispersion =
-      params.dispersion !== undefined ? Number(params.dispersion) : 0.0;
-    this.iridescence =
-      params.iridescence !== undefined ? Number(params.iridescence) : 0.0;
-    this.iridescenceIOR =
-      params.iridescenceIOR !== undefined ? Number(params.iridescenceIOR) : 1.3;
+    this.attenuationDistance = numberOr(params.attenuationDistance, Infinity);
+    this.ior = numberOr(params.ior, 1.5);
+    this.dispersion = numberOr(params.dispersion, 0.0);
+    this.iridescence = numberOr(params.iridescence, 0.0);
+    this.iridescenceIOR = numberOr(params.iridescenceIOR, 1.3);
   }
 
   public dispose(): void {}
@@ -2459,34 +2454,40 @@ export interface SandboxWorkerSourceOptions {
   readonly allowedScriptUrl?: string | null;
 }
 
+/** Values baked into a generated sandbox worker. */
+interface SandboxWorkerConfig {
+  readonly nonce: string;
+  readonly engineSrc: string;
+  readonly allowedScriptUrl: string | null;
+  readonly allowClientScripts: boolean;
+  readonly revoked: readonly string[];
+}
+
 /**
- * Builds the body of the sandbox worker.
+ * The sandbox worker's entry point.
  *
- * Exported so tests can execute it against a stub worker global: this is a
- * plain string, so the compiler offers no protection here.
+ * This function is never called in the host realm. `buildSandboxWorkerSource`
+ * serializes it with `Function.prototype.toString` and the worker evaluates it,
+ * so it must stay self-contained: it may only use its `cfg` argument and worker
+ * globals, never anything from this module's scope. Keeping it as real code
+ * (rather than a template string) lets esbuild minify it.
  */
-export function buildSandboxWorkerSource(
-  engineSrc: string,
-  nonce: string,
-  options?: SandboxWorkerSourceOptions,
-): string {
-  const allowedScriptUrl = options?.allowedScriptUrl ?? null;
-  const allowClientScripts =
-    options?.allowClientScripts ?? allowedScriptUrl === null;
-  return `
-'use strict';
-(function () {
-  var NONCE = ${JSON.stringify(nonce)};
-  var ENGINE_SRC = ${JSON.stringify(engineSrc)};
-  var ALLOWED_SCRIPT_URL = ${JSON.stringify(allowedScriptUrl)};
-  var ALLOW_CLIENT_SCRIPTS = ${JSON.stringify(allowClientScripts)};
-  var REVOKED = ${JSON.stringify(REVOKED_WORKER_GLOBALS)};
+function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
+  // The worker global is a WorkerGlobalScope whose members are revoked and
+  // patched dynamically below, so it is deliberately untyped here.
+  // tslint:disable-next-line:no-any
+  const scope: any = self;
+  const NONCE = cfg.nonce;
+  const ENGINE_SRC = cfg.engineSrc;
+  const ALLOWED_SCRIPT_URL = cfg.allowedScriptUrl;
+  const ALLOW_CLIENT_SCRIPTS = cfg.allowClientScripts;
+  const REVOKED = cfg.revoked;
 
   // Capture the channel back to the host before the author script can see it,
   // so it cannot forge a 3D_MODEL_READY message.
-  var post = self.postMessage.bind(self);
+  const post = scope.postMessage.bind(scope);
 
-  function fail(message) {
+  function fail(message: unknown) {
     post({type: 'ERROR', nonce: NONCE, message: String(message)});
   }
 
@@ -2494,23 +2495,25 @@ export function buildSandboxWorkerSource(
   // and WorkerGlobalScope.prototype, so Use Case 2 (server-generated scriptUrl)
   // can load the allowlisted script URL without exposing importScripts to the
   // scene script or requiring 'unsafe-eval'.
-  var nativeImportScripts =
-    typeof self.importScripts === 'function'
-      ? self.importScripts.bind(self)
+  let nativeImportScripts =
+    typeof scope.importScripts === 'function'
+      ? scope.importScripts.bind(scope)
       : null;
-  var sceneScriptUrlToLoad = ALLOWED_SCRIPT_URL;
-  var createClientScript = null;
+  let sceneScriptUrlToLoad: unknown = ALLOWED_SCRIPT_URL;
+  // tslint:disable-next-line:no-any
+  let createClientScript: any = null;
 
   try {
-    var scriptUrlToLoad = ENGINE_SRC;
+    let scriptUrlToLoad: unknown = ENGINE_SRC;
     if (
-      typeof self.trustedTypes !== 'undefined' &&
-      self.trustedTypes &&
-      typeof self.trustedTypes.createPolicy === 'function'
+      typeof scope.trustedTypes !== 'undefined' &&
+      scope.trustedTypes &&
+      typeof scope.trustedTypes.createPolicy === 'function'
     ) {
       try {
-        var policyRules = {
-          createScriptURL: function (u) {
+        // tslint:disable-next-line:no-any
+        const policyRules: any = {
+          createScriptURL: function (u: string) {
             if (
               u !== ENGINE_SRC &&
               (!ALLOWED_SCRIPT_URL || u !== ALLOWED_SCRIPT_URL)
@@ -2521,11 +2524,11 @@ export function buildSandboxWorkerSource(
           },
         };
         if (ALLOW_CLIENT_SCRIPTS) {
-          policyRules.createScript = function (s) {
+          policyRules.createScript = function (s: string) {
             return String(s);
           };
         }
-        var bootPolicy = self.trustedTypes.createPolicy(
+        const bootPolicy = scope.trustedTypes.createPolicy(
           'three-live#worker-boot',
           policyRules,
         );
@@ -2545,12 +2548,13 @@ export function buildSandboxWorkerSource(
     fail(
       'Sandbox failed to load the Three-Live engine from "' + ENGINE_SRC +
         '". It must be a same-origin (or CORS-enabled) IIFE bundle such as ' +
-        'three-live.min.js. Underlying error: ' + (err && err.message || err),
+        // tslint:disable-next-line:no-any
+        'three-live.min.js. Underlying error: ' + ((err && (err as any).message) || err),
     );
     return;
   }
 
-  var THREE = self.THREE;
+  const THREE = scope.THREE;
   if (!THREE || typeof THREE.Scene !== 'function') {
     fail(
       'Sandbox loaded "' + ENGINE_SRC + '" but it did not install a THREE ' +
@@ -2564,11 +2568,11 @@ export function buildSandboxWorkerSource(
   // prototype chain (DedicatedWorkerGlobalScope.prototype -> WorkerGlobalScope.prototype)
   // so scripts cannot bypass self.fetch = undefined via
   // Object.getPrototypeOf(self).fetch.call(self, ...).
-  for (var i = 0; i < REVOKED.length; i++) {
-    var key = REVOKED[i];
-    var proto = self;
+  for (let i = 0; i < REVOKED.length; i++) {
+    const key = REVOKED[i];
+    let proto = scope;
     while (proto && proto !== Object.prototype) {
-      if (proto !== self) {
+      if (proto !== scope) {
         try {
           delete proto[key];
         } catch (e) {}
@@ -2591,14 +2595,14 @@ export function buildSandboxWorkerSource(
 
   // Coarsen self.performance to millisecond resolution and strip resource-timing
   // methods while keeping performance.now() functional for THREE.Clock.
-  var coarsePerformance = Object.freeze({
+  const coarsePerformance = Object.freeze({
     now: function () {
       return Date.now();
     },
   });
-  var perfProto = self;
+  let perfProto = scope;
   while (perfProto && perfProto !== Object.prototype) {
-    if (perfProto !== self) {
+    if (perfProto !== scope) {
       try {
         delete perfProto.performance;
       } catch (e) {}
@@ -2621,10 +2625,11 @@ export function buildSandboxWorkerSource(
   // The sandboxed WebGLRenderer legitimately posts scene updates via
   // self.postMessage, so this cannot simply throw. Instead, allowlist the two
   // scene message types and stamp the nonce on self AND across the prototype chain.
-  var SCENE_MESSAGE_TYPES = ['3D_MODEL_READY', '3D_UPDATE_TRANSFORMS'];
-  var sentModel = false;
+  const SCENE_MESSAGE_TYPES = ['3D_MODEL_READY', '3D_UPDATE_TRANSFORMS'];
+  let sentModel = false;
 
-  function emit(msg, transfer) {
+  // tslint:disable-next-line:no-any
+  function emit(msg: any, transfer?: Transferable[]) {
     if (msg.type === '3D_MODEL_READY') {
       if (sentModel) return;
       sentModel = true;
@@ -2634,7 +2639,8 @@ export function buildSandboxWorkerSource(
     else post(msg);
   }
 
-  var guardedPostMessage = function (msg, transfer) {
+  // tslint:disable-next-line:no-any
+  const guardedPostMessage = function (msg: any, transfer?: Transferable[]) {
     if (!msg || SCENE_MESSAGE_TYPES.indexOf(msg.type) === -1) {
       throw new Error(
         'Sandboxed scripts may only post Three-Live scene messages (' +
@@ -2644,10 +2650,10 @@ export function buildSandboxWorkerSource(
     emit(msg, transfer);
   };
 
-  var pmProto = self;
+  let pmProto = scope;
   while (pmProto && pmProto !== Object.prototype) {
     if (
-      pmProto === self ||
+      pmProto === scope ||
       Object.prototype.hasOwnProperty.call(pmProto, 'postMessage')
     ) {
       try {
@@ -2665,19 +2671,20 @@ export function buildSandboxWorkerSource(
     }
   }
 
-  var started = false;
+  let started = false;
 
-  self.onmessage = function (e) {
-    var data = e && e.data;
+  // tslint:disable-next-line:no-any
+  scope.onmessage = function (e: any) {
+    const data = e && e.data;
     if (!data || data.nonce !== NONCE) return;
     if (data.type !== 'EXECUTE' && data.type !== 'EXECUTE_URL') return;
     if (started) return;
     started = true;
 
     try {
-      var scene = new THREE.Scene();
-      var camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-      var renderer = new THREE.WebGLRenderer({isSandboxed: true});
+      let scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({isSandboxed: true});
 
       if (data.type === 'EXECUTE_URL') {
         if (
@@ -2690,17 +2697,17 @@ export function buildSandboxWorkerSource(
           );
           return;
         }
-        var urlToImport = sceneScriptUrlToLoad || ALLOWED_SCRIPT_URL;
-        var runImport = nativeImportScripts;
+        const urlToImport = sceneScriptUrlToLoad || ALLOWED_SCRIPT_URL;
+        const runImport = nativeImportScripts;
         nativeImportScripts = null;
         sceneScriptUrlToLoad = null;
-        self.THREE = THREE;
-        self.scene = scene;
-        self.camera = camera;
-        self.renderer = renderer;
+        scope.THREE = THREE;
+        scope.scene = scene;
+        scope.camera = camera;
+        scope.renderer = renderer;
         runImport(urlToImport);
-        if (typeof self.__THREE_LIVE_SCENE__ === 'function') {
-          var cbRet = self.__THREE_LIVE_SCENE__(
+        if (typeof scope.__THREE_LIVE_SCENE__ === 'function') {
+          const cbRet = scope.__THREE_LIVE_SCENE__(
             THREE,
             scene,
             camera,
@@ -2709,8 +2716,8 @@ export function buildSandboxWorkerSource(
           if (cbRet && typeof cbRet.toGLB === 'function') {
             scene = cbRet;
           }
-        } else if (self.scene && typeof self.scene.toGLB === 'function') {
-          scene = self.scene;
+        } else if (scope.scene && typeof scope.scene.toGLB === 'function') {
+          scene = scope.scene;
         }
       } else {
         if (!ALLOW_CLIENT_SCRIPTS) {
@@ -2719,13 +2726,13 @@ export function buildSandboxWorkerSource(
           );
           return;
         }
-        var runClientFn = createClientScript
+        const runClientFn = createClientScript
           ? (0, eval)(
               createClientScript(
-                '(function (THREE, scene, camera, renderer) {\\n' +
-                  'return (function () {\\n' +
+                '(function (THREE, scene, camera, renderer) {\n' +
+                  'return (function () {\n' +
                   data.script +
-                  '\\n})();\\n})',
+                  '\n})();\n})',
               ),
             )
           : new Function(
@@ -2733,10 +2740,10 @@ export function buildSandboxWorkerSource(
               'scene',
               'camera',
               'renderer',
-              'return (function () {\\n' + data.script + '\\n})();',
+              'return (function () {\n' + data.script + '\n})();',
             );
         createClientScript = null;
-        var ret = runClientFn(THREE, scene, camera, renderer);
+        const ret = runClientFn(THREE, scene, camera, renderer);
         if (ret && typeof ret.toGLB === 'function') {
           scene = ret;
         }
@@ -2747,8 +2754,8 @@ export function buildSandboxWorkerSource(
         if (THREE.SceneQuotaValidator) {
           THREE.SceneQuotaValidator.validate(scene);
         }
-        var glbBytes = scene.toGLB();
-        var glbBuffer =
+        const glbBytes = scene.toGLB();
+        const glbBuffer =
           glbBytes instanceof ArrayBuffer
             ? glbBytes
             : glbBytes.buffer.slice(
@@ -2765,13 +2772,51 @@ export function buildSandboxWorkerSource(
       }
       post({type: 'DONE', nonce: NONCE});
     } catch (err) {
-      fail((err && err.message) || err);
+      // tslint:disable-next-line:no-any
+      fail((err && (err as any).message) || err);
     }
   };
 
   post({type: 'READY', nonce: NONCE});
-})();
-`;
+}
+
+/**
+ * Builds the body of the sandbox worker.
+ *
+ * Exported so tests can execute it against a stub worker global: the result is
+ * a plain string evaluated in another realm, so the compiler offers no
+ * protection across that boundary.
+ */
+export function buildSandboxWorkerSource(
+  engineSrc: string,
+  nonce: string,
+  options?: SandboxWorkerSourceOptions,
+): string {
+  const allowedScriptUrl = options?.allowedScriptUrl ?? null;
+  const allowClientScripts =
+    options?.allowClientScripts ?? allowedScriptUrl === null;
+  const cfg: SandboxWorkerConfig = {
+    nonce,
+    engineSrc,
+    allowedScriptUrl,
+    allowClientScripts,
+    revoked: REVOKED_WORKER_GLOBALS,
+  };
+  // The 'use strict' prologue applies to the whole worker script; a directive
+  // inside the function could be stripped when the bundle is itself strict.
+  return `'use strict';(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)});`;
+}
+
+/** Reports a sandbox job that hit SECURITY_3D_SANDBOX_TIMEOUT_MS. */
+function reportSandboxTimeout(callbacks: ScriptExecutionCallbacks): void {
+  callbacks.onError?.(
+    new Error(
+      'SecurityError: Sandboxed script exceeded ' +
+        `SECURITY_3D_SANDBOX_TIMEOUT_MS (${SECURITY_3D_SANDBOX_TIMEOUT_MS} ms) ` +
+        'and was terminated.',
+    ),
+  );
+  callbacks.onToast?.('Security Error: script timed out and was stopped.');
 }
 
 /** Number of sandbox workers currently alive, capped by MAX_CONCURRENT_TASKS. */
@@ -3072,14 +3117,8 @@ function executeInSandboxIframe(
 
   watchdog = setTimeout(() => {
     if (settled) return;
-    const error = new Error(
-      'SecurityError: Sandboxed script exceeded ' +
-        `SECURITY_3D_SANDBOX_TIMEOUT_MS (${SECURITY_3D_SANDBOX_TIMEOUT_MS} ms) ` +
-        'and was terminated.',
-    );
     shutdown();
-    callbacks.onError?.(error);
-    callbacks.onToast?.('Security Error: script timed out and was stopped.');
+    reportSandboxTimeout(callbacks);
   }, SECURITY_3D_SANDBOX_TIMEOUT_MS);
 
   if (typeof globalThis.addEventListener === 'function') {
@@ -3229,14 +3268,8 @@ function runSandboxedJob(
 
   watchdog = setTimeout(() => {
     if (settled) return;
-    const error = new Error(
-      'SecurityError: Sandboxed script exceeded ' +
-        `SECURITY_3D_SANDBOX_TIMEOUT_MS (${SECURITY_3D_SANDBOX_TIMEOUT_MS} ms) ` +
-        'and was terminated.',
-    );
     shutdown();
-    callbacks.onError?.(error);
-    callbacks.onToast?.('Security Error: script timed out and was stopped.');
+    reportSandboxTimeout(callbacks);
   }, SECURITY_3D_SANDBOX_TIMEOUT_MS);
 
   worker.onmessage = (event: MessageEvent): void => {
@@ -3328,13 +3361,8 @@ export const authorScriptRunner: ScriptRunner = {
       options?.allowClientScripts ?? getAllowClientScripts();
     if (!clientScriptsAllowed) {
       return reject(
-        'SecurityError: Client-modified script compilation (Use Case 1) is ' +
-          'disabled by default to satisfy strict CSP and Trusted Types ' +
-          'requirements. Use script-src="..." or loadScriptFromSrc(url) for ' +
-          'server-generated scripts (Use Case 2), or explicitly opt in via ' +
-          'ThreeLiveElement.allowClientScripts = true (or the ' +
-          'allow-client-scripts attribute).',
-        'Security Error: client-side scripts require allow-client-scripts opt-in.',
+        CLIENT_SCRIPTS_DISABLED_ERROR,
+        CLIENT_SCRIPTS_DISABLED_TOAST,
       );
     }
 
@@ -3615,10 +3643,6 @@ export const threeAuthorPlugin = {
 
 export const threeMicroPlugin = threeAuthorPlugin;
 
-let defaultScene = new Scene();
-let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
-defaultCamera.position.set(0, 2, 5);
-
 const globalRoot = (
   typeof globalThis !== 'undefined'
     ? globalThis
@@ -3651,6 +3675,10 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
+  // Only the server-extract engine needs a default scene; web builds skip it.
+  let defaultScene = new Scene();
+  let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
+  defaultCamera.position.set(0, 2, 5);
   globalRoot.scene = defaultScene;
   globalRoot.camera = defaultCamera;
   if (typeof globalRoot.window === 'undefined') {

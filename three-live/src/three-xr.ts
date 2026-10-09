@@ -175,11 +175,7 @@ export async function getAvailableARModes(): Promise<ARMode[]> {
  * Returns the best AR mode available for the current environment.
  */
 export async function getBestARMode(): Promise<ARMode | null> {
-  const modes = await getAvailableARModes();
-  if (modes.includes('quick-look')) return 'quick-look';
-  if (modes.includes('webxr')) return 'webxr';
-  if (modes.includes('scene-viewer')) return 'scene-viewer';
-  return null;
+  return (await getARCapabilities()).bestMode;
 }
 
 /**
