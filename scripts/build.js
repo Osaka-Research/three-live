@@ -735,68 +735,64 @@ function buildXRLive() {
   }
 }
 
+/**
+ * Prints raw and gzipped sizes for every published bundle and enforces the
+ * gzip budgets. The README lists these same budgets as `< N KB gz` ceilings,
+ * so exceeding one fails the build rather than letting the docs go stale.
+ * Keep `budgetKb` in sync with the README bundle tables.
+ */
 function reportSizes() {
   const zlib = require('zlib');
   console.log('\n============================= Bundle Size Report =============================');
   console.log('Asset                                      Raw Size     Gzip Size     Budget');
   console.log('------------------------------------------------------------------------------');
   const files = [
-    {
-      path: path.join(DIST_DIR, 'three-live-viewer.min.js'),
-      name: 'dist/three-live-viewer.min.js',
-      budget: '< 24 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'three-live.min.js'),
-      name: 'dist/three-live.min.js',
-      budget: '< 48 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'three-live-extras.min.js'),
-      name: 'dist/three-live-extras.min.js',
-      budget: '< 8.0 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'three-live-animation.min.js'),
-      name: 'dist/three-live-animation.min.js',
-      budget: '< 5.5 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'three-live-full.min.js'),
-      name: 'dist/three-live-full.min.js',
-      budget: '< 58 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'xr-live-viewer.min.js'),
-      name: 'dist/xr-live-viewer.min.js',
-      budget: '< 40 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'xr-live.min.js'),
-      name: 'dist/xr-live.min.js',
-      budget: '< 59 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'xr-live-extras.min.js'),
-      name: 'dist/xr-live-extras.min.js',
-      budget: '< 8.0 KB gz'
-    },
-    {
-      path: path.join(DIST_DIR, 'xr-live-full.min.js'),
-      name: 'dist/xr-live-full.min.js',
-      budget: '< 72 KB gz'
-    },
+    {name: 'three-live-viewer.min.js', budgetKb: '24'},
+    {name: 'three-live.min.js', budgetKb: '48'},
+    {name: 'three-live-extras.min.js', budgetKb: '8.0'},
+    {name: 'three-live-animation.min.js', budgetKb: '5.5'},
+    {name: 'three-live-full.min.js', budgetKb: '58'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '40'},
+    {name: 'xr-live.min.js', budgetKb: '59'},
+    {name: 'xr-live-extras.min.js', budgetKb: '8.0'},
+    {name: 'xr-live-full.min.js', budgetKb: '72'},
   ];
+  const failures = [];
   for (const f of files) {
-    if (fs.existsSync(f.path)) {
-      const raw = fs.readFileSync(f.path);
-      const gz = zlib.gzipSync(raw, { level: 9 });
-      const rawKb = (raw.length / 1024).toFixed(1).padStart(6) + ' KB';
-      const gzKb = (gz.length / 1024).toFixed(1).padStart(6) + ' KB';
-      console.log(`${f.name.padEnd(42)} ${rawKb}     ${gzKb}     ${f.budget}`);
+    const filePath = path.join(DIST_DIR, f.name);
+    const label = `dist/${f.name}`;
+    // Kept as a string so the label matches the README text exactly.
+    const budgetLabel = `< ${f.budgetKb} KB gz`;
+    if (!fs.existsSync(filePath)) {
+      console.log(`${label.padEnd(42)} ${'MISSING'.padStart(9)}     ${''.padStart(9)}     ${budgetLabel}`);
+      failures.push(`${label} was not built`);
+      continue;
+    }
+    const raw = fs.readFileSync(filePath);
+    const gz = zlib.gzipSync(raw, {level: 9});
+    const gzKbValue = gz.length / 1024;
+    const rawKb = (raw.length / 1024).toFixed(1).padStart(6) + ' KB';
+    const gzKb = gzKbValue.toFixed(1).padStart(6) + ' KB';
+    const overBudget = gzKbValue >= parseFloat(f.budgetKb);
+    console.log(
+        `${label.padEnd(42)} ${rawKb}     ${gzKb}     ${budgetLabel}` +
+        (overBudget ? '  OVER BUDGET' : ''));
+    if (overBudget) {
+      failures.push(
+          `${label} is ${gzKbValue.toFixed(1)} KB gz (budget ${budgetLabel})`);
     }
   }
   console.log('==============================================================================\n');
+  if (failures.length > 0) {
+    console.error('Bundle size budget check failed:');
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    console.error(
+        'Reduce the bundle size, or raise the budget in scripts/build.js ' +
+        'and the README bundle tables together.');
+    process.exit(1);
+  }
 }
 
 function runTestFile(entryPoint, outfile) {

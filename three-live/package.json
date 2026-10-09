@@ -1,7 +1,7 @@
 {
   "name": "three-live",
   "version": "1.0.0",
-  "description": "Ultra-lightweight 3D, WebXR, and procedural Three.js runtime in under 30 KB gzip",
+  "description": "Lightweight 3D, WebXR, and procedural Three.js runtime",
   "author": "Google LLC",
   "license": "Apache-2.0",
   "repository": {
