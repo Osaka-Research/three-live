@@ -36,11 +36,12 @@ You are authoring 3D / Spatial Computing scenes using Google's `three-live` and 
 
 ### 2. Procedural `<script type="text/three">` Rules
 - Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
+- ALWAYS add the `allow-client-scripts` attribute to the `<three-live>` or `<xr-live>` element that contains an inline `<script type="text/three">`; without it the script is refused and nothing renders.
 - Add all meshes, groups, and lights directly to `scene.add(...)`.
 - Attach spatial traits to procedural objects via `mesh.userData.xrTraits = ['grab', 'scale', 'billboard', 'anchor']`.
 - NEVER use `GLTFLoader`, `OBJLoader`, `TextureLoader`, `EffectComposer`, `ShaderMaterial`, `RawShaderMaterial`, or `requestAnimationFrame` inside `<script type="text/three">`.
 - NEVER create a `THREE.WebGLRenderer` or attach DOM canvas elements inside `<script type="text/three">`.
-- Respect strict scene quotas: max 1,000 meshes, 100,000 vertices, 300,000 indices, 16 textures, 5-second execution timeout.
+- Respect strict scene quotas: max 1,000 meshes, 100,000 vertices, 300,000 indices, 16 textures, 3-second execution timeout.
 
 ### 3. Allowed `THREE.*` Constructors inside `<script type="text/three">`
 - Math: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`
@@ -99,7 +100,7 @@ Three.js assumptions never crash or abort a 3D/XR scene:
 ```html
 <script type="module" src="/dist/three-live.min.js"></script>
 
-<three-live camera-controls ar auto-rotate style="width: 100%; height: 500px; display: block;">
+<three-live allow-client-scripts camera-controls ar auto-rotate style="width: 100%; height: 500px; display: block;">
   <script type="text/three">
     const base = new THREE.Mesh(
       new THREE.CylinderGeometry(0.6, 0.7, 0.2, 32),
@@ -127,6 +128,7 @@ Three.js assumptions never crash or abort a 3D/XR scene:
 <script type="module" src="/dist/xr-live-full.min.js"></script>
 
 <xr-live
+  allow-client-scripts
   xr-mode="inline-ar"
   xr-depth
   xr-hands

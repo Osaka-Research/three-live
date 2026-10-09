@@ -105,7 +105,7 @@ Spatial traits work identically across **WebXR**, **Mobile Web AR**, and
 You can attach traits directly to procedural Three.js meshes or groups:
 
 ```html
-<xr-live xr-mode="inline-ar" style="width: 100%; height: 500px;">
+<xr-live allow-client-scripts xr-mode="inline-ar" style="width: 100%; height: 500px;">
   <script type="text/three">
     const orb = new THREE.Mesh(
       new THREE.SphereGeometry(0.15, 32, 32),

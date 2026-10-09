@@ -1,0 +1,54 @@
+# xr-live
+
+HTML-first spatial computing on top of
+[`three-live`](https://www.npmjs.com/package/three-live): 6DoF WebXR, hand
+gestures, spatial HTML cards, and depth-aware physics. Part of
+[Three-Live](https://github.com/google/three-live).
+
+> Developer Preview. APIs may change before a stable release.
+
+## Install
+
+```sh
+npm install xr-live
+```
+
+Or load it from a CDN with a classic script tag:
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/xr-live/dist/xr-live.min.js"></script>
+```
+
+## Usage
+
+```html
+<xr-live allow-client-scripts xr-mode="inline-ar" camera-controls>
+  <script type="text/three">
+    const orb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.15, 32, 32),
+      new THREE.MeshStandardMaterial({color: 0x38bdf8, metalness: 0.4, roughness: 0.2})
+    );
+    orb.position.set(0, 1.2, -0.8);
+    orb.userData.xrTraits = ['grab', 'scale', 'billboard'];
+    scene.add(orb);
+  </script>
+</xr-live>
+```
+
+## Bundles
+
+| File | Contents |
+| :--- | :--- |
+| `dist/xr-live-viewer.min.js` | Lean `.glb`/`.usdz` WebXR viewer with spatial traits |
+| `dist/xr-live.min.js` | Standard: `<xr-live>` + sandboxed `<script type="text/three">` |
+| `dist/xr-live-extras.min.js` | Add-on: XR simulator, depth, and AI plugins |
+| `dist/xr-live-full.min.js` | Everything in one bundle |
+
+## Documentation
+
+See the [project README](https://github.com/google/three-live#readme) and
+[xr-live docs](https://github.com/google/three-live/blob/main/docs/xr-live.md).
+
+## License
+
+Apache 2.0. This is not an officially supported Google product.

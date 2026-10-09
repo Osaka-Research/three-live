@@ -228,7 +228,7 @@ ThreeLiveElement.registerDecoder('draco', myDracoDecoder);
 2.  **Client-Modified Scene Scripts (Opt-In — `allow-client-scripts` /
     `ThreeLiveElement.allowClientScripts = true`):** For interactive code
     editors or client-modified scripts (`el.executeScript(code)` or inline
-    `<script type="text/three-live">`), explicitly opt in via the
+    `<script type="text/three">`), explicitly opt in via the
     `allow-client-scripts` attribute or `ThreeLiveElement.allowClientScripts =
     true`:
 
@@ -237,7 +237,7 @@ ThreeLiveElement.registerDecoder('draco', myDracoDecoder);
   allow-client-scripts
   camera-controls
   style="width: 100%; height: 500px; display: block;">
-  <script type="text/three-live">
+  <script type="text/three">
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshStandardMaterial({ color: 0x4285f4 });
     const mesh = new THREE.Mesh(geo, mat);

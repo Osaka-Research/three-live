@@ -13,6 +13,9 @@
   "bugs": {
     "url": "https://github.com/google/three-live/issues"
   },
+  "files": [
+    "dist"
+  ],
   "main": "dist/xr-live.cjs",
   "module": "dist/xr-live.js",
   "types": "dist/index.d.ts",

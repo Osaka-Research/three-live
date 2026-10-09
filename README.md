@@ -65,7 +65,7 @@ Three-Live is currently in **Developer Preview (Alpha)**. It is an experimental 
 ```html
 <script type="module" src="/dist/three-live.min.js"></script>
 
-<three-live camera-controls ar auto-rotate style="width: 100%; height: 480px; display: block;">
+<three-live allow-client-scripts camera-controls ar auto-rotate style="width: 100%; height: 480px; display: block;">
   <script type="text/three">
     const mesh = new THREE.Mesh(
       new THREE.TorusKnotGeometry(0.4, 0.14, 64, 16),

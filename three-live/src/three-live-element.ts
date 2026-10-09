@@ -216,7 +216,7 @@ export class ThreeLiveElement extends BaseElement {
 
   /**
    * Global opt-in flag enabling client-modified Three.js script strings
-   * (Use Case 1: `el.executeScript(code)` and inline `<script type="text/three-live">`).
+   * (Use Case 1: `el.executeScript(code)` and inline `<script type="text/three">`).
    *
    * Defaults to `false` so only server-generated script URLs (`script-src`) are
    * compiled by the sandbox unless explicitly enabled.
@@ -324,7 +324,11 @@ export class ThreeLiveElement extends BaseElement {
     } else if (scriptSrc) {
       this.loadScriptFromSrc(scriptSrc).catch(() => {});
     } else {
-      const inlineScript = this.querySelector('script[type="text/three-live"]');
+      // `text/three` is the documented form (README, LLM guide);
+      // `text/three-live` is accepted as an alias.
+      const inlineScript = this.querySelector(
+        'script[type="text/three"], script[type="text/three-live"]',
+      );
       if (inlineScript && inlineScript.textContent) {
         this.executeScript(inlineScript.textContent).catch(() => {});
       }
@@ -586,7 +590,7 @@ export class ThreeLiveElement extends BaseElement {
 
   /**
    * Opt-in flag enabling client-modified procedural script strings on this
-   * element (`executeScript(code)` and inline `<script type="text/three-live">`).
+   * element (`executeScript(code)` and inline `<script type="text/three">`).
    *
    * Returns `true` when either the `allow-client-scripts` attribute is set on
    * this element or `ThreeLiveElement.allowClientScripts` is enabled globally.
