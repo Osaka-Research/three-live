@@ -112,34 +112,33 @@ export const materialsPlugin: ThreeLivePlugin = {
     }
 
     const exts = materialDef.extensions || {};
-    const hasClearcoat = Boolean(exts.KHR_materials_clearcoat);
-    const hasSheen = Boolean(exts.KHR_materials_sheen);
-    const isUnlit = Boolean(exts.KHR_materials_unlit);
+    const cc = exts.KHR_materials_clearcoat;
+    const sh = exts.KHR_materials_sheen;
     const hasTransmission = Boolean(exts.KHR_materials_transmission);
-    const hasVolume = Boolean(exts.KHR_materials_volume);
     const hasIOR = Boolean(exts.KHR_materials_ior);
-    const hasDispersion = Boolean(exts.KHR_materials_dispersion);
-    const hasIridescence = Boolean(exts.KHR_materials_iridescence);
+    const irid = exts.KHR_materials_iridescence;
 
     if (
-      !hasClearcoat &&
-      !hasSheen &&
-      !isUnlit &&
+      !cc &&
+      !sh &&
+      !exts.KHR_materials_unlit &&
       !hasTransmission &&
-      !hasVolume &&
+      !exts.KHR_materials_volume &&
       !hasIOR &&
-      !hasDispersion &&
-      !hasIridescence
+      !exts.KHR_materials_dispersion &&
+      !irid
     ) {
       return null;
     }
 
-    if (isUnlit) {
-      const unlitFS = defaultFS.replace(
-        'fragColor=vec4(color,base.a);',
-        'fragColor=vec4(base.rgb,base.a);',
-      );
-      return {vs: defaultVS, fs: unlitFS};
+    if (exts.KHR_materials_unlit) {
+      return {
+        vs: defaultVS,
+        fs: defaultFS.replace(
+          'fragColor=vec4(color,base.a);',
+          'fragColor=vec4(base.rgb,base.a);',
+        ),
+      };
     }
 
     let modifiedFS = defaultFS;
@@ -159,8 +158,9 @@ export const materialsPlugin: ThreeLivePlugin = {
       decimals = 3,
     ): string => {
       const n = Number(val);
-      if (!Number.isFinite(n)) return fallback.toFixed(decimals);
-      return Math.min(max, Math.max(min, n)).toFixed(decimals);
+      return (
+        Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
+      ).toFixed(decimals);
     };
 
     // 1. Custom IOR F0 override
@@ -177,8 +177,7 @@ export const materialsPlugin: ThreeLivePlugin = {
     }
 
     // 2. Thin-film Iridescence
-    if (hasIridescence) {
-      const irid = exts.KHR_materials_iridescence;
+    if (irid) {
       const iridFactor = safeGlslFloat(irid.iridescenceFactor, 1.0, 0, 1);
       const iridIOR = safeGlslFloat(irid.iridescenceIor, 1.3, 1.0, 10.0);
       modifiedFS = modifiedFS.replace(
@@ -221,8 +220,7 @@ diffuseIBL=mix(diffuseIBL,tr*volumeAtten*base.rgb,${transFactor});`,
     }
 
     // 4. Clearcoat
-    if (hasClearcoat) {
-      const cc = exts.KHR_materials_clearcoat;
+    if (cc) {
       const factor = safeGlslFloat(cc.clearcoatFactor, 1.0, 0, 1);
       const rough = safeGlslFloat(cc.clearcoatRoughnessFactor, 0.0, 0, 1);
       modifiedFS = modifiedFS.replace(
@@ -232,8 +230,7 @@ diffuseIBL=mix(diffuseIBL,tr*volumeAtten*base.rgb,${transFactor});`,
     }
 
     // 5. Sheen
-    if (hasSheen) {
-      const sh = exts.KHR_materials_sheen;
+    if (sh) {
       const col = Array.isArray(sh.sheenColorFactor)
         ? sh.sheenColorFactor
         : [1, 1, 1];

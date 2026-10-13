@@ -152,6 +152,18 @@ function invertMat4(m: Float32Array): Float32Array {
   return out;
 }
 
+async function setTex(
+  viewer: any,
+  prop: 'environmentTexture' | 'skyboxTexture',
+  imageOrUrl: string | HTMLImageElement | ImageBitmap | null,
+): Promise<void> {
+  const tex = imageOrUrl
+    ? await loadEnvironmentTexture(viewer.gl, imageOrUrl)
+    : null;
+  if (viewer[prop]) viewer.gl.deleteTexture(viewer[prop]);
+  viewer[prop] = tex;
+}
+
 export const environmentMapPlugin: ThreeLivePlugin & {
   setEnvironmentImage?: (
     viewer: any,
@@ -164,40 +176,12 @@ export const environmentMapPlugin: ThreeLivePlugin & {
 } = {
   name: 'environment-map',
 
-  async setEnvironmentImage(
-    viewer: any,
-    imageOrUrl: string | HTMLImageElement | ImageBitmap | null,
-  ): Promise<void> {
-    if (!imageOrUrl) {
-      if (viewer.environmentTexture) {
-        viewer.gl.deleteTexture(viewer.environmentTexture);
-        viewer.environmentTexture = null;
-      }
-    } else {
-      const tex = await loadEnvironmentTexture(viewer.gl, imageOrUrl);
-      if (viewer.environmentTexture) {
-        viewer.gl.deleteTexture(viewer.environmentTexture);
-      }
-      viewer.environmentTexture = tex;
-    }
+  setEnvironmentImage(viewer, imageOrUrl) {
+    return setTex(viewer, 'environmentTexture', imageOrUrl);
   },
 
-  async setSkyboxImage(
-    viewer: any,
-    imageOrUrl: string | HTMLImageElement | ImageBitmap | null,
-  ): Promise<void> {
-    if (!imageOrUrl) {
-      if (viewer.skyboxTexture) {
-        viewer.gl.deleteTexture(viewer.skyboxTexture);
-        viewer.skyboxTexture = null;
-      }
-    } else {
-      const tex = await loadEnvironmentTexture(viewer.gl, imageOrUrl);
-      if (viewer.skyboxTexture) {
-        viewer.gl.deleteTexture(viewer.skyboxTexture);
-      }
-      viewer.skyboxTexture = tex;
-    }
+  setSkyboxImage(viewer, imageOrUrl) {
+    return setTex(viewer, 'skyboxTexture', imageOrUrl);
   },
 
   onBeforeDrawScene(
@@ -211,37 +195,27 @@ export const environmentMapPlugin: ThreeLivePlugin & {
 
     let progInfo = skyboxProgMap.get(gl);
     if (!progInfo) {
-      const vs = gl.createShader(gl.VERTEX_SHADER)!;
-      gl.shaderSource(
-        vs,
-        `#version 300 es
-out vec2 vNDC;
-void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);vNDC=p*2.-1.;gl_Position=vec4(vNDC,.999999,1.);}`,
-      );
-      gl.compileShader(vs);
-      const fs = gl.createShader(gl.FRAGMENT_SHADER)!;
-      gl.shaderSource(
-        fs,
-        `#version 300 es
-precision highp float;
-in vec2 vNDC;
-uniform mat4 uInvVP;
-uniform vec3 uCameraPos;
-uniform sampler2D uSkyboxMap;
-uniform float uExposure;
-out vec4 fragColor;
-vec2 eqUV(vec3 d){return vec2(atan(d.x,d.z)/6.2831853+.5,asin(clamp(d.y,-1.,1.))/3.1415926+.5);}
-void main(){
-vec4 fp=uInvVP*vec4(vNDC,1.,1.);
-vec3 dir=normalize(fp.xyz/fp.w-uCameraPos);
-vec3 col=texture(uSkyboxMap,eqUV(dir)).rgb*uExposure;
-fragColor=vec4(pow(col,vec3(1./2.2)),1.);
-}`,
-      );
-      gl.compileShader(fs);
+      const mkS = (t: number, s: string) => {
+        const sh = gl.createShader(t)!;
+        gl.shaderSource(sh, s);
+        gl.compileShader(sh);
+        return sh;
+      };
       const program = gl.createProgram()!;
-      gl.attachShader(program, vs);
-      gl.attachShader(program, fs);
+      gl.attachShader(
+        program,
+        mkS(
+          gl.VERTEX_SHADER,
+          `#version 300 es\nout vec2 vNDC;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);vNDC=p*2.-1.;gl_Position=vec4(vNDC,.999999,1.);}`,
+        ),
+      );
+      gl.attachShader(
+        program,
+        mkS(
+          gl.FRAGMENT_SHADER,
+          `#version 300 es\nprecision highp float;in vec2 vNDC;uniform mat4 uInvVP;uniform vec3 uCameraPos;uniform sampler2D uSkyboxMap;uniform float uExposure;out vec4 fragColor;vec2 eqUV(vec3 d){return vec2(atan(d.x,d.z)/6.2831853+.5,asin(clamp(d.y,-1.,1.))/3.1415926+.5);}void main(){vec4 fp=uInvVP*vec4(vNDC,1.,1.);vec3 dir=normalize(fp.xyz/fp.w-uCameraPos);fragColor=vec4(pow(texture(uSkyboxMap,eqUV(dir)).rgb*uExposure,vec3(1./2.2)),1.);}`,
+        ),
+      );
       gl.linkProgram(program);
       const vao =
         typeof gl.createVertexArray === 'function'

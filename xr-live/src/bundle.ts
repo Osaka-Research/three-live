@@ -19,6 +19,8 @@
  * procedural Three.js scene authoring and runtime GLB/USDZ baking.
  */
 
+import {registerPlugin} from '../../three-live/src/plugin';
+import {contactShadowPlugin} from '../../three-live/src/plugins/shadows';
 import {authorScriptRunner} from '../../three-live/src/three-author';
 import {createUSDZBlob, sceneToGLB} from '../../three-live/src/three-convert';
 import {ThreeLiveElement} from '../../three-live/src/three-live-element';
@@ -26,6 +28,7 @@ import {registerXRSceneConverter} from './xr-registry';
 
 ThreeLiveElement.registerScriptRunner(authorScriptRunner);
 registerXRSceneConverter({createUSDZBlob, sceneToGLB});
+registerPlugin(contactShadowPlugin);
 
 export * from '../../three-live/src/three-author';
 export * from '../../three-live/src/three-convert';

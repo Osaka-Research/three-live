@@ -83,23 +83,17 @@ function createReticleMeshGpu(gl: WebGL2RenderingContext): any {
   const vao = gl.createVertexArray()!;
   gl.bindVertexArray(vao);
 
-  const posBuf = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-
-  const normBuf = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(1);
-  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
-
-  const uvBuf = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(2);
-  gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
+  const mkBuf = (data: Float32Array, loc: number, size: number) => {
+    const b = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    return b;
+  };
+  const posBuf = mkBuf(positions, 0, 3);
+  const normBuf = mkBuf(normals, 1, 3);
+  const uvBuf = mkBuf(uvs, 2, 2);
 
   const idxBuf = gl.createBuffer()!;
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
@@ -232,52 +226,44 @@ export const webxrPlugin: ThreeLivePlugin = {
           .catch(() => {});
       }
 
-      // 3. Tap-to-place via WebXR select event
-      const onSelect = () => {
-        if (state && state.lastHitMatrix) {
+      // 3. Tap-to-place & touch gestures
+      const syncPlace = () =>
+        state?.lastHitMatrix &&
+        applyRootPlacement(
+          view.modelRootMatrix,
+          state.lastHitMatrix,
+          state.rotationY,
+        );
+      const touchAngle = (e: TouchEvent) =>
+        Math.atan2(
+          e.touches[1].clientY - e.touches[0].clientY,
+          e.touches[1].clientX - e.touches[0].clientX,
+        );
+      session.addEventListener('select', () => {
+        if (state?.lastHitMatrix) {
           state.hasPlaced = true;
-          applyRootPlacement(
-            view.modelRootMatrix,
-            state.lastHitMatrix,
-            state.rotationY,
-          );
+          syncPlace();
         }
-      };
-      session.addEventListener('select', onSelect);
+      });
 
-      // 4. Touch gestures for 1-finger drag & 2-finger twist rotation
       const onTouchStart = (e: TouchEvent) => {
         if (!state) return;
         if (e.touches.length === 1 && state.hasPlaced) {
           state.isDragging = true;
         } else if (e.touches.length === 2) {
           state.isDragging = false;
-          const dx = e.touches[1].clientX - e.touches[0].clientX;
-          const dy = e.touches[1].clientY - e.touches[0].clientY;
-          state.lastTouchAngle = Math.atan2(dy, dx);
+          state.lastTouchAngle = touchAngle(e);
         }
       };
       const onTouchMove = (e: TouchEvent) => {
         if (!state) return;
-        if (e.touches.length === 1 && state.isDragging && state.lastHitMatrix) {
-          applyRootPlacement(
-            view.modelRootMatrix,
-            state.lastHitMatrix,
-            state.rotationY,
-          );
+        if (e.touches.length === 1 && state.isDragging) {
+          syncPlace();
         } else if (e.touches.length === 2 && state.lastTouchAngle !== null) {
-          const dx = e.touches[1].clientX - e.touches[0].clientX;
-          const dy = e.touches[1].clientY - e.touches[0].clientY;
-          const angle = Math.atan2(dy, dx);
+          const angle = touchAngle(e);
           state.rotationY += angle - state.lastTouchAngle;
           state.lastTouchAngle = angle;
-          if (state.lastHitMatrix) {
-            applyRootPlacement(
-              view.modelRootMatrix,
-              state.lastHitMatrix,
-              state.rotationY,
-            );
-          }
+          syncPlace();
         }
       };
       const onTouchEnd = () => {

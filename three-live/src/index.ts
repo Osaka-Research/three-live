@@ -18,6 +18,8 @@
  * and custom element (ThreeLiveElement) without three-author.
  */
 
+import {registerPlugin} from './plugin';
+import {contactShadowPlugin} from './plugins/shadows';
 import {authorScriptRunner, THREE} from './three-author';
 import {ThreeLiveElement} from './three-live-element';
 import {
@@ -31,9 +33,10 @@ import {
   type ARCapabilities,
 } from './three-xr';
 
-// Automatically register AR provider and Three.js script runner for the default bundle
+// Automatically register AR provider, contact shadows, and Three.js script runner for the default bundle
 ThreeLiveElement.registerAR({activateAR, createUSDZBlob});
 ThreeLiveElement.registerScriptRunner(authorScriptRunner);
+registerPlugin(contactShadowPlugin);
 
 export {
   ThreeLiveElement,

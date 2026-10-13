@@ -29,6 +29,7 @@ import {
 } from '../src/plugins/keyframes';
 import {materialsPlugin} from '../src/plugins/materials';
 import {morphPlugin, setMorphTargetWeight} from '../src/plugins/morph';
+import {contactShadowPlugin} from '../src/plugins/shadows';
 import {webxrPlugin} from '../src/plugins/webxr';
 import THREE from '../src/three-author';
 import {
@@ -942,6 +943,119 @@ async function runThreeViewTests() {
     viewInstance.turntableRotation === 0 &&
       Math.abs(viewInstance.modelRootMatrix[0] - 1.0) < 1e-5,
     'resetTurntableRotation() resets turntableRotation to 0 and modelRootMatrix to identity',
+  );
+
+  // 18. Per-Object Dynamic Contact Shadows (contactShadowPlugin)
+  const shadowQuads: Float32Array[] = [];
+  const shadowUniforms: Array<{name: string; val: number}> = [];
+  const shadowGl: any = new Proxy(
+    {
+      canvas: {width: 400, height: 400},
+      getShaderParameter: () => true,
+      getProgramParameter: () => true,
+      getUniformLocation: (_prog: any, name: string) => ({name}),
+      bufferSubData: (_target: number, _offset: number, data: Float32Array) => {
+        shadowQuads.push(new Float32Array(data));
+      },
+      uniform1f: (loc: any, val: number) => {
+        if (loc?.name) shadowUniforms.push({name: loc.name, val});
+      },
+    },
+    {
+      get(target: any, prop: string) {
+        if (prop in target) return target[prop];
+        return () => ({});
+      },
+    },
+  );
+
+  const shadowScene = new THREE.Scene();
+  // Resting object on tabletop at (-0.2, 0.05, 0.0)
+  const restingBox = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.1, 0.1),
+    new THREE.MeshStandardMaterial({color: 0xffaa00}),
+  );
+  restingBox.name = 'RestingBox';
+  restingBox.position.set(-0.2, 0.05, 0.0);
+  shadowScene.add(restingBox);
+
+  // Concentric ring around RestingBox at (-0.2, 0.05, 0.0) -> should merge into same shadow cluster
+  const concentricRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.08, 0.01, 8, 16),
+    new THREE.MeshStandardMaterial({color: 0x00ffcc}),
+  );
+  concentricRing.name = 'ConcentricRing';
+  concentricRing.position.set(-0.2, 0.05, 0.0);
+  shadowScene.add(concentricRing);
+
+  // Floating sphere above tabletop at (+0.25, 0.40, 0.0)
+  const floatingOrb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08, 12, 12),
+    new THREE.MeshStandardMaterial({color: 0x38bdf8}),
+  );
+  floatingOrb.name = 'FloatingOrb';
+  floatingOrb.position.set(0.25, 0.4, 0.0);
+  shadowScene.add(floatingOrb);
+
+  const shadowView = new ThreeView(
+    {
+      ...mockCanvas,
+      getContext: () => shadowGl,
+    },
+    {
+      ...mockCanvas,
+      getContext: () => shadowGl,
+    },
+    {shadowIntensity: 0.8, shadowSoftness: 0.4},
+  );
+  await shadowView.loadModel(shadowScene.toGLB().buffer);
+  // Simulate living room backdrop active so coffee table surface (y ≈ 0.003) is used
+  (shadowView as any).backdropMeshes = [
+    {
+      name: 'LivingRoomBackdrop',
+      transform: mat4Create(),
+      normalMatrix: new Float32Array(9),
+      primitives: [],
+    },
+  ];
+
+  shadowQuads.length = 0;
+  shadowUniforms.length = 0;
+  contactShadowPlugin.onAfterRender!(shadowGl, shadowView, mat4Create());
+
+  assert(
+    shadowQuads.length === 2,
+    `contactShadowPlugin clusters concentric meshes and draws 2 per-object shadow quads (got ${shadowQuads.length})`,
+  );
+  const intensities = shadowUniforms
+    .filter((u) => u.name === 'uShadowIntensity')
+    .map((u) => u.val);
+  const softnesses = shadowUniforms
+    .filter((u) => u.name === 'uShadowSoftness')
+    .map((u) => u.val);
+  assert(
+    intensities.length === 2 && intensities[0] > intensities[1],
+    `Resting object casts darker contact shadow (${intensities[0]?.toFixed(3)}) than floating orb (${intensities[1]?.toFixed(3)})`,
+  );
+  assert(
+    softnesses.length === 2 && softnesses[1] > softnesses[0],
+    `Floating orb casts softer drop shadow (${softnesses[1]?.toFixed(3)}) than resting object (${softnesses[0]?.toFixed(3)})`,
+  );
+  assert(
+    Math.abs(shadowQuads[0][1] - 0.003) < 1e-4 &&
+      Math.abs(shadowQuads[1][1] - 0.003) < 1e-4,
+    'Per-object contact shadows project onto coffee table surface (y = 0.003)',
+  );
+
+  // Verify shadow quads rotate across tabletop when turntableRotation is applied
+  const initialOrbShadowCenterZ = (shadowQuads[1][2] + shadowQuads[1][12]) * 0.5;
+  shadowQuads.length = 0;
+  shadowView.resetTurntableRotation(Math.PI / 2);
+  contactShadowPlugin.onAfterRender!(shadowGl, shadowView, mat4Create());
+  const rotatedOrbShadowCenterZ = (shadowQuads[1][2] + shadowQuads[1][12]) * 0.5;
+  assert(
+    Math.abs(rotatedOrbShadowCenterZ - initialOrbShadowCenterZ) > 0.1,
+    `Per-object shadows follow turntable rotation across tabletop (z shifted from ${initialOrbShadowCenterZ.toFixed(2)} to ${rotatedOrbShadowCenterZ.toFixed(2)})`,
   );
 
   // P1-1 (WEB-09): glTF images[].uri scheme allowlist
