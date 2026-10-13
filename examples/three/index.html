@@ -324,7 +324,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">47.2 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">47.3 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -572,7 +572,7 @@ const core = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
 );
 core.name = "QuantumCore";
-core.position.set(0.0, 0.25, 0.14);
+core.position.set(0.0, 0.33, 0.14);
 scene.add(core);
 
 const ring1 = new THREE.Mesh(
@@ -580,7 +580,7 @@ const ring1 = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.85, roughness: 0.2 })
 );
 ring1.name = "InnerOrbitRing";
-ring1.position.set(0.0, 0.25, 0.14);
+ring1.position.set(0.0, 0.33, 0.14);
 ring1.rotation.x = 1.1;
 scene.add(ring1);
 
@@ -589,7 +589,7 @@ const ring2 = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.7, roughness: 0.3 })
 );
 ring2.name = "OuterOrbitRing";
-ring2.position.set(0.0, 0.25, 0.14);
+ring2.position.set(0.0, 0.33, 0.14);
 ring2.rotation.y = 0.9;
 ring2.rotation.z = 0.4;
 scene.add(ring2);
@@ -597,12 +597,12 @@ scene.add(ring2);
 const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
 const sat1 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.055), satMat);
 sat1.name = "SensorArray_A";
-sat1.position.set(0.24, 0.31, 0.14);
+sat1.position.set(0.24, 0.36, 0.14);
 scene.add(sat1);
 
 const sat2 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.055), satMat);
 sat2.name = "SensorArray_B";
-sat2.position.set(-0.23, 0.17, 0.14);
+sat2.position.set(-0.23, 0.14, 0.14);
 scene.add(sat2);`
   };
 

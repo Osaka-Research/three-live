@@ -231,7 +231,13 @@ export const contactShadowPlugin: ThreeLivePlugin = {
     gl.useProgram(ctx.prog);
     gl.uniformMatrix4fv(ctx.uMVP, false, vpMatrix);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    (gl.blendFuncSeparate || gl.blendFunc).call(
+      gl,
+      gl.SRC_ALPHA,
+      gl.ONE_MINUS_SRC_ALPHA,
+      1,
+      gl.ONE_MINUS_SRC_ALPHA,
+    );
     gl.depthMask(false);
     gl.bindVertexArray(ctx.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, ctx.vbo);
