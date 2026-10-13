@@ -367,6 +367,48 @@ async function runXRLiveTests() {
     'Phase 2.2: XRHeightfieldPhysics resolves floor bounce and sphere-to-sphere Ballpit collision',
   );
 
+  // Verify circular table surface, 3D furniture AABB collider, and enclosing room wall bounds
+  const roomBallTransform = mat4Create();
+  mat4FromRotationTranslationScale(
+    roomBallTransform,
+    [0, 0, 0, 1],
+    [0, 0.25, 0],
+    [1, 1, 1],
+  );
+  const roomBallMesh = {
+    name: 'RoomBall',
+    visible: true,
+    transform: roomBallTransform,
+    extras: {xr: {physics: 'dynamic'}},
+  };
+  physics.tableCenter = [0, 0];
+  physics.tableRadius = 0.72;
+  physics.roomBounds = {
+    minX: -1.0,
+    maxX: 1.0,
+    minZ: -1.0,
+    maxZ: 1.0,
+    ceilingY: 2.0,
+  };
+  physics.colliders = [{min: [0.3, -0.5, -0.3], max: [0.8, 0.4, 0.3]}];
+  for (let i = 0; i < 40; i++) {
+    physics.step([roomBallMesh], 1 / 60, undefined, -0.5, 0.0);
+  }
+  const roomBallPos = extractPosition(roomBallMesh.transform);
+  assert(
+    Math.abs(roomBallPos[1] - 0.1) < 0.03,
+    `Phase 2.2b: XRHeightfieldPhysics rests sphere on circular tableY=0 (got y=${roomBallPos[1].toFixed(3)})`,
+  );
+  physics.setVelocity(roomBallMesh, -15.0, 0, 0);
+  for (let i = 0; i < 20; i++) {
+    physics.step([roomBallMesh], 1 / 60, undefined, -0.5, 0.0);
+  }
+  const walledPos = extractPosition(roomBallMesh.transform);
+  assert(
+    walledPos[0] >= -0.91,
+    `Phase 2.2c: XRHeightfieldPhysics roomBounds contains sphere within minX=-1.0 wall (got x=${walledPos[0].toFixed(3)})`,
+  );
+
   // =========================================================================
   // Phase 2.3: Procedural 25-Joint Hand Gesture Classifier
   // =========================================================================

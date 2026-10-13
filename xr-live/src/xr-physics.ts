@@ -39,6 +39,19 @@ export interface PhysicsBodyState {
 export class XRHeightfieldPhysics {
   private bodies = new WeakMap<object, PhysicsBodyState>();
   public gravity: [number, number, number] = [0, -9.81, 0];
+  public tableCenter: [number, number] = [0, 0];
+  public tableRadius = 0.62;
+  public colliders: Array<{
+    min: [number, number, number];
+    max: [number, number, number];
+  }> = [];
+  public roomBounds: {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    ceilingY: number;
+  } | null = null;
 
   public getOrCreateBody(mesh: any): PhysicsBodyState {
     let state = this.bodies.get(mesh);
@@ -151,19 +164,118 @@ export class XRHeightfieldPhysics {
         }
       };
 
-      if (
-        tableY !== undefined &&
-        Math.abs(pos[0]) < 0.6 &&
-        Math.abs(pos[2] + 0.6) < 0.6 &&
-        pos[1] - body.radius < tableY &&
-        pos[1] > tableY - 0.15 &&
-        body.velocity[1] < 0
-      ) {
-        resolvePlaneBounce(tableY);
+      if (tableY !== undefined) {
+        const dxT = pos[0] - this.tableCenter[0];
+        const dzT = pos[2] - this.tableCenter[1];
+        const distT = Math.hypot(dxT, dzT);
+        if (
+          distT < this.tableRadius + body.radius * 0.4 &&
+          pos[1] - body.radius < tableY &&
+          pos[1] >= tableY - body.radius - 0.35
+        ) {
+          resolvePlaneBounce(tableY);
+        } else if (
+          pos[1] < tableY &&
+          pos[1] + body.radius > floorY &&
+          distT < this.tableRadius + body.radius &&
+          distT > 1e-4
+        ) {
+          const nx = dxT / distT;
+          const nz = dzT / distT;
+          pos[0] = this.tableCenter[0] + nx * (this.tableRadius + body.radius);
+          pos[2] = this.tableCenter[1] + nz * (this.tableRadius + body.radius);
+          const vDotN = body.velocity[0] * nx + body.velocity[2] * nz;
+          if (vDotN < 0) {
+            body.velocity[0] -= (1 + body.restitution) * vDotN * nx;
+            body.velocity[2] -= (1 + body.restitution) * vDotN * nz;
+            if (Math.abs(vDotN) > 0.2) onBounce?.(mesh, Math.abs(vDotN));
+          }
+        }
+      }
+
+      for (const box of this.colliders) {
+        const cx = Math.max(box.min[0], Math.min(box.max[0], pos[0]));
+        const cy = Math.max(box.min[1], Math.min(box.max[1], pos[1]));
+        const cz = Math.max(box.min[2], Math.min(box.max[2], pos[2]));
+        const dx = pos[0] - cx;
+        const dy = pos[1] - cy;
+        const dz = pos[2] - cz;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < body.radius) {
+          let nx = 0,
+            ny = 1,
+            nz = 0;
+          if (dist > 1e-5) {
+            nx = dx / dist;
+            ny = dy / dist;
+            nz = dz / dist;
+            pos[0] = cx + nx * body.radius;
+            pos[1] = cy + ny * body.radius;
+            pos[2] = cz + nz * body.radius;
+          } else {
+            pos[1] = box.max[1] + body.radius;
+          }
+          const vDotN =
+            body.velocity[0] * nx +
+            body.velocity[1] * ny +
+            body.velocity[2] * nz;
+          if (vDotN < 0) {
+            const j = -(1 + body.restitution) * vDotN;
+            body.velocity[0] += j * nx;
+            body.velocity[1] += j * ny;
+            body.velocity[2] += j * nz;
+            if (ny > 0.7 && Math.abs(body.velocity[1]) < 0.08) {
+              body.velocity[1] = 0;
+            }
+            if (Math.abs(vDotN) > 0.2) onBounce?.(mesh, Math.abs(vDotN));
+          }
+        }
       }
 
       if (pos[1] - body.radius < floorY) {
         resolvePlaneBounce(floorY);
+      }
+
+      if (this.roomBounds) {
+        const b = this.roomBounds;
+        if (pos[1] + body.radius > b.ceilingY) {
+          const impactSpeed = Math.abs(body.velocity[1]);
+          pos[1] = b.ceilingY - body.radius;
+          if (body.velocity[1] > 0) {
+            body.velocity[1] = -body.velocity[1] * body.restitution;
+            if (impactSpeed > 0.2) onBounce?.(mesh, impactSpeed);
+          }
+        }
+        if (pos[0] - body.radius < b.minX) {
+          const impactSpeed = Math.abs(body.velocity[0]);
+          pos[0] = b.minX + body.radius;
+          if (body.velocity[0] < 0) {
+            body.velocity[0] = -body.velocity[0] * body.restitution;
+            if (impactSpeed > 0.2) onBounce?.(mesh, impactSpeed);
+          }
+        } else if (pos[0] + body.radius > b.maxX) {
+          const impactSpeed = Math.abs(body.velocity[0]);
+          pos[0] = b.maxX - body.radius;
+          if (body.velocity[0] > 0) {
+            body.velocity[0] = -body.velocity[0] * body.restitution;
+            if (impactSpeed > 0.2) onBounce?.(mesh, impactSpeed);
+          }
+        }
+        if (pos[2] - body.radius < b.minZ) {
+          const impactSpeed = Math.abs(body.velocity[2]);
+          pos[2] = b.minZ + body.radius;
+          if (body.velocity[2] < 0) {
+            body.velocity[2] = -body.velocity[2] * body.restitution;
+            if (impactSpeed > 0.2) onBounce?.(mesh, impactSpeed);
+          }
+        } else if (pos[2] + body.radius > b.maxZ) {
+          const impactSpeed = Math.abs(body.velocity[2]);
+          pos[2] = b.maxZ - body.radius;
+          if (body.velocity[2] > 0) {
+            body.velocity[2] = -body.velocity[2] * body.restitution;
+            if (impactSpeed > 0.2) onBounce?.(mesh, impactSpeed);
+          }
+        }
       }
 
       applyMeshTRS(mesh, quat, pos, scl);

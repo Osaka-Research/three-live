@@ -104,6 +104,10 @@ export interface ThreeLiveAttributes {
   'animation-name'?: string;
   /** Automatically rotate scene around the Y-axis when user is idle. */
   'auto-rotate'?: boolean | string;
+  /** Delay in milliseconds before auto-rotation resumes after user interaction (default: 3000). */
+  'auto-rotate-delay'?: number | string;
+  /** Rate of turntable auto-rotation (e.g. "30deg", "0.5rad", "100%", default: "30deg"). */
+  'rotation-per-second'?: string;
   /** Enable one-tap Augmented Reality button overlay. */
   'ar'?: boolean | string;
   /** Ordered list of AR launch targets ('webxr', 'quick-look', 'scene-viewer'). */

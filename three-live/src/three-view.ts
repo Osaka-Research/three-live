@@ -83,6 +83,7 @@ export interface ViewOptions {
   clearColor?: [number, number, number, number];
   autoRotate?: boolean;
   autoRotateSpeed?: number;
+  autoRotateDelay?: number;
   autoStart?: boolean;
   exposure?: number;
   shadowIntensity?: number;
@@ -336,7 +337,8 @@ uniform vec4 uUvTransform;
 out vec3 vNormal,vWorldPos;
 out vec2 vUV;
 void main(){
-vNormal=normalize(uNormalMatrix*aNormal);
+vec3 rawN=uNormalMatrix*aNormal;
+vNormal=length(rawN)>1e-5?normalize(rawN):vec3(0.0);
 vec4 world=uModel*vec4(aPosition,1.0);
 vWorldPos=world.xyz;
 vec2 scaleUV=uUvTransform.zw;
@@ -426,14 +428,19 @@ return color;
 }
 
 void main(){
-vec3 N=normalize(vNormal);
+vec4 base=uBaseColor;
+if(uHasTexture==1)base*=texture(uBaseColorTexture,vUV);
+if(length(vNormal)<1e-4&&uHasTexture==1){
+vec3 unlit=base.rgb+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
+fragColor=vec4(unlit,base.a);
+return;
+}
+vec3 N=length(vNormal)<1e-4?normalize(cross(dFdx(vWorldPos),dFdy(vWorldPos))):normalize(vNormal);
 if(!gl_FrontFacing)N=-N;
 vec3 V=normalize(uCameraPos-vWorldPos);
 if(uHasNormalTexture==1){
 N=perturbNormal(N,V,vUV,uNormalTexture,uNormalScale);
 }
-vec4 base=uBaseColor;
-if(uHasTexture==1)base*=texture(uBaseColorTexture,vUV);
 
 float metallic=uMetallic;
 float roughness=uRoughness;
@@ -682,7 +689,26 @@ function bindBufferAttribute(
   const acc = gltf.accessors[accIdx];
   const bv = gltf.bufferViews[acc.bufferView];
   const offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-  const data = new Float32Array(bin, offset, acc.count * size);
+  const strideFloats =
+    bv.byteStride && bv.byteStride > size * 4 ? bv.byteStride >> 2 : size;
+  let data: Float32Array;
+  if (strideFloats === size) {
+    data = new Float32Array(bin, offset, acc.count * size);
+  } else {
+    data = new Float32Array(acc.count * size);
+    const src = new Float32Array(
+      bin,
+      bv.byteOffset || 0,
+      Math.floor(bv.byteLength / 4),
+    );
+    const startFloat = (acc.byteOffset || 0) >> 2;
+    for (let i = 0; i < acc.count; i++) {
+      const base = startFloat + i * strideFloats;
+      for (let c = 0; c < size; c++) {
+        data[i * size + c] = src[base + c];
+      }
+    }
+  }
   const vbo = gl.createBuffer()!;
   buffers.push(vbo);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
@@ -726,6 +752,7 @@ function buildGpuScene(
   gl: WebGL2RenderingContext,
   data: GLBData,
   limits: HostSceneLimits = UNBOUNDED_HOST_SCENE_LIMITS,
+  onTextureLoad?: () => void,
 ): {
   meshes: MeshGpu[];
   bounds: {
@@ -863,6 +890,7 @@ function buildGpuScene(
                   bmp,
                 );
                 gl.generateMipmap(gl.TEXTURE_2D);
+                onTextureLoad?.();
               })
               .catch(() => {});
           }
@@ -883,6 +911,7 @@ function buildGpuScene(
                 img,
               );
               gl.generateMipmap(gl.TEXTURE_2D);
+              onTextureLoad?.();
             };
             img.src = safeUri;
           } else {
@@ -1153,6 +1182,7 @@ export class ThreeView {
   private uRender!: Record<string, WebGLUniformLocation | null>;
   private uPick!: Record<string, WebGLUniformLocation | null>;
   public meshes: MeshGpu[] = [];
+  public backdropMeshes: MeshGpu[] = [];
   public bounds: any = {
     center: [0, 0, 0] as [number, number, number],
     radius: 1,
@@ -1215,8 +1245,11 @@ export class ThreeView {
   private currPhi = 0.35;
   private targetDistance = 3.0;
   private currDistance = 3.0;
-  private autoRotate = true;
-  private autoRotateSpeed = 0.25;
+  private autoRotate = false;
+  private autoRotateSpeed = Math.PI / 6;
+  private autoRotateDelay = 3000;
+  private lastInteractionTime = -Infinity;
+  public turntableRotation = 0;
 
   private isPointerDown = false;
   private interactive = true;
@@ -1309,6 +1342,12 @@ export class ThreeView {
     }
     if (this.opts.autoRotateSpeed !== undefined) {
       this.autoRotateSpeed = this.opts.autoRotateSpeed;
+    }
+    if (this.opts.autoRotateDelay !== undefined) {
+      this.autoRotateDelay = Math.max(
+        0,
+        Number(this.opts.autoRotateDelay) || 0,
+      );
     }
     if (this.opts.exposure !== undefined) {
       this.envIntensity = Math.max(0, Number(this.opts.exposure));
@@ -1474,10 +1513,13 @@ export class ThreeView {
       this.gl,
       glbData,
       limits,
+      () => this.render(),
     );
     this.disposeMeshGpuResources();
     this.meshes = meshes;
     this.bounds = bounds;
+    this.turntableRotation = 0;
+    this.updateTurntableMatrix();
     this.lights = lights;
     this.animations = animations || [];
     this.worldMatrices = worldMatrices || [];
@@ -1553,6 +1595,39 @@ export class ThreeView {
    */
   public loadModel(data: GLBData | ArrayBuffer | ArrayBufferView): void {
     this.loadGLBData(toGLBData(data));
+  }
+
+  /**
+   * Loads an optional room/environment GLB backdrop that renders behind/around
+   * the foreground `meshes` without altering `bounds` (camera framing) or exports.
+   */
+  public setBackdropGLB(
+    data: GLBData | ArrayBuffer | ArrayBufferView | null,
+    offset?: [number, number, number],
+  ): void {
+    this.disposeMeshListGpuResources(this.backdropMeshes);
+    this.backdropMeshes = [];
+    if (!data) {
+      this.render();
+      return;
+    }
+    const glbData = toGLBData(data);
+    const {meshes} = buildGpuScene(
+      this.gl,
+      glbData,
+      UNBOUNDED_HOST_SCENE_LIMITS,
+      () => this.render(),
+    );
+    if (offset) {
+      for (const m of meshes) {
+        m.transform[12] += offset[0];
+        m.transform[13] += offset[1];
+        m.transform[14] += offset[2];
+        mat3NormalFromMat4(m.normalMatrix, m.transform);
+      }
+    }
+    this.backdropMeshes = meshes;
+    this.render();
   }
 
   public setClearColor(r: number, g: number, b: number, a: number = 1.0): void {
@@ -2015,6 +2090,8 @@ export class ThreeView {
     } else {
       this.customTarget = null;
     }
+    this.turntableRotation = 0;
+    this.updateTurntableMatrix();
   }
 
   public projectPointToScreen(
@@ -2024,7 +2101,33 @@ export class ThreeView {
     const vp = mat4Create();
     mat4Multiply(vp, this.projMatrix, this.viewMatrix);
 
-    const [wx, wy, wz] = worldPos;
+    let [wx, wy, wz] = worldPos;
+    let nx = normal ? normal[0] : 0;
+    let ny = normal ? normal[1] : 0;
+    let nz = normal ? normal[2] : 0;
+    const rm = this.modelRootMatrix;
+    if (rm) {
+      wx =
+        rm[0] * worldPos[0] +
+        rm[4] * worldPos[1] +
+        rm[8] * worldPos[2] +
+        rm[12];
+      wy =
+        rm[1] * worldPos[0] +
+        rm[5] * worldPos[1] +
+        rm[9] * worldPos[2] +
+        rm[13];
+      wz =
+        rm[2] * worldPos[0] +
+        rm[6] * worldPos[1] +
+        rm[10] * worldPos[2] +
+        rm[14];
+      if (normal) {
+        nx = rm[0] * normal[0] + rm[4] * normal[1] + rm[8] * normal[2];
+        ny = rm[1] * normal[0] + rm[5] * normal[1] + rm[9] * normal[2];
+        nz = rm[2] * normal[0] + rm[6] * normal[1] + rm[10] * normal[2];
+      }
+    }
     const clipX = vp[0] * wx + vp[4] * wy + vp[8] * wz + vp[12];
     const clipY = vp[1] * wx + vp[5] * wy + vp[9] * wz + vp[13];
     const clipZ = vp[2] * wx + vp[6] * wy + vp[10] * wz + vp[14];
@@ -2065,15 +2168,9 @@ export class ThreeView {
         c[2] +
         this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
 
-      const eyeToPoint = [
-        worldPos[0] - eyeX,
-        worldPos[1] - eyeY,
-        worldPos[2] - eyeZ,
-      ];
+      const eyeToPoint = [wx - eyeX, wy - eyeY, wz - eyeZ];
       const dot =
-        normal[0] * eyeToPoint[0] +
-        normal[1] * eyeToPoint[1] +
-        normal[2] * eyeToPoint[2];
+        nx * eyeToPoint[0] + ny * eyeToPoint[1] + nz * eyeToPoint[2];
       if (dot > 0.05) {
         visible = false;
       }
@@ -2097,6 +2194,8 @@ export class ThreeView {
     this.boundPointerDown = (e: PointerEvent) => {
       if (!this.interactive) return;
       this.isPointerDown = true;
+      this.lastInteractionTime =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.lastPointerX = e.clientX;
       this.lastPointerY = e.clientY;
       this.totalDragDist = 0;
@@ -2109,6 +2208,8 @@ export class ThreeView {
 
     this.boundPointerMove = (e: PointerEvent) => {
       if (!this.isPointerDown || !this.interactive) return;
+      this.lastInteractionTime =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
       const prev = this.activePointers.get(e.pointerId) || {
         x: this.lastPointerX,
         y: this.lastPointerY,
@@ -2149,6 +2250,8 @@ export class ThreeView {
     c.addEventListener('pointermove', this.boundPointerMove);
 
     this.boundPointerUp = (e: PointerEvent) => {
+      this.lastInteractionTime =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.activePointers.delete(e.pointerId);
       if (this.activePointers.size === 0) {
         this.isPointerDown = false;
@@ -2177,6 +2280,8 @@ export class ThreeView {
     this.boundWheel = (e: WheelEvent) => {
       if (!this.interactive) return;
       e.preventDefault();
+      this.lastInteractionTime =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
       const factor = Math.exp(e.deltaY * 0.001);
       this.targetDistance = this.clampDistance(this.targetDistance * factor);
     };
@@ -2211,36 +2316,45 @@ export class ThreeView {
 
     this.boundKeyDown = (e: KeyboardEvent) => {
       if (!this.interactive) return;
+      const now =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
       switch (e.key) {
         case 'ArrowLeft':
+          this.lastInteractionTime = now;
           this.targetTheta = this.clampTheta(this.targetTheta - 0.1);
           e.preventDefault();
           break;
         case 'ArrowRight':
+          this.lastInteractionTime = now;
           this.targetTheta = this.clampTheta(this.targetTheta + 0.1);
           e.preventDefault();
           break;
         case 'ArrowUp':
+          this.lastInteractionTime = now;
           this.targetPhi = this.clampPhi(this.targetPhi + 0.08);
           e.preventDefault();
           break;
         case 'ArrowDown':
+          this.lastInteractionTime = now;
           this.targetPhi = this.clampPhi(this.targetPhi - 0.08);
           e.preventDefault();
           break;
         case '+':
         case '=': {
+          this.lastInteractionTime = now;
           this.targetDistance = this.clampDistance(this.targetDistance * 0.9);
           e.preventDefault();
           break;
         }
         case '-':
         case '_': {
+          this.lastInteractionTime = now;
           this.targetDistance = this.clampDistance(this.targetDistance * 1.1);
           e.preventDefault();
           break;
         }
         case 'Home':
+          this.lastInteractionTime = now;
           this.resetCamera();
           e.preventDefault();
           break;
@@ -2572,8 +2686,54 @@ export class ThreeView {
     this.autoRotate = enabled;
   }
 
+  public getAutoRotate(): boolean {
+    return this.autoRotate;
+  }
+
   public setAutoRotateSpeed(speed: number): void {
     this.autoRotateSpeed = speed;
+  }
+
+  public getAutoRotateSpeed(): number {
+    return this.autoRotateSpeed;
+  }
+
+  public setAutoRotateDelay(ms: number): void {
+    this.autoRotateDelay = Math.max(0, Number(ms) || 0);
+  }
+
+  public getAutoRotateDelay(): number {
+    return this.autoRotateDelay;
+  }
+
+  public resetTurntableRotation(theta = 0): void {
+    this.turntableRotation = Number(theta) || 0;
+    this.updateTurntableMatrix();
+    this.render();
+  }
+
+  private updateTurntableMatrix(): void {
+    const cosA = Math.cos(this.turntableRotation);
+    const sinA = Math.sin(this.turntableRotation);
+    const cx = this.bounds.center[0];
+    const cz = this.bounds.center[2];
+    const m = this.modelRootMatrix;
+    m[0] = cosA;
+    m[1] = 0;
+    m[2] = -sinA;
+    m[3] = 0;
+    m[4] = 0;
+    m[5] = 1;
+    m[6] = 0;
+    m[7] = 0;
+    m[8] = sinA;
+    m[9] = 0;
+    m[10] = cosA;
+    m[11] = 0;
+    m[12] = cx - (cosA * cx + sinA * cz);
+    m[13] = 0;
+    m[14] = cz - (-sinA * cx + cosA * cz);
+    m[15] = 1;
   }
 
   public setVisible(visible: boolean): void {
@@ -2585,21 +2745,29 @@ export class ThreeView {
       plugin.onUpdate?.(this, dt);
     }
 
-    if (!this.isPointerDown && this.autoRotate) {
-      this.targetTheta += this.autoRotateSpeed * dt;
+    const now =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (
+      !this.isPointerDown &&
+      this.autoRotate &&
+      now - this.lastInteractionTime >= this.autoRotateDelay
+    ) {
+      this.turntableRotation += this.autoRotateSpeed * dt;
+      this.updateTurntableMatrix();
+      for (const plugin of registeredPlugins) {
+        plugin.onCameraChange?.(this, this.container);
+      }
     }
     this.currTheta += (this.targetTheta - this.currTheta) * 0.12;
     this.currPhi += (this.targetPhi - this.currPhi) * 0.12;
     this.currDistance += (this.targetDistance - this.currDistance) * 0.12;
 
     const aspect = (this.canvas.width || 1) / (this.canvas.height || 1);
-    mat4Perspective(
-      this.projMatrix,
-      this.fov,
-      aspect,
-      0.1,
-      this.bounds.radius * 20,
-    );
+    const farPlane =
+      this.backdropMeshes.length > 0
+        ? Math.max(this.bounds.radius * 20, 120)
+        : this.bounds.radius * 20;
+    mat4Perspective(this.projMatrix, this.fov, aspect, 0.1, farPlane);
 
     const c = this.customTarget || this.bounds.center;
     const eyeX =
@@ -2773,17 +2941,27 @@ export class ThreeView {
       );
     }
 
-    if (this.meshes.length === 0) return;
+    if (this.meshes.length === 0 && this.backdropMeshes.length === 0) return;
 
     const currentEye = xrOverride?.eye || 'none';
     let hasTransmissive = false;
+    const numBackdrop = this.backdropMeshes.length;
+    const renderList =
+      numBackdrop > 0
+        ? [...this.backdropMeshes, ...this.meshes]
+        : this.meshes;
     const drawPass = (transmissivePass: boolean) => {
-      for (const mesh of this.meshes) {
+      for (let i = 0; i < renderList.length; i++) {
+        const mesh = renderList[i];
         if ((mesh as any).visible === false) continue;
         const isSelected =
           this.selectedMeshName !== '' && mesh.name === this.selectedMeshName;
 
-        mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);
+        if (i < numBackdrop) {
+          this.modelMatrix.set(mesh.transform);
+        } else {
+          mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);
+        }
         mat4Multiply(this.mvpMatrix, vp, this.modelMatrix);
         mat3NormalFromMat4(mesh.normalMatrix, this.modelMatrix);
 
@@ -2940,9 +3118,9 @@ export class ThreeView {
     }
   }
 
-  private disposeMeshGpuResources(): void {
+  private disposeMeshListGpuResources(list: MeshGpu[]): void {
     const gl = this.gl;
-    for (const mesh of this.meshes) {
+    for (const mesh of list) {
       for (const prim of mesh.primitives) {
         if (prim.vao) {
           gl.deleteVertexArray(prim.vao);
@@ -2969,12 +3147,18 @@ export class ThreeView {
         }
       }
     }
+  }
+
+  private disposeMeshGpuResources(): void {
+    this.disposeMeshListGpuResources(this.meshes);
     this.meshes = [];
   }
 
   disposeGpuResources(): void {
     const gl = this.gl;
     this.disposeMeshGpuResources();
+    this.disposeMeshListGpuResources(this.backdropMeshes);
+    this.backdropMeshes = [];
 
     for (const plugin of registeredPlugins) {
       plugin.onDestroy?.(gl, this);

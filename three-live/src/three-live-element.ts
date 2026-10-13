@@ -156,6 +156,8 @@ export class ThreeLiveElement extends BaseElement {
     'autoplay',
     'animation-name',
     'auto-rotate',
+    'auto-rotate-delay',
+    'rotation-per-second',
   ];
 
   private static get arProvider(): ARProvider | undefined {
@@ -474,6 +476,18 @@ export class ThreeLiveElement extends BaseElement {
         }
         break;
 
+      case 'auto-rotate-delay':
+        if (this.viewer) {
+          this.viewer.setAutoRotateDelay(this.autoRotateDelay);
+        }
+        break;
+
+      case 'rotation-per-second':
+        if (this.viewer) {
+          this.viewer.setAutoRotateSpeed(this.parseRotationPerSecond(newVal));
+        }
+        break;
+
       case 'ar':
         this.updateARButtonVisibility();
         break;
@@ -633,6 +647,24 @@ export class ThreeLiveElement extends BaseElement {
     this.setBoolAttr('auto-rotate', val);
   }
 
+  get autoRotateDelay(): number {
+    return this.getFloatAttr('auto-rotate-delay', 3000);
+  }
+  set autoRotateDelay(val: number) {
+    this.setAttribute('auto-rotate-delay', String(val));
+  }
+
+  get rotationPerSecond(): string {
+    return this.getAttr('rotation-per-second') || '30deg';
+  }
+  set rotationPerSecond(val: string | null) {
+    this.setAttr('rotation-per-second', val);
+  }
+
+  get turntableRotation(): number {
+    return this.viewer ? this.viewer.turntableRotation : 0;
+  }
+
   get ar(): boolean {
     return this.hasAttribute('ar');
   }
@@ -744,6 +776,10 @@ export class ThreeLiveElement extends BaseElement {
 
   public resetCamera(): void {
     this.viewer?.resetCamera();
+  }
+
+  public resetTurntableRotation(theta = 0): void {
+    this.viewer?.resetTurntableRotation(theta);
   }
 
   public setCamera(
@@ -1155,6 +1191,10 @@ export class ThreeLiveElement extends BaseElement {
 
     this.viewer = new ThreeView(this, this.canvas, {
       autoRotate,
+      autoRotateDelay: this.autoRotateDelay,
+      autoRotateSpeed: this.parseRotationPerSecond(
+        this.getAttribute('rotation-per-second'),
+      ),
       exposure,
       shadowIntensity: this.shadowIntensity,
       shadowSoftness: this.shadowSoftness,
@@ -1455,6 +1495,16 @@ export class ThreeLiveElement extends BaseElement {
       ? (parseFloat(fovStr) * 180) / Math.PI
       : parseFloat(fovStr.replace(/deg$/, ''));
     return isNaN(fov) ? undefined : fov;
+  }
+
+  private parseRotationPerSecond(rpsStr: string | null): number {
+    if (!rpsStr) return Math.PI / 6;
+    const s = rpsStr.trim();
+    const num = parseFloat(s);
+    if (isNaN(num)) return Math.PI / 6;
+    if (s.endsWith('rad')) return num;
+    if (s.endsWith('%')) return (num / 100) * Math.PI * 2;
+    return (num * Math.PI) / 180;
   }
 
   private applyCameraTarget(targetStr: string | null): void {

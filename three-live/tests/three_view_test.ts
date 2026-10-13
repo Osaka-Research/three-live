@@ -888,6 +888,62 @@ async function runThreeViewTests() {
     `raycastFromScreenPoint hits ViewerTestBox at center of screen: meshName=${hitCenter?.meshName}`,
   );
 
+  // 17. <model-viewer>-compatible Turntable Auto-Rotate (turntableRotation, resetTurntableRotation, autoRotateDelay)
+  const defaultView = new ThreeView(mockCanvas, mockCanvas);
+  assert(
+    defaultView.getAutoRotate() === false,
+    'ThreeView defaults autoRotate to false (matching <model-viewer>)',
+  );
+  assert(
+    Math.abs(defaultView.getAutoRotateSpeed() - Math.PI / 6) < 1e-5,
+    'ThreeView defaults autoRotateSpeed to 30deg/s (Math.PI / 6 rad/s)',
+  );
+  assert(
+    defaultView.getAutoRotateDelay() === 3000,
+    'ThreeView defaults autoRotateDelay to 3000ms',
+  );
+
+  viewInstance.setAutoRotate(true);
+  viewInstance.setAutoRotateSpeed(Math.PI / 2); // 90 deg/s
+  viewInstance.setAutoRotateDelay(1000);
+  const thetaBeforeSpin = viewInstance.getCameraOrbit().theta;
+  (viewInstance as any).update(1.0); // 1 second step -> +PI/2 rad turntable rotation
+  assert(
+    Math.abs(viewInstance.turntableRotation - Math.PI / 2) < 1e-4,
+    `auto-rotate increments turntableRotation by speed*dt: got ${viewInstance.turntableRotation.toFixed(4)}`,
+  );
+  assert(
+    Math.abs(viewInstance.getCameraOrbit().theta - thetaBeforeSpin) < 1e-4,
+    'auto-rotate rotates model on turntable without orbiting camera theta',
+  );
+  assert(
+    Math.abs(viewInstance.modelRootMatrix[0] - Math.cos(Math.PI / 2)) < 1e-4 &&
+      Math.abs(viewInstance.modelRootMatrix[8] - Math.sin(Math.PI / 2)) < 1e-4,
+    'turntableRotation updates modelRootMatrix yaw around bounds.center',
+  );
+
+  // Verify autoRotateDelay pauses turntable rotation after user interaction
+  (viewInstance as any).lastInteractionTime =
+    typeof performance !== 'undefined' ? performance.now() : Date.now();
+  (viewInstance as any).update(0.5);
+  assert(
+    Math.abs(viewInstance.turntableRotation - Math.PI / 2) < 1e-4,
+    'auto-rotate pauses while within autoRotateDelay window after user interaction',
+  );
+
+  viewInstance.resetTurntableRotation(0.25);
+  assert(
+    Math.abs(viewInstance.turntableRotation - 0.25) < 1e-5 &&
+      Math.abs(viewInstance.modelRootMatrix[0] - Math.cos(0.25)) < 1e-4,
+    'resetTurntableRotation(theta) sets turntableRotation and updates modelRootMatrix',
+  );
+  viewInstance.resetTurntableRotation();
+  assert(
+    viewInstance.turntableRotation === 0 &&
+      Math.abs(viewInstance.modelRootMatrix[0] - 1.0) < 1e-5,
+    'resetTurntableRotation() resets turntableRotation to 0 and modelRootMatrix to identity',
+  );
+
   // P1-1 (WEB-09): glTF images[].uri scheme allowlist
   assert(
     sanitizeTextureUri('https://example.com/tex.png') ===

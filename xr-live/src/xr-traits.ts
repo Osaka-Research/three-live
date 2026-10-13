@@ -156,7 +156,25 @@ export function quatSlerp(
 }
 
 export function getMeshXRTraits(mesh: any): XRMeshTraits | undefined {
+  if (mesh?.extras?.xr && mesh?.userData?.xr && mesh.extras.xr !== mesh.userData.xr) {
+    Object.assign(mesh.extras.xr, mesh.userData.xr);
+  }
   return mesh?.extras?.xr || mesh?.userData?.xr;
+}
+
+export function computeMeshBottomOffset(
+  mesh: any,
+  scl: [number, number, number],
+): number {
+  const prim = mesh?.primitives?.[0];
+  if (prim?.positions && prim.positions.length >= 3) {
+    let minY = 0;
+    for (let i = 1; i < prim.positions.length; i += 3) {
+      if (prim.positions[i] < minY) minY = prim.positions[i];
+    }
+    if (minY < -0.001) return -minY * scl[1];
+  }
+  return 0;
 }
 
 export function applyMeshTRS(
@@ -499,18 +517,22 @@ export class XRTraitSystem {
 
       // Plane surface anchoring ('floor', 'table', 'horizontal')
       if (traits.anchor && !traits.physics) {
+        const bottomOffset = computeMeshBottomOffset(mesh, scl);
         if (traits.anchor === 'floor') {
-          if (Math.abs(pos[1] - floorY) > 1e-3) {
-            pos[1] = floorY;
+          const restY = floorY + bottomOffset;
+          if (Math.abs(pos[1] - restY) > 1e-3) {
+            pos[1] = restY;
             modified = true;
           }
         } else if (
           traits.anchor === 'table' ||
           traits.anchor === 'horizontal'
         ) {
-          const snapY = Math.abs(pos[1] - tableY) < 0.4 ? tableY : floorY;
-          if (Math.abs(pos[1] - snapY) > 1e-3) {
-            pos[1] = snapY;
+          const basePlaneY =
+            Math.abs(pos[1] - bottomOffset - tableY) < 0.45 ? tableY : floorY;
+          const restY = basePlaneY + bottomOffset;
+          if (Math.abs(pos[1] - restY) > 1e-3) {
+            pos[1] = restY;
             modified = true;
           }
         }

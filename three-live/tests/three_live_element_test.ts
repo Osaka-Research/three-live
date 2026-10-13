@@ -115,6 +115,14 @@ async function runElementTests() {
     'observedAttributes contains auto-rotate',
   );
   assert(
+    ThreeLiveElement.observedAttributes.includes('auto-rotate-delay'),
+    'observedAttributes contains auto-rotate-delay',
+  );
+  assert(
+    ThreeLiveElement.observedAttributes.includes('rotation-per-second'),
+    'observedAttributes contains rotation-per-second',
+  );
+  assert(
     typeof ThreeLiveElement.registerDecoder === 'function',
     'ThreeLiveElement has static registerDecoder method',
   );
@@ -244,6 +252,26 @@ async function runElementTests() {
   instance.autoRotate = true;
   assert(attributes.has('auto-rotate'), 'autoRotate setter adds attribute');
   assert(instance.autoRotate === true, 'autoRotate getter returns true');
+  assert(
+    instance.autoRotateDelay === 3000,
+    'autoRotateDelay defaults to 3000ms',
+  );
+  instance.autoRotateDelay = 1500;
+  assert(
+    attributes.get('auto-rotate-delay') === '1500' &&
+      instance.autoRotateDelay === 1500,
+    'autoRotateDelay setter and getter sync with auto-rotate-delay attribute',
+  );
+  assert(
+    instance.rotationPerSecond === '30deg',
+    'rotationPerSecond defaults to "30deg"',
+  );
+  instance.rotationPerSecond = '60deg';
+  assert(
+    attributes.get('rotation-per-second') === '60deg' &&
+      instance.rotationPerSecond === '60deg',
+    'rotationPerSecond setter and getter sync with rotation-per-second attribute',
+  );
 
   instance.ar = true;
   assert(attributes.has('ar'), 'ar setter adds attribute');
@@ -786,6 +814,23 @@ async function runElementTests() {
       hitRes.position.toString() === '1m 2m 3m' &&
       hitRes.normal.toString() === '0m 1m 0m',
     'instance.positionAndNormalFromPoint returns position and normal with model-viewer toString() formatting',
+  );
+
+  // Test turntableRotation and resetTurntableRotation delegation
+  let resetTheta: number | undefined;
+  (instance as any).viewer.turntableRotation = 1.25;
+  (instance as any).viewer.resetTurntableRotation = (theta = 0) => {
+    resetTheta = theta;
+    (instance as any).viewer.turntableRotation = theta;
+  };
+  assert(
+    Math.abs(instance.turntableRotation - 1.25) < 1e-5,
+    'instance.turntableRotation reads viewer.turntableRotation',
+  );
+  instance.resetTurntableRotation(0.5);
+  assert(
+    resetTheta === 0.5 && Math.abs(instance.turntableRotation - 0.5) < 1e-5,
+    'instance.resetTurntableRotation(theta) delegates to viewer.resetTurntableRotation',
   );
 
   console.log(
