@@ -361,7 +361,7 @@ limitations under the License.
           <button id="btn-artifact" class="primary">Artifact</button>
           <button id="btn-torus">Torus Knot</button>
           <button id="btn-crystal">Crystal Gem</button>
-          <button id="btn-spheres">Spheres</button>
+          <button id="btn-spheres">🏠 XR Living Room</button>
         </div>
       </div>
 
@@ -483,7 +483,7 @@ scene.add(base);
 </div>
 
 <script>
-  const ThreeLiveBundle = Object.assign({}, window.THREE || {}, window.ThreeLive || window.ThreeLiveBundle || {});
+  const ThreeLiveLib = Object.assign({}, window.THREE || {}, window.ThreeLive || {}, window.ThreeLiveBundle || {});
   const el = document.getElementById("viewer");
   const cameraBadge = document.getElementById("camera-badge");
   const meshBadge = document.getElementById("mesh-badge");
@@ -565,19 +565,70 @@ const mesh = new THREE.Mesh(
 mesh.name = "EmeraldGem";
 scene.add(mesh);`,
 
-    spheres: `// Five Orbital Spheres
-const colors = [0xef4444, 0xf59e0b, 0x10b981, 0x3b82f6, 0x8b5cf6];
-for (let i = 0; i < 5; i++) {
-  const angle = (i / 5) * Math.PI * 2;
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.45, 24, 16),
-    new THREE.MeshStandardMaterial({ color: colors[i], metalness: 0.9, roughness: 0.2 })
-  );
-  sphere.name = \`Sphere_\${i + 1}\`;
-  sphere.position.set(Math.cos(angle) * 1.3, Math.sin(angle) * 0.4, Math.sin(angle) * 1.3);
-  scene.add(sphere);
-}`
+    spheres: `// Tabletop Quantum Artifact in XR Blocks Living Room
+const core = new THREE.Mesh(
+  new THREE.SphereGeometry(0.14, 32, 24),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
+);
+core.name = "QuantumCore";
+core.position.set(0.0, 0.38, 0.14);
+scene.add(core);
+
+const ring1 = new THREE.Mesh(
+  new THREE.TorusGeometry(0.23, 0.016, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.85, roughness: 0.2 })
+);
+ring1.name = "InnerOrbitRing";
+ring1.position.set(0.0, 0.38, 0.14);
+ring1.rotation.x = 1.1;
+scene.add(ring1);
+
+const ring2 = new THREE.Mesh(
+  new THREE.TorusGeometry(0.30, 0.013, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.7, roughness: 0.3 })
+);
+ring2.name = "OuterOrbitRing";
+ring2.position.set(0.0, 0.38, 0.14);
+ring2.rotation.y = 0.9;
+ring2.rotation.z = 0.4;
+scene.add(ring2);
+
+const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
+const sat1 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.055), satMat);
+sat1.name = "SensorArray_A";
+sat1.position.set(0.24, 0.46, 0.14);
+scene.add(sat1);
+
+const sat2 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.055), satMat);
+sat2.name = "SensorArray_B";
+sat2.position.set(-0.23, 0.30, 0.14);
+scene.add(sat2);`
   };
+
+  const XRBLOCKS_ROOM_CDN =
+    "https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/simulator/scenes/XREmulatorsceneV5_livingRoom.glb";
+  let cachedRoomGLB = null;
+
+  async function ensureRoomGLB() {
+    if (cachedRoomGLB) return cachedRoomGLB;
+    const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
+    const urls = isCorpHost
+      ? ["./livingRoom.glb", "../livingRoom.glb", XRBLOCKS_ROOM_CDN]
+      : [XRBLOCKS_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf && buf.byteLength > 1000 && new Uint32Array(buf, 0, 1)[0] === 0x46546C67) {
+            cachedRoomGLB = buf;
+            return buf;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
 
   async function selectPreset(presetId) {
     const presetButtons = {
@@ -602,6 +653,24 @@ for (let i = 0; i < 5; i++) {
       codeEditor.value = code;
       try {
         currentGLBBuffer = await el.executeScript(code);
+        if (presetId === "spheres") {
+          arStatus.textContent = "Loading XR Blocks Living Room...";
+          const roomBuf = await ensureRoomGLB();
+          if (roomBuf && el.viewer) {
+            el.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
+            el.viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
+            el.viewer.setTarget(0.0, 0.24, 0.10);
+            el.viewer.setInitialCamera(-150, 18, 1.65);
+            arStatus.textContent = "XR Blocks Living Room loaded!";
+          }
+        } else if (el.viewer) {
+          el.viewer.setBackdropGLB(null);
+          el.viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 25.0 });
+          el.viewer.customTarget = null;
+          el.viewer.customDistance = false;
+          el.viewer.setInitialCamera(34, 20, el.viewer.bounds.radius * 2.5);
+          arStatus.textContent = "";
+        }
       } catch (err) {
         if (arStatus) arStatus.textContent = err.message;
       }
@@ -691,7 +760,7 @@ for (let i = 0; i < 5; i++) {
   document.getElementById("btn-dl-usdz").addEventListener("click", () => {
     if (!currentGLBBuffer) return;
     try {
-      const usdzBlob = ThreeLiveBundle.createUSDZBlob(currentGLBBuffer);
+      const usdzBlob = ThreeLiveLib.createUSDZBlob(currentGLBBuffer);
       const url = URL.createObjectURL(usdzBlob);
       const a = document.createElement("a");
       a.href = url;

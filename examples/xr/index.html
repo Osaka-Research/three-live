@@ -847,6 +847,7 @@ limitations under the License.
         <div class="hud-card">
           <span class="stat-label">Hand Gesture:</span>
           <span class="gesture-badge" id="hud-gesture">open-palm</span>
+          <button class="action-btn" id="btn-room-toggle" style="padding: 5px 9px; font-size: 11px;" onclick="toggleXRBlocksRoom()">🏠 XR Room: OFF</button>
           <button class="action-btn" id="btn-stereo" style="display:none; padding: 5px 9px; font-size: 11px;" onclick="toggleStereoSBS()">Stereo SBS: OFF</button>
           <button class="action-btn primary" id="btn-enter-xr" style="padding: 5px 10px; font-size: 11px;" onclick="toggleXRSession()">Enter XR</button>
         </div>
@@ -968,51 +969,51 @@ for (let i = 0; i < 14; i++) {
 
 return scene;`,
 
-      workbench: `// Spatial Workbench: 6DoF Grab, Scale & Capsule Billboard
+      workbench: `// Spatial Workbench in XR Blocks Living Room: 6DoF Grab, Scale & Billboard
 const scene = new THREE.Scene();
 
-// Workbench Pedestal
+// Tabletop Anchor Pad (shown when room backdrop is off)
 const base = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.9, 1.0, 0.08, 36),
+  new THREE.CylinderGeometry(0.65, 0.55, 0.08, 36),
   new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.5 })
 );
 base.name = 'Workbench_Pedestal';
-base.position.set(0, -0.65, 0);
+base.position.set(0, -0.25, 0);
 scene.add(base);
 
-// 1. Grabbable & Scalable Hero Torus Knot Artifact
+// 1. Grabbable & Scalable Hero Torus Knot Artifact (rests on open coffee table surface)
 const artifact = new THREE.Mesh(
-  new THREE.TorusKnotGeometry(0.28, 0.085, 96, 20),
-  new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.15, metalness: 0.75 })
+  new THREE.TorusKnotGeometry(0.12, 0.036, 96, 20),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.15, metalness: 0.85 })
 );
 artifact.name = 'Torus_Knot_Artifact';
-artifact.position.set(-0.45, 0.1, 0);
+artifact.position.set(-0.14, 0.18, -0.14);
 artifact.userData.xr = {
   traits: ['grab', 'scale'],
   anchor: 'table'
 };
 scene.add(artifact);
 
-// 2. Capsule Billboard Indicator Gem (TurnToFace Y-axis locked)
+// 2. Capsule Billboard Indicator Gem (rests on open tabletop)
 const gem = new THREE.Mesh(
-  new THREE.CylinderGeometry(0, 0.24, 0.42, 6),
-  new THREE.MeshStandardMaterial({ color: 0xa855f7, roughness: 0.2, metalness: 0.4 })
+  new THREE.CylinderGeometry(0, 0.11, 0.22, 6),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, roughness: 0.2, metalness: 0.5 })
 );
 gem.name = 'Billboard_Gem';
-gem.position.set(0.45, 0.15, 0);
+gem.position.set(0.24, 0.15, 0.16);
 gem.userData.xr = {
   traits: ['grab', 'billboard'],
   anchor: 'table'
 };
 scene.add(gem);
 
-// 3. Floating Dynamic Moon Orbiter
+// 3. Floating Dynamic Moon Orbiter (bounces on coffee table)
 const orb = new THREE.Mesh(
-  new THREE.SphereGeometry(0.14, 24, 24),
-  new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.2, metalness: 0.3 })
+  new THREE.SphereGeometry(0.085, 24, 24),
+  new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.2, metalness: 0.35 })
 );
 orb.name = 'Dynamic_Orbiter';
-orb.position.set(0, 0.55, 0);
+orb.position.set(-0.04, 0.36, 0.20);
 orb.userData.xr = {
   physics: 'dynamic',
   traits: ['grab', 'scale']
@@ -1050,6 +1051,111 @@ return scene;`
     }
 
     let lastCompiledGLB = null;
+    const XRBLOCKS_ROOM_CDN =
+      'https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/simulator/scenes/XREmulatorsceneV5_livingRoom.glb';
+    let cachedRoomGLB = null;
+    let xrRoomEnabled = false;
+
+    async function ensureRoomGLB() {
+      if (cachedRoomGLB) return cachedRoomGLB;
+      const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
+      const urls = isCorpHost
+        ? ['./livingRoom.glb', '../livingRoom.glb', XRBLOCKS_ROOM_CDN]
+        : [XRBLOCKS_ROOM_CDN, './livingRoom.glb', '../livingRoom.glb'];
+      for (const url of urls) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            if (buf && buf.byteLength > 1000 && new Uint32Array(buf, 0, 1)[0] === 0x46546c67) {
+              cachedRoomGLB = buf;
+              return buf;
+            }
+          }
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    const LIVING_ROOM_COLLIDERS = [
+      // Book on coffee table
+      { min: [0.04, -0.02, -0.34], max: [0.36, 0.034, -0.04] },
+      // Ceramic mug on coffee table
+      { min: [-0.40, -0.02, 0.04], max: [-0.28, 0.09, 0.16] },
+      // Couch seat & backrest
+      { min: [-1.21, -0.48, 0.83], max: [1.39, -0.04, 1.84] },
+      { min: [-1.21, -0.04, 1.45], max: [1.39, 0.34, 1.84] },
+      // Green pouf ottoman
+      { min: [0.61, -0.48, -0.11], max: [1.42, -0.11, 0.69] },
+      // Side table
+      { min: [1.40, -0.48, 0.70], max: [1.82, -0.03, 1.12] },
+      // Green armchair
+      { min: [-2.12, -0.48, -0.85], max: [-1.05, 0.12, 0.25] },
+      // TV console cabinet along front wall
+      { min: [-1.45, -0.48, -2.02], max: [1.45, 0.08, -1.52] }
+    ];
+
+    const LIVING_ROOM_BOUNDS = {
+      minX: -2.28,
+      maxX: 1.96,
+      minZ: -1.98,
+      maxZ: 1.90,
+      ceilingY: 2.18
+    };
+
+    const DEFAULT_ROOM_BOUNDS = {
+      minX: -2.20,
+      maxX: 2.20,
+      minZ: -2.20,
+      maxZ: 2.20,
+      ceilingY: 2.40
+    };
+
+    async function syncXRBlocksRoom(enable) {
+      xrRoomEnabled = Boolean(enable);
+      const btn = document.getElementById('btn-room-toggle');
+      if (btn) {
+        btn.textContent = '🏠 XR Room: ' + (xrRoomEnabled ? 'ON' : 'OFF');
+        btn.classList.toggle('primary', xrRoomEnabled);
+      }
+      if (xrEl.simulator && xrEl.simulator.room) {
+        xrEl.simulator.room.floorY = xrRoomEnabled ? -0.48 : -0.80;
+        xrEl.simulator.room.tableY = xrRoomEnabled ? -0.005 : -0.20;
+      }
+      if (xrEl.physics) {
+        xrEl.physics.colliders = xrRoomEnabled ? LIVING_ROOM_COLLIDERS : [];
+        xrEl.physics.roomBounds = xrRoomEnabled ? LIVING_ROOM_BOUNDS : DEFAULT_ROOM_BOUNDS;
+      }
+      const viewer = xrEl.viewer;
+      if (!viewer) return;
+      if (xrRoomEnabled) {
+        const roomBuf = await ensureRoomGLB();
+        if (roomBuf && xrRoomEnabled) {
+          viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
+          viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
+          viewer.setTarget(0.02, 0.18, 0.08);
+          viewer.setInitialCamera(-150, 18, 1.75);
+        }
+      } else {
+        viewer.setBackdropGLB(null);
+        viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 20.0 });
+        viewer.customTarget = null;
+        viewer.customDistance = false;
+        viewer.setInitialCamera(34, 20, viewer.bounds.radius * 2.5);
+      }
+      if (Array.isArray(viewer.meshes)) {
+        viewer.meshes.forEach((m) => {
+          if (m.name === 'Room_Floor' || m.name === 'Pedestal_Table' || m.name === 'Workbench_Pedestal') {
+            m.visible = !xrRoomEnabled;
+          }
+        });
+      }
+    }
+
+    async function toggleXRBlocksRoom() {
+      await syncXRBlocksRoom(!xrRoomEnabled);
+      setToast('XR Blocks Living Room: ' + (xrRoomEnabled ? 'ON' : 'OFF'));
+    }
 
     async function switchMode(mode) {
       currentMode = mode;
@@ -1067,7 +1173,9 @@ return scene;`
 
       editorEl.value = PRESET_SCRIPTS[mode];
       setToast('Switched to ' + titles[mode]);
+      xrRoomEnabled = (mode === 'workbench');
       await applyEditorScript();
+      await syncXRBlocksRoom(xrRoomEnabled);
 
       if (mode === 'perception') {
         setTimeout(() => runCaptureFrame(), 250);
@@ -1079,14 +1187,21 @@ return scene;`
         const code = editorEl.value;
         lastCompiledGLB = await xrEl.executeScript(code);
         if (xrEl.simulator && xrEl.simulator.room) {
-          xrEl.simulator.room.floorY = -0.80;
-          xrEl.simulator.room.tableY = -0.20;
+          xrEl.simulator.room.floorY = xrRoomEnabled ? -0.48 : -0.80;
+          xrEl.simulator.room.tableY = xrRoomEnabled ? -0.005 : -0.20;
+        }
+        if (xrEl.physics) {
+          xrEl.physics.colliders = xrRoomEnabled ? LIVING_ROOM_COLLIDERS : [];
+          xrEl.physics.roomBounds = xrRoomEnabled ? LIVING_ROOM_BOUNDS : DEFAULT_ROOM_BOUNDS;
         }
         bounceCount = 0;
         updatePhysicsParams();
         const viewer = xrEl.viewer;
         if (viewer && Array.isArray(viewer.meshes)) {
           viewer.meshes.forEach((m, i) => {
+            if (m.name === 'Room_Floor' || m.name === 'Pedestal_Table' || m.name === 'Workbench_Pedestal') {
+              m.visible = !xrRoomEnabled;
+            }
             const traits = m?.extras?.xr || m?.userData?.xr;
             if (traits?.physics === 'dynamic' && xrEl.physics?.setVelocity) {
               const angle = (i / 14) * Math.PI * 2;
@@ -1341,8 +1456,12 @@ return scene;`
       const viewer = xrEl.viewer;
       if (viewer && Array.isArray(viewer.meshes)) {
         if (xrEl.simulator && xrEl.simulator.room) {
-          xrEl.simulator.room.floorY = -0.80;
-          xrEl.simulator.room.tableY = -0.20;
+          xrEl.simulator.room.floorY = xrRoomEnabled ? -0.48 : -0.80;
+          xrEl.simulator.room.tableY = xrRoomEnabled ? -0.005 : -0.20;
+        }
+        if (xrEl.physics) {
+          xrEl.physics.colliders = xrRoomEnabled ? LIVING_ROOM_COLLIDERS : [];
+          xrEl.physics.roomBounds = xrRoomEnabled ? LIVING_ROOM_BOUNDS : DEFAULT_ROOM_BOUNDS;
         }
 
         // Step 6DoF WASD + Q/E headset locomotion (drives real 3D camera + simulator head pose)
@@ -1533,6 +1652,9 @@ return scene;`
       for (const m of viewer.meshes) {
         const xr = m?.extras?.xr || m?.userData?.xr;
         if (xr?.traits) {
+          if (!m.userData) m.userData = {};
+          if (!m.userData.xr) m.userData.xr = {};
+          m.userData.xr.physics = 'dynamic';
           xrEl.physics.setVelocity(m, (Math.random() - 0.5) * 1.2, 2.2, (Math.random() - 0.5) * 1.2);
         }
       }
