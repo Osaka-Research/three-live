@@ -184,7 +184,7 @@ object MiniJson {
     if (d.isInfinite()) return if (d > 0) "Infinity" else "-Infinity"
     if (d == 0.0) return "0"
     if (d == Math.rint(d) && Math.abs(d) < 1e15) return d.toLong().toString()
-    val bd = java.math.BigDecimal(java.lang.Double.toString(Math.abs(d))).stripTrailingZeros()
+    val bd = shortestDecimal(Math.abs(d))
     val digits = bd.unscaledValue().toString()
     val k = digits.length
     val n = k - bd.scale()
@@ -209,6 +209,20 @@ object MiniJson {
       }
     }
     return sb.toString()
+  }
+
+  /**
+   * Returns the shortest decimal that round-trips to [d] (like JavaScript's Number#toString).
+   * `Double.toString` is not shortest on JDK < 19 (e.g. `2.0E23` prints as
+   * `2.0000000000000002E23`), so the digits are derived from the exact binary value instead.
+   */
+  private fun shortestDecimal(d: Double): java.math.BigDecimal {
+    val exact = java.math.BigDecimal(d)
+    for (precision in 1..17) {
+      val candidate = exact.round(java.math.MathContext(precision, java.math.RoundingMode.HALF_EVEN))
+      if (candidate.toDouble() == d) return candidate.stripTrailingZeros()
+    }
+    return exact.round(java.math.MathContext(17)).stripTrailingZeros()
   }
 
   private fun writeNumber(sb: StringBuilder, d: Double) {
