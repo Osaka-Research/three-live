@@ -1088,9 +1088,9 @@ class XRLiveRuntimeSessionTest {
     assertNull(MiniJson.parseOrNull("1" + "0".repeat(MiniJson.MAX_NUMBER_CHARS)))
 
     val nodes = (0..XRLiveRuntimeSession.MAX_NODES).joinToString(",") { "{}" }
-    assertThrows { XRLiveRuntimeSession("""{"nodes":[$nodes]}""") }
+    assertThrows { val unused = XRLiveRuntimeSession("""{"nodes":[$nodes]}""") }
     val mats = (0..XRLiveRuntimeSession.MAX_MATERIALS).joinToString(",") { "{}" }
-    assertThrows { XRLiveRuntimeSession("""{"materials":[$mats]}""") }
+    assertThrows { val unused = XRLiveRuntimeSession("""{"materials":[$mats]}""") }
 
     assertEquals(128 * 1024 * 1024, SplatParser.MAX_SPZ_DECOMPRESSED_BYTES)
   }
