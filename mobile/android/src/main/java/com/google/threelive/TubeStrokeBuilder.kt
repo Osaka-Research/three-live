@@ -79,7 +79,9 @@ constructor(
     }
 
   /** Removes every point. */
-  fun clear() = pts.clear()
+  fun clear() {
+    pts.clear()
+  }
 
   /** Returns the Catmull-Rom-smoothed centerline (`(points - 1) * samplesPerSpan + 1` points). */
   fun smoothedPoints(): List<DoubleArray> {

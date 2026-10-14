@@ -281,8 +281,11 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val ext = MiniJson.asMap(MiniJson.asMap(root["extensions"])?.get("KHR_interactivity"))
     val graphs = MiniJson.asList(ext?.get("graphs"))
     val graph =
-      if (graphs != null) MiniJson.asMap(graphs.getOrNull(Math.max(0, intIndex(ext?.get("graph") ?: 0.0))))
-      else ext
+      if (graphs != null) {
+        MiniJson.asMap(graphs.getOrNull(Math.max(0, intIndex(ext?.get("graph") ?: 0.0))))
+      } else {
+        ext
+      }
     val rawNodes = MiniJson.asList(graph?.get("nodes"))
     val rawVars = MiniJson.asList(graph?.get("variables")) ?: emptyList()
     var error: String? = null
@@ -1151,8 +1154,11 @@ class XRLiveRuntimeSession(gltfJson: String) {
             val keys = node.gateKeys
             if (keys.isNotEmpty()) {
               val idx =
-                if (bool(readCfg(node, "isRandom"))) (Math.random() * keys.size).toInt()
-                else multiGates[nodeIdx] ?: 0
+                if (bool(readCfg(node, "isRandom"))) {
+                  (Math.random() * keys.size).toInt()
+                } else {
+                  multiGates[nodeIdx] ?: 0
+                }
               if (idx < keys.size) {
                 pushOut(keys[idx])
                 multiGates[nodeIdx] = if (readCfg(node, "isLoop") != false) (idx + 1) % keys.size else idx + 1
@@ -1461,8 +1467,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
     if (state == null) {
       // Allocated once per follower (and again only after a grab resets it).
       val spring = SpringState()
-      if (options.snapOnStart) target.copyInto(spring.position)
-      else {
+      if (options.snapOnStart) {
+        target.copyInto(spring.position)
+      } else {
         spring.position[0] = mA[12]
         spring.position[1] = mA[13]
         spring.position[2] = mA[14]

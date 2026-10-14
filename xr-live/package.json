@@ -39,6 +39,7 @@
     "three-live": "1.0.0"
   },
   "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../LICENSE', 'LICENSE')\"",
     "build": "node ../scripts/build.js --xr-live",
     "test": "node ../scripts/build.js --test-xr-live"
   }

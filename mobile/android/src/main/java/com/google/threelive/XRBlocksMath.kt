@@ -553,8 +553,11 @@ object ManipulationHandles {
     val d1 = XRBlocksMath.dot3(dir, ab)
     val denom = abLen2 - d1 * d1
     var s =
-      if (Math.abs(denom) < 1e-10) 0.0
-      else (XRBlocksMath.dot3(ao, ab) - d1 * XRBlocksMath.dot3(ao, dir)) / denom
+      if (Math.abs(denom) < 1e-10) {
+        0.0
+      } else {
+        (XRBlocksMath.dot3(ao, ab) - d1 * XRBlocksMath.dot3(ao, dir)) / denom
+      }
     s = Math.max(0.0, Math.min(1.0, s))
     val onSeg = doubleArrayOf(a[0] + ab[0] * s, a[1] + ab[1] * s, a[2] + ab[2] * s)
     return rayPointDistance(origin, dir, onSeg)
@@ -658,8 +661,12 @@ object ManipulationHandles {
       val h = pick(layout, rayOrigin, dir, options) ?: return null
       hit = h
       startPoint =
-        if (h is Hit.Corner) layout.corners[h.index].copyOf()
-        else intersectHorizontalPlane(rayOrigin, dir, layout.pedestalCenter[1]) ?: layout.pedestalCenter.copyOf()
+        if (h is Hit.Corner) {
+          layout.corners[h.index].copyOf()
+        } else {
+          intersectHorizontalPlane(rayOrigin, dir, layout.pedestalCenter[1])
+            ?: layout.pedestalCenter.copyOf()
+        }
       pivot = layout.origin.copyOf()
       planeY = layout.pedestalCenter[1]
       localScale.copyInto(startScale)
@@ -901,6 +908,8 @@ object WorldUnderstanding {
       get() = points.size
 
     /** Removes every point. */
-    fun clear() = points.clear()
+    fun clear() {
+      points.clear()
+    }
   }
 }
