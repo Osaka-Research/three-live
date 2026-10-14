@@ -80,7 +80,11 @@ most `SECURITY_3D_MAX_MESHES × 4` nodes.
 | Lazy follow + orbit | `plugins/head-follow.ts` | `XRLiveRuntimeSession.step()` | `XRLiveRuntimeSession.step()` |
 | Manipulation handles | `plugins/manipulation-handles.ts` | `ManipulationHandles` + SceneCore `ResizableComponent` | `ManipulationHandles` + RealityKit gestures |
 | World understanding | `plugins/world-understanding.ts` | `WorldUnderstanding.unprojectDetection()` + ARCore | `WorldUnderstanding.unprojectDetection()` + ARKit |
-| Gemini Live / hold-to-ask | `plugins/gemini-live.ts` | `holdToAsk` metadata + host speech APIs | `holdToAsk` metadata + host speech APIs |
+| Gemini Live / hold-to-ask | `plugins/gemini-live.ts` | `gemini/XRGeminiLiveController` + `HoldToAskController` | `Gemini/XRGeminiLiveController` + `HoldToAskController` |
+| Camera + `camera-change` | `three-view.ts` orbit camera | `OrbitCameraState` (via `ThreeLiveRenderer`) | `XROrbitCameraState` |
+| Hand gestures | `xr-gestures.ts` | `XRHandGestures` (host supplies joints) | `XRHandGestureClassifier` + `XRHandTrackingSource` (visionOS) |
+| Object detection | `world-understanding.ts` | `ThreeLiveDetections.detect()` | `XRDetections.detect()` |
+| Rendering | WebGL2 viewer | `ThreeLiveRenderer`; optional `:mobile:android-filament` | RealityKit |
 | Spatial paint | `plugins/spatial-paint.ts` | `TubeStrokeBuilder` | `TubeStrokeBuilder` |
 | Depth particles | `plugins/depth-particles.ts` | `ParticleEmitter` | `ParticleEmitter` |
 | Gaussian splats | `plugins/splat-loader.ts` | `SplatParser` | `SplatParser` |
@@ -127,3 +131,33 @@ Shared algorithms (all platforms):
 - **Particles**: presets `rain` / `snow` / `sparks` / `confetti`, mulberry32
   RNG, respawn at the volume top on floor / depth collision.
 - **Splats**: `.splat` (32-byte records) and `.spz` v2 / v3 (gzip or raw).
+
+## 4. Gemini Live on native
+
+The native clients port `gemini-live.ts` (same message shapes, transcript
+accumulation, barge-in, 4000-character caps and hold-to-ask prompt) and need no
+extra dependencies.
+
+- **Default transport: plain Live API.** Android `WebSocketLiveTransport`
+  (built-in RFC 6455 client, platform TLS with hostname verification) and iOS
+  `URLSessionLiveTransport`. Only `wss:` URLs are accepted, plus `ws:` to
+  loopback for local development.
+- **Credentials.** Mint an [ephemeral token](https://ai.google.dev/gemini-api/docs/ephemeral-tokens)
+  on your backend and connect with `GeminiLiveEndpoints.ephemeralTokenUrl(token)`
+  (Android) / `GeminiLiveEndpoints.ephemeralTokenURL(token:)` (iOS), or point
+  the transport at your own `wss://` proxy that adds credentials server-side.
+  Constrain tokens on the backend (`live_connect_constraints`: model, system
+  instruction, tools).
+- **Dev-only API keys.** `devApiKeyUrl(...)` warns loudly and is refused in
+  release builds (Android: `FLAG_DEBUGGABLE`; iOS: `#if DEBUG`). Never ship a key.
+- **Optional Firebase AI Logic adapter.** Android module
+  `:mobile:android-firebase-ai` (`FirebaseLiveTransport`), iOS local package
+  `mobile/ios/FirebaseAdapter` (`ThreeLiveFirebaseAI`). The core libraries and
+  the root `Package.swift` never depend on Firebase.
+- **Audio and speech.** Android `AudioTrackPcmSink`, `MicrophoneStreamer`
+  (`RECORD_AUDIO`), `HoldToAskController` (`SpeechRecognizer`); iOS
+  `AVAudioPcmSink`, `MicrophoneStreamer` (`NSMicrophoneUsageDescription`),
+  `HoldToAskController` (`SFSpeechRecognizer`,
+  `NSSpeechRecognitionUsageDescription`). Without speech permission,
+  hold-to-ask sends the trait's default prompt.
+- Connect only after a user interaction, never at load.

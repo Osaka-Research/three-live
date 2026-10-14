@@ -1,0 +1,64 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Optional Firebase AI Logic adapter for the native Gemini Live client. The core library connects
+// to the plain Live API with zero dependencies; apps that already use Firebase can route the same
+// XRGeminiLiveController through Firebase AI Logic (App Check, Firebase Auth) with this module.
+
+plugins {
+  id("com.android.library")
+  id("org.jetbrains.kotlin.android")
+  `maven-publish`
+}
+
+base { archivesName.set("three-live-firebase-ai") }
+
+android {
+  namespace = "com.google.threelive.firebase"
+  compileSdk = 34
+
+  defaultConfig { minSdk = 24 }
+
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+    freeCompilerArgs = listOf("-opt-in=com.google.firebase.ai.type.PublicPreviewAPI")
+  }
+
+  publishing { singleVariant("release") { withSourcesJar() } }
+}
+
+dependencies {
+  api(project(":mobile:android"))
+  // 17.17.0 is the newest release built with Kotlin 2.0 (readable by this build's Kotlin 1.9).
+  api("com.google.firebase:firebase-ai:17.17.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+
+  testImplementation("junit:junit:4.13.2")
+}
+
+publishing {
+  publications {
+    register<MavenPublication>("release") {
+      groupId = "com.google.threelive"
+      artifactId = "firebase-ai"
+      version = "1.0.0"
+      afterEvaluate { from(components["release"]) }
+    }
+  }
+}

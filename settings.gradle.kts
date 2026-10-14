@@ -40,4 +40,6 @@ include(":mobile:android")
 
 include(":mobile:android-filament")
 
+include(":mobile:android-firebase-ai")
+
 include(":mobile:examples:android_compose")
