@@ -1054,27 +1054,33 @@ return scene;`
     const XRBLOCKS_ROOM_CDN =
       'https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/simulator/scenes/XREmulatorsceneV5_livingRoom.glb';
     let cachedRoomGLB = null;
+    let roomGLBPromise = null;
     let xrRoomEnabled = false;
 
-    async function ensureRoomGLB() {
-      if (cachedRoomGLB) return cachedRoomGLB;
-      const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
-      const urls = isCorpHost
-        ? ['./livingRoom.glb', '../livingRoom.glb', XRBLOCKS_ROOM_CDN]
-        : [XRBLOCKS_ROOM_CDN, './livingRoom.glb', '../livingRoom.glb'];
-      for (const url of urls) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            const buf = await res.arrayBuffer();
-            if (buf && buf.byteLength > 1000 && new Uint32Array(buf, 0, 1)[0] === 0x46546c67) {
-              cachedRoomGLB = buf;
-              return buf;
+    function ensureRoomGLB() {
+      if (cachedRoomGLB) return Promise.resolve(cachedRoomGLB);
+      if (roomGLBPromise) return roomGLBPromise;
+      roomGLBPromise = (async () => {
+        const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
+        const urls = isCorpHost
+          ? ['./livingRoom.glb', '../livingRoom.glb', XRBLOCKS_ROOM_CDN]
+          : [XRBLOCKS_ROOM_CDN, './livingRoom.glb', '../livingRoom.glb'];
+        for (const url of urls) {
+          try {
+            const res = await fetch(url);
+            if (res.ok) {
+              const buf = await res.arrayBuffer();
+              if (buf && buf.byteLength > 1000 && new Uint32Array(buf, 0, 1)[0] === 0x46546c67) {
+                cachedRoomGLB = buf;
+                return buf;
+              }
             }
-          }
-        } catch (_) {}
-      }
-      return null;
+          } catch (_) {}
+        }
+        roomGLBPromise = null;
+        return null;
+      })();
+      return roomGLBPromise;
     }
 
     const LIVING_ROOM_COLLIDERS = [
@@ -1111,6 +1117,36 @@ return scene;`
       ceilingY: 2.40
     };
 
+    function applyXRRoomCameraAndVisibility(enable) {
+      const viewer = xrEl.viewer;
+      if (!viewer) return;
+      if (Array.isArray(viewer.meshes)) {
+        viewer.meshes.forEach((m) => {
+          if (m.name === 'Room_Floor' || m.name === 'Pedestal_Table' || m.name === 'Workbench_Pedestal') {
+            m.visible = !enable;
+          }
+        });
+      }
+      if (enable) {
+        viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
+        viewer.setTarget(0.02, 0.18, 0.08);
+        viewer.setInitialCamera(-150, 18, 1.75);
+      } else {
+        viewer.setBackdropGLB(null);
+        viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 20.0 });
+        viewer.customTarget = null;
+        viewer.customDistance = false;
+        viewer.setInitialCamera(34, 20);
+        if (viewer.meshes && viewer.meshes.length > 0) {
+          const dist = viewer.bounds.radius * 2.5;
+          viewer.targetDistance = dist;
+          viewer.currDistance = dist;
+          viewer.customDistance = false;
+          viewer.render();
+        }
+      }
+    }
+
     async function syncXRBlocksRoom(enable) {
       xrRoomEnabled = Boolean(enable);
       const btn = document.getElementById('btn-room-toggle');
@@ -1126,29 +1162,14 @@ return scene;`
         xrEl.physics.colliders = xrRoomEnabled ? LIVING_ROOM_COLLIDERS : [];
         xrEl.physics.roomBounds = xrRoomEnabled ? LIVING_ROOM_BOUNDS : DEFAULT_ROOM_BOUNDS;
       }
+      applyXRRoomCameraAndVisibility(xrRoomEnabled);
       const viewer = xrEl.viewer;
       if (!viewer) return;
       if (xrRoomEnabled) {
         const roomBuf = await ensureRoomGLB();
         if (roomBuf && xrRoomEnabled) {
           viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
-          viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
-          viewer.setTarget(0.02, 0.18, 0.08);
-          viewer.setInitialCamera(-150, 18, 1.75);
         }
-      } else {
-        viewer.setBackdropGLB(null);
-        viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 20.0 });
-        viewer.customTarget = null;
-        viewer.customDistance = false;
-        viewer.setInitialCamera(34, 20, viewer.bounds.radius * 2.5);
-      }
-      if (Array.isArray(viewer.meshes)) {
-        viewer.meshes.forEach((m) => {
-          if (m.name === 'Room_Floor' || m.name === 'Pedestal_Table' || m.name === 'Workbench_Pedestal') {
-            m.visible = !xrRoomEnabled;
-          }
-        });
       }
     }
 
@@ -1174,6 +1195,10 @@ return scene;`
       editorEl.value = PRESET_SCRIPTS[mode];
       setToast('Switched to ' + titles[mode]);
       xrRoomEnabled = (mode === 'workbench');
+      if (xrRoomEnabled) {
+        ensureRoomGLB();
+      }
+      applyXRRoomCameraAndVisibility(xrRoomEnabled);
       await applyEditorScript();
       await syncXRBlocksRoom(xrRoomEnabled);
 
@@ -1214,6 +1239,7 @@ return scene;`
             }
           });
         }
+        applyXRRoomCameraAndVisibility(xrRoomEnabled);
       } catch (err) {
         setToast('Script error: ' + err.message);
       }
@@ -1806,6 +1832,7 @@ return scene;`
     // Boot initial Ballpit scene
     renderDepthGrid([]);
     switchMode('ballpit');
+    ensureRoomGLB();
     requestAnimationFrame(tickPlayground);
   </script>
 </body>

@@ -1613,6 +1613,7 @@ export class ThreeView {
     this.disposeMeshListGpuResources(this.backdropMeshes);
     this.backdropMeshes = [];
     if (!data) {
+      this.update(0);
       this.render();
       return;
     }
@@ -1632,6 +1633,7 @@ export class ThreeView {
       }
     }
     this.backdropMeshes = meshes;
+    this.update(0);
     this.render();
   }
 
@@ -1816,6 +1818,7 @@ export class ThreeView {
     this.currTheta = this.targetTheta;
     this.currPhi = this.targetPhi;
     this.currDistance = this.targetDistance;
+    this.update(0);
     this.render();
   }
 
@@ -1949,6 +1952,10 @@ export class ThreeView {
 
   public setTarget(x: number, y: number, z: number): void {
     this.customTarget = [x, y, z];
+    if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
+      this.update(0);
+      this.render();
+    }
   }
 
   public getTarget(): [number, number, number] | null {
@@ -2079,6 +2086,10 @@ export class ThreeView {
       this.customDistance = true;
       this.targetDistance = d;
       this.currDistance = d;
+    }
+    if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
+      this.update(0);
+      this.render();
     }
   }
 

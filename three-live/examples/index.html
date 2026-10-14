@@ -609,26 +609,32 @@ scene.add(sat2);`
   const XRBLOCKS_ROOM_CDN =
     "https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/simulator/scenes/XREmulatorsceneV5_livingRoom.glb";
   let cachedRoomGLB = null;
+  let roomGLBPromise = null;
 
-  async function ensureRoomGLB() {
-    if (cachedRoomGLB) return cachedRoomGLB;
-    const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
-    const urls = isCorpHost
-      ? ["./livingRoom.glb", "../livingRoom.glb", XRBLOCKS_ROOM_CDN]
-      : [XRBLOCKS_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
-    for (const url of urls) {
-      try {
-        const res = await fetch(url);
-        if (res.ok) {
-          const buf = await res.arrayBuffer();
-          if (buf && buf.byteLength > 1000 && new Uint32Array(buf, 0, 1)[0] === 0x46546C67) {
-            cachedRoomGLB = buf;
-            return buf;
+  function ensureRoomGLB() {
+    if (cachedRoomGLB) return Promise.resolve(cachedRoomGLB);
+    if (roomGLBPromise) return roomGLBPromise;
+    roomGLBPromise = (async () => {
+      const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
+      const urls = isCorpHost
+        ? ["./livingRoom.glb", "../livingRoom.glb", XRBLOCKS_ROOM_CDN]
+        : [XRBLOCKS_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
+      for (const url of urls) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            const buf = await res.arrayBuffer();
+            if (buf && buf.byteLength > 1000 && new Uint32Array(buf, 0, 1)[0] === 0x46546C67) {
+              cachedRoomGLB = buf;
+              return buf;
+            }
           }
-        }
-      } catch (_) {}
-    }
-    return null;
+        } catch (_) {}
+      }
+      roomGLBPromise = null;
+      return null;
+    })();
+    return roomGLBPromise;
   }
 
   async function selectPreset(presetId) {
@@ -653,23 +659,36 @@ scene.add(sat2);`
     if (code) {
       codeEditor.value = code;
       try {
-        currentGLBBuffer = await el.executeScript(code);
-        if (presetId === "spheres") {
-          arStatus.textContent = "Loading XR Blocks Living Room...";
-          const roomBuf = await ensureRoomGLB();
-          if (roomBuf && el.viewer) {
-            el.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
+        const roomPromise = presetId === "spheres" ? ensureRoomGLB() : null;
+        if (el.viewer) {
+          if (presetId === "spheres") {
             el.viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
             el.viewer.setTarget(0.0, 0.24, 0.10);
             el.viewer.setInitialCamera(-150, 18, 1.65);
+          } else {
+            el.viewer.setBackdropGLB(null);
+            el.viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 25.0 });
+            el.viewer.customTarget = null;
+            el.viewer.customDistance = false;
+            el.viewer.setInitialCamera(34, 20);
+          }
+        }
+        currentGLBBuffer = await el.executeScript(code);
+        if (presetId === "spheres") {
+          if (el.viewer) {
+            el.viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
+            el.viewer.setTarget(0.0, 0.24, 0.10);
+            el.viewer.setInitialCamera(-150, 18, 1.65);
+          }
+          if (!cachedRoomGLB) {
+            arStatus.textContent = "Loading XR Blocks Living Room...";
+          }
+          const roomBuf = await roomPromise;
+          if (roomBuf && el.viewer) {
+            el.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
             arStatus.textContent = "XR Blocks Living Room loaded!";
           }
         } else if (el.viewer) {
-          el.viewer.setBackdropGLB(null);
-          el.viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 25.0 });
-          el.viewer.customTarget = null;
-          el.viewer.customDistance = false;
-          el.viewer.setInitialCamera(34, 20, el.viewer.bounds.radius * 2.5);
           arStatus.textContent = "";
         }
       } catch (err) {
@@ -800,6 +819,7 @@ scene.add(sat2);`
   window.addEventListener("DOMContentLoaded", () => {
     selectPreset("artifact");
     syncSpinButton();
+    ensureRoomGLB();
   });
 </script>
 
