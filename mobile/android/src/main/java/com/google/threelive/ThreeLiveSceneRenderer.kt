@@ -78,6 +78,15 @@ interface ThreeLiveSceneRenderer {
    */
   fun sceneRootMatrix(out: FloatArray): Boolean = false
 
+  /**
+   * Captures the next rendered frame as a JPEG (longest edge at most [maxEdge] pixels) together with
+   * the camera matrices it was rendered with, and calls [callback] exactly once, on any thread, with
+   * `null` when capture is unsupported or fails. Used to stream what the user sees to Gemini Live.
+   */
+  fun captureFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
+    callback(null)
+  }
+
   /** Starts (looping) the glTF animation at [animationIndex]; `-1` plays every animation. */
   fun playAnimation(animationIndex: Int) {}
 
@@ -116,6 +125,19 @@ interface ThreeLiveSceneRenderer {
   /** Releases every resource. The renderer is unusable afterwards; safe to call twice. */
   fun dispose()
 }
+
+/**
+ * A captured frame: JPEG bytes plus the column-major camera world and projection matrices it was
+ * rendered with (so 2D detections on this image can be unprojected later).
+ */
+class CapturedFrame(
+  val jpeg: ByteArray,
+  val width: Int,
+  val height: Int,
+  val cameraWorld: FloatArray,
+  val projection: FloatArray,
+  val timestampMs: Long,
+)
 
 /** A hit on the loaded scene. [nodeIndex] is the glTF node owning the hit renderable. */
 class ThreeLivePick(

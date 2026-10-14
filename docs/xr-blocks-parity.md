@@ -161,6 +161,12 @@ extra dependencies.
   `NSSpeechRecognitionUsageDescription`). Without speech permission,
   hold-to-ask sends the trait's default prompt.
 - Connect only after a user interaction, never at load.
+- **Frames.** Like web, native clients stream what the user sees (about 1 fps, longest edge
+  768 px, JPEG quality 0.6) once connected. Android: `RendererFrameSource(renderer)` over
+  `ThreeLiveSceneRenderer.captureFrame()` (Filament reads back the rendered frame). iOS:
+  `ARViewFrameSource(arView:)` (`ARView.snapshot`; includes the camera feed in AR mode). Both
+  keep the camera matrices of recently sent frames so detections reported for an image can be
+  unprojected against the camera that produced it. Pause them while the view is hidden.
 
 ## 5. Native XR Blocks features
 

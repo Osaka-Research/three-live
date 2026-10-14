@@ -161,6 +161,28 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertEqual(before.z, after.z, accuracy: 0.02)
   }
 
+  // MARK: Frame capture
+
+  func testFrameFitPerspectiveAndHistory() {
+    XCTAssertEqual(XRFrameCapture.fit(width: 1920, height: 1080, maxEdge: 768).width, 768)
+    XCTAssertEqual(XRFrameCapture.fit(width: 1920, height: 1080, maxEdge: 768).height, 432)
+    XCTAssertEqual(XRFrameCapture.fit(width: 640, height: 480, maxEdge: 768).width, 640)
+    XCTAssertEqual(XRFrameCapture.fit(width: 0, height: 5, maxEdge: 768).width, 0)
+    // 90° vertical FOV, aspect 2: p0 = 0.5, p5 = 1 (the layout WorldUnderstanding reads).
+    let p = XRFrameCapture.perspective(fovYDegrees: 90, aspect: 2)
+    XCTAssertEqual(p.columns.0.x, 0.5, accuracy: 1e-6)
+    XCTAssertEqual(p.columns.1.y, 1, accuracy: 1e-6)
+    XCTAssertEqual(p.columns.2.w, -1)
+    let h = XRFrameHistory()
+    for i in 0..<6 {
+      h.remember(
+        XRCapturedFrame(
+          jpeg: Data([UInt8(i)]), width: 1, height: 1, cameraWorld: matrix_identity_float4x4,
+          projection: p, timestamp: TimeInterval(i)))
+    }
+    XCTAssertEqual(h.latest?.timestamp, 5)
+  }
+
   // MARK: Gemini Live
 
   private final class FakeTransport: GeminiLiveTransport {

@@ -18,6 +18,8 @@ package com.google.threelive.filament
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -42,6 +44,7 @@ import com.google.android.filament.RenderableManager
 import com.google.android.filament.Renderer
 import com.google.android.filament.Scene
 import com.google.android.filament.SwapChain
+import com.google.android.filament.Texture
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.gltfio.AssetLoader
@@ -49,6 +52,7 @@ import com.google.android.filament.gltfio.FilamentAsset
 import com.google.android.filament.gltfio.Gltfio
 import com.google.android.filament.gltfio.ResourceLoader
 import com.google.android.filament.gltfio.UbershaderProvider
+import com.google.threelive.CapturedFrame
 import com.google.threelive.GltfSceneIndex
 import com.google.threelive.OrbitCameraState
 import com.google.threelive.ThreeLiveCameraOptions
@@ -56,8 +60,10 @@ import com.google.threelive.ThreeLivePick
 import com.google.threelive.ThreeLivePointer
 import com.google.threelive.ThreeLiveRenderer
 import com.google.threelive.ThreeLiveRendererListener
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.Executors
 
 /**
  * [ThreeLiveRenderer] backed by Filament and gltfio.
@@ -112,6 +118,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private var pointerDown = false
   private var disposed = false
 
+  private var pendingCapture: Pair<Int, (CapturedFrame?) -> Unit>? = null
+  private var captureInFlight = false
+  private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-capture").apply { isDaemon = true } }
   private val cameraWorld = FloatArray(16)
   private val eye = DoubleArray(3)
   private val target = DoubleArray(3)
@@ -330,6 +339,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     disposed = true
     choreographer.removeFrameCallback(frameCallback)
     listener = null
+    pendingCapture?.second?.invoke(null)
+    pendingCapture = null
+    encoder.shutdown()
     clearDynamicMeshes()
     destroyAsset()
     templateAsset?.let {
@@ -386,7 +398,42 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val sc = swapChain ?: return
     if (renderer.beginFrame(sc, frameTimeNanos)) {
       renderer.render(filamentView)
+      pendingCapture?.let { (maxEdge, callback) ->
+        pendingCapture = null
+        readFrame(maxEdge, callback)
+      }
       renderer.endFrame()
+    }
+  }
+
+  override fun captureFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
+    mainHandler.post {
+      if (disposed || swapChain == null || captureInFlight || pendingCapture != null) {
+        callback(null)
+      } else {
+        pendingCapture = maxEdge to callback
+      }
+    }
+  }
+
+  /** Reads back the frame just rendered (inside beginFrame / endFrame) and encodes it off-thread. */
+  private fun readFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
+    val w = viewportWidth
+    val h = viewportHeight
+    val world = cameraWorld.copyOf()
+    val proj = camera.getProjectionMatrix(DoubleArray(16)).let { m -> FloatArray(16) { m[it].toFloat() } }
+    val pixels = ByteBuffer.allocateDirect(w * h * 4)
+    captureInFlight = true
+    val descriptor =
+      Texture.PixelBufferDescriptor(pixels, Texture.Format.RGBA, Texture.Type.UBYTE, 1, 0, 0, w, mainHandler) {
+        captureInFlight = false
+        encoder.execute { callback(encodeJpeg(pixels, w, h, maxEdge, world, proj)) }
+      }
+    try {
+      renderer.readPixels(0, 0, w, h, descriptor)
+    } catch (e: RuntimeException) {
+      captureInFlight = false
+      callback(null)
     }
   }
 
@@ -726,6 +773,37 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     private const val MAX_DEPTH = 256
     private const val MAX_MATERIALS = 4096
     private const val MAX_DYNAMIC_VERTICES = 1_000_000
+
+    private const val JPEG_QUALITY = 60
+
+    /** RGBA (bottom-up, as read back from GL) → downscaled, upright JPEG; `null` on failure. */
+    private fun encodeJpeg(
+      pixels: ByteBuffer,
+      w: Int,
+      h: Int,
+      maxEdge: Int,
+      world: FloatArray,
+      proj: FloatArray,
+    ): CapturedFrame? {
+      return try {
+        pixels.rewind()
+        val src = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        src.copyPixelsFromBuffer(pixels)
+        val size = com.google.threelive.gemini.RendererFrameSource.fitWithin(w, h, maxEdge)
+        val m = Matrix()
+        m.postScale(size[0].toFloat() / w, -size[1].toFloat() / h)
+        val upright = Bitmap.createBitmap(src, 0, 0, w, h, m, true)
+        val out = ByteArrayOutputStream()
+        upright.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        if (upright !== src) upright.recycle()
+        src.recycle()
+        CapturedFrame(out.toByteArray(), size[0], size[1], world, proj, System.currentTimeMillis())
+      } catch (e: RuntimeException) {
+        null
+      } catch (e: OutOfMemoryError) {
+        null
+      }
+    }
 
     private fun floatBuffer(values: FloatArray, count: Int): ByteBuffer {
       val b = ByteBuffer.allocateDirect(count * 4).order(ByteOrder.nativeOrder())
