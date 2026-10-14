@@ -42,4 +42,6 @@ include(":mobile:android-filament")
 
 include(":mobile:android-firebase-ai")
 
+include(":mobile:android-detect-mlkit")
+
 include(":mobile:examples:android_compose")

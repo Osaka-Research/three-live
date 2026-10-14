@@ -161,6 +161,50 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertEqual(long.first?.label.count, 256)
   }
 
+  private final class FakeDetector: XRObjectDetector, @unchecked Sendable {
+    var boxes: [XRDetections.Box] = [XRDetections.Box(box: [0.4, 0.4, 0.6, 0.6], label: "cat")]
+    func detect(frame: XRCapturedFrame, completion: @escaping @Sendable ([XRDetections.Box]) -> Void) {
+      completion(boxes)
+    }
+  }
+
+  func testVisionBoundingBoxConversionAndDetectionLoop() throws {
+    let topLeft = try XCTUnwrap(
+      XRObjectDetectors.visionBoundingBoxToTopLeft(x: 0.25, y: 0.2, width: 0.5, height: 0.3, label: "dog"))
+    XCTAssertEqual(topLeft.label, "dog")
+    XCTAssertEqual(topLeft.box[0], 0.5, accuracy: 1e-6)
+    XCTAssertEqual(topLeft.box[1], 0.25, accuracy: 1e-6)
+    XCTAssertEqual(topLeft.box[2], 0.8, accuracy: 1e-6)
+    XCTAssertEqual(topLeft.box[3], 0.75, accuracy: 1e-6)
+    XCTAssertNil(XRObjectDetectors.visionBoundingBoxToTopLeft(x: 0.5, y: 0.5, width: 0, height: 0.2, label: "x"))
+
+    let detector = FakeDetector()
+    XRObjectDetectors.register(detector)
+    XCTAssertTrue(XRObjectDetectors.current() === detector)
+    XRObjectDetectors.register(nil)
+    XCTAssertNil(XRObjectDetectors.current())
+
+    var world = matrix_identity_float4x4
+    world.columns.3 = SIMD4<Float>(0, 0, 4, 1)
+    let proj = XRFrameCapture.perspective(fovYDegrees: 90, aspect: 1)
+    var results: [[WorldUnderstanding.Detection3D]] = []
+    let loop = XRObjectDetectionLoop(
+      captureFrame: { done in
+        done(XRCapturedFrame(jpeg: Data([1]), width: 64, height: 64, cameraWorld: world, projection: proj, timestamp: 1))
+      },
+      detector: detector
+    ) { results.append($0) }
+    XCTAssertTrue(loop.tick())
+    drainMain()
+    XCTAssertEqual(results.count, 1)
+    XCTAssertEqual(results.first?.first?.label, "cat")
+    XCTAssertEqual(results.first?.first?.position.z ?? 0, 4 - WorldUnderstanding.fallbackDepthMeters, accuracy: 1e-4)
+
+    loop.paused = true
+    XCTAssertFalse(loop.tick())
+    loop.stop()
+  }
+
   // MARK: Scene root (turntable) parity with Android
 
   func testRootTransformRotatesWorldAndLazyFollowStaysPut() throws {

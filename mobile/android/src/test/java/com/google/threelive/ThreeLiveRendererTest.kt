@@ -331,6 +331,32 @@ class ThreeLiveRendererTest {
     assertEquals(5.0 - WorldUnderstanding.FALLBACK_DEPTH_METERS, out[0].z, 1e-6)
   }
 
+  @Test
+  fun objectDetectionLoopCapturesDetectsAndUnprojectsWithFrameCamera() {
+    val r = FakeRenderer()
+    r.hasCamera = true
+    val results = ArrayList<List<WorldUnderstanding.Detection3D>>()
+    val detector = ThreeLiveObjectDetector { _, cb ->
+      cb(listOf(ThreeLiveDetections.Box(doubleArrayOf(0.4, 0.4, 0.6, 0.6), "plant")))
+    }
+    ThreeLiveObjectDetectors.register(detector)
+    assertEquals(detector, ThreeLiveObjectDetectors.current())
+    ThreeLiveObjectDetectors.register(null)
+    assertEquals(null, ThreeLiveObjectDetectors.current())
+
+    val loop = ObjectDetectionLoop(r, detector, intervalMs = 500) { results.add(it) }
+    assertTrue(loop.tick())
+    assertEquals(1, results.size)
+    assertEquals("plant", results[0][0].label)
+    assertEquals(5.0 - WorldUnderstanding.FALLBACK_DEPTH_METERS, results[0][0].z, 1e-6)
+
+    loop.paused = true
+    assertFalse(loop.tick())
+    assertEquals(1, results.size)
+    loop.paused = false
+    loop.stop()
+  }
+
   private class FakeRenderer : ThreeLiveSceneRenderer {
     override var listener: ThreeLiveRendererListener? = null
     val visible = HashMap<Int, Boolean>()
@@ -353,6 +379,16 @@ class ThreeLiveRendererTest {
       projection[11] = -1f
       projection[14] = -0.2f
       return true
+    }
+
+    override fun captureFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
+      val world = FloatArray(16)
+      val proj = FloatArray(16)
+      if (!cameraMatrices(world, proj)) {
+        callback(null)
+      } else {
+        callback(CapturedFrame(byteArrayOf(1), 64, 64, world, proj, 1L))
+      }
     }
 
     override fun load(glb: ByteBuffer) {}

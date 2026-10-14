@@ -135,6 +135,20 @@ public final class XRFrameHistory: @unchecked Sendable {
             done(nil)
             return
           }
+          self.capture { done($0?.jpeg) }
+        }
+      }
+    }
+
+    /// Captures one `XRCapturedFrame` (JPEG plus camera matrices) for on-device detectors such as
+    /// `XRObjectDetectionLoop` (may be called from any thread).
+    public nonisolated func makeFrameCapture() -> (@escaping @Sendable (XRCapturedFrame?) -> Void) -> Void {
+      return { [weak self] done in
+        Task { @MainActor in
+          guard let self = self else {
+            done(nil)
+            return
+          }
           self.capture(done)
         }
       }
@@ -160,7 +174,7 @@ public final class XRFrameHistory: @unchecked Sendable {
       return (world: arView.cameraTransform.matrix, projection: projection)
     }
 
-    private func capture(_ done: @escaping (Data?) -> Void) {
+    private func capture(_ done: @escaping (XRCapturedFrame?) -> Void) {
       guard !paused, let arView = arView,
         let matrices = ARViewFrameSource.cameraMatrices(of: arView, fieldOfViewDegrees: fieldOfViewDegrees())
       else {
@@ -184,11 +198,11 @@ public final class XRFrameHistory: @unchecked Sendable {
         let data = renderer.jpegData(withCompressionQuality: 0.6) { _ in
           image.draw(in: CGRect(x: 0, y: 0, width: fitted.width, height: fitted.height))
         }
-        history.remember(
-          XRCapturedFrame(
-            jpeg: data, width: fitted.width, height: fitted.height, cameraWorld: world, projection: projection,
-            timestamp: Date().timeIntervalSince1970))
-        done(data)
+        let frame = XRCapturedFrame(
+          jpeg: data, width: fitted.width, height: fitted.height, cameraWorld: world, projection: projection,
+          timestamp: Date().timeIntervalSince1970)
+        history.remember(frame)
+        done(frame)
       }
     }
   }

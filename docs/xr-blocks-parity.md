@@ -131,7 +131,13 @@ Shared algorithms (all platforms):
   Parsers: web `parseDetections()`, Android `ThreeLiveDetections.parse()`,
   iOS `XRDetections.parse(json:)`. Android renderers expose the camera through
   `ThreeLiveSceneRenderer.cameraMatrices()`; `ThreeLiveRuntimeBinding.detect()`
-  unprojects against it.
+  unprojects against it. For continuous on-device detection (~2 Hz), Android
+  provides `ThreeLiveObjectDetector` / `ThreeLiveObjectDetectors` /
+  `ObjectDetectionLoop` plus the optional `:mobile:android-detect-mlkit` module
+  (`ThreeLiveMlKitDetector.install()`), and iOS provides `XRObjectDetector` /
+  `XRObjectDetectors` / `XRObjectDetectionLoop` plus `XRVisionDetector` (Apple
+  Vision `VNCoreMLRequest` with an app Core ML model, or built-in animal/human
+  requests when no model is supplied).
 - **Tube strokes**: uniform Catmull-Rom (4 samples/span), rotation-minimizing
   frames (double reflection), 8 radial segments, flat caps.
 - **Particles**: presets `rain` / `snow` / `sparks` / `confetti`, mulberry32
