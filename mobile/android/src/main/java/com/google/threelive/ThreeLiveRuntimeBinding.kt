@@ -1,0 +1,208 @@
+/*
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.google.threelive
+
+import java.nio.ByteBuffer
+
+/**
+ * Connects an [XRLiveRuntimeSession] to a [ThreeLiveRenderer]: behavior-graph and trait changes
+ * become renderer calls, taps become `pointer/onSelect`, and every frame steps the session with the
+ * camera as the head pose. Host-facing events (mesh clicks, camera changes, graph events) are
+ * reported through [Callbacks] with the same payload fields as the web element.
+ *
+ * Use on the main thread. Call `renderer.load(glb)` first, then create one binding per loaded scene
+ * and [dispose] it before loading another.
+ */
+class ThreeLiveRuntimeBinding(
+  private val renderer: ThreeLiveRenderer,
+  glb: ByteBuffer,
+) {
+  /** Host callbacks; every method is optional. */
+  interface Callbacks {
+    /**
+     * A node was tapped. [nodeName] is the glTF node name and [meshName] the glTF mesh name of the
+     * hit node (the web `meshclick` `mesh` field); [point] is the world hit point if known.
+     */
+    fun onMeshClick(nodeIndex: Int, nodeName: String?, meshName: String?, point: FloatArray?) {}
+
+    /** The camera moved (web `camera-change` rule: ≥ 1° or ≥ 0.02 zoom). */
+    fun onCameraChange(change: ThreeLiveCameraChange) {}
+
+    /** The behavior graph executed `event/send`. */
+    fun onInteractivityEvent(eventId: String, payloadJson: String) {}
+
+    /** A long press began on a node (hold-to-ask). */
+    fun onLongPress(nodeIndex: Int, nodeName: String?, meshName: String?, pressed: Boolean) {}
+  }
+
+  /** The behavior / trait runtime for the loaded scene. */
+  val session: XRLiveRuntimeSession = XRLiveRuntimeSession.fromGlb(glb)
+
+  /** Hierarchy, mesh and material index of the loaded scene. */
+  val scene: GltfSceneIndex =
+    GltfSceneIndex.fromGlb(glb) ?: throw IllegalArgumentException("ThreeLiveRuntimeBinding: not a valid .glb")
+
+  /** Host callbacks. */
+  var callbacks: Callbacks? = null
+
+  /**
+   * Extra pointer handler consulted before camera orbiting (XR Blocks features such as handles
+   * and paint plug in here).
+   */
+  var pointerHandler: ThreeLiveRendererListener? = null
+
+  /** Extra per-frame hook, run after the session step (XR Blocks features plug in here). */
+  var frameHandler: ((dtSeconds: Double, cameraWorld: FloatArray) -> Unit)? = null
+
+  private val pendingVisibility = LinkedHashSet<Int>()
+  private val m = DoubleArray(16)
+  private val q = DoubleArray(4)
+  private var disposed = false
+
+  private val sessionListener =
+    object : XRLiveRuntimeSession.Listener {
+      override fun onNodeTransformChanged(
+        nodeIndex: Int,
+        translation: FloatArray,
+        rotation: FloatArray,
+        scale: FloatArray,
+      ) {
+        renderer.setNodeTransform(nodeIndex, translation, rotation, scale)
+      }
+
+      override fun onVisibilityChanged(nodeIndex: Int, visible: Boolean) {
+        pendingVisibility.add(nodeIndex)
+      }
+
+      override fun onMaterialChanged(
+        materialIndex: Int,
+        baseColorFactor: FloatArray,
+        emissiveFactor: FloatArray,
+        metallicFactor: Float,
+        roughnessFactor: Float,
+      ) {
+        renderer.setMaterialFactors(materialIndex, baseColorFactor, emissiveFactor, metallicFactor, roughnessFactor)
+      }
+
+      override fun onAlphaCutoffChanged(materialIndex: Int, alphaCutoff: Float) {
+        renderer.setMaterialAlphaCutoff(materialIndex, alphaCutoff)
+      }
+
+      override fun onInteractivityEvent(eventId: String, payloadJson: String) {
+        callbacks?.onInteractivityEvent(eventId, payloadJson)
+      }
+
+      override fun onAnimation(start: Boolean, animationIndex: Int, animationName: String?) {
+        if (start) {
+          renderer.playAnimation(animationIndex)
+        } else {
+          renderer.stopAnimation()
+        }
+      }
+    }
+
+  private val rendererListener =
+    object : ThreeLiveRendererListener {
+      override fun onPick(pick: ThreeLivePick) {
+        if (disposed) return
+        val node = pick.nodeIndex
+        if (node in 0 until scene.nodeCount) {
+          session.dispatchSelect(node, pick.hitPoint)
+          applyPendingVisibility()
+          callbacks?.onMeshClick(node, scene.nodeNames[node], scene.meshNameOfNode(node), pick.hitPoint)
+        }
+      }
+
+      override fun onLongPress(pick: ThreeLivePick, pressed: Boolean) {
+        val node = pick.nodeIndex
+        if (disposed || node !in 0 until scene.nodeCount) return
+        callbacks?.onLongPress(node, scene.nodeNames[node], scene.meshNameOfNode(node), pressed)
+      }
+
+      override fun onPointerDown(pointer: ThreeLivePointer): Boolean =
+        !disposed && pointerHandler?.onPointerDown(pointer) == true
+
+      override fun onPointerMove(pointer: ThreeLivePointer) {
+        if (!disposed) pointerHandler?.onPointerMove(pointer)
+      }
+
+      override fun onPointerUp(pointer: ThreeLivePointer) {
+        if (!disposed) pointerHandler?.onPointerUp(pointer)
+      }
+
+      override fun onCameraChange(change: ThreeLiveCameraChange) {
+        if (!disposed) callbacks?.onCameraChange(change)
+      }
+
+      override fun onFrame(dtSeconds: Double, cameraWorld: FloatArray) {
+        if (disposed) return
+        session.step(dtSeconds, headPoseOf(cameraWorld))
+        applyPendingVisibility()
+        frameHandler?.invoke(dtSeconds, cameraWorld)
+      }
+    }
+
+  init {
+    session.listener = sessionListener
+    renderer.listener = rendererListener
+    // Initial authored visibility (KHR_node_visibility) and graph `event/onStart`.
+    for (i in 0 until scene.nodeCount) {
+      if (!session.isVisible(i)) pendingVisibility.add(i)
+    }
+    session.start()
+    applyPendingVisibility()
+  }
+
+  /** Delivers a custom event to the graph's `event/receive` nodes. */
+  fun sendEvent(eventId: String, payload: Map<String, Any?> = emptyMap()) {
+    if (disposed) return
+    session.sendEvent(eventId, payload)
+    applyPendingVisibility()
+  }
+
+  /** Detaches from the renderer and session. Does not dispose the renderer. */
+  fun dispose() {
+    if (disposed) return
+    disposed = true
+    session.listener = null
+    if (renderer.listener === rendererListener) renderer.listener = null
+    pointerHandler = null
+    frameHandler = null
+  }
+
+  /** Pushes effective visibility for every node whose own flag (or an ancestor's) changed. */
+  private fun applyPendingVisibility() {
+    if (pendingVisibility.isEmpty()) return
+    val changed = pendingVisibility.toIntArray()
+    pendingVisibility.clear()
+    val done = HashSet<Int>()
+    for (root in changed) {
+      for (i in scene.subtree(root)) {
+        if (done.add(i)) renderer.setNodeVisible(i, session.isEffectivelyVisible(i))
+      }
+    }
+  }
+
+  private fun headPoseOf(cameraWorld: FloatArray): XRPose {
+    for (k in 0 until 16) m[k] = cameraWorld.getOrElse(k) { if (k % 5 == 0) 1f else 0f }.toDouble()
+    XRBlocksMath.extractQuaternion(m, q)
+    return XRPose(
+      floatArrayOf(m[12].toFloat(), m[13].toFloat(), m[14].toFloat()),
+      floatArrayOf(q[0].toFloat(), q[1].toFloat(), q[2].toFloat(), q[3].toFloat()),
+    )
+  }
+}

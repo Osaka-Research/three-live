@@ -38,4 +38,6 @@ rootProject.name = "three-live"
 
 include(":mobile:android")
 
+include(":mobile:android-filament")
+
 include(":mobile:examples:android_compose")

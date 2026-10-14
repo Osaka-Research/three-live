@@ -17,8 +17,6 @@
 package com.google.threelive.example
 
 import android.os.Bundle
-import android.view.SurfaceHolder
-import android.view.SurfaceView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -44,8 +42,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.google.threelive.GlbBuffer
 import com.google.threelive.ThreeCompiler
+import com.google.threelive.ThreeLiveRuntimeBinding
 import com.google.threelive.XRLiveNodeTraits
 import com.google.threelive.XRLiveSceneCoreHelper
+import com.google.threelive.filament.ThreeLiveFilamentRenderer
 import java.util.Locale
 import kotlin.system.measureNanoTime
 import kotlinx.coroutines.CancellationException
@@ -55,7 +55,7 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
-  private var filamentRenderer: FilamentRenderer? = null
+  private var filamentRenderer: ThreeLiveFilamentRenderer? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -71,13 +71,13 @@ class MainActivity : ComponentActivity() {
 
   override fun onDestroy() {
     super.onDestroy()
-    filamentRenderer?.destroy()
+    filamentRenderer?.dispose()
   }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CompilerStudioScreen(onInitRenderer: (FilamentRenderer) -> Unit) {
+fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
   var selectedMode by remember { mutableStateOf(StudioMode.THREE_LIVE) }
@@ -96,8 +96,11 @@ fun CompilerStudioScreen(onInitRenderer: (FilamentRenderer) -> Unit) {
   // assigning the renderer to composition state from that factory mutates state that
   // composition itself reads, which is an anti-pattern. Initializing here also means the
   // renderer is never observable in a half-constructed state.
-  val renderer = remember { FilamentRenderer().apply { initFilament() } }
-  var hasCompiledInitialScene by remember { mutableStateOf(false) }
+  val renderer = remember { ThreeLiveFilamentRenderer(context).also(onInitRenderer) }
+  // Runs the scene's KHR_interactivity graph and spatial traits on top of the renderer.
+  var binding by remember { mutableStateOf<ThreeLiveRuntimeBinding?>(null) }
+  var lastEvent by remember { mutableStateOf<String?>(null) }
+  DisposableEffect(Unit) { onDispose { binding?.dispose() } }
 
   fun triggerCompileAndRender() {
     isCompiling = true
@@ -117,10 +120,32 @@ fun CompilerStudioScreen(onInitRenderer: (FilamentRenderer) -> Unit) {
         val size = glbCopy.size
         val xrTraits = XRLiveSceneCoreHelper.extractNodeTraits(compiled.byteBuffer.duplicate())
         withContext(Dispatchers.Main) {
-          // loadGlb takes ownership and frees the native buffer once Filament has read
-          // it, on both the success and failure paths, so hand it off before calling.
+          // The renderer and binding finish reading the buffer synchronously, so it is
+          // freed right after (on both the success and failure paths).
           transferredOwnership = true
-          renderer.loadGlb(compiled)
+          compiled.use {
+            binding?.dispose()
+            binding = null
+            renderer.load(it.byteBuffer)
+            binding =
+              ThreeLiveRuntimeBinding(renderer, it.byteBuffer).apply {
+                callbacks =
+                  object : ThreeLiveRuntimeBinding.Callbacks {
+                    override fun onMeshClick(
+                      nodeIndex: Int,
+                      nodeName: String?,
+                      meshName: String?,
+                      point: FloatArray?,
+                    ) {
+                      lastEvent = "Tapped ${nodeName ?: meshName ?: "node $nodeIndex"}"
+                    }
+
+                    override fun onInteractivityEvent(eventId: String, payloadJson: String) {
+                      lastEvent = "Event '$eventId' $payloadJson"
+                    }
+                  }
+              }
+          }
         }
         lastCompiledGlbBytes = glbCopy
         extractedXrTraits = xrTraits
@@ -177,40 +202,23 @@ fun CompilerStudioScreen(onInitRenderer: (FilamentRenderer) -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
       // Top Section: 3D Filament Viewport (42% height)
       Box(modifier = Modifier.fillMaxWidth().weight(0.42f).background(Color(0xFF0F141C))) {
-        AndroidView(
-          modifier = Modifier.fillMaxSize(),
-          factory = { ctx ->
-            val surfaceView = SurfaceView(ctx)
-            onInitRenderer(renderer)
+        AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx -> renderer.createView(ctx) })
+        LaunchedEffect(Unit) { triggerCompileAndRender() }
 
-            surfaceView.holder.addCallback(
-              object : SurfaceHolder.Callback {
-                override fun surfaceCreated(holder: SurfaceHolder) {
-                  renderer.onSurfaceAvailable(holder.surface, surfaceView.width, surfaceView.height)
-                  // Compile initial scene only once on startup
-                  if (!hasCompiledInitialScene) {
-                    hasCompiledInitialScene = true
-                    triggerCompileAndRender()
-                  }
-                }
-
-                override fun surfaceChanged(
-                  holder: SurfaceHolder,
-                  format: Int,
-                  width: Int,
-                  height: Int,
-                ) {
-                  renderer.onSurfaceResized(width, height)
-                }
-
-                override fun surfaceDestroyed(holder: SurfaceHolder) {
-                  renderer.onSurfaceDestroyed()
-                }
-              }
+        lastEvent?.let { message ->
+          Surface(
+            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF0F172A).copy(alpha = 0.85f),
+          ) {
+            Text(
+              text = message,
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+              style = MaterialTheme.typography.labelSmall,
+              color = Color.White,
             )
-            surfaceView
-          },
-        )
+          }
+        }
 
         // Overlay XR-Live Spatial Traits Pill (Top-Left) when XR traits are present
         if (extractedXrTraits.isNotEmpty() && compileError == null) {

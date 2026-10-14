@@ -25,11 +25,50 @@ Android Kotlin and Java bindings for `three-live-compiler`.
 ```kotlin
 dependencies {
     implementation("com.google.threelive:compiler:1.0.0")
-    // If using Google Filament for 3D rendering:
-    implementation("com.google.android.filament:filament-android:1.51.0")
-    implementation("com.google.android.filament:gltfio-android:1.51.0")
+    // Optional: the Filament renderer (adds Filament + gltfio).
+    implementation("com.google.threelive:filament:1.0.0")
 }
 ```
+
+The core library has no rendering dependency. Rendering goes through the small
+`ThreeLiveRenderer` interface; add the optional `filament` module (source:
+[`mobile/android-filament`](../android-filament)) or register your own renderer.
+
+## Rendering and interactivity
+
+```kotlin
+// Once, e.g. in Application.onCreate (nothing is registered automatically):
+ThreeLiveFilament.install()
+
+// In a screen:
+val renderer = ThreeLiveRenderers.current()!!.create(context)
+setContentView(renderer.createView(context))
+renderer.setCameraOptions(ThreeLiveCameraOptions(cameraOrbit = "30deg 15deg 3m", autoRotate = true))
+
+ThreeCompiler.compile(script).use { glb ->
+    renderer.load(glb.byteBuffer)
+    // Runs KHR_interactivity graphs and spatial traits, and reports web-compatible events.
+    binding = ThreeLiveRuntimeBinding(renderer, glb.byteBuffer).apply {
+        callbacks = object : ThreeLiveRuntimeBinding.Callbacks {
+            override fun onMeshClick(nodeIndex: Int, nodeName: String?, meshName: String?, point: FloatArray?) {}
+            override fun onCameraChange(change: ThreeLiveCameraChange) {}
+        }
+    }
+}
+// Later: binding.dispose(); renderer.dispose()
+```
+
+- **Camera:** `ThreeLiveCameraOptions` takes the same strings as the
+  `<three-live>` attributes (`camera-orbit`, `camera-target`,
+  `min/max-camera-orbit`, `field-of-view`, `rotation-per-second`). The orbit
+  model (`OrbitCameraState`) matches the web viewer, including `camera-change`
+  reporting at 1° / 0.02-zoom granularity.
+- **Node indices** are glTF indices. Native compiled GLBs use the same node
+  order as the web exporter, so graphs and events line up across platforms.
+- **Custom renderers** implement `ThreeLiveRenderer` (load, node transform,
+  effective visibility, material factors, animations, optional dynamic meshes)
+  and call the `ThreeLiveRendererListener` callbacks; `GltfSceneIndex` helps map
+  glTF nodes and materials onto renderer objects.
 
 ## Quick Start
 

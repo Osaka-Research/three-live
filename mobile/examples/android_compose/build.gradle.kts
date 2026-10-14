@@ -56,8 +56,9 @@ android {
 }
 
 dependencies {
-  // Three-Live Mobile Compiler library
+  // Three-Live Mobile Compiler library + the optional Filament renderer module
   implementation(project(":mobile:android"))
+  implementation(project(":mobile:android-filament"))
 
   // AndroidX & Jetpack Compose
   implementation("androidx.core:core-ktx:1.12.0")
@@ -70,10 +71,7 @@ dependencies {
   implementation("androidx.compose.material3:material3")
   implementation("androidx.compose.material:material-icons-extended")
 
-  // Google Filament 3D Rendering Engine & GLTF Loader
-  implementation("com.google.android.filament:filament-android:1.51.0")
-  implementation("com.google.android.filament:filament-utils-android:1.51.0")
-  implementation("com.google.android.filament:gltfio-android:1.51.0")
+  // Filament itself comes from :mobile:android-filament (keep versions in sync there).
 
   // Coroutines
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")

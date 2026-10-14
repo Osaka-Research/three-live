@@ -157,12 +157,24 @@ jobs:
           path: mobile/android/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
+      # The optional Filament renderer is pure Kotlin on top of the core AAR (no native code
+      # of its own; Filament ships its .so files through its Maven artifacts).
+      - name: Build and upload optional Filament renderer AAR
+        run: gradle :mobile:android-filament:assembleRelease --stacktrace
+
+      - name: Upload Filament renderer AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-live-filament-release-aar
+          path: mobile/android-filament/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
       # Runs here rather than in a separate job: publication must happen on a runner that has the
       # cross-compiled .so files, otherwise it produces a Java-only AAR. This currently targets
       # mavenLocal, which validates the POM and publication wiring end to end. Point it at the
       # real repository (and add credentials) when one is provisioned.
       - name: Publish Android AAR to Maven Local
-        run: gradle :mobile:android:publishReleasePublicationToMavenLocal --stacktrace
+        run: gradle :mobile:android:publishReleasePublicationToMavenLocal :mobile:android-filament:publishReleasePublicationToMavenLocal --stacktrace
 
   build-ios:
     name: Build Apple XCFramework
