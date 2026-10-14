@@ -287,6 +287,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   override fun cameraMatrices(world: FloatArray, projection: FloatArray): Boolean {
     if (disposed || world.size < 16 || projection.size < 16 || viewportWidth <= 0) return false
+    // Not rendered yet: the camera matrix is written on the first frame.
+    if (cameraWorld[15] == 0f) return false
     System.arraycopy(cameraWorld, 0, world, 0, 16)
     val m = camera.getProjectionMatrix(projScratch)
     for (i in 0 until 16) projection[i] = m[i].toFloat()

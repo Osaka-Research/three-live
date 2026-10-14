@@ -140,13 +140,14 @@ public final class XRFrameHistory: @unchecked Sendable {
       }
     }
 
-    private func capture(_ done: @escaping (Data?) -> Void) {
-      guard !paused, let arView = arView, arView.bounds.width > 0, arView.bounds.height > 0 else {
-        done(nil)
-        return
-      }
-      let world = arView.cameraTransform.matrix
+    /// The camera's world matrix and projection for `arView` right now (ARKit's projection in AR
+    /// mode, otherwise a perspective with `fieldOfViewDegrees`), or `nil` before layout. Used to
+    /// unproject 2D detections with `XRDetections.detect`.
+    public static func cameraMatrices(of arView: ARView, fieldOfViewDegrees: Double)
+      -> (world: simd_float4x4, projection: simd_float4x4)?
+    {
       let size = arView.bounds.size
+      guard size.width > 0, size.height > 0 else { return nil }
       let projection: simd_float4x4
       if let camera = arView.session.currentFrame?.camera, arView.cameraMode == .ar {
         projection = camera.projectionMatrix(
@@ -154,8 +155,20 @@ public final class XRFrameHistory: @unchecked Sendable {
           zNear: 0.05, zFar: 100)
       } else {
         projection = XRFrameCapture.perspective(
-          fovYDegrees: fieldOfViewDegrees(), aspect: Double(size.width / size.height))
+          fovYDegrees: fieldOfViewDegrees, aspect: Double(size.width / size.height))
       }
+      return (world: arView.cameraTransform.matrix, projection: projection)
+    }
+
+    private func capture(_ done: @escaping (Data?) -> Void) {
+      guard !paused, let arView = arView,
+        let matrices = ARViewFrameSource.cameraMatrices(of: arView, fieldOfViewDegrees: fieldOfViewDegrees())
+      else {
+        done(nil)
+        return
+      }
+      let world = matrices.world
+      let projection = matrices.projection
       let maxEdge = self.maxEdge
       let history = self.history
       arView.snapshot(saveToHDR: false) { image in
