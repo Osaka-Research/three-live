@@ -1,0 +1,636 @@
+{
+  "interactivity": {
+    "graph": 0,
+    "graphs": [
+      {
+        "declarations": [
+          {
+            "op": "variable/get"
+          },
+          {
+            "op": "math/not"
+          },
+          {
+            "op": "variable/set"
+          },
+          {
+            "op": "pointer/interpolate"
+          },
+          {
+            "op": "flow/branch"
+          },
+          {
+            "op": "pointer/set"
+          },
+          {
+            "op": "flow/sequence"
+          },
+          {
+            "op": "pointer/onSelect"
+          },
+          {
+            "op": "math/add"
+          },
+          {
+            "op": "math/rem"
+          },
+          {
+            "op": "flow/switch"
+          },
+          {
+            "op": "pointer/onHoverIn"
+          }
+        ],
+        "events": [],
+        "nodes": [
+          {
+            "configuration": {
+              "variable": 0
+            },
+            "declaration": 0
+          },
+          {
+            "declaration": 1,
+            "values": {
+              "a": {
+                "node": 0,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 0
+            },
+            "declaration": 2,
+            "flows": {
+              "out": {
+                "node": 5
+              }
+            },
+            "values": {
+              "value": {
+                "node": 1,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/nodes/0/rotation"
+            },
+            "declaration": 3,
+            "values": {
+              "duration": {
+                "value": 0.35
+              },
+              "value": {
+                "value": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/nodes/0/rotation"
+            },
+            "declaration": 3,
+            "values": {
+              "duration": {
+                "value": 0.35
+              },
+              "value": {
+                "value": [
+                  0,
+                  0.38268,
+                  0,
+                  0.92388
+                ]
+              }
+            }
+          },
+          {
+            "declaration": 4,
+            "flows": {
+              "false": {
+                "node": 4
+              },
+              "true": {
+                "node": 3
+              }
+            },
+            "values": {
+              "condition": {
+                "node": 0,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 1
+            },
+            "declaration": 0
+          },
+          {
+            "declaration": 1,
+            "values": {
+              "a": {
+                "node": 6,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 1
+            },
+            "declaration": 2,
+            "flows": {
+              "out": {
+                "node": 9
+              }
+            },
+            "values": {
+              "value": {
+                "node": 7,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/nodes/2/extensions/KHR_node_visibility/visible"
+            },
+            "declaration": 5,
+            "values": {
+              "value": {
+                "node": 6,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "declaration": 6,
+            "flows": {
+              "0": {
+                "node": 2
+              },
+              "1": {
+                "node": 8
+              }
+            }
+          },
+          {
+            "configuration": {
+              "nodeIndex": 0
+            },
+            "declaration": 7,
+            "flows": {
+              "out": {
+                "node": 10
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 2
+            },
+            "declaration": 0
+          },
+          {
+            "declaration": 1,
+            "values": {
+              "a": {
+                "node": 12,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 2
+            },
+            "declaration": 2,
+            "flows": {
+              "out": {
+                "node": 15
+              }
+            },
+            "values": {
+              "value": {
+                "node": 13,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/nodes/0/extensions/KHR_node_visibility/visible"
+            },
+            "declaration": 5,
+            "values": {
+              "value": {
+                "node": 12,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "nodeIndex": 2
+            },
+            "declaration": 7,
+            "flows": {
+              "out": {
+                "node": 14
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 3
+            },
+            "declaration": 0
+          },
+          {
+            "declaration": 8,
+            "values": {
+              "a": {
+                "node": 17,
+                "socket": "value"
+              },
+              "b": {
+                "value": 1
+              }
+            }
+          },
+          {
+            "declaration": 9,
+            "values": {
+              "a": {
+                "node": 18,
+                "socket": "value"
+              },
+              "b": {
+                "value": 2
+              }
+            }
+          },
+          {
+            "configuration": {
+              "variable": 3
+            },
+            "declaration": 2,
+            "flows": {
+              "out": {
+                "node": 23
+              }
+            },
+            "values": {
+              "value": {
+                "node": 19,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/materials/0/pbrMetallicRoughness/baseColorFactor"
+            },
+            "declaration": 3,
+            "values": {
+              "duration": {
+                "value": 0.25
+              },
+              "value": {
+                "value": [
+                  1,
+                  0,
+                  0,
+                  1
+                ]
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/materials/0/pbrMetallicRoughness/baseColorFactor"
+            },
+            "declaration": 3,
+            "values": {
+              "duration": {
+                "value": 0.25
+              },
+              "value": {
+                "value": [
+                  0,
+                  1,
+                  0,
+                  1
+                ]
+              }
+            }
+          },
+          {
+            "declaration": 10,
+            "flows": {
+              "0": {
+                "node": 21
+              },
+              "1": {
+                "node": 22
+              }
+            },
+            "values": {
+              "selection": {
+                "node": 17,
+                "socket": "value"
+              }
+            }
+          },
+          {
+            "configuration": {
+              "nodeIndex": 2
+            },
+            "declaration": 11,
+            "flows": {
+              "out": {
+                "node": 20
+              }
+            }
+          },
+          {
+            "configuration": {
+              "pointer": "/nodes/1/extensions/KHR_node_visibility/visible"
+            },
+            "declaration": 5,
+            "values": {
+              "value": {
+                "value": false
+              }
+            }
+          },
+          {
+            "configuration": {
+              "nodeIndex": 5
+            },
+            "declaration": 7,
+            "flows": {
+              "out": {
+                "node": 25
+              }
+            }
+          }
+        ],
+        "variables": [
+          {
+            "id": "__toggle_0_0",
+            "type": "bool",
+            "value": false
+          },
+          {
+            "id": "__vis_2_1",
+            "type": "bool",
+            "value": true
+          },
+          {
+            "id": "__vis_0_0",
+            "type": "bool",
+            "value": true
+          },
+          {
+            "id": "__color_idx_2_0",
+            "type": "int",
+            "value": 0
+          }
+        ]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "children": [
+        1,
+        3,
+        4
+      ],
+      "hubs": {
+        "billboard": {
+          "onlyY": false
+        },
+        "grabbable": {
+          "cursor": true,
+          "hand": true
+        }
+      },
+      "material": null,
+      "mesh": false,
+      "name": "Rig",
+      "rotation": [
+        0,
+        0.38268,
+        0,
+        0.92388
+      ],
+      "scale": [
+        2,
+        2,
+        2
+      ],
+      "scenecore": {
+        "billboard": {
+          "mode": "spherical"
+        },
+        "interactable": {
+          "mode": "2-hand"
+        },
+        "movable": {
+          "maxScale": 5,
+          "minScale": 0.05,
+          "scaleInZ": false,
+          "systemMovable": true
+        }
+      },
+      "translation": [
+        1,
+        2,
+        0
+      ],
+      "xr": {
+        "billboard": "spherical",
+        "grab": "2-hand",
+        "grabbable": true
+      }
+    },
+    {
+      "children": [
+        2
+      ],
+      "hubs": null,
+      "material": null,
+      "mesh": false,
+      "name": "Arm",
+      "rotation": [
+        0.70711,
+        0,
+        0,
+        0.70711
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "scenecore": null,
+      "translation": [
+        0,
+        1,
+        0
+      ],
+      "xr": null
+    },
+    {
+      "children": [],
+      "hubs": {},
+      "material": 0,
+      "mesh": true,
+      "name": "Lamp",
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "scenecore": {
+        "follow": {
+          "lazy": false,
+          "target": "hand-left"
+        }
+      },
+      "translation": [
+        0,
+        0,
+        0.5
+      ],
+      "xr": {
+        "follow": "hand-left",
+        "restitution": 0.25
+      }
+    },
+    {
+      "children": [],
+      "hubs": null,
+      "material": null,
+      "mesh": false,
+      "name": "Placeholder",
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "scenecore": null,
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "xr": null
+    },
+    {
+      "children": [],
+      "hubs": null,
+      "material": null,
+      "mesh": false,
+      "name": "KeyLight",
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "scenecore": null,
+      "translation": [
+        0,
+        3,
+        0
+      ],
+      "xr": null
+    },
+    {
+      "children": [],
+      "hubs": null,
+      "material": 1,
+      "mesh": true,
+      "name": "Floor",
+      "rotation": [
+        -0.70711,
+        0,
+        0,
+        0.70711
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "scenecore": null,
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "xr": null
+    },
+    {
+      "children": [],
+      "hubs": null,
+      "material": null,
+      "mesh": false,
+      "name": "Marker",
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "scenecore": null,
+      "translation": [
+        -1,
+        0,
+        0
+      ],
+      "xr": null
+    }
+  ],
+  "sceneNodes": [
+    0,
+    5,
+    6
+  ]
+}

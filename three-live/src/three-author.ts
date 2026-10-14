@@ -3730,6 +3730,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
    * deeper than 32 levels, so hostile nesting cannot exhaust the native stack.
    */
   const toSafeJson = function (value: unknown): any {
+    // Fast path: most nodes carry no `userData.xr` / `interactivity`.
+    if (value === undefined || value === null) return null;
     let budget = 20000;
     const seen = new Set<object>();
     const copy = (v: unknown, depth: number): unknown => {
@@ -3762,6 +3764,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
 
   /** The per-mesh trait payload cap enforced by the Rust engine (bytes). */
   const MAX_XR_JSON_CHARS = 15 * 1024;
+
+  /** The glTF node cap enforced by the Rust engine (`SECURITY_3D_MAX_MESHES * 4`). */
+  const MAX_RAW_NODES = SECURITY_3D_MAX_MESHES * 4;
 
   /** Canonical XR trait payloads consumed by the Rust GLB / USDZ writers. */
   const serializeXRForCompiler = function (
@@ -3826,97 +3831,227 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       return idx;
     }
 
-    function traverse(
-      node: Object3D,
-      currentPos: [number, number, number],
-      scale: [number, number, number],
-    ) {
-      const pos: [number, number, number] = [
-        currentPos[0] + node.position.x * scale[0],
-        currentPos[1] + node.position.y * scale[1],
-        currentPos[2] + node.position.z * scale[2],
-      ];
-      const nextScale: [number, number, number] = [
-        scale[0] * node.scale.x,
-        scale[1] * node.scale.y,
-        scale[2] * node.scale.z,
-      ];
+    /** Finite number or `fallback` (scripts can assign anything to a vector). */
+    const fin = (v: unknown, fallback: number): number =>
+      typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 
-      if (node instanceof Mesh && node.geometry) {
-        const geo = node.geometry;
-        const posAttr = geo.attributes.position;
-        // Empty geometry produces no glTF node in the Rust writer; skipping it
-        // here keeps raw-mesh index == glTF node index for KHR_interactivity.
-        if (posAttr && posAttr.array && posAttr.count > 0) {
-          const safeXR = toSafeJson(node.userData?.xr);
-          rawMeshes.push({
-            name: node.name || `Mesh_${rawMeshes.length}`,
-            raw_positions: posAttr.array,
-            raw_normals: geo.attributes.normal
-              ? geo.attributes.normal.array
-              : null,
-            raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
-            raw_indices: geo.index ? geo.index.array : null,
-            vertex_count: posAttr.count,
-            pos,
-            scale: nextScale,
-            material_index: getMaterialIndex(node.material),
-            xr_traits_json: safeXR ? JSON.stringify(safeXR) : null,
-            ...serializeXRForCompiler(safeXR),
-            interactivity: toSafeJson(node.userData?.interactivity),
-          });
+    /**
+     * Raw glTF node list, in exactly `sceneToCanvas3D`'s order: every
+     * descendant `Object3D` of the scene (the scene root itself is not a
+     * node) in pre-order DFS, with LOCAL translation / rotation / scale.
+     * The Rust GLB writer reproduces this list 1:1, so node indices used by
+     * `KHR_interactivity` (raw graphs, `targetNode`, explicit pointers) match
+     * the web exporter.
+     */
+    const rawNodes: any[] = [];
+    /** Per-node `userData.interactivity`, kept off `rawNodes` (read by Rust). */
+    const nodeInteractivity: unknown[] = [];
+    let anyNodeInteractivity = false;
+    const activeScene = globalRoot.scene || defaultScene;
+    const sceneWorld = new Matrix4().compose(
+      {
+        x: fin(activeScene.position?.x, 0),
+        y: fin(activeScene.position?.y, 0),
+        z: fin(activeScene.position?.z, 0),
+      } as Vector3,
+      {
+        x: fin(activeScene.quaternion?.x, 0),
+        y: fin(activeScene.quaternion?.y, 0),
+        z: fin(activeScene.quaternion?.z, 0),
+        w: fin(activeScene.quaternion?.w, 1),
+      } as Quaternion,
+      {
+        x: fin(activeScene.scale?.x, 1),
+        y: fin(activeScene.scale?.y, 1),
+        z: fin(activeScene.scale?.z, 1),
+      } as Vector3,
+    );
+
+    // Iterative (explicit stack) pre-order walk: deep hierarchies cannot hit
+    // the VM recursion limit, and `seen` breaks parent/child cycles that a
+    // hostile script can build by hand.
+    const seen = new Set<Object3D>([activeScene]);
+
+    // Cheap pre-pass: count nodes (stopping one past the cap) before doing any
+    // per-node work, so an oversized hierarchy is refused without serializing
+    // thousands of nodes first. Rust rejects `nodes.length > MAX_RAW_NODES`.
+    {
+      const counted = new Set<Object3D>([activeScene]);
+      const pending: unknown[] = Array.isArray(activeScene.children)
+        ? [...activeScene.children]
+        : [];
+      let count = 0;
+      while (pending.length > 0 && count <= MAX_RAW_NODES) {
+        const n = pending.pop();
+        if (!(n instanceof Object3D) || counted.has(n)) continue;
+        counted.add(n);
+        count++;
+        if (Array.isArray(n.children)) {
+          for (const c of n.children) pending.push(c);
         }
-      } else if (
-        !(node instanceof Scene) &&
-        (node.userData?.xr || node.userData?.interactivity)
-      ) {
-        // Native GLBs contain only geometry nodes; put traits on meshes.
-        warnUnsupported(
-          `userData.xr / userData.interactivity on non-mesh node "${String(node.name || node.type).slice(0, 64)}" in native compilation`,
-          'ignored (attach them to a mesh)',
+      }
+      if (count > MAX_RAW_NODES) {
+        return {meshes: [], nodes: new Array(count), materials: [], lights: []};
+      }
+    }
+
+    const stack: Array<[Object3D, number]> = [];
+    const pushChildren = (obj: Object3D, parentIdx: number) => {
+      const kids = Array.isArray(obj.children) ? obj.children : [];
+      for (let i = kids.length - 1; i >= 0; i--) {
+        stack.push([kids[i], parentIdx]);
+      }
+    };
+    pushChildren(activeScene, -1);
+
+    /**
+     * World matrix of raw node `idx`, composed lazily from the local TRS of
+     * its ancestors. Only lights need world positions, so ordinary nodes skip
+     * the matrix math entirely (it dominated extraction time for large
+     * hierarchies).
+     */
+    const worldOf = (idx: number): Matrix4 => {
+      const chain: number[] = [];
+      for (let i = idx; i >= 0 && chain.length <= rawNodes.length; i = rawNodes[i].parent) {
+        chain.push(i);
+      }
+      const world = sceneWorld.clone();
+      for (let c = chain.length - 1; c >= 0; c--) {
+        const n = rawNodes[chain[c]];
+        world.multiply(
+          new Matrix4().compose(
+            {x: n.translation[0], y: n.translation[1], z: n.translation[2]} as Vector3,
+            {
+              x: n.rotation[0],
+              y: n.rotation[1],
+              z: n.rotation[2],
+              w: n.rotation[3],
+            } as Quaternion,
+            {x: n.scale[0], y: n.scale[1], z: n.scale[2]} as Vector3,
+          ),
         );
       }
+      return world;
+    };
+
+    while (stack.length > 0) {
+      const [node, parentIdx] = stack.pop()!;
+      if (!(node instanceof Object3D) || seen.has(node)) continue;
+      seen.add(node);
+
+      const translation = [
+        fin(node.position?.x, 0),
+        fin(node.position?.y, 0),
+        fin(node.position?.z, 0),
+      ];
+      const rotation = [
+        fin(node.quaternion?.x, 0),
+        fin(node.quaternion?.y, 0),
+        fin(node.quaternion?.z, 0),
+        fin(node.quaternion?.w, 1),
+      ];
+      const scale = [
+        fin(node.scale?.x, 1),
+        fin(node.scale?.y, 1),
+        fin(node.scale?.z, 1),
+      ];
+      // Same mesh predicate as `sceneToCanvas3D`: any node with a non-empty
+      // position attribute. Empty geometry yields a mesh-less node.
+      let meshIdx = -1;
+      const geo = (node as any).geometry;
+      const posAttr = geo?.attributes?.position;
+      if (posAttr && posAttr.array && posAttr.count > 0) {
+        meshIdx = rawMeshes.length;
+        rawMeshes.push({
+          name: node.name || `Mesh_${rawMeshes.length}`,
+          raw_positions: posAttr.array,
+          raw_normals: geo.attributes.normal ? geo.attributes.normal.array : null,
+          raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
+          raw_indices: geo.index ? geo.index.array : null,
+          vertex_count: posAttr.count,
+          material_index: getMaterialIndex(
+            (node as any).material instanceof Material
+              ? (node as any).material
+              : null,
+          ),
+        });
+      }
+
+      const safeXR = toSafeJson(node.userData?.xr);
+      // `sceneToCanvas3D` only serializes truthy `userData.xr`.
+      const hasXR = Boolean(node.userData?.xr) && safeXR !== null;
+      const nodeIdx = rawNodes.length;
+      rawNodes.push({
+        name: typeof node.name === 'string' ? node.name.slice(0, 1024) : '',
+        parent: parentIdx,
+        translation,
+        rotation,
+        scale,
+        mesh: meshIdx,
+        xr_traits_json: hasXR ? JSON.stringify(safeXR) : null,
+        ...(hasXR ? serializeXRForCompiler(safeXR) : {}),
+      });
+      const inter = toSafeJson(node.userData?.interactivity);
+      nodeInteractivity.push(inter);
+      if (inter) anyNodeInteractivity = true;
+      // One past the Rust cap is enough for it to reject the scene; stop
+      // walking so a huge hierarchy is not serialized just to be refused.
+      if (rawNodes.length > MAX_RAW_NODES) break;
+
       if (node instanceof Light) {
+        const e = worldOf(nodeIdx).elements;
         lights.push({
           light_type: node.type,
           color: [node.color.r, node.color.g, node.color.b],
           intensity: node.intensity,
-          position: [pos[0], pos[1], pos[2]],
+          position: [fin(e[12], 0), fin(e[13], 0), fin(e[14], 0)],
         });
       }
 
-      for (const child of node.children) {
-        traverse(child, pos, nextScale);
-      }
+      pushChildren(node, nodeIdx);
     }
 
-    const activeScene = globalRoot.scene || defaultScene;
-    traverse(activeScene, [0, 0, 0], [1, 1, 1]);
-
     // Compile `userData.interactivity` with the same compiler as the web
-    // exporter. The Rust GLB writer emits exactly one node per raw mesh, in
-    // order, with the mesh at the same index.
-    const interactivityExt = compileInteractivityGraph(
-      rawMeshes.map((m, i) => ({
-        mesh: i,
-        name: m.name,
-        extras: m.interactivity ? {interactivity: m.interactivity} : undefined,
-      })),
-      rawMeshes.map((m) => ({
-        primitives: [{material: m.material_index ?? 0}],
-      })),
-      toSafeJson({
-        interactivity: activeScene.userData?.interactivity,
-        gltfExtensions: {
-          KHR_interactivity: activeScene.userData?.gltfExtensions?.KHR_interactivity,
-        },
-      }) ?? undefined,
+    // exporter, over node stubs that mirror `sceneToCanvas3D`'s nodes (same
+    // order, names, mesh indices and non-default TRS), so every node index in
+    // the graph matches the web export.
+    const isDefault = (v: number[], d: number[]) => v.every((c, i) => c === d[i]);
+    const sceneInteractivity = toSafeJson({
+      interactivity: activeScene.userData?.interactivity,
+      gltfExtensions: {
+        KHR_interactivity: activeScene.userData?.gltfExtensions?.KHR_interactivity,
+      },
+    });
+    const hasSceneGraph = Boolean(
+      sceneInteractivity?.interactivity ??
+        sceneInteractivity?.gltfExtensions?.KHR_interactivity,
     );
-    for (const m of rawMeshes) delete m.interactivity;
+    // Without any authored interactivity the compiler emits nothing; skip
+    // building per-node stubs (a measurable cost for large hierarchies).
+    let interactivityExt: Record<string, unknown> | null = null;
+    if (anyNodeInteractivity || hasSceneGraph) {
+      interactivityExt = compileInteractivityGraph(
+        rawNodes.map((n, i) => ({
+          name: n.name,
+          ...(n.mesh >= 0 ? {mesh: n.mesh} : {}),
+          ...(isDefault(n.translation, [0, 0, 0])
+            ? {}
+            : {translation: n.translation}),
+          ...(isDefault(n.rotation, [0, 0, 0, 1]) ? {} : {rotation: n.rotation}),
+          ...(isDefault(n.scale, [1, 1, 1]) ? {} : {scale: n.scale}),
+          extras: nodeInteractivity[i] ? {interactivity: nodeInteractivity[i]} : undefined,
+        })),
+        rawMeshes.map((m) => ({
+          primitives: [{material: m.material_index ?? 0}],
+        })),
+        sceneInteractivity ?? undefined,
+      );
+    }
 
     const activeCam = globalRoot.camera || defaultCamera;
     return {
       meshes: rawMeshes,
+      nodes: rawNodes,
       materials,
       lights,
       interactivity_json: interactivityExt

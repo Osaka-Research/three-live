@@ -15,6 +15,7 @@
 //! Pure Rust glTF 2.0 Binary (.glb) Writer with zero external C-dependencies.
 
 use crate::constants::{SECURITY_3D_MAX_HEAP_BYTES, SECURITY_3D_MAX_TEXTURES};
+use crate::engine::MAX_SCENE_NODES;
 use crate::scene::SceneGraph;
 use serde_json::json;
 
@@ -97,6 +98,110 @@ fn validate_texture_uri(uri: &str) -> Result<(), String> {
 
 thread_local! {
     static REUSABLE_BIN_BUFFER: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::with_capacity(MAX_REUSABLE_BIN_CAPACITY));
+}
+
+/// Builds a node's `extras.xr` value and its `MOZ_hubs_components` /
+/// `ANDROID_xr_scenecore` extensions from the engine's trait payloads.
+///
+/// With canonical normalized traits (`xr_normalized`, from `xr-trait-schema.ts`)
+/// and `web_parity`, the output matches `sceneToCanvas3D` with the canonical
+/// serializer registered: `extras.xr` is the normalized set and both
+/// extensions are always present (possibly empty). Without `web_parity` (the
+/// legacy flat layout) empty extension maps are omitted and Hubs components are
+/// derived from the raw traits, exactly as before the hierarchy rewrite.
+fn build_xr_payload(
+    xr_traits: Option<&serde_json::Value>,
+    xr_normalized: Option<&serde_json::Value>,
+    xr_scenecore: Option<&serde_json::Value>,
+    xr_hubs: Option<&serde_json::Value>,
+    web_parity: bool,
+) -> Option<(serde_json::Value, serde_json::Map<String, serde_json::Value>)> {
+    if web_parity {
+        if let Some(normalized) = xr_normalized {
+            let as_map = |v: Option<&serde_json::Value>| match v {
+                Some(serde_json::Value::Object(m)) => m.clone(),
+                _ => serde_json::Map::new(),
+            };
+            let mut exts = serde_json::Map::new();
+            exts.insert(
+                "MOZ_hubs_components".to_string(),
+                serde_json::Value::Object(as_map(xr_hubs)),
+            );
+            exts.insert(
+                "ANDROID_xr_scenecore".to_string(),
+                serde_json::Value::Object(as_map(xr_scenecore)),
+            );
+            return Some((normalized.clone(), exts));
+        }
+    }
+
+    let empty_xr = serde_json::Value::Object(serde_json::Map::new());
+    let xr = xr_traits.or(xr_normalized.map(|_| &empty_xr))?;
+    let mut normalized_xr = xr.clone();
+    let traits_arr = xr.get("traits").and_then(|v| v.as_array());
+    let has_trait = |name: &str| -> bool {
+        traits_arr.map(|arr| arr.iter().any(|item| item.as_str() == Some(name))).unwrap_or(false)
+    };
+    let is_grabbable =
+        xr.get("grabbable").and_then(|v| v.as_bool()).unwrap_or(false) || has_trait("grab");
+    let is_scalable = xr
+        .get("scalable")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| xr.get("scalable").is_some())
+        || has_trait("scale");
+    if let Some(obj) = normalized_xr.as_object_mut() {
+        if is_grabbable {
+            obj.insert("grabbable".to_string(), json!(true));
+        }
+        if is_scalable {
+            obj.insert("scalable".to_string(), json!(true));
+        }
+        if has_trait("billboard") && !obj.contains_key("billboard") {
+            obj.insert("billboard".to_string(), json!("capsule"));
+        }
+    }
+
+    // Prefer the canonical normalized traits computed by the shared
+    // `xr-trait-schema.ts` (identical on web, Android and iOS).
+    let extras_xr = xr_normalized.cloned().unwrap_or(normalized_xr.clone());
+    let mut hubs_ext = serde_json::Map::new();
+    let mut android_ext = serde_json::Map::new();
+    if is_grabbable {
+        hubs_ext.insert("grabbable".to_string(), json!({ "cursor": true, "hand": true }));
+        android_ext.insert(
+            "movable".to_string(),
+            json!({
+                "systemMovable": true,
+                "scaleInZ": is_scalable,
+            }),
+        );
+    }
+    if let Some(bb) = normalized_xr.get("billboard") {
+        if !bb.is_null() && bb.as_bool() != Some(false) {
+            let only_y = bb.as_str() == Some("cylindrical") || bb.as_str() == Some("capsule");
+            hubs_ext.insert("billboard".to_string(), json!({ "onlyY": only_y }));
+            android_ext.insert("billboard".to_string(), json!({ "mode": bb }));
+        }
+    }
+    if let Some(anchor_str) = xr.get("anchor").and_then(|a| a.as_str()) {
+        let plane_type = if anchor_str == "vertical" { "VERTICAL" } else { "HORIZONTAL" };
+        android_ext.insert(
+            "anchor".to_string(),
+            json!({ "planeType": plane_type, "semanticType": anchor_str.to_uppercase() }),
+        );
+    }
+    if let Some(serde_json::Value::Object(canonical)) = xr_scenecore {
+        android_ext = canonical.clone();
+    }
+    let mut node_exts = serde_json::Map::new();
+    if !hubs_ext.is_empty() {
+        node_exts.insert("MOZ_hubs_components".to_string(), serde_json::Value::Object(hubs_ext));
+    }
+    if !android_ext.is_empty() {
+        node_exts
+            .insert("ANDROID_xr_scenecore".to_string(), serde_json::Value::Object(android_ext));
+    }
+    Some((extras_xr, node_exts))
 }
 
 /// Serializes a SceneGraph into a complete, valid glTF 2.0 Binary (.glb) byte vector.
@@ -263,14 +368,31 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
         }
     }
 
+    // With an explicit hierarchy (`scene.nodes`), meshes are written here and
+    // referenced from the node pass below; otherwise (legacy engine assets) every
+    // scene mesh becomes one flat node, in order.
+    let hierarchical = !scene.nodes.is_empty();
+    if scene.nodes.len() > MAX_SCENE_NODES {
+        return Err(format!(
+            "Scene exceeds maximum allowed nodes ({}/{})",
+            scene.nodes.len(),
+            MAX_SCENE_NODES
+        ));
+    }
+    // Scene mesh index -> glTF mesh index (`None` for empty geometry).
+    let mut mesh_map: Vec<Option<usize>> = Vec::with_capacity(scene.meshes.len());
+
     // 2. Process Meshes
     for (mesh_idx, mesh) in scene.meshes.iter().enumerate() {
         if mesh.positions.is_empty() {
-            // Keep glTF node index == scene mesh index (KHR_interactivity
-            // pointers and `nodeIndex` rely on it): emit a mesh-less node.
-            nodes.push(json!({
-                "name": if mesh.name.is_empty() { format!("Node_{}", mesh_idx) } else { mesh.name.clone() },
-            }));
+            mesh_map.push(None);
+            if !hierarchical {
+                // Keep glTF node index == scene mesh index (KHR_interactivity
+                // pointers and `nodeIndex` rely on it): emit a mesh-less node.
+                nodes.push(json!({
+                    "name": if mesh.name.is_empty() { format!("Node_{}", mesh_idx) } else { mesh.name.clone() },
+                }));
+            }
             continue;
         }
 
@@ -429,8 +551,11 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             "name": if mesh.name.is_empty() { format!("Mesh_{}", mesh_idx) } else { mesh.name.clone() },
             "primitives": [primitive],
         }));
+        mesh_map.push(Some(mesh_obj_idx));
+        if hierarchical {
+            continue;
+        }
 
-        let _node_idx = nodes.len();
         let mut node_json = json!({
             "name": if mesh.name.is_empty() { format!("Node_{}", mesh_idx) } else { mesh.name.clone() },
             "mesh": mesh_obj_idx,
@@ -442,93 +567,85 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
         if finite3(&mesh.scale) && mesh.scale != [1.0, 1.0, 1.0] {
             node_json["scale"] = json!(mesh.scale);
         }
-        let empty_xr = serde_json::Value::Object(serde_json::Map::new());
-        let xr_source = mesh.xr_traits.as_ref().or(mesh.xr_normalized.as_ref().map(|_| &empty_xr));
-        if let Some(xr) = xr_source {
-            let mut normalized_xr = xr.clone();
-            let traits_arr = xr.get("traits").and_then(|v| v.as_array());
-            let has_trait = |name: &str| -> bool {
-                traits_arr
-                    .map(|arr| arr.iter().any(|item| item.as_str() == Some(name)))
-                    .unwrap_or(false)
-            };
-            let is_grabbable =
-                xr.get("grabbable").and_then(|v| v.as_bool()).unwrap_or(false) || has_trait("grab");
-            let is_scalable = xr
-                .get("scalable")
-                .and_then(|v| v.as_bool())
-                .unwrap_or_else(|| xr.get("scalable").is_some())
-                || has_trait("scale");
-            if let Some(obj) = normalized_xr.as_object_mut() {
-                if is_grabbable {
-                    obj.insert("grabbable".to_string(), json!(true));
-                }
-                if is_scalable {
-                    obj.insert("scalable".to_string(), json!(true));
-                }
-                if has_trait("billboard") && !obj.contains_key("billboard") {
-                    obj.insert("billboard".to_string(), json!("capsule"));
-                }
-            }
-
-            // Prefer the canonical normalized traits computed by the shared
-            // `xr-trait-schema.ts` (identical on web, Android and iOS).
-            let extras_xr = mesh.xr_normalized.clone().unwrap_or(normalized_xr.clone());
+        if let Some((extras_xr, node_exts)) = build_xr_payload(
+            mesh.xr_traits.as_ref(),
+            mesh.xr_normalized.as_ref(),
+            mesh.xr_scenecore.as_ref(),
+            mesh.xr_hubs.as_ref(),
+            false,
+        ) {
             node_json["extras"] = json!({ "xr": extras_xr });
-            let mut hubs_ext = serde_json::Map::new();
-            let mut android_ext = serde_json::Map::new();
-            if is_grabbable {
-                hubs_ext.insert("grabbable".to_string(), json!({ "cursor": true, "hand": true }));
-                android_ext.insert(
-                    "movable".to_string(),
-                    json!({
-                        "systemMovable": true,
-                        "scaleInZ": is_scalable,
-                    }),
-                );
-            }
-            if let Some(bb) = normalized_xr.get("billboard") {
-                if !bb.is_null() && bb.as_bool() != Some(false) {
-                    let only_y =
-                        bb.as_str() == Some("cylindrical") || bb.as_str() == Some("capsule");
-                    hubs_ext.insert("billboard".to_string(), json!({ "onlyY": only_y }));
-                    android_ext.insert("billboard".to_string(), json!({ "mode": bb }));
-                }
-            }
-            if let Some(anchor) = xr.get("anchor") {
-                if let Some(anchor_str) = anchor.as_str() {
-                    let plane_type =
-                        if anchor_str == "vertical" { "VERTICAL" } else { "HORIZONTAL" };
-                    android_ext.insert(
-                        "anchor".to_string(),
-                        json!({ "planeType": plane_type, "semanticType": anchor_str.to_uppercase() }),
-                    );
-                }
-            }
-            let mut node_exts = serde_json::Map::new();
-            if !hubs_ext.is_empty() {
+            if node_exts.contains_key("MOZ_hubs_components") {
                 add_ext("MOZ_hubs_components");
-                node_exts
-                    .insert("MOZ_hubs_components".to_string(), serde_json::Value::Object(hubs_ext));
             }
-            if let Some(serde_json::Value::Object(canonical)) = &mesh.xr_scenecore {
-                android_ext = canonical.clone();
-            }
-            if let Some(serde_json::Value::Object(canonical)) = &mesh.xr_hubs {
-                hubs_ext = canonical.clone();
-            }
-            if !android_ext.is_empty() {
+            if node_exts.contains_key("ANDROID_xr_scenecore") {
                 add_ext("ANDROID_xr_scenecore");
-                node_exts.insert(
-                    "ANDROID_xr_scenecore".to_string(),
-                    serde_json::Value::Object(android_ext),
-                );
             }
             if !node_exts.is_empty() {
                 node_json["extensions"] = serde_json::Value::Object(node_exts);
             }
         }
         nodes.push(node_json);
+    }
+
+    // 2b. Scene hierarchy: one glTF node per scene node, local TRS, children.
+    let mut root_nodes: Vec<usize> = Vec::new();
+    if hierarchical {
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); scene.nodes.len()];
+        for (i, node) in scene.nodes.iter().enumerate() {
+            // `parent < i` is validated on extraction; re-check so a hand-built
+            // SceneGraph can never describe a cycle.
+            match node.parent {
+                Some(p) if p < i => children[p].push(i),
+                _ => root_nodes.push(i),
+            }
+        }
+        for (i, node) in scene.nodes.iter().enumerate() {
+            let mut node_json = json!({ "name": node.name });
+            let t = node.translation.map(|c| sanitize_finite(c, 0.0));
+            if t != [0.0, 0.0, 0.0] {
+                node_json["translation"] = json!([jnum(t[0]), jnum(t[1]), jnum(t[2])]);
+            }
+            let r = if node.rotation.iter().all(|c| c.is_finite()) {
+                node.rotation
+            } else {
+                [0.0, 0.0, 0.0, 1.0]
+            };
+            if r != [0.0, 0.0, 0.0, 1.0] {
+                node_json["rotation"] = json!([jnum(r[0]), jnum(r[1]), jnum(r[2]), jnum(r[3])]);
+            }
+            let s = node.scale.map(|c| sanitize_finite(c, 1.0));
+            if s != [1.0, 1.0, 1.0] {
+                node_json["scale"] = json!([jnum(s[0]), jnum(s[1]), jnum(s[2])]);
+            }
+            if let Some(gltf_mesh) = node.mesh.and_then(|m| mesh_map.get(m).copied().flatten()) {
+                node_json["mesh"] = json!(gltf_mesh);
+            }
+            if !children[i].is_empty() {
+                node_json["children"] = json!(children[i]);
+            }
+            if let Some((extras_xr, node_exts)) = build_xr_payload(
+                node.xr_traits.as_ref(),
+                node.xr_normalized.as_ref(),
+                node.xr_scenecore.as_ref(),
+                node.xr_hubs.as_ref(),
+                true,
+            ) {
+                node_json["extras"] = json!({ "xr": extras_xr });
+                if node_exts.contains_key("MOZ_hubs_components") {
+                    add_ext("MOZ_hubs_components");
+                }
+                if node_exts.contains_key("ANDROID_xr_scenecore") {
+                    add_ext("ANDROID_xr_scenecore");
+                }
+                if !node_exts.is_empty() {
+                    node_json["extensions"] = serde_json::Value::Object(node_exts);
+                }
+            }
+            nodes.push(node_json);
+        }
+    } else {
+        root_nodes.extend(0..nodes.len());
     }
 
     align_bin_data(bin_data);
@@ -539,9 +656,8 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
     // comment would otherwise yield a GLB that parses as JSON but fails validation —
     // with AI-generated input that is a routine outcome, not an exotic one.
     let mut scene_obj = json!({ "name": "Scene" });
-    if !nodes.is_empty() {
-        let scene_nodes: Vec<usize> = (0..nodes.len()).collect();
-        scene_obj["nodes"] = json!(scene_nodes);
+    if !root_nodes.is_empty() {
+        scene_obj["nodes"] = json!(root_nodes);
     }
 
     let mut gltf_json = json!({

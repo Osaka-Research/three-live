@@ -25,6 +25,61 @@ pub struct SceneGraph {
     /// Compiled root `KHR_interactivity` extension (from `userData.interactivity`).
     #[serde(default)]
     pub interactivity: Option<serde_json::Value>,
+    /// Full scene hierarchy (every `Object3D` below the scene root, in the web
+    /// exporter's pre-order DFS order). When non-empty, the GLB writer emits
+    /// exactly these nodes, with `meshes` referenced by index; when empty it
+    /// falls back to the legacy one-flat-node-per-mesh layout.
+    #[serde(default)]
+    pub nodes: Vec<SceneNode>,
+}
+
+/// One glTF node: a local transform, an optional mesh, and XR traits.
+///
+/// Invariants (enforced by the engine on extraction): `parent < own index`
+/// (so the hierarchy is a forest with no cycles), finite TRS, and
+/// `mesh < SceneGraph::meshes.len()`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SceneNode {
+    pub name: String,
+    #[serde(default)]
+    pub parent: Option<usize>,
+    #[serde(default)]
+    pub translation: [f32; 3],
+    #[serde(default = "identity_rotation")]
+    pub rotation: [f32; 4],
+    #[serde(default = "unit_scale")]
+    pub scale: [f32; 3],
+    #[serde(default)]
+    pub mesh: Option<usize>,
+    #[serde(default)]
+    pub xr_traits: Option<serde_json::Value>,
+    #[serde(default)]
+    pub xr_normalized: Option<serde_json::Value>,
+    #[serde(default)]
+    pub xr_scenecore: Option<serde_json::Value>,
+    #[serde(default)]
+    pub xr_hubs: Option<serde_json::Value>,
+}
+
+impl Default for SceneNode {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            parent: None,
+            translation: [0.0; 3],
+            rotation: identity_rotation(),
+            scale: unit_scale(),
+            mesh: None,
+            xr_traits: None,
+            xr_normalized: None,
+            xr_scenecore: None,
+            xr_hubs: None,
+        }
+    }
+}
+
+fn identity_rotation() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 1.0]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,9 +102,11 @@ pub struct Mesh3D {
     #[serde(default)]
     pub xr_hubs: Option<serde_json::Value>,
     /// Node translation (world offset accumulated through the hierarchy).
+    /// Legacy flat layout only; ignored when `SceneGraph::nodes` is non-empty.
     #[serde(default)]
     pub translation: [f32; 3],
     /// Node scale (accumulated through the hierarchy).
+    /// Legacy flat layout only; ignored when `SceneGraph::nodes` is non-empty.
     #[serde(default = "unit_scale")]
     pub scale: [f32; 3],
 }

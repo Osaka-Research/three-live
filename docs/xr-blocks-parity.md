@@ -45,14 +45,20 @@ normalize to strings); XR Blocks lazy follows are objects with `"lazy": true`.
 `splatUrl` and `audio.src` are kept only when they are `https:` URLs or plain
 relative paths (no `..`, `%`, `\`, scheme, or `//`).
 
-### Exporter differences to be aware of
+### Web and native exports share one node list
 
-| Topic | Web exporter (`sceneToCanvas3D`) | Native compiler (Rust) |
-| --- | --- | --- |
-| Nodes | Every `Object3D` (groups, lights, meshes) in DFS order. | One node per non-empty mesh, flat, with the accumulated `translation` / `scale` (rotation of ancestors is not yet propagated). |
-| Interactivity targets | `target: '<node name>'` resolves on both. Numeric `targetNode`, raw `pointer` strings and raw `scene.userData.interactivity` graphs use this exporter's node numbering. | Same name resolution; numeric indices refer to the flat mesh list. Prefer `target` names. |
-| Traits on groups | Exported on the group node. | Ignored with an author warning; attach traits to meshes. |
-| Size caps | None. | `userData.xr` ≤ 15 KB per mesh (larger bags keep only canonical traits), compiled graph ≤ 256 KB. |
+Both exporters emit every `Object3D` under the scene (groups, lights, empty
+objects and meshes) as a glTF node in the same pre-order DFS, with local
+translation / rotation / scale and `children`. Traits and interactivity work
+on any node, and numeric indices (`targetNode`, raw `pointer` strings, raw
+`scene.userData.interactivity` graphs) mean the same node on web and native.
+`compiler/tests/fixtures/hierarchy_parity.expected.json` pins both exporters
+to the same output (`three-live/tests/hierarchy_parity_test.ts` and the Rust
+test `test_hierarchy_matches_web_exporter_fixture`).
+
+The native compiler additionally enforces size caps: `userData.xr` ≤ 15 KB per
+node (larger bags keep only canonical traits), compiled graph ≤ 256 KB, and at
+most `SECURITY_3D_MAX_MESHES × 4` nodes.
 
 ### Clamping (identical on every platform)
 

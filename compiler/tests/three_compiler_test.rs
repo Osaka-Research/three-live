@@ -1475,3 +1475,259 @@ fn test_empty_mesh_does_not_shift_interactivity_node_indices() {
         gltf["extensionsUsed"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
     assert!(used.contains(&"KHR_node_visibility"), "extensionsUsed: {:?}", used);
 }
+
+/// Rounds every number to 1e-5 (native f32 vs web f64) and folds `-0` into `0`;
+/// mirrors `canon` in `three-live/tests/hierarchy_parity_test.ts`.
+fn canon_parity(v: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Number(n) => {
+            let r = (n.as_f64().unwrap_or(0.0) * 1e5).round() / 1e5;
+            serde_json::json!(if r == 0.0 { 0.0 } else { r })
+        }
+        Value::Array(a) => Value::Array(a.iter().map(canon_parity).collect()),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, v)| (k.clone(), canon_parity(v))).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Exporter-neutral glTF projection; mirrors `project` in
+/// `three-live/tests/hierarchy_parity_test.ts`.
+fn project_parity(gltf: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{json, Value};
+    let or = |v: &Value, d: Value| if v.is_null() { d } else { v.clone() };
+    let empty = Vec::new();
+    let nodes: Vec<Value> = gltf["nodes"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .map(|n| {
+            let mesh = n["mesh"].as_u64();
+            let material = match mesh {
+                Some(m) => gltf["meshes"][m as usize]["primitives"][0]["material"].clone(),
+                None => Value::Null,
+            };
+            json!({
+                "name": or(&n["name"], json!("")),
+                "children": or(&n["children"], json!([])),
+                "translation": or(&n["translation"], json!([0, 0, 0])),
+                "rotation": or(&n["rotation"], json!([0, 0, 0, 1])),
+                "scale": or(&n["scale"], json!([1, 1, 1])),
+                "mesh": mesh.is_some(),
+                "material": material,
+                "xr": n["extras"]["xr"].clone(),
+                "hubs": n["extensions"]["MOZ_hubs_components"].clone(),
+                "scenecore": n["extensions"]["ANDROID_xr_scenecore"].clone(),
+            })
+        })
+        .collect();
+    canon_parity(&json!({
+        "sceneNodes": or(&gltf["scenes"][0]["nodes"], json!([])),
+        "nodes": nodes,
+        "interactivity": gltf["extensions"]["KHR_interactivity"].clone(),
+    }))
+}
+
+/// Cross-exporter parity: the native GLB must describe exactly the node list
+/// `sceneToCanvas3D` produces for the same script (same DFS order, names,
+/// hierarchy, local TRS, mesh/material references, XR extras/extensions and
+/// KHR_interactivity node indices). The expected JSON is generated from the web
+/// exporter by `three-live/tests/hierarchy_parity_test.ts`, which also fails if
+/// the web side drifts from it, so both exporters are pinned to one fixture.
+#[test]
+fn test_hierarchy_matches_web_exporter_fixture() {
+    let script = include_str!("fixtures/hierarchy_parity.js");
+    let expected: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/hierarchy_parity.expected.json"))
+            .expect("fixture parses");
+    let glb = transcode_three_to_glb(script).expect("parity scene should compile");
+    let gltf = parse_gltf_json(&glb);
+    let actual = project_parity(&gltf);
+    assert_eq!(
+        actual,
+        canon_parity(&expected),
+        "native GLB diverges from the web exporter fixture:\n{}",
+        serde_json::to_string_pretty(&actual).unwrap()
+    );
+}
+
+/// Groups now carry traits and behaviors (they used to be dropped with a
+/// warning in native builds).
+#[test]
+fn test_traits_and_interactivity_on_group() {
+    let script = r#"
+        const group = new THREE.Group();
+        group.name = "Handle";
+        group.userData.xr = { grab: true };
+        group.userData.interactivity = { onSelect: { action: "toggleVisibility" } };
+        const child = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+        child.name = "Body";
+        group.add(child);
+        scene.add(group);
+    "#;
+    let glb = transcode_three_to_glb(script).expect("group traits should compile");
+    let gltf = parse_gltf_json(&glb);
+    let nodes = gltf["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2);
+    let group = &nodes[0];
+    assert_eq!(group["name"], "Handle");
+    assert!(group.get("mesh").is_none(), "a group has no mesh");
+    assert_eq!(group["children"], serde_json::json!([1]));
+    assert_eq!(group["extras"]["xr"]["grabbable"], true);
+    assert_eq!(group["extensions"]["ANDROID_xr_scenecore"]["movable"]["systemMovable"], true);
+    assert_eq!(group["extensions"]["MOZ_hubs_components"]["grabbable"]["hand"], true);
+    assert_eq!(nodes[1]["name"], "Body");
+    assert!(nodes[1]["mesh"].is_u64());
+    assert_eq!(gltf["scenes"][0]["nodes"], serde_json::json!([0]));
+
+    let graph = gltf["extensions"]["KHR_interactivity"].to_string();
+    assert!(graph.contains("\"nodeIndex\":0"), "onSelect bound to the group: {}", graph);
+    assert!(graph.contains("/nodes/0/extensions/KHR_node_visibility/visible"), "{}", graph);
+    let used: Vec<&str> =
+        gltf["extensionsUsed"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+    for ext in
+        ["KHR_interactivity", "KHR_node_visibility", "MOZ_hubs_components", "ANDROID_xr_scenecore"]
+    {
+        assert!(used.contains(&ext), "{} missing from extensionsUsed: {:?}", ext, used);
+    }
+}
+
+/// Extracts the first `point3f[] points = [...]` array of a (stored) USDZ.
+fn usdz_points(usdz: &[u8]) -> Vec<[f32; 3]> {
+    let text = String::from_utf8_lossy(usdz);
+    let start = text.find("points = [").expect("USDA points") + "points = [".len();
+    let end = start + text[start..].find(']').expect("points end");
+    text[start..end]
+        .split(')')
+        .filter_map(|tuple| {
+            let nums: Vec<f32> = tuple
+                .trim_start_matches([',', ' ', '('])
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            (nums.len() == 3).then(|| [nums[0], nums[1], nums[2]])
+        })
+        .collect()
+}
+
+/// A rotated parent must rotate (and offset) its children in both formats:
+/// GLB keeps local TRS on a parent/child pair, USDZ bakes the world transform.
+#[test]
+fn test_rotated_parent_world_transform_in_glb_and_usdz() {
+    use three_live_compiler::compile_three_to_usdz;
+
+    let script = r#"
+        const parent = new THREE.Group();
+        parent.name = "Turntable";
+        parent.position.set(10, 0, 0);
+        parent.rotation.set(0, 0, Math.PI / 2);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), 3));
+        const tri = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
+        tri.name = "Tri";
+        tri.position.set(1, 0, 0);
+        parent.add(tri);
+        scene.add(parent);
+    "#;
+
+    let gltf = parse_gltf_json(&transcode_three_to_glb(script).expect("GLB should compile"));
+    let nodes = gltf["nodes"].as_array().unwrap();
+    assert_eq!(nodes[0]["name"], "Turntable");
+    assert_eq!(nodes[0]["children"], serde_json::json!([1]));
+    let rot: Vec<f64> =
+        nodes[0]["rotation"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    for (got, want) in rot.iter().zip([0.0, 0.0, h, h]) {
+        assert!((got - want).abs() < 1e-6, "parent rotation {:?}", rot);
+    }
+    assert_eq!(nodes[1]["translation"], serde_json::json!([1.0, 0.0, 0.0]));
+    assert!(nodes[1].get("rotation").is_none(), "child keeps its local (identity) rotation");
+
+    let usdz = compile_three_to_usdz(script).expect("USDZ should compile");
+    let points = usdz_points(&usdz);
+    let expected = [[10.0, 2.0, 0.0], [9.0, 1.0, 0.0], [10.0, 1.0, 1.0]];
+    assert_eq!(points.len(), 3, "points: {:?}", points);
+    for (p, e) in points.iter().zip(expected) {
+        for c in 0..3 {
+            assert!(
+                (p[c] - e[c]).abs() < 1e-4,
+                "world-space points {:?} != {:?}",
+                points,
+                expected
+            );
+        }
+    }
+}
+
+/// Deep nesting must not hit the VM recursion limit, and a parent/child cycle
+/// wired by hand must not hang or duplicate nodes.
+#[test]
+fn test_deep_and_cyclic_hierarchies_are_bounded() {
+    let deep = r#"
+        let parent = scene;
+        for (let i = 0; i < 300; i++) {
+            const g = new THREE.Group();
+            g.position.x = 0.01;
+            parent.add(g);
+            parent = g;
+        }
+        parent.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()));
+    "#;
+    let gltf = parse_gltf_json(&transcode_three_to_glb(deep).expect("deep hierarchy compiles"));
+    let nodes = gltf["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 301);
+    assert_eq!(nodes[299]["children"], serde_json::json!([300]));
+    assert!(nodes[300]["mesh"].is_u64());
+
+    let cyclic = r#"
+        const a = new THREE.Group(); a.name = "A";
+        const b = new THREE.Group(); b.name = "B";
+        scene.add(a);
+        a.add(b);
+        b.children.push(a);
+    "#;
+    let gltf = parse_gltf_json(&transcode_three_to_glb(cyclic).expect("cycle compiles"));
+    let names: Vec<&str> =
+        gltf["nodes"].as_array().unwrap().iter().filter_map(|n| n["name"].as_str()).collect();
+    assert_eq!(names, ["A", "B"]);
+    assert!(gltf["nodes"][1].get("children").is_none(), "the back edge is dropped");
+}
+
+#[test]
+fn test_node_quota_limit() {
+    // Fully constructed Groups are too slow to build 4001 of within the
+    // execution ceiling, so use bare prototype instances: this also checks
+    // that half-initialized hostile objects (no position/children) are safe.
+    let script = r#"
+        for (let i = 0; i < 4001; i++) scene.children.push(Object.create(THREE.Group.prototype));
+    "#;
+    let err = transcode_three_to_glb(script).expect_err("node quota must be enforced");
+    assert!(err.contains("maximum allowed nodes"), "unexpected error: {}", err);
+}
+
+/// A hand-built SceneGraph cannot describe a cycle or reference a missing mesh.
+#[test]
+fn test_glb_writer_rejects_invalid_hierarchy_links() {
+    use three_live_compiler::scene::{SceneGraph, SceneNode};
+    let scene = SceneGraph {
+        nodes: vec![
+            SceneNode { name: "Root".into(), parent: Some(1), mesh: Some(7), ..Default::default() },
+            SceneNode {
+                name: "Child".into(),
+                parent: Some(0),
+                rotation: [f32::NAN, 0.0, 0.0, 1.0],
+                translation: [f32::INFINITY, 1.0, 0.0],
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let gltf = parse_gltf_json(&three_live_compiler::write_glb(&scene).expect("GLB"));
+    assert_eq!(gltf["scenes"][0]["nodes"], serde_json::json!([0]), "forward parent -> root");
+    assert_eq!(gltf["nodes"][0]["children"], serde_json::json!([1]));
+    assert!(gltf["nodes"][0].get("mesh").is_none(), "out-of-range mesh dropped");
+    assert!(gltf["nodes"][1].get("rotation").is_none(), "non-finite rotation -> identity");
+    assert_eq!(gltf["nodes"][1]["translation"], serde_json::json!([0.0, 1.0, 0.0]));
+}

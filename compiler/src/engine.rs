@@ -21,7 +21,7 @@
 
 use crate::constants::*;
 use crate::geometry::register_native_geometry_callables;
-use crate::scene::{CameraConfig, Light3D, Material3D, Mesh3D, SceneGraph};
+use crate::scene::{CameraConfig, Light3D, Material3D, Mesh3D, SceneGraph, SceneNode};
 use crate::time::Stopwatch;
 use crate::usdz::register_native_usdz_callables;
 use boa_engine::{
@@ -982,14 +982,197 @@ impl ThreeEngine {
         )
         .filter(|v| v.is_object());
 
+        // 5. Scene hierarchy (absent on legacy engine assets -> flat layout).
+        let nodes = self.extract_nodes(&scene_obj, rust_meshes.len())?;
+
         Ok(SceneGraph {
             meshes: rust_meshes,
             materials: rust_materials,
             lights: rust_lights,
             camera: camera_config,
             interactivity,
+            nodes,
         })
     }
+
+    /// Reads and validates `raw_nodes` (the `nodes` array of the extraction
+    /// result). Every node's parent must precede it (a forest with no cycles),
+    /// mesh references must be in range, and transforms are sanitized to finite
+    /// values with a unit quaternion.
+    fn extract_nodes(
+        &mut self,
+        scene_obj: &JsObject,
+        mesh_count: usize,
+    ) -> Result<Vec<SceneNode>, RawExtractionError> {
+        let nodes_val = scene_obj
+            .get(js_string!("nodes"), &mut self.context)
+            .map_err(|e| RawExtractionError::Format(format!("Failed to get nodes: {}", e)))?;
+        if nodes_val.is_undefined() || nodes_val.is_null() {
+            return Ok(Vec::new());
+        }
+        let nodes_arr = nodes_val
+            .as_object()
+            .and_then(|o| JsArray::from_object(o.clone()).ok())
+            .ok_or_else(|| RawExtractionError::Format("Nodes is not an array".to_string()))?;
+        let nodes_len = nodes_arr
+            .length(&mut self.context)
+            .map_err(|e| RawExtractionError::Format(format!("Failed to get nodes length: {}", e)))?
+            as usize;
+        if nodes_len > MAX_SCENE_NODES {
+            return Err(RawExtractionError::Quota(format!(
+                "Scene exceeds maximum allowed nodes ({}/{})",
+                nodes_len, MAX_SCENE_NODES
+            )));
+        }
+
+        let mut nodes = Vec::with_capacity(nodes_len);
+        for i in 0..nodes_len {
+            let node_val = nodes_arr.at(i as i64, &mut self.context).map_err(|e| {
+                RawExtractionError::Format(format!("Failed to get node {}: {}", i, e))
+            })?;
+            let node_obj = node_val.as_object().ok_or_else(|| {
+                RawExtractionError::Format(format!("Node {} is not an object", i))
+            })?;
+
+            let name = node_obj
+                .get(js_string!("name"), &mut self.context)
+                .ok()
+                .and_then(|v| {
+                    v.as_string().filter(|s| s.len() <= 1024).map(|s| s.to_std_string_escaped())
+                })
+                .unwrap_or_default();
+
+            let parent = match read_index(&node_obj, "parent", &mut self.context) {
+                IndexField::None => None,
+                IndexField::Some(p) if p < i => Some(p),
+                _ => {
+                    return Err(RawExtractionError::Format(format!(
+                        "Node {} has an invalid parent (must precede the node)",
+                        i
+                    )))
+                }
+            };
+            let mesh = match read_index(&node_obj, "mesh", &mut self.context) {
+                IndexField::None => None,
+                IndexField::Some(m) if m < mesh_count => Some(m),
+                _ => {
+                    return Err(RawExtractionError::Format(format!(
+                        "Node {} references an invalid mesh",
+                        i
+                    )))
+                }
+            };
+
+            let t_val = node_obj
+                .get(js_string!("translation"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let r_val = node_obj
+                .get(js_string!("rotation"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let s_val = node_obj
+                .get(js_string!("scale"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let translation =
+                finite_or(extract_f32_3(&t_val, [0.0; 3], &mut self.context), [0.0; 3]);
+            let rotation =
+                unit_quaternion(extract_f32_4(&r_val, [0.0, 0.0, 0.0, 1.0], &mut self.context));
+            let scale = finite_or(extract_f32_3(&s_val, [1.0; 3], &mut self.context), [1.0; 3]);
+
+            let (xr_traits, xr_normalized, xr_scenecore, xr_hubs) =
+                read_xr_fields(&node_obj, &mut self.context);
+
+            nodes.push(SceneNode {
+                name,
+                parent,
+                translation,
+                rotation,
+                scale,
+                mesh,
+                xr_traits,
+                xr_normalized,
+                xr_scenecore,
+                xr_hubs,
+            });
+        }
+        Ok(nodes)
+    }
+}
+
+/// Maximum number of glTF nodes (groups, lights, empties and meshes).
+pub(crate) const MAX_SCENE_NODES: usize = SECURITY_3D_MAX_MESHES * 4;
+
+/// A non-negative integer index field; `-1`, `null` and absent mean "none".
+enum IndexField {
+    None,
+    Some(usize),
+    Invalid,
+}
+
+fn read_index(obj: &JsObject, key: &str, context: &mut Context) -> IndexField {
+    let v = obj.get(JsString::from(key), context).unwrap_or(JsValue::undefined());
+    if v.is_undefined() || v.is_null() {
+        return IndexField::None;
+    }
+    match v.as_number() {
+        Some(n) if n == -1.0 => IndexField::None,
+        Some(n) if n >= 0.0 && n.fract() == 0.0 && n < usize::MAX as f64 => {
+            IndexField::Some(n as usize)
+        }
+        _ => IndexField::Invalid,
+    }
+}
+
+/// Replaces each non-finite component with the corresponding default.
+fn finite_or<const N: usize>(v: [f32; N], default: [f32; N]) -> [f32; N] {
+    let mut out = v;
+    for i in 0..N {
+        if !out[i].is_finite() {
+            out[i] = default[i];
+        }
+    }
+    out
+}
+
+/// Returns a finite unit quaternion: non-finite or zero-length input becomes the
+/// identity, and a non-unit quaternion is normalized (glTF requires unit
+/// rotations).
+fn unit_quaternion(q: [f32; 4]) -> [f32; 4] {
+    const IDENTITY: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    if !q.iter().all(|c| c.is_finite()) {
+        return IDENTITY;
+    }
+    let len = q.iter().map(|c| (*c as f64) * (*c as f64)).sum::<f64>().sqrt();
+    if !len.is_finite() || len < 1e-12 {
+        return IDENTITY;
+    }
+    if (len - 1.0).abs() <= 1e-5 {
+        return q;
+    }
+    [
+        (q[0] as f64 / len) as f32,
+        (q[1] as f64 / len) as f32,
+        (q[2] as f64 / len) as f32,
+        (q[3] as f64 / len) as f32,
+    ]
+}
+
+/// Raw / canonical normalized / SceneCore / Hubs XR trait payloads.
+type XrFields = (
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+);
+
+/// Reads the four per-node XR trait JSON payloads, each bounded by
+/// [`MAX_XR_JSON_BYTES`].
+fn read_xr_fields(obj: &JsObject, context: &mut Context) -> XrFields {
+    (
+        read_json_field(obj, "xr_traits_json", MAX_XR_JSON_BYTES, context),
+        read_json_field(obj, "xr_normalized_json", MAX_XR_JSON_BYTES, context),
+        read_json_field(obj, "xr_scenecore_json", MAX_XR_JSON_BYTES, context),
+        read_json_field(obj, "xr_hubs_json", MAX_XR_JSON_BYTES, context),
+    )
 }
 
 /// Maximum size of a per-mesh canonical XR trait JSON payload.
