@@ -615,6 +615,50 @@ console.log('=== Running KHR_interactivity Plugin Tests ===');
   );
 }
 
+{
+  // event/send -> event/receive self-loop: must share one step budget instead of
+  // starting a fresh 2048-step budget at every nesting level (2048^16).
+  const fanOutGltf = {
+    asset: {version: '2.0'},
+    nodes: [{name: 'n'}],
+    extensions: {
+      KHR_interactivity: {
+        graph: 0,
+        graphs: [{
+          declarations: [{op: 'event/onStart'}, {op: 'event/receive'}, {op: 'event/send'}, {op: 'flow/sequence'}],
+          events: [{id: 'loop'}],
+          nodes: [
+            {declaration: 0, flows: {out: {node: 2}}},
+            {declaration: 1, configuration: {event: {value: [0]}}, flows: {out: {node: 3}}},
+            {declaration: 2, configuration: {event: {value: [0]}}},
+            {declaration: 3, flows: {a: {node: 2}, b: {node: 2}, c: {node: 2}}},
+          ],
+        }],
+      },
+    },
+  };
+  const t0 = Date.now();
+  createMockViewerFromGLBData({gltf: fanOutGltf, bin: new ArrayBuffer(0)});
+  assert(Date.now() - t0 < 1000, `send/receive fan-out halts under a shared budget (${Date.now() - t0}ms)`);
+
+  // Diamond value DAG: 60 math/add nodes each reading the previous one twice.
+  const decls = [{op: 'event/onStart'}, {op: 'math/add'}, {op: 'variable/set'}];
+  const nodes: any[] = [{declaration: 0, flows: {out: {node: 61}}}];
+  for (let i = 1; i <= 60; i++) {
+    const prev = i === 1 ? {value: 1} : {node: i - 1, socket: 'value'};
+    nodes.push({declaration: 1, values: {a: prev, b: prev}});
+  }
+  nodes.push({declaration: 2, configuration: {variable: 'x'}, values: {value: {node: 60, socket: 'value'}}});
+  const diamondGltf = {
+    asset: {version: '2.0'},
+    nodes: [{name: 'n'}],
+    extensions: {KHR_interactivity: {graph: 0, graphs: [{declarations: decls, variables: [{id: 'x', type: 'float', value: 0}], nodes}]}},
+  };
+  const t1 = Date.now();
+  createMockViewerFromGLBData({gltf: diamondGltf, bin: new ArrayBuffer(0)});
+  assert(Date.now() - t1 < 1000, `diamond value DAG evaluation is capped (${Date.now() - t1}ms)`);
+}
+
 console.log(
   `\n=== KHR_interactivity Tests Summary: ${passed} passed, ${failed} failed ===`,
 );

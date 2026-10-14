@@ -88,6 +88,11 @@ export interface SharedThreeLiveRegistry {
   xrExtrasProvider?: any;
   xrSceneConverter?: any;
   /**
+   * Canonical `userData.xr` serializer (`xr-trait-schema.ts`). When present,
+   * GLB/USDZ exports emit fully normalized XR Blocks traits.
+   */
+  xrTraitSerializer?: import('./xr-trait-schema').XRTraitSerializer;
+  /**
    * URL of the Three-Live IIFE bundle the worker sandbox loads to obtain THREE.
    * Lives on the shared registry so the lean element bundle can set it without
    * taking a dependency on three-author.

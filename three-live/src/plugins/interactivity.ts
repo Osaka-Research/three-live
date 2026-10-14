@@ -34,6 +34,10 @@ export const MAX_ACTIVE_TWEENS = 128;
 /** Maximum concurrent scheduled delays active per viewer. */
 export const MAX_ACTIVE_DELAYS = 64;
 const MAX_EVENT_NESTING_DEPTH = 16;
+/** Maximum value-socket evaluations per top-level invocation. */
+const MAX_EVALS_PER_INVOCATION = 10000;
+/** Maximum nesting of `flow/for` bodies (each recursion uses native stack). */
+const MAX_FOR_NESTING = 8;
 
 const FORBIDDEN_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -321,6 +325,8 @@ export class InteractivityVM {
     let nextDelayId = 1;
     let elapsed = 0;
     let eventDepth = 0;
+    let evalCount = 0;
+    let forDepth = 0;
     let transformsDirty = false;
     let visibilityDirty = false;
     let renderDirty = false;
@@ -560,11 +566,16 @@ export class InteractivityVM {
       return false;
     };
 
-    const resolvePtr = (nodeIdx: number, node: InteractivityNode): string | null => {
+    const resolvePtr = (
+      nodeIdx: number,
+      node: InteractivityNode,
+      // Shared with the caller's evaluation so templated pointer cycles stop.
+      visited: Set<number> = new Set(),
+    ): string | null => {
       const raw = readCfg(node, 'pointer');
       if (typeof raw !== 'string' || !raw.startsWith('/')) return null;
       const sub = raw.replace(/\{([a-zA-Z0-9_]+)\}/g, (_m, param) => {
-        const i = Math.trunc(Number(readIn(nodeIdx, param, undefined, new Set()) ?? readCfg(node, param)));
+        const i = Math.trunc(Number(readIn(nodeIdx, param, undefined, visited) ?? readCfg(node, param)));
         return Number.isSafeInteger(i) && i >= 0 ? String(i) : '-1';
       });
       return parseSafeGltfPointer(sub) ? sub : null;
@@ -594,12 +605,20 @@ export class InteractivityVM {
       sock: string,
       visited: Set<number>,
     ): InteractivityValue => {
-      if (nodeIdx < 0 || nodeIdx >= nodes.length || visited.has(nodeIdx) || visited.size > 128) {
+      if (
+        nodeIdx < 0 ||
+        nodeIdx >= nodes.length ||
+        visited.has(nodeIdx) ||
+        visited.size > 128 ||
+        // Diamond-shaped value DAGs would otherwise cost 2^N evaluations.
+        ++evalCount > MAX_EVALS_PER_INVOCATION
+      ) {
         return undefined;
       }
       const node = nodes[nodeIdx];
       const op = getOp(node);
-      if (/^(event|pointer\/on|scene\/on|flow)\//.test(op)) {
+      // Trigger/flow nodes expose their last outputs (e.g. onSelect nodeIndex).
+      if (/^(event\/|pointer\/on|scene\/on|flow\/)/.test(op)) {
         return cloneVal(outputs.get(nodeIdx)?.[sock]);
       }
       visited.add(nodeIdx);
@@ -613,7 +632,7 @@ export class InteractivityVM {
             : undefined;
         }
         if (op === 'pointer/get') {
-          const p = resolvePtr(nodeIdx, node);
+          const p = resolvePtr(nodeIdx, node, visited);
           return p ? readPtr(p) : undefined;
         }
         if (op.startsWith('math/')) {
@@ -753,7 +772,12 @@ export class InteractivityVM {
       budget: {steps: number} = {steps: 0},
     ) => {
       if (!startTarget || typeof startTarget.node !== 'number') return;
+      if (budget.steps === 0) evalCount = 0;
       const queue: InteractivityFlowTarget[] = [startTarget];
+      // Bounded enqueue: pending work never exceeds the remaining step budget.
+      const enqueue = (t: InteractivityFlowTarget): void => {
+        if (queue.length + budget.steps < MAX_STEPS_PER_INVOCATION) queue.push(t);
+      };
       while (queue.length > 0 && budget.steps < MAX_STEPS_PER_INVOCATION) {
         budget.steps++;
         const cur = queue.shift();
@@ -767,7 +791,7 @@ export class InteractivityVM {
           readIn(nodeIdx, name, fb, new Set());
         const pushOut = (sock = 'out') => {
           const t = node.flows?.[sock];
-          if (t) queue.push(t);
+          if (t) enqueue(t);
         };
 
         switch (op) {
@@ -785,7 +809,7 @@ export class InteractivityVM {
             const next =
               node.flows?.[String(inp('selection', inp('value', 0)))] ??
               node.flows?.['default'];
-            if (next) queue.push(next);
+            if (next) enqueue(next);
             break;
           }
           case 'flow/for': {
@@ -793,15 +817,20 @@ export class InteractivityVM {
             const eIdx = Math.trunc(num(inp('endIndex', 0)));
             const stp = Math.max(1, Math.trunc(num(inp('step', 1), 1)));
             const body = node.flows?.['body'];
-            if (body && eIdx > sIdx) {
+            if (body && eIdx > sIdx && forDepth < MAX_FOR_NESTING) {
               const maxIt = Math.min(Math.ceil((eIdx - sIdx) / stp), MAX_STEPS_PER_INVOCATION);
-              for (let it = 0; it < maxIt && budget.steps < MAX_STEPS_PER_INVOCATION; it++) {
-                setOut(nodeIdx, 'index', sIdx + it * stp);
-                followFlow(body, budget);
+              forDepth++;
+              try {
+                for (let it = 0; it < maxIt && budget.steps < MAX_STEPS_PER_INVOCATION; it++) {
+                  setOut(nodeIdx, 'index', sIdx + it * stp);
+                  followFlow(body, budget);
+                }
+              } finally {
+                forDepth--;
               }
             }
             const done = node.flows?.['completed'] ?? node.flows?.['out'];
-            if (done) queue.push(done);
+            if (done) enqueue(done);
             break;
           }
           case 'flow/doN': {
@@ -877,7 +906,7 @@ export class InteractivityVM {
             const done = node.flows?.['done'] ?? node.flows?.['out'];
             if (dur <= 0) {
               setOut(nodeIdx, 'lastDelayIndex', -1);
-              if (done) queue.push(done);
+              if (done) enqueue(done);
               break;
             }
             if (delays.length >= MAX_ACTIVE_DELAYS) delays.shift();
@@ -997,7 +1026,8 @@ export class InteractivityVM {
                   }),
                 );
               }
-              this.receiveCustomEvent(id, payload);
+              // Share this invocation's budget so send->receive loops stay bounded.
+              receiveWithBudget(id, payload, budget);
             }
             pushOut();
             break;
@@ -1063,7 +1093,13 @@ export class InteractivityVM {
     this.receiveCustomEvent = (
       eventIdOrIndex: string | number,
       payload: Record<string, InteractivityValue> = {},
-    ) => {
+    ) => receiveWithBudget(eventIdOrIndex, payload, {steps: 0});
+
+    function receiveWithBudget(
+      eventIdOrIndex: string | number,
+      payload: Record<string, InteractivityValue>,
+      budget: {steps: number},
+    ): void {
       if (eventDepth >= MAX_EVENT_NESTING_DEPTH) return;
       eventDepth++;
       try {
@@ -1075,13 +1111,13 @@ export class InteractivityVM {
           for (const [k, v] of Object.entries(payload)) {
             if (!FORBIDDEN_SEGMENTS.has(k)) setOut(i, k, cloneVal(v));
           }
-          followFlow(node.flows?.['out']);
+          followFlow(node.flows?.['out'], budget);
         });
         flushSync();
       } finally {
         eventDepth--;
       }
-    };
+    }
 
     this.tick = (dt: number) => {
       if (!Number.isFinite(dt) || dt < 0) return;

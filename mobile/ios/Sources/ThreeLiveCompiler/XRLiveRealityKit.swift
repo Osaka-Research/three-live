@@ -19,15 +19,47 @@
   import RealityKit
 
   /// Declarative spatial traits extracted from `mesh.userData.xr` in a Three.js scene.
+  ///
+  /// The original fields (`grabbable` ... `mass`) are kept source-compatible. The XR Blocks
+  /// fields added after them are parsed from the canonical compiled form
+  /// (`nodes[i].extras.xr`, see `docs/xr-blocks-parity.md`) with the same clamps as every
+  /// other platform.
   public struct XRLiveEntityTraits: Codable, Sendable, Equatable {
     public var grabbable: Bool?
     public var billboard: String?
     public var anchor: String?
+    /// Follow mode (`"head"`, `"hand-left"`, `"hand-right"`). Set for both eager and lazy
+    /// follows; `lazyFollow` is non-`nil` only for XR Blocks lazy follows.
     public var follow: String?
     public var followDistance: Float?
     public var physics: String?
     public var restitution: Float?
     public var mass: Float?
+
+    /// Canonical grab mode (`"1-hand"` or `"2-hand"`).
+    public var grabMode: String?
+    /// Minimum uniform scale for system manipulation (`scale.min`).
+    public var minScale: Float?
+    /// Maximum uniform scale for system manipulation (`scale.max`).
+    public var maxScale: Float?
+    /// XR Blocks lazy head / hand follow parameters.
+    public var lazyFollow: XRLiveLazyFollow?
+    /// Orbit parameters (named target or literal center).
+    public var orbit: XRLiveOrbit?
+    /// Manipulation handle parameters.
+    public var handles: XRLiveHandles?
+    /// Particle emitter parameters.
+    public var particles: XRLiveParticles?
+    /// Hold-to-ask (Gemini Live) parameters.
+    public var holdToAsk: XRLiveHoldToAsk?
+    /// World-understanding opt-in flags.
+    public var worldUnderstanding: XRLiveWorldUnderstanding?
+    /// Gaussian splat URL (already filtered by the `safeMediaUrl` allow-list).
+    public var splatUrl: String?
+    /// Host-provided spatial panel slot name.
+    public var spatialSlot: String?
+    /// Spatial audio parameters (`src` already filtered by the `safeMediaUrl` allow-list).
+    public var audio: XRLiveSpatialAudio?
 
     public init(
       grabbable: Bool? = nil,
@@ -37,7 +69,19 @@
       followDistance: Float? = nil,
       physics: String? = nil,
       restitution: Float? = nil,
-      mass: Float? = nil
+      mass: Float? = nil,
+      grabMode: String? = nil,
+      minScale: Float? = nil,
+      maxScale: Float? = nil,
+      lazyFollow: XRLiveLazyFollow? = nil,
+      orbit: XRLiveOrbit? = nil,
+      handles: XRLiveHandles? = nil,
+      particles: XRLiveParticles? = nil,
+      holdToAsk: XRLiveHoldToAsk? = nil,
+      worldUnderstanding: XRLiveWorldUnderstanding? = nil,
+      splatUrl: String? = nil,
+      spatialSlot: String? = nil,
+      audio: XRLiveSpatialAudio? = nil
     ) {
       self.grabbable = grabbable
       self.billboard = billboard
@@ -47,6 +91,57 @@
       self.physics = physics
       self.restitution = restitution
       self.mass = mass
+      self.grabMode = grabMode
+      self.minScale = minScale
+      self.maxScale = maxScale
+      self.lazyFollow = lazyFollow
+      self.orbit = orbit
+      self.handles = handles
+      self.particles = particles
+      self.holdToAsk = holdToAsk
+      self.worldUnderstanding = worldUnderstanding
+      self.splatUrl = splatUrl
+      self.spatialSlot = spatialSlot
+      self.audio = audio
+    }
+
+    /// Builds entity traits from a raw `extras.xr` dictionary, combining the legacy keys
+    /// with the canonical normalized traits.
+    static func from(xr: [String: Any]) -> XRLiveEntityTraits {
+      let canonical = XRLiveTraitParser.normalize(xr)
+      let traitsList = (XRJSON.array(xr["traits"]) ?? []).compactMap { XRJSON.string($0) }
+      let legacyGrab = XRJSON.bool(xr["grabbable"]) ?? traitsList.contains("grab")
+      let billboard =
+        XRJSON.string(xr["billboard"])
+        ?? (traitsList.contains("billboard") ? "capsule" : nil)
+        ?? canonical?.billboard
+      // `follow` is a string (eager) or an object (lazy) in compiled GLBs.
+      let follow =
+        XRJSON.string(xr["follow"]) ?? canonical?.follow ?? canonical?.lazyFollow?.mode
+      let followDistance =
+        XRJSON.number(xr["followDistance"]).map { Float($0) } ?? canonical?.lazyFollow?.distance
+      return XRLiveEntityTraits(
+        grabbable: legacyGrab || canonical?.grab != nil,
+        billboard: billboard,
+        anchor: XRJSON.string(xr["anchor"]),
+        follow: follow,
+        followDistance: followDistance,
+        physics: XRJSON.string(xr["physics"]),
+        restitution: XRJSON.number(xr["restitution"]).map { Float($0) },
+        mass: XRJSON.number(xr["mass"]).map { Float($0) },
+        grabMode: canonical?.grab,
+        minScale: canonical?.scale?.min,
+        maxScale: canonical?.scale?.max,
+        lazyFollow: canonical?.lazyFollow,
+        orbit: canonical?.orbit,
+        handles: canonical?.handles,
+        particles: canonical?.particles,
+        holdToAsk: canonical?.holdToAsk,
+        worldUnderstanding: canonical?.worldUnderstanding,
+        splatUrl: canonical?.splatUrl,
+        spatialSlot: canonical?.spatialSlot,
+        audio: canonical?.audio
+      )
     }
   }
 
@@ -56,73 +151,38 @@
     /// Extracts a map of node/entity name to `XRLiveEntityTraits` from a compiled `.glb` buffer's
     /// JSON chunk (`nodes[].extras.xr`).
     public static func extractXRTraits(fromGLB glbData: Data) -> [String: XRLiveEntityTraits] {
-      guard glbData.count >= 20 else { return [:] }
-      let magic = UInt32(
-        littleEndian: glbData.withUnsafeBytes {
-          $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self)
-        })
-      let version = UInt32(
-        littleEndian: glbData.withUnsafeBytes {
-          $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self)
-        })
-      let chunkLenU32 = UInt32(
-        littleEndian: glbData.withUnsafeBytes {
-          $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self)
-        })
-      let chunkType = UInt32(
-        littleEndian: glbData.withUnsafeBytes {
-          $0.loadUnaligned(fromByteOffset: 16, as: UInt32.self)
-        })
-      let chunkLen = Int(chunkLenU32)
-      guard magic == 0x4654_6C67, version == 2, chunkType == 0x4E4F_534A,
-        chunkLen > 0, chunkLen <= glbData.count - 20
-      else {
-        return [:]
-      }
-
-      let sliceStart = glbData.startIndex.advanced(by: 20)
-      let sliceEnd = sliceStart.advanced(by: chunkLen)
-      let jsonSlice = glbData.subdata(in: sliceStart..<sliceEnd)
       guard
-        let root = try? JSONSerialization.jsonObject(with: jsonSlice) as? [String: Any],
-        let nodes = root["nodes"] as? [[String: Any]]
+        let root = XRLiveGLB.jsonRoot(fromGLB: glbData),
+        let nodes = root["nodes"] as? [Any]
       else {
         return [:]
       }
 
       var result: [String: XRLiveEntityTraits] = [:]
-      for (idx, node) in nodes.enumerated() {
-        let name = (node["name"] as? String) ?? "Node_\(idx)"
+      for (idx, rawNode) in nodes.prefix(XRLiveRuntimeSession.maxSceneElements).enumerated() {
         guard
+          let node = rawNode as? [String: Any],
           let extras = node["extras"] as? [String: Any],
           let xr = extras["xr"] as? [String: Any]
         else {
           continue
         }
-        let traitsList = (xr["traits"] as? [String]) ?? []
-        let grabbable = (xr["grabbable"] as? Bool) ?? traitsList.contains("grab")
-        let billboard =
-          (xr["billboard"] as? String)
-          ?? (traitsList.contains("billboard") ? "capsule" : nil)
-        let anchor = xr["anchor"] as? String
-        let follow = xr["follow"] as? String
-        let followDistance = (xr["followDistance"] as? NSNumber)?.floatValue
-        let physics = xr["physics"] as? String
-        let restitution = (xr["restitution"] as? NSNumber)?.floatValue
-        let mass = (xr["mass"] as? NSNumber)?.floatValue
-
-        result[name] = XRLiveEntityTraits(
-          grabbable: grabbable,
-          billboard: billboard,
-          anchor: anchor,
-          follow: follow,
-          followDistance: followDistance,
-          physics: physics,
-          restitution: restitution,
-          mass: mass
-        )
+        let name = XRJSON.string(node["name"]) ?? "Node_\(idx)"
+        result[name] = XRLiveEntityTraits.from(xr: xr)
       }
       return result
+    }
+
+    /// Extracts canonical traits keyed by glTF node index from a compiled `.glb` buffer.
+    public static func extractCanonicalXRTraits(fromGLB glbData: Data) -> [Int: XRLiveNodeTraits] {
+      guard let root = XRLiveGLB.jsonRoot(fromGLB: glbData) else { return [:] }
+      return XRLiveTraitParser.traits(fromGLTF: root)
+    }
+
+    /// Extracts the root `extensions.KHR_interactivity` behavior graph from a compiled `.glb`
+    /// buffer as JSON bytes, or `nil` when absent or malformed.
+    public static func extractInteractivityJSON(fromGLB glbData: Data) -> Data? {
+      XRLiveGLB.interactivityJSON(fromGLB: glbData)
     }
 
     /// Applies `XRLiveEntityTraits` (`userData.xr`) to a loaded RealityKit `Entity` hierarchy,
@@ -137,8 +197,16 @@
       _ traitsByName: [String: XRLiveEntityTraits],
       to rootEntity: Entity
     ) {
+      // USDZ prim names are sanitized USD identifiers, so also index the sanitized names.
+      var lookup = traitsByName
+      for (name, traits) in traitsByName {
+        let prim = XRLiveGLB.usdPrimName(for: name, fallback: name)
+        if lookup[prim] == nil {
+          lookup[prim] = traits
+        }
+      }
       func visit(_ entity: Entity) {
-        if let traits = traitsByName[entity.name] {
+        if let traits = lookup[entity.name] {
           configureEntity(entity, with: traits)
         }
         for child in entity.children {
@@ -152,15 +220,20 @@
     /// to its `userData.xr` traits.
     @MainActor
     public static func configureEntity(_ entity: Entity, with traits: XRLiveEntityTraits) {
+      let interactive =
+        traits.grabbable == true || traits.handles != nil || traits.holdToAsk != nil
       let needsCollision =
-        (traits.grabbable == true) || (traits.physics != nil && traits.physics != "none")
+        interactive || (traits.physics != nil && traits.physics != "none")
       if needsCollision {
         entity.generateCollisionShapes(recursive: true)
       }
 
-      if traits.grabbable == true {
-        #if os(iOS) || os(visionOS)
-          if #available(iOS 18.0, visionOS 1.0, *) {
+      if interactive {
+        #if os(visionOS)
+          entity.components.set(InputTargetComponent(allowedInputTypes: .all))
+        #elseif os(iOS) && compiler(>=6.0)
+          // `InputTargetComponent` ships in the iOS 18 SDK (Xcode 16 / Swift 6 compiler).
+          if #available(iOS 18.0, *) {
             entity.components.set(InputTargetComponent(allowedInputTypes: .all))
           }
         #endif
@@ -199,11 +272,14 @@
         )
       }
 
-      if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
-        if let bb = traits.billboard, !bb.isEmpty, bb != "false" {
-          entity.components.set(BillboardComponent())
+      // `BillboardComponent` ships in the iOS 18 / macOS 15 / visionOS 2 SDKs (Xcode 16).
+      #if compiler(>=6.0)
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+          if let bb = traits.billboard, !bb.isEmpty, bb != "false" {
+            entity.components.set(BillboardComponent())
+          }
         }
-      }
+      #endif
     }
   }
 #endif

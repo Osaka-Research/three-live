@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: https: http:; worker-src blob:; connect-src 'none'; font-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none';">
+<title>Three-Live Sandbox</title>
+</head>
+<body>
+<script>
+'use strict';
+(function () {
+  var started = false;
+
+  function lockDownExternalScriptLoading() {
+    try {
+      var meta = document.createElement('meta');
+      meta.httpEquiv = 'Content-Security-Policy';
+      meta.content =
+        "default-src 'none'; script-src 'unsafe-eval' blob:; worker-src 'none'; connect-src 'none';";
+      document.head.appendChild(meta);
+    } catch (e) {}
+  }
+
+  window.addEventListener('message', function (e) {
+    if (started) return;
+    if (e.source !== window.parent) return;
+    var data = e && e.data;
+    if (!data || data.type !== 'SANDBOX_RUN') return;
+    if (
+      typeof data.nonce !== 'string' ||
+      typeof data.workerSource !== 'string' ||
+      (typeof data.script !== 'string' && typeof data.scriptUrl !== 'string')
+    ) {
+      return;
+    }
+    started = true;
+    var nonce = data.nonce;
+    var script = typeof data.script === 'string' ? data.script : null;
+    var scriptUrl = typeof data.scriptUrl === 'string' ? data.scriptUrl : null;
+    var lockedDown = false;
+    function ensureLockedDown() {
+      if (lockedDown) return;
+      lockedDown = true;
+      lockDownExternalScriptLoading();
+    }
+    var worker;
+    try {
+      var blob = new Blob([data.workerSource], {
+        type: 'application/javascript',
+      });
+      var workerUrl = URL.createObjectURL(blob);
+      try {
+        var trustedWorkerUrl = workerUrl;
+        if (
+          typeof window.trustedTypes !== 'undefined' &&
+          window.trustedTypes &&
+          typeof window.trustedTypes.createPolicy === 'function'
+        ) {
+          try {
+            var policy = window.trustedTypes.createPolicy(
+              'three-live#sandbox-iframe',
+              {
+                createScriptURL: function (u) {
+                  if (!/^blob:/i.test(String(u))) {
+                    throw new TypeError(
+                      'Sandbox iframe only permits blob: worker URLs',
+                    );
+                  }
+                  return u;
+                },
+              },
+            );
+            trustedWorkerUrl = policy.createScriptURL(workerUrl);
+          } catch (ttErr) {}
+        }
+        worker = new Worker(trustedWorkerUrl);
+      } finally {
+        URL.revokeObjectURL(workerUrl);
+      }
+    } catch (err) {
+      window.parent.postMessage(
+        {
+          type: 'ERROR',
+          nonce: nonce,
+          message:
+            'Failed to initialize sandbox worker inside isolated iframe: ' +
+            ((err && err.message) || err),
+        },
+        '*',
+      );
+      return;
+    }
+
+    worker.onmessage = function (ev) {
+      var msg = ev && ev.data;
+      if (!msg || msg.nonce !== nonce) return;
+      if (msg.type === 'READY') {
+        window.parent.postMessage(msg, '*');
+        if (scriptUrl !== null) {
+          worker.postMessage({
+            type: 'EXECUTE_URL',
+            nonce: nonce,
+            scriptUrl: scriptUrl,
+          });
+        } else {
+          ensureLockedDown();
+          worker.postMessage({type: 'EXECUTE', nonce: nonce, script: script});
+        }
+        return;
+      }
+      ensureLockedDown();
+      var transfer =
+        msg.glbBuffer instanceof ArrayBuffer ? [msg.glbBuffer] : [];
+      window.parent.postMessage(msg, '*', transfer);
+      if (msg.type === 'DONE' || msg.type === 'ERROR') {
+        worker.terminate();
+      }
+    };
+
+    worker.onerror = function (errEvent) {
+      window.parent.postMessage(
+        {
+          type: 'ERROR',
+          nonce: nonce,
+          message:
+            (errEvent && errEvent.message) || 'Sandbox worker execution error',
+        },
+        '*',
+      );
+      worker.terminate();
+    };
+  });
+
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({type: 'IFRAME_READY'}, '*');
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

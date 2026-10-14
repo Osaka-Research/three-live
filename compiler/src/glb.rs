@@ -266,6 +266,11 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
     // 2. Process Meshes
     for (mesh_idx, mesh) in scene.meshes.iter().enumerate() {
         if mesh.positions.is_empty() {
+            // Keep glTF node index == scene mesh index (KHR_interactivity
+            // pointers and `nodeIndex` rely on it): emit a mesh-less node.
+            nodes.push(json!({
+                "name": if mesh.name.is_empty() { format!("Node_{}", mesh_idx) } else { mesh.name.clone() },
+            }));
             continue;
         }
 
@@ -430,7 +435,16 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             "name": if mesh.name.is_empty() { format!("Node_{}", mesh_idx) } else { mesh.name.clone() },
             "mesh": mesh_obj_idx,
         });
-        if let Some(ref xr) = mesh.xr_traits {
+        let finite3 = |v: &[f32; 3]| v.iter().all(|c| c.is_finite());
+        if finite3(&mesh.translation) && mesh.translation != [0.0, 0.0, 0.0] {
+            node_json["translation"] = json!(mesh.translation);
+        }
+        if finite3(&mesh.scale) && mesh.scale != [1.0, 1.0, 1.0] {
+            node_json["scale"] = json!(mesh.scale);
+        }
+        let empty_xr = serde_json::Value::Object(serde_json::Map::new());
+        let xr_source = mesh.xr_traits.as_ref().or(mesh.xr_normalized.as_ref().map(|_| &empty_xr));
+        if let Some(xr) = xr_source {
             let mut normalized_xr = xr.clone();
             let traits_arr = xr.get("traits").and_then(|v| v.as_array());
             let has_trait = |name: &str| -> bool {
@@ -457,7 +471,10 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                 }
             }
 
-            node_json["extras"] = json!({ "xr": normalized_xr });
+            // Prefer the canonical normalized traits computed by the shared
+            // `xr-trait-schema.ts` (identical on web, Android and iOS).
+            let extras_xr = mesh.xr_normalized.clone().unwrap_or(normalized_xr.clone());
+            node_json["extras"] = json!({ "xr": extras_xr });
             let mut hubs_ext = serde_json::Map::new();
             let mut android_ext = serde_json::Map::new();
             if is_grabbable {
@@ -493,6 +510,12 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                 add_ext("MOZ_hubs_components");
                 node_exts
                     .insert("MOZ_hubs_components".to_string(), serde_json::Value::Object(hubs_ext));
+            }
+            if let Some(serde_json::Value::Object(canonical)) = &mesh.xr_scenecore {
+                android_ext = canonical.clone();
+            }
+            if let Some(serde_json::Value::Object(canonical)) = &mesh.xr_hubs {
+                hubs_ext = canonical.clone();
             }
             if !android_ext.is_empty() {
                 add_ext("ANDROID_xr_scenecore");
@@ -556,6 +579,17 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             root.insert("textures".to_string(), json!(textures));
             root.insert("images".to_string(), json!(images));
             root.insert("samplers".to_string(), json!(samplers));
+        }
+        if let Some(interactivity) = scene.interactivity.as_ref().filter(|v| v.is_object()) {
+            if !extensions_used.contains(&"KHR_interactivity") {
+                extensions_used.insert(0, "KHR_interactivity");
+            }
+            if interactivity.to_string().contains("KHR_node_visibility")
+                && !extensions_used.contains(&"KHR_node_visibility")
+            {
+                extensions_used.push("KHR_node_visibility");
+            }
+            root.insert("extensions".to_string(), json!({ "KHR_interactivity": interactivity }));
         }
         if !extensions_used.is_empty() {
             root.insert("extensionsUsed".to_string(), json!(extensions_used));

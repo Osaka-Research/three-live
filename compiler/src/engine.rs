@@ -28,7 +28,7 @@ use boa_engine::{
     builtins::typed_array::TypedArrayKind,
     js_string,
     object::builtins::{JsArray, JsArrayBuffer, JsTypedArray},
-    Context, JsValue, Source,
+    Context, JsObject, JsString, JsValue, Source,
 };
 
 #[cfg(not(cargo_build))]
@@ -696,13 +696,13 @@ impl ThreeEngine {
                 )));
             }
 
+            // Vertices stay in mesh-local space; the world offset/scale become the
+            // glTF node's `translation`/`scale`, so runtime transforms (follow,
+            // handles, KHR_interactivity pointers) pivot about the mesh origin
+            // exactly as on the web.
             let mut positions = Vec::with_capacity(vertex_count);
             for chunk in raw_positions.as_chunks::<3>().0 {
-                positions.push([
-                    chunk[0] * scale_trans[0] + pos_trans[0],
-                    chunk[1] * scale_trans[1] + pos_trans[1],
-                    chunk[2] * scale_trans[2] + pos_trans[2],
-                ]);
+                positions.push([chunk[0], chunk[1], chunk[2]]);
             }
 
             // Raw normals
@@ -765,6 +765,18 @@ impl ThreeEngine {
                         .map(|s| s.to_std_string_escaped())
                 })
                 .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok());
+            let xr_normalized = read_json_field(
+                &mesh_obj,
+                "xr_normalized_json",
+                MAX_XR_JSON_BYTES,
+                &mut self.context,
+            );
+            let xr_scenecore = read_json_field(
+                &mesh_obj,
+                "xr_scenecore_json",
+                MAX_XR_JSON_BYTES,
+                &mut self.context,
+            );
 
             rust_meshes.push(Mesh3D {
                 name,
@@ -774,6 +786,16 @@ impl ThreeEngine {
                 indices,
                 material_index,
                 xr_traits,
+                xr_normalized,
+                xr_scenecore,
+                xr_hubs: read_json_field(
+                    &mesh_obj,
+                    "xr_hubs_json",
+                    MAX_XR_JSON_BYTES,
+                    &mut self.context,
+                ),
+                translation: pos_trans,
+                scale: scale_trans,
             });
         }
 
@@ -952,13 +974,43 @@ impl ThreeEngine {
             camera_config = Some(CameraConfig { fov, position, target });
         }
 
+        let interactivity = read_json_field(
+            &scene_obj,
+            "interactivity_json",
+            MAX_INTERACTIVITY_JSON_BYTES,
+            &mut self.context,
+        )
+        .filter(|v| v.is_object());
+
         Ok(SceneGraph {
             meshes: rust_meshes,
             materials: rust_materials,
             lights: rust_lights,
             camera: camera_config,
+            interactivity,
         })
     }
+}
+
+/// Maximum size of a per-mesh canonical XR trait JSON payload.
+const MAX_XR_JSON_BYTES: usize = 16 * 1024;
+/// Maximum size of the compiled scene `KHR_interactivity` JSON payload.
+const MAX_INTERACTIVITY_JSON_BYTES: usize = 256 * 1024;
+
+/// Reads an optional JSON-string field from a JS object and parses it, ignoring
+/// non-strings, oversized payloads, and malformed JSON.
+fn read_json_field(
+    obj: &JsObject,
+    key: &str,
+    max_bytes: usize,
+    context: &mut Context,
+) -> Option<serde_json::Value> {
+    obj.get(JsString::from(key), context)
+        .ok()
+        .and_then(|v| {
+            v.as_string().filter(|s| s.len() <= max_bytes).map(|s| s.to_std_string_escaped())
+        })
+        .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
 }
 
 /// Maximum number of floats any single geometry attribute may carry.

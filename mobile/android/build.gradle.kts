@@ -51,7 +51,9 @@ android {
 
   kotlinOptions {
     jvmTarget = "17"
-    freeCompilerArgs = listOf("-opt-in=kotlin.RequiresOptIn")
+    // `all-compatibility` keeps DefaultImpls bridges so Java / older Kotlin implementers of
+    // interfaces that gained default methods (e.g. SceneCoreComponentApplier) keep working.
+    freeCompilerArgs = listOf("-opt-in=kotlin.RequiresOptIn", "-Xjvm-default=all-compatibility")
   }
 
   sourceSets { getByName("main") { jniLibs.srcDirs("src/main/jniLibs") } }

@@ -157,6 +157,7 @@ export const contactShadowPlugin: ThreeLivePlugin = {
       if (
         !mesh ||
         (mesh as any).visible === false ||
+        (mesh as any).isPluginMesh ||
         mesh.name === '__xr_reticle__' ||
         mesh.name?.startsWith('__xr_slot_')
       ) {

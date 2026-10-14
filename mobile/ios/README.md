@@ -119,6 +119,34 @@ func openAR(viewController: UIViewController) async {
 }
 ```
 
+### 4. Run behaviors and XR Blocks traits natively
+
+Compiled `.glb` files carry `KHR_interactivity` behavior graphs and canonical
+`extras.xr` traits (see [`docs/xr-blocks-parity.md`](../../docs/xr-blocks-parity.md)).
+`XRLiveRuntimeSession` (platform-neutral) executes them; `XRLiveRealityKitSession`
+binds it to RealityKit entities.
+
+```swift
+import ThreeLiveCompiler
+
+@MainActor
+func run(glb: Data) async throws -> XRLiveRealityKitSession? {
+    let entity = try await RealityKitHelper.loadEntity(fromGLB: glb)
+    guard let live = XRLiveRealityKitSession(glbData: glb, root: entity) else { return nil }
+    live.installInputTargets()                       // collision + input targets for taps
+    live.headPoseProvider = { /* world head pose */ nil }
+    live.onInteractivityEvent = { id, json in print("event", id, json) }
+    live.start()                                     // event/onStart + SceneEvents.Update
+    return live
+}
+// iOS:      live.handleTap(at: point, in: arView)
+// visionOS: SpatialTapGesture().targetedToAnyEntity().onEnded { live.handleTap(on: $0.entity) }
+```
+
+Shared XR Blocks algorithms are exposed as pure helpers: `XRBlocksMath` (lazy follow
+spring, orbit), `ManipulationHandles`, `WorldUnderstanding.unprojectDetection`,
+`TubeStrokeBuilder`, `ParticleEmitter`, and `SplatParser` (`.splat`, `.spz` v2/v3).
+
 ## Building the XCFramework locally
 
 ```bash

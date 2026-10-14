@@ -27,7 +27,20 @@ import {
   mat4Invert,
   mat4Multiply,
 } from '../../three-live/src/math';
+import {getRegisteredPlugins} from '../../three-live/src/plugin';
 import type {XRMeshTraits} from '../../three-live/src/three-convert';
+
+/**
+ * Returns true when an object-valued `follow` trait is owned by the optional
+ * `xr-live-head-follow` plugin (lazy deadzone + critically damped spring).
+ */
+function isLazyFollowDelegated(follow: unknown): boolean {
+  return (
+    (follow as {lazy?: unknown} | null)?.lazy !== false &&
+    typeof follow === 'object' &&
+    getRegisteredPlugins().some((p) => p.name === 'xr-live-head-follow')
+  );
+}
 
 export interface XRPose6DoF {
   position: [number, number, number];
@@ -236,6 +249,11 @@ export function computeBillboardQuaternion(
 export class XRTraitSystem {
   private activeGrabs = new Map<any, ActiveGrabState>();
   private followOffsets = new WeakMap<object, [number, number, number]>();
+
+  /** Returns whether `mesh` is currently held by a 1-hand or 2-hand grab. */
+  public isGrabbing(mesh: unknown): boolean {
+    return this.activeGrabs.has(mesh);
+  }
 
   /**
    * Starts a 1-hand or 2-hand grab on a mesh with `userData.xr.grab`.
@@ -460,7 +478,7 @@ export class XRTraitSystem {
       let modified = false;
 
       // Lazy spring follow ('head', 'hand-left', 'hand-right')
-      if (traits.follow) {
+      if (traits.follow && !isLazyFollowDelegated(traits.follow)) {
         const targetSource =
           traits.follow === 'hand-left'
             ? handPoses.left

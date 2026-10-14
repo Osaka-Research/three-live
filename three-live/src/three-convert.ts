@@ -18,6 +18,8 @@
  * and Apple Universal Scene Description (USDZ with 64-byte alignment).
  */
 
+import {compileInteractivityGraph} from './interactivity-compiler';
+import {getSharedRegistry} from './plugin';
 import type {
   Light,
   LightGpu,
@@ -44,12 +46,58 @@ export interface XRMeshTraits {
   grab?: boolean | '1-hand' | '2-hand';
   scale?: boolean | {min?: number; max?: number};
   billboard?: boolean | 'capsule' | 'cylindrical' | 'spherical';
-  follow?: 'head' | 'hand-left' | 'hand-right' | string;
+  follow?:
+    | 'head'
+    | 'hand-left'
+    | 'hand-right'
+    | string
+    | {
+        mode?: 'head' | 'hand-left' | 'hand-right';
+        distance?: number;
+        deadzoneDeg?: number;
+        stiffness?: number;
+        height?: number;
+        faceUser?: boolean;
+        snapOnStart?: boolean;
+      };
   anchor?: 'horizontal' | 'vertical' | 'floor' | 'wall' | 'table';
   physics?: 'dynamic' | 'static' | 'none';
   stereo?: 'sbs' | 'ou' | 'mono';
   audio?: string | {src: string; refDistance?: number; loop?: boolean};
   pointerEvents?: 'auto' | 'none';
+  /** XR Blocks `Orbit`: circles a point, the head, or a named mesh. */
+  orbit?: {
+    target?: [number, number, number] | 'head' | string;
+    radius?: number;
+    speed?: number;
+    height?: number;
+    phase?: number;
+    faceCenter?: boolean;
+  };
+  /** XR Blocks manipulation handles (corner scale + pedestal yaw bar). */
+  handles?:
+    | boolean
+    | {rotateAxis?: 'y' | 'none'; minScale?: number; maxScale?: number};
+  /** XR Blocks depth-colliding particle emitter. */
+  particles?: {
+    preset?: 'rain' | 'snow' | 'sparks' | 'confetti';
+    count?: number;
+    area?: number | [number, number, number];
+    speed?: number;
+  };
+  /** XR Blocks press-and-hold "ask Gemini about this object". */
+  holdToAsk?: boolean | {prompt?: string; holdMs?: number};
+  /** XR Blocks world understanding (planes, meshes, reticle, detection). */
+  worldUnderstanding?: {
+    planes?: boolean;
+    meshes?: boolean;
+    reticle?: boolean;
+    objects?: boolean;
+  };
+  /** URL of a `.splat` / `.spz` Gaussian splat rendered at this node. */
+  splatUrl?: string;
+  /** Id of a `<div slot="spatial">` card anchored to this node. */
+  spatialSlot?: string;
   [key: string]: any;
 }
 
@@ -112,7 +160,9 @@ function buildSceneCoreExtension(xr: XRMeshTraits): Record<string, any> {
     };
   }
   if (xr.follow) {
-    comp.follow = {target: xr.follow};
+    comp.follow = {
+      target: typeof xr.follow === 'object' ? (xr.follow.mode ?? 'head') : xr.follow,
+    };
   }
   if (xr.anchor) {
     comp.anchor = {plane: xr.anchor};
@@ -123,325 +173,7 @@ function buildSceneCoreExtension(xr: XRMeshTraits): Record<string, any> {
   return comp;
 }
 
-/**
- * Compiles high-level `userData.interactivity` authoring traits on Three.js
- * nodes (or a raw `scene.userData.interactivity` graph) into a standard
- * Khronos `KHR_interactivity` extension payload.
- */
-export function compileInteractivityGraph(
-  // tslint:disable-next-line:no-any
-  gltfNodes: readonly any[],
-  // tslint:disable-next-line:no-any
-  gltfMeshes: readonly any[],
-  // tslint:disable-next-line:no-any
-  sceneUserData?: Record<string, any>,
-  // tslint:disable-next-line:no-any
-): Record<string, any> | null {
-  const declarations: Array<{op: string}> = [];
-  const declMap = new Map<string, number>();
-  // tslint:disable-next-line:no-any
-  const graphNodes: any[] = [];
-  // tslint:disable-next-line:no-any
-  const variables: any[] = [];
-  // tslint:disable-next-line:no-any
-  const events: any[] = [];
-  const eventMap = new Map<string, number>();
-
-  const ensureDecl = (op: string): number => {
-    let idx = declMap.get(op);
-    if (idx === undefined) {
-      idx = declarations.length;
-      declarations.push({op});
-      declMap.set(op, idx);
-    }
-    return idx;
-  };
-
-  const ensureEvent = (id: string): number => {
-    let idx = eventMap.get(id);
-    if (idx === undefined) {
-      idx = events.length;
-      events.push({id});
-      eventMap.set(id, idx);
-    }
-    return idx;
-  };
-
-  // tslint:disable-next-line:no-any
-  const addNode = (op: string, spec: Record<string, any> = {}): number =>
-    graphNodes.push({declaration: ensureDecl(op), ...spec}) - 1;
-  // tslint:disable-next-line:no-any
-  const addVar = (id: string, type: string, value: any): number =>
-    variables.push({id, type, value}) - 1;
-  const link = (node: number) => ({node, socket: 'value'});
-
-  const rawExt =
-    sceneUserData?.interactivity ??
-    sceneUserData?.gltfExtensions?.KHR_interactivity;
-  if (rawExt && typeof rawExt === 'object') {
-    const rawGraph = Array.isArray(rawExt.graphs)
-      ? rawExt.graphs[rawExt.graph ?? 0]
-      : rawExt;
-    if (rawGraph && Array.isArray(rawGraph.nodes)) {
-      const rawDecls = Array.isArray(rawGraph.declarations)
-        ? rawGraph.declarations
-        : [];
-      for (const d of rawDecls) {
-        if (d?.op) ensureDecl(d.op);
-      }
-      if (Array.isArray(rawGraph.variables)) variables.push(...rawGraph.variables);
-      for (const ev of rawGraph.events || []) {
-        if (ev?.id) ensureEvent(ev.id);
-      }
-      for (const rn of rawGraph.nodes) {
-        if (!rn || typeof rn !== 'object') continue;
-        const opStr =
-          rn.op ||
-          (typeof rn.declaration === 'number'
-            ? rawDecls[rn.declaration]?.op
-            : '');
-        graphNodes.push(
-          opStr ? {...rn, declaration: ensureDecl(opStr)} : {...rn},
-        );
-      }
-    }
-  }
-
-  const resolvePtr = (nIdx: number, mIdx: number, prop = 'translation'): string =>
-    prop === 'baseColorFactor' ||
-    prop === 'metallicFactor' ||
-    prop === 'roughnessFactor'
-      ? `/materials/${Math.max(0, mIdx)}/pbrMetallicRoughness/${prop}`
-      : prop === 'emissiveFactor' || prop === 'alphaCutoff'
-        ? `/materials/${Math.max(0, mIdx)}/${prop}`
-        : prop === 'visible'
-          ? `/nodes/${nIdx}/extensions/KHR_node_visibility/visible`
-          : `/nodes/${nIdx}/${prop}`;
-
-  for (let nodeIdx = 0; nodeIdx < gltfNodes.length; nodeIdx++) {
-    const gNode = gltfNodes[nodeIdx];
-    const inter = gNode?.extras?.interactivity;
-    if (!inter || typeof inter !== 'object') continue;
-
-    const matIdx =
-      (typeof gNode.mesh === 'number'
-        ? gltfMeshes[gNode.mesh]?.primitives?.[0]?.material
-        : 0) ?? 0;
-
-    // tslint:disable-next-line:no-any
-    const compileChain = (input: any): number | null => {
-      const list = Array.isArray(input) ? input : [input];
-      const entries: number[] = [];
-
-      for (let aIdx = 0; aIdx < list.length; aIdx++) {
-        const act = list[aIdx];
-        if (!act || typeof act !== 'object') continue;
-        const kind = act.action || 'interpolate';
-        const dur = typeof act.duration === 'number' ? act.duration : 0.35;
-
-        if (kind === 'toggleTransform') {
-          const prop =
-            act.property === 'rotation' || act.property === 'scale'
-              ? act.property
-              : 'translation';
-          const def =
-            prop === 'rotation'
-              ? gNode.rotation || [0, 0, 0, 1]
-              : prop === 'scale'
-                ? gNode.scale || [1, 1, 1]
-                : gNode.translation || [0, 0, 0];
-          const ptr = `/nodes/${nodeIdx}/${prop}`;
-          const varIdx = addVar(`__toggle_${nodeIdx}_${aIdx}`, 'bool', false);
-          const getIdx = addNode('variable/get', {configuration: {variable: varIdx}});
-          const notIdx = addNode('math/not', {values: {a: link(getIdx)}});
-          const setIdx = addNode('variable/set', {
-            configuration: {variable: varIdx},
-            values: {value: link(notIdx)},
-          });
-          const toIdx = addNode('pointer/interpolate', {
-            configuration: {pointer: ptr},
-            values: {
-              value: {value: Array.isArray(act.to) ? act.to : def},
-              duration: {value: dur},
-            },
-          });
-          const fromIdx = addNode('pointer/interpolate', {
-            configuration: {pointer: ptr},
-            values: {
-              value: {value: Array.isArray(act.from) ? act.from : def},
-              duration: {value: dur},
-            },
-          });
-          graphNodes[setIdx].flows = {
-            out: {
-              node: addNode('flow/branch', {
-                values: {condition: link(getIdx)},
-                flows: {true: {node: toIdx}, false: {node: fromIdx}},
-              }),
-            },
-          };
-          entries.push(setIdx);
-        } else if (kind === 'interpolate') {
-          const toVal = act.to ?? act.value;
-          if (toVal === undefined) continue;
-          // tslint:disable-next-line:no-any
-          const values: Record<string, any> = {
-            value: {value: toVal},
-            duration: {value: dur},
-          };
-          if (act.from !== undefined) values.from = {value: act.from};
-          entries.push(
-            addNode('pointer/interpolate', {
-              configuration: {
-                pointer:
-                  typeof act.pointer === 'string'
-                    ? act.pointer
-                    : resolvePtr(nodeIdx, matIdx, act.property),
-              },
-              values,
-            }),
-          );
-        } else if (kind === 'setProperty') {
-          if (act.value === undefined) continue;
-          entries.push(
-            addNode('pointer/set', {
-              configuration: {
-                pointer:
-                  typeof act.pointer === 'string'
-                    ? act.pointer
-                    : resolvePtr(nodeIdx, matIdx, act.property),
-              },
-              values: {value: {value: act.value}},
-            }),
-          );
-        } else if (kind === 'toggleVisibility') {
-          const tNode =
-            typeof act.targetNode === 'number' ? act.targetNode : nodeIdx;
-          const varIdx = addVar(`__vis_${tNode}_${aIdx}`, 'bool', true);
-          const getIdx = addNode('variable/get', {configuration: {variable: varIdx}});
-          const notIdx = addNode('math/not', {values: {a: link(getIdx)}});
-          const setVarIdx = addNode('variable/set', {
-            configuration: {variable: varIdx},
-            values: {value: link(notIdx)},
-          });
-          graphNodes[setVarIdx].flows = {
-            out: {
-              node: addNode('pointer/set', {
-                configuration: {
-                  pointer: `/nodes/${tNode}/extensions/KHR_node_visibility/visible`,
-                },
-                values: {value: link(getIdx)},
-              }),
-            },
-          };
-          entries.push(setVarIdx);
-        } else if (
-          kind === 'cycleMaterialColor' &&
-          Array.isArray(act.colors) &&
-          act.colors.length > 0
-        ) {
-          const cDur = typeof act.duration === 'number' ? act.duration : 0.25;
-          const ptr = `/materials/${Math.max(0, matIdx)}/pbrMetallicRoughness/baseColorFactor`;
-          const varIdx = addVar(`__color_idx_${nodeIdx}_${aIdx}`, 'int', 0);
-          const getIdx = addNode('variable/get', {configuration: {variable: varIdx}});
-          const addIdx = addNode('math/add', {
-            values: {a: link(getIdx), b: {value: 1}},
-          });
-          const remIdx = addNode('math/rem', {
-            values: {a: link(addIdx), b: {value: act.colors.length}},
-          });
-          const setIdx = addNode('variable/set', {
-            configuration: {variable: varIdx},
-            values: {value: link(remIdx)},
-          });
-          const flows: Record<string, {node: number}> = {};
-          for (let cIdx = 0; cIdx < act.colors.length; cIdx++) {
-            const c = act.colors[cIdx];
-            const rgba =
-              Array.isArray(c) && c.length >= 3
-                ? [c[0], c[1], c[2], c[3] ?? 1]
-                : [1, 1, 1, 1];
-            flows[String(cIdx)] = {
-              node:
-                cDur > 0
-                  ? addNode('pointer/interpolate', {
-                      configuration: {pointer: ptr},
-                      values: {value: {value: rgba}, duration: {value: cDur}},
-                    })
-                  : addNode('pointer/set', {
-                      configuration: {pointer: ptr},
-                      values: {value: {value: rgba}},
-                    }),
-            };
-          }
-          graphNodes[setIdx].flows = {
-            out: {
-              node: addNode('flow/switch', {
-                values: {selection: link(getIdx)},
-                flows,
-              }),
-            },
-          };
-          entries.push(setIdx);
-        } else if (kind === 'playAnimation') {
-          entries.push(
-            addNode('animation/start', {
-              configuration: {animation: act.animation ?? act.clip ?? 0},
-            }),
-          );
-        } else if (kind === 'stopAnimation') {
-          entries.push(addNode('animation/stop'));
-        } else if (kind === 'sendEvent') {
-          // tslint:disable-next-line:no-any
-          const values: Record<string, any> = {};
-          for (const [k, v] of Object.entries(act.values || {})) {
-            values[k] = {value: v};
-          }
-          entries.push(
-            addNode('event/send', {
-              configuration: {
-                event: ensureEvent(String(act.event ?? act.id ?? 'custom')),
-              },
-              values,
-            }),
-          );
-        }
-      }
-
-      if (!entries.length) return null;
-      if (entries.length === 1) return entries[0];
-      const flows: Record<string, {node: number}> = {};
-      entries.forEach((n, i) => {
-        flows[String(i)] = {node: n};
-      });
-      return addNode('flow/sequence', {flows});
-    };
-
-    const bindTrigger = (op: string, actions: unknown, cfg?: Record<string, unknown>) => {
-      const target = compileChain(actions);
-      if (target !== null) {
-        addNode(op, {
-          ...(cfg ? {configuration: cfg} : {}),
-          flows: {out: {node: target}},
-        });
-      }
-    };
-
-    if (inter.onSelect) bindTrigger('pointer/onSelect', inter.onSelect, {nodeIndex: nodeIdx});
-    if (inter.onHoverIn) bindTrigger('pointer/onHoverIn', inter.onHoverIn, {nodeIndex: nodeIdx});
-    if (inter.onHoverOut) bindTrigger('pointer/onHoverOut', inter.onHoverOut, {nodeIndex: nodeIdx});
-    if (inter.onStart) bindTrigger('event/onStart', inter.onStart);
-    if (inter.onReceive && typeof inter.onReceive === 'object') {
-      for (const [evName, actions] of Object.entries(inter.onReceive)) {
-        bindTrigger('event/receive', actions, {event: ensureEvent(evName)});
-      }
-    }
-  }
-
-  return graphNodes.length
-    ? {graphs: [{declarations, nodes: graphNodes, variables, events}], graph: 0}
-    : null;
-}
+export {compileInteractivityGraph};
 
 /**
  * Serializes a Three.js Scene into in-memory GLBData ({ gltf, bin }) for WebGL2 rendering.
@@ -463,6 +195,7 @@ export function sceneToCanvas3D(
   const accessors: any[] = [];
   const meshes: any[] = [];
   const nodes: any[] = [];
+  const nodeExtensionsUsed = new Set<string>();
   const nodeObjects: Object3D[] = [];
   const materials: any[] = [];
   const matMap = new Map<Material, number>();
@@ -557,6 +290,10 @@ export function sceneToCanvas3D(
           MOZ_hubs_components: sceneCoreExt,
           ANDROID_xr_scenecore: sceneCoreExt,
         };
+        // The canonical serializer (XR Blocks bundle / compiler engine) upgrades
+        // `extras.xr` and `ANDROID_xr_scenecore` to the normalized trait set.
+        getSharedRegistry().xrTraitSerializer?.gltfNode(node, obj.userData.xr);
+        nodeExtensionsUsed.add('MOZ_hubs_components').add('ANDROID_xr_scenecore');
       }
     }
 
@@ -913,11 +650,16 @@ export function sceneToCanvas3D(
     bufferViews,
     buffers: [{byteLength: byteOffset}],
     ...(gltfAnimations.length > 0 ? {animations: gltfAnimations} : {}),
-    ...(interactivityExt
+    ...(interactivityExt || nodeExtensionsUsed.size > 0
       ? {
-          extensionsUsed: ['KHR_interactivity'],
-          extensions: {KHR_interactivity: interactivityExt},
+          extensionsUsed: [
+            ...(interactivityExt ? ['KHR_interactivity'] : []),
+            ...nodeExtensionsUsed,
+          ],
         }
+      : {}),
+    ...(interactivityExt
+      ? {extensions: {KHR_interactivity: interactivityExt}}
       : {}),
   };
 
@@ -1682,31 +1424,15 @@ def Scope "Meshes"
           `prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsCollisionAPI"]`,
         );
       }
-      const xrDictLines: string[] = [];
-      if (xr.grab !== undefined) {
-        xrDictLines.push(
-          `string grab = "${sanitizeUsdStringLiteral(xr.grab)}"`,
-        );
-      }
-      if (xr.billboard !== undefined) {
-        xrDictLines.push(
-          `string billboard = "${sanitizeUsdStringLiteral(xr.billboard)}"`,
-        );
-      }
-      if (xr.follow !== undefined) {
-        xrDictLines.push(
-          `string follow = "${sanitizeUsdStringLiteral(xr.follow)}"`,
-        );
-      }
-      if (xr.anchor !== undefined) {
-        xrDictLines.push(
-          `string anchor = "${sanitizeUsdStringLiteral(xr.anchor)}"`,
-        );
-      }
-      if (xr.physics !== undefined) {
-        xrDictLines.push(
-          `string physics = "${sanitizeUsdStringLiteral(xr.physics)}"`,
-        );
+      const xrDictLines: string[] = getSharedRegistry().xrTraitSerializer?.usdLines(
+        xr,
+        sanitizeUsdStringLiteral,
+      ) ?? [];
+      if (!xrDictLines.length) {
+        for (const k of ['grab', 'billboard', 'follow', 'anchor', 'physics'] as const) {
+          const v: unknown = k === 'follow' && typeof xr.follow === 'object' ? xr.follow.mode ?? 'head' : xr[k];
+          if (v !== undefined) xrDictLines.push(`string ${k} = "${sanitizeUsdStringLiteral(v)}"`);
+        }
       }
       if (xrDictLines.length > 0) {
         metaLines.push(

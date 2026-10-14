@@ -22,6 +22,9 @@ pub struct SceneGraph {
     pub materials: Vec<Material3D>,
     pub lights: Vec<Light3D>,
     pub camera: Option<CameraConfig>,
+    /// Compiled root `KHR_interactivity` extension (from `userData.interactivity`).
+    #[serde(default)]
+    pub interactivity: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +37,21 @@ pub struct Mesh3D {
     pub material_index: Option<usize>,
     #[serde(default)]
     pub xr_traits: Option<serde_json::Value>,
+    /// Canonical normalized traits (`xr-trait-schema.ts`), emitted as `extras.xr`.
+    #[serde(default)]
+    pub xr_normalized: Option<serde_json::Value>,
+    /// Canonical `ANDROID_xr_scenecore` component map.
+    #[serde(default)]
+    pub xr_scenecore: Option<serde_json::Value>,
+    /// Canonical `MOZ_hubs_components` map.
+    #[serde(default)]
+    pub xr_hubs: Option<serde_json::Value>,
+    /// Node translation (world offset accumulated through the hierarchy).
+    #[serde(default)]
+    pub translation: [f32; 3],
+    /// Node scale (accumulated through the hierarchy).
+    #[serde(default = "unit_scale")]
+    pub scale: [f32; 3],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,4 +113,8 @@ pub struct CameraConfig {
     pub fov: f32,
     pub position: [f32; 3],
     pub target: [f32; 3],
+}
+
+fn unit_scale() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
 }

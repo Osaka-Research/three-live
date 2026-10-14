@@ -2464,8 +2464,9 @@ export class ThreeView {
       gl.useProgram(this.pickProg);
 
       for (let i = 0; i < this.meshes.length; i++) {
-        const mesh = this.meshes[i];
-        if ((mesh as any).visible === false) continue;
+        const mesh = this.meshes[i] as any;
+        // Plugin overlays (handles, particles, strokes) are not pickable.
+        if (mesh.visible === false || mesh.isPluginMesh) continue;
         const id = i + 1;
         const r = (id & 0xff) / 255.0;
         const g = ((id >> 8) & 0xff) / 255.0;

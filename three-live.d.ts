@@ -29,6 +29,8 @@ import type {
   ThreeView,
 } from './three-live/src/three-view';
 import type {ARLaunchResult, ARMode} from './three-live/src/three-xr';
+import type {TranscriptEvent} from './xr-live/src/plugins/gemini-live';
+import type {Detection3D} from './xr-live/src/plugins/world-understanding';
 import type {
   XRAnchorElement,
   XRDepthMode,
@@ -72,6 +74,8 @@ export {
   type XRProfile,
   type XRSimulatorRoom,
 } from './xr-live/src/xr-live-element';
+/** Optional XR Blocks plugins (`xr-live/blocks`, `xr-live-blocks.min.js`). */
+export * from './xr-live/src/plugins/index';
 
 /**
  * Declarative JSX / HTML attributes supported by the <three-live> custom element.
@@ -187,6 +191,21 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'xr-simulator'?: XRSimulatorRoom;
   /** Spatial UI profile ("quest3", "android-xr", "visionos", "auto"). */
   'xr-profile'?: XRProfile;
+  /** XR Blocks: enables plane/mesh detection; include "reticle" for a gaze reticle. */
+  'world-understanding'?: boolean | string;
+  /** XR Blocks: pinch in empty space to paint 3D tubes (optional `#rrggbb` color). */
+  'spatial-paint'?: boolean | string;
+  'onxr-object-detected'?: (e: CustomEvent<Detection3D>) => void;
+  'onxr-transcription'?: (e: CustomEvent<TranscriptEvent>) => void;
+  'onxr-hold-to-ask'?: (
+    e: CustomEvent<{mesh: string; transcript: string; prompt: string}>,
+  ) => void;
+  'onxr-handles-change'?: (
+    e: CustomEvent<{mesh: string; scale: number; yawDeg: number}>,
+  ) => void;
+  'onxr-paint-stroke'?: (
+    e: CustomEvent<{index: number; points: number; lengthMeters: number}>,
+  ) => void;
 }
 
 declare global {

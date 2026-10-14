@@ -1292,3 +1292,186 @@ fn test_unified_presets_compile_to_glb_and_usdz() {
         verify_usdz_alignment(&usdz);
     }
 }
+
+#[test]
+fn test_khr_interactivity_and_xr_blocks_traits_in_glb_and_usdz() {
+    use three_live_compiler::compile_three_to_usdz;
+
+    let script = r#"
+        const lamp = new THREE.Mesh(
+            new THREE.BoxGeometry(0.2, 0.2, 0.2),
+            new THREE.MeshStandardMaterial({ color: 0xffcc00 })
+        );
+        lamp.name = "Lamp";
+        lamp.userData.xr = {
+            grab: true,
+            follow: { mode: "head", distance: 99, deadzoneDeg: 20 },
+            handles: { minScale: 0.5, maxScale: 3 },
+            particles: { preset: "snow", count: 1e9 },
+            holdToAsk: { prompt: "What lamp is this?" },
+            orbit: { target: "Sun", radius: 0.4, speed: 0.6 },
+            splatUrl: "https://example.com/room.spz",
+            restitution: 0.4
+        };
+        lamp.userData.interactivity = { onSelect: { action: "toggleVisibility" } };
+        scene.add(lamp);
+
+        const other = new THREE.Mesh(
+            new THREE.SphereGeometry(0.1, 8, 8),
+            new THREE.MeshStandardMaterial({ color: 0x00ccff })
+        );
+        other.name = "Other";
+        other.userData.xr = { follow: "hand-left" };
+        scene.add(other);
+    "#;
+
+    let glb = transcode_three_to_glb(script).expect("GLB with XR Blocks traits should compile");
+    let gltf = parse_gltf_json(&glb);
+
+    // KHR_interactivity is compiled with the shared TS compiler and declared.
+    let used: Vec<&str> =
+        gltf["extensionsUsed"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert!(used.contains(&"KHR_interactivity"), "extensionsUsed: {:?}", used);
+    let graph = &gltf["extensions"]["KHR_interactivity"];
+    assert!(graph.is_object(), "root KHR_interactivity extension must be present");
+    let graph_json = graph.to_string();
+    assert!(
+        graph_json.contains("pointer/onSelect"),
+        "onSelect event node expected: {}",
+        graph_json
+    );
+    assert!(
+        graph_json.contains("/nodes/0/extensions/KHR_node_visibility/visible"),
+        "toggleVisibility must target node 0: {}",
+        graph_json
+    );
+
+    // Canonical normalized traits (clamped identically on every platform).
+    let lamp = &gltf["nodes"][0];
+    let xr = &lamp["extras"]["xr"];
+    assert_eq!(xr["grab"], "2-hand");
+    assert_eq!(xr["grabbable"], true);
+    assert_eq!(xr["follow"]["lazy"], true);
+    assert_eq!(xr["follow"]["distance"], 10.0);
+    assert_eq!(xr["particles"]["count"], 2000);
+    assert_eq!(xr["particles"]["preset"], "snow");
+    assert_eq!(xr["handles"]["maxScale"], 3.0);
+    assert_eq!(xr["restitution"], 0.4, "unknown authored keys are preserved");
+
+    let core = &lamp["extensions"]["ANDROID_xr_scenecore"];
+    assert_eq!(core["movable"]["systemMovable"], true);
+    assert_eq!(core["follow"]["target"], "head");
+    assert_eq!(core["follow"]["deadzoneDeg"], 20.0);
+    assert_eq!(core["resizable"]["minScale"], 0.5);
+    assert_eq!(core["particles"]["count"], 2000);
+    assert_eq!(core["holdToAsk"]["prompt"], "What lamp is this?");
+    assert_eq!(core["orbit"]["target"], "Sun");
+    assert_eq!(core["splat"]["url"], "https://example.com/room.spz");
+
+    let other = &gltf["nodes"][1];
+    assert_eq!(other["extras"]["xr"]["follow"], "hand-left", "eager follow stays a string");
+    assert_eq!(other["extensions"]["ANDROID_xr_scenecore"]["follow"]["lazy"], false);
+
+    // USDZ carries the flattened canonical traits for RealityKit.
+    let usdz = compile_three_to_usdz(script).expect("USDZ with XR Blocks traits should compile");
+    let usdz_str = String::from_utf8_lossy(&usdz);
+    for needle in [
+        "double followDistance = 10",
+        "bool handles = true",
+        "double handlesMaxScale = 3",
+        "string particlesPreset = \"snow\"",
+        "double particlesCount = 2000",
+        "bool holdToAsk = true",
+        "string splatUrl = \"https://example.com/room.spz\"",
+        "string follow = \"hand-left\"",
+    ] {
+        assert!(usdz_str.contains(needle), "USDZ customData should contain `{}`", needle);
+    }
+}
+
+#[test]
+fn test_scene_level_raw_khr_interactivity_graph_passthrough() {
+    let script = r#"
+        const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+        scene.add(box);
+        scene.userData.interactivity = JSON.parse(
+            '{"declarations":[{"op":"event/onStart"}],"nodes":[{"declaration":0}],' +
+            '"__proto__":{"polluted":true}}'
+        );
+    "#;
+    let glb = transcode_three_to_glb(script).expect("raw graph scene should compile");
+    let gltf = parse_gltf_json(&glb);
+    let graph = gltf["extensions"]["KHR_interactivity"].to_string();
+    assert!(graph.contains("event/onStart"), "raw graph declarations preserved: {}", graph);
+    assert!(!graph.contains("polluted"), "prototype keys must be stripped: {}", graph);
+}
+
+#[test]
+fn test_scene_without_interactivity_has_no_extension() {
+    let glb = transcode_three_to_glb(
+        "scene.add(new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial()));",
+    )
+    .expect("plain scene should compile");
+    let gltf = parse_gltf_json(&glb);
+    assert!(gltf.get("extensions").is_none(), "no root extensions without interactivity");
+}
+
+#[test]
+fn test_scripts_cannot_replace_the_trait_serializer() {
+    use three_live_compiler::compile_three_to_usdz;
+
+    // Script A tries to swap the USD serializer on the shared registry.
+    let attacker = r#"
+        try {
+            globalThis.__THREE_LIVE_REGISTRY__.xrTraitSerializer = {
+                gltfNode() {},
+                usdLines: () => ['}}) def "Injected" (prepend references = @https://evil/x.usd@) {'],
+            };
+        } catch (e) {}
+        scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()));
+    "#;
+    let _ = compile_three_to_usdz(attacker);
+
+    // Script B on the same (cached) engine must not see the payload.
+    let victim = r#"
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+        m.userData.xr = { grab: true };
+        scene.add(m);
+    "#;
+    let usdz = compile_three_to_usdz(victim).expect("victim scene should compile");
+    let text = String::from_utf8_lossy(&usdz);
+    assert!(!text.contains("Injected"), "serializer swap must not leak across compiles");
+    assert!(text.contains("string grab = \"2-hand\""), "canonical serializer still active");
+}
+
+#[test]
+fn test_empty_mesh_does_not_shift_interactivity_node_indices() {
+    let script = r#"
+        scene.add(new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial()));
+        const target = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+        target.name = "Target";
+        target.position.set(2, 0, 0);
+        target.userData.interactivity = { onSelect: { action: "toggleVisibility" } };
+        scene.add(target);
+        const button = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+        button.name = "Button";
+        button.userData.interactivity = { onSelect: { action: "toggleVisibility", target: "Target" } };
+        scene.add(button);
+    "#;
+    let glb = transcode_three_to_glb(script).expect("scene should compile");
+    let gltf = parse_gltf_json(&glb);
+    let nodes = gltf["nodes"].as_array().unwrap();
+    let target_idx = nodes.iter().position(|n| n["name"] == "Target").expect("Target node");
+    assert_eq!(nodes[target_idx]["translation"], serde_json::json!([2.0, 0.0, 0.0]));
+    let graph = gltf["extensions"]["KHR_interactivity"].to_string();
+    let ptr = format!("/nodes/{}/extensions/KHR_node_visibility/visible", target_idx);
+    assert_eq!(
+        graph.matches(&ptr).count(),
+        2,
+        "both actions target Target by index/name: {}",
+        graph
+    );
+    let used: Vec<&str> =
+        gltf["extensionsUsed"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert!(used.contains(&"KHR_node_visibility"), "extensionsUsed: {:?}", used);
+}

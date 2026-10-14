@@ -27,6 +27,7 @@
  * - Dual Exporter: scene.toCanvas3D() in-memory AST (0 ms) & scene.toGLB() binary writer.
  */
 
+import {compileInteractivityGraph} from './interactivity-compiler';
 import {getSharedRegistry} from './plugin';
 import {
   generateUSDZ,
@@ -46,6 +47,12 @@ import {
   CLIENT_SCRIPTS_DISABLED_ERROR,
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
+import {
+  buildHubsExtension,
+  buildXRSceneCoreExtension,
+  normalizeXRTraits,
+  registerXRTraitSerializer,
+} from './xr-trait-schema';
 
 declare const SECURITY_3D_MAX_CONCURRENT_TASKS: number;
 declare const SECURITY_3D_MAX_HEAP_BYTES: number;
@@ -3675,6 +3682,8 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
+  // Native GLB/USDZ exports carry the full canonical XR Blocks trait set.
+  registerXRTraitSerializer();
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -3714,6 +3723,68 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     writable: false,
     configurable: false,
   });
+
+  /**
+   * Deep-copies JSON-safe data with explicit depth / size limits, dropping
+   * functions, non-finite numbers, cycles, and prototype keys. Never recurses
+   * deeper than 32 levels, so hostile nesting cannot exhaust the native stack.
+   */
+  const toSafeJson = function (value: unknown): any {
+    let budget = 20000;
+    const seen = new Set<object>();
+    const copy = (v: unknown, depth: number): unknown => {
+      if (--budget < 0 || depth > 32) return undefined;
+      if (v === null || typeof v === 'string' || typeof v === 'boolean') return v;
+      if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+      if (typeof v !== 'object' || seen.has(v as object)) return undefined;
+      seen.add(v as object);
+      let out: any;
+      if (Array.isArray(v)) {
+        out = [];
+        for (const item of v) out.push(copy(item, depth + 1) ?? null);
+      } else {
+        out = {};
+        for (const k of Object.keys(v as object)) {
+          if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue;
+          const c = copy((v as Record<string, unknown>)[k], depth + 1);
+          if (c !== undefined) out[k] = c;
+        }
+      }
+      seen.delete(v as object);
+      return out;
+    };
+    try {
+      return copy(value, 0) ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** The per-mesh trait payload cap enforced by the Rust engine (bytes). */
+  const MAX_XR_JSON_CHARS = 15 * 1024;
+
+  /** Canonical XR trait payloads consumed by the Rust GLB / USDZ writers. */
+  const serializeXRForCompiler = function (
+    safe: unknown,
+  ): Record<string, string | null> {
+    const normalized = normalizeXRTraits(safe);
+    if (!normalized) return {};
+    // Unknown authored keys (e.g. `restitution`) are preserved when they fit
+    // the native size cap; otherwise only the canonical traits are kept.
+    let merged = JSON.stringify({...(safe as object), ...normalized});
+    if (merged.length > MAX_XR_JSON_CHARS) {
+      warnUnsupported(
+        `userData.xr larger than ${MAX_XR_JSON_CHARS} characters`,
+        'canonical XR traits only',
+      );
+      merged = JSON.stringify(normalized);
+    }
+    return {
+      xr_normalized_json: merged,
+      xr_scenecore_json: JSON.stringify(buildXRSceneCoreExtension(normalized)),
+      xr_hubs_json: JSON.stringify(buildHubsExtension(normalized)),
+    };
+  };
 
   const extractSceneRawFn = function () {
     const rawMeshes: any[] = [];
@@ -3774,7 +3845,10 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       if (node instanceof Mesh && node.geometry) {
         const geo = node.geometry;
         const posAttr = geo.attributes.position;
-        if (posAttr && posAttr.array) {
+        // Empty geometry produces no glTF node in the Rust writer; skipping it
+        // here keeps raw-mesh index == glTF node index for KHR_interactivity.
+        if (posAttr && posAttr.array && posAttr.count > 0) {
+          const safeXR = toSafeJson(node.userData?.xr);
           rawMeshes.push({
             name: node.name || `Mesh_${rawMeshes.length}`,
             raw_positions: posAttr.array,
@@ -3787,13 +3861,22 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             pos,
             scale: nextScale,
             material_index: getMaterialIndex(node.material),
-            xr_traits_json:
-              node.userData && node.userData.xr
-                ? JSON.stringify(node.userData.xr)
-                : null,
+            xr_traits_json: safeXR ? JSON.stringify(safeXR) : null,
+            ...serializeXRForCompiler(safeXR),
+            interactivity: toSafeJson(node.userData?.interactivity),
           });
         }
-      } else if (node instanceof Light) {
+      } else if (
+        !(node instanceof Scene) &&
+        (node.userData?.xr || node.userData?.interactivity)
+      ) {
+        // Native GLBs contain only geometry nodes; put traits on meshes.
+        warnUnsupported(
+          `userData.xr / userData.interactivity on non-mesh node "${String(node.name || node.type).slice(0, 64)}" in native compilation`,
+          'ignored (attach them to a mesh)',
+        );
+      }
+      if (node instanceof Light) {
         lights.push({
           light_type: node.type,
           color: [node.color.r, node.color.g, node.color.b],
@@ -3810,11 +3893,35 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     const activeScene = globalRoot.scene || defaultScene;
     traverse(activeScene, [0, 0, 0], [1, 1, 1]);
 
+    // Compile `userData.interactivity` with the same compiler as the web
+    // exporter. The Rust GLB writer emits exactly one node per raw mesh, in
+    // order, with the mesh at the same index.
+    const interactivityExt = compileInteractivityGraph(
+      rawMeshes.map((m, i) => ({
+        mesh: i,
+        name: m.name,
+        extras: m.interactivity ? {interactivity: m.interactivity} : undefined,
+      })),
+      rawMeshes.map((m) => ({
+        primitives: [{material: m.material_index ?? 0}],
+      })),
+      toSafeJson({
+        interactivity: activeScene.userData?.interactivity,
+        gltfExtensions: {
+          KHR_interactivity: activeScene.userData?.gltfExtensions?.KHR_interactivity,
+        },
+      }) ?? undefined,
+    );
+    for (const m of rawMeshes) delete m.interactivity;
+
     const activeCam = globalRoot.camera || defaultCamera;
     return {
       meshes: rawMeshes,
       materials,
       lights,
+      interactivity_json: interactivityExt
+        ? JSON.stringify(interactivityExt)
+        : null,
       camera: {
         fov: activeCam.fov || 45,
         position: activeCam.position
