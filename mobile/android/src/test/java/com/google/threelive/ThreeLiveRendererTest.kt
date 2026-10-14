@@ -283,15 +283,17 @@ class ThreeLiveRendererTest {
   @Test
   fun initialAuthoredVisibilityIsApplied() {
     val r = FakeRenderer()
-    ThreeLiveRuntimeBinding(
-      r,
-      glbOf(
-        """{"nodes":[{"name":"P","children":[1],"extensions":{"KHR_node_visibility":{"visible":false}}},{"name":"C"}],
-          "scenes":[{"nodes":[0]}]}"""
-      ),
-    )
+    val binding =
+      ThreeLiveRuntimeBinding(
+        r,
+        glbOf(
+          """{"nodes":[{"name":"P","children":[1],"extensions":{"KHR_node_visibility":{"visible":false}}},{"name":"C"}],
+            "scenes":[{"nodes":[0]}]}"""
+        ),
+      )
     assertEquals(false, r.visible[0])
     assertEquals(false, r.visible[1])
+    binding.dispose()
   }
 
   @Test
