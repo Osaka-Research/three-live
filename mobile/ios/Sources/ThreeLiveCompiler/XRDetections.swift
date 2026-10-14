@@ -28,6 +28,39 @@ public enum XRDetections {
     }
   }
 
+  /// Maximum size of a `detections` JSON string, in UTF-16 code units (same as web).
+  public static let maxDetectionsJSONChars = 16 * 1024
+
+  /// Parses a `detections` JSON string (`[{label, box: [ymin, xmin, ymax, xmax]}]`, 0…1 or Gemini
+  /// 0…1000; `box_2d` is accepted as an alias) into at most `WorldUnderstanding.maxDetections`
+  /// boxes. Malformed entries are skipped; malformed or oversized input yields `[]`. Mirrors web
+  /// `parseDetections`.
+  public static func parse(json: String?) -> [Box] {
+    guard let json = json, !json.isEmpty, json.utf16.count <= maxDetectionsJSONChars,
+      let data = json.data(using: .utf8),
+      let root = (try? JSONSerialization.jsonObject(with: data, options: [])) as? [Any]
+    else { return [] }
+    var out: [Box] = []
+    for item in root {
+      if out.count >= WorldUnderstanding.maxDetections { break }
+      guard let rec = item as? [String: Any] else { continue }
+      guard let raw = (rec["box"] as? [Any]) ?? (rec["box_2d"] as? [Any]), raw.count >= 4 else {
+        continue
+      }
+      var nums: [Float] = []
+      for value in raw.prefix(4) {
+        guard let n = value as? NSNumber else { break }
+        let d = n.doubleValue
+        guard d.isFinite else { break }
+        nums.append(Float(d))
+      }
+      guard nums.count == 4 else { continue }
+      let label = (rec["label"] as? String).map { String($0.prefix(256)) } ?? ""
+      out.append(Box(box: nums, label: label))
+    }
+    return out
+  }
+
   /// Unprojects up to `WorldUnderstanding.maxDetections` boxes. `depthSampler` optionally returns
   /// view-space depth (meters) at normalized `(u, v)` (e.g. from `ARFrame.sceneDepth`); otherwise
   /// `planes` are ray-tested, then `WorldUnderstanding.fallbackDepthMeters` is used (as on web).

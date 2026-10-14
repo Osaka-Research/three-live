@@ -138,6 +138,29 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertEqual(withDepth[0].position.z, -1, accuracy: 1e-5)
   }
 
+  func testDetectionsParseMirrorsWeb() {
+    let json =
+      #"[{"label":"cup","box":[400,400,600,600]},{"label":"mug","box_2d":[0.1,0.2,0.3,0.4]},"#
+      + #"{"label":"bad","box":[1,2]},{"box":[1,"x",3,4]},7,{"box":[0,0,1,1]}]"#
+    let parsed = XRDetections.parse(json: json)
+    XCTAssertEqual(parsed.count, 3)
+    XCTAssertEqual(parsed[0].label, "cup")
+    XCTAssertEqual(parsed[0].box[3], 600)
+    XCTAssertEqual(parsed[1].label, "mug")
+    XCTAssertEqual(parsed[1].box[1], 0.2, accuracy: 1e-6)
+    XCTAssertEqual(parsed[2].label, "")
+    XCTAssertEqual(parsed[2].box, [0, 0, 1, 1])
+    XCTAssertTrue(XRDetections.parse(json: nil).isEmpty)
+    XCTAssertTrue(XRDetections.parse(json: #"{"box":[0,0,1,1]}"#).isEmpty)
+    XCTAssertTrue(XRDetections.parse(json: "[{").isEmpty)
+    let many = "[" + Array(repeating: #"{"box":[0,0,1,1]}"#, count: 40).joined(separator: ",") + "]"
+    XCTAssertEqual(XRDetections.parse(json: many).count, WorldUnderstanding.maxDetections)
+    let huge = "[" + String(repeating: " ", count: XRDetections.maxDetectionsJSONChars) + "]"
+    XCTAssertTrue(XRDetections.parse(json: huge).isEmpty)
+    let long = XRDetections.parse(json: #"[{"label":""# + String(repeating: "a", count: 300) + #"","box":[0,0,1,1]}]"#)
+    XCTAssertEqual(long.first?.label.count, 256)
+  }
+
   // MARK: Scene root (turntable) parity with Android
 
   func testRootTransformRotatesWorldAndLazyFollowStaysPut() throws {

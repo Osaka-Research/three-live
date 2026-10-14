@@ -125,7 +125,13 @@ Shared algorithms (all platforms):
   angle delta (`atan2(dx, dz)`).
 - **Detection unprojection**: boxes are `[ymin, xmin, ymax, xmax]` in 0–1
   or Gemini 0–1000; the box center is unprojected along the camera ray to the
-  sampled depth, a tracked plane, or 1.5 m.
+  sampled depth, a tracked plane, or 1.5 m. Host-supplied detections arrive as
+  a JSON string `[{label, box}]` (`box_2d` accepted as an alias), capped at
+  16 KB, 32 entries and 256-character labels; malformed entries are skipped.
+  Parsers: web `parseDetections()`, Android `ThreeLiveDetections.parse()`,
+  iOS `XRDetections.parse(json:)`. Android renderers expose the camera through
+  `ThreeLiveSceneRenderer.cameraMatrices()`; `ThreeLiveRuntimeBinding.detect()`
+  unprojects against it.
 - **Tube strokes**: uniform Catmull-Rom (4 samples/span), rotation-minimizing
   frames (double reflection), 8 radial segments, flat caps.
 - **Particles**: presets `rain` / `snow` / `sparks` / `confetti`, mulberry32

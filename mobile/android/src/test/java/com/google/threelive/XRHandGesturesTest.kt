@@ -64,6 +64,30 @@ class XRHandGesturesTest {
     assertTrue(ThreeLiveDetections.detect(boxes, FloatArray(3), proj).isEmpty())
   }
 
+  @Test
+  fun detectionsParseMirrorsWeb() {
+    val parsed =
+      ThreeLiveDetections.parse(
+        """[{"label":"cup","box":[400,400,600,600]},{"label":"mug","box_2d":[0.1,0.2,0.3,0.4]},""" +
+          """{"label":"bad","box":[1,2]},{"box":[1,"x",3,4]},7,{"box":[0,0,1,1]}]"""
+      )
+    assertEquals(3, parsed.size)
+    assertEquals("cup", parsed[0].label)
+    assertEquals(600.0, parsed[0].box[3], 0.0)
+    assertEquals("mug", parsed[1].label)
+    assertEquals(0.2, parsed[1].box[1], 0.0)
+    assertEquals("", parsed[2].label)
+    assertTrue(ThreeLiveDetections.parse(null).isEmpty())
+    assertTrue(ThreeLiveDetections.parse("{\"box\":[0,0,1,1]}").isEmpty())
+    assertTrue(ThreeLiveDetections.parse("[{").isEmpty())
+    val many = (0 until 40).joinToString(",", "[", "]") { """{"box":[0,0,1,1]}""" }
+    assertEquals(ThreeLiveDetections.MAX_DETECTIONS, ThreeLiveDetections.parse(many).size)
+    val huge = "[" + " ".repeat(ThreeLiveDetections.MAX_DETECTIONS_JSON_CHARS) + "]"
+    assertTrue(ThreeLiveDetections.parse(huge).isEmpty())
+    val longLabel = ThreeLiveDetections.parse("""[{"label":"${"a".repeat(300)}","box":[0,0,1,1]}]""")
+    assertEquals(256, longLabel[0].label.length)
+  }
+
   private fun hand(mode: String): Map<String, DoubleArray> {
     val m =
       hashMapOf(

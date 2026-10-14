@@ -79,6 +79,13 @@ interface ThreeLiveSceneRenderer {
   fun sceneRootMatrix(out: FloatArray): Boolean = false
 
   /**
+   * Writes the current camera's column-major world matrix into [world] and projection matrix into
+   * [projection] (both at least 16 floats), for unprojecting 2D detections. Returns `false` (the
+   * default) when no camera is available.
+   */
+  fun cameraMatrices(world: FloatArray, projection: FloatArray): Boolean = false
+
+  /**
    * Captures the next rendered frame as a JPEG (longest edge at most [maxEdge] pixels) together with
    * the camera matrices it was rendered with, and calls [callback] exactly once, on any thread, with
    * `null` when capture is unsupported or fails. Used to stream what the user sees to Gemini Live.

@@ -178,6 +178,18 @@ class ThreeLiveRuntimeBinding(
     applyPendingVisibility()
   }
 
+  /**
+   * Unprojects 2D [boxes] (see [ThreeLiveDetections.parse]) against the renderer's current camera
+   * and returns world-space detections, or an empty list when the renderer has no camera.
+   */
+  fun detect(boxes: List<ThreeLiveDetections.Box>): List<WorldUnderstanding.Detection3D> {
+    if (disposed || boxes.isEmpty()) return emptyList()
+    val world = FloatArray(16)
+    val proj = FloatArray(16)
+    if (!renderer.cameraMatrices(world, proj)) return emptyList()
+    return ThreeLiveDetections.detect(boxes, world, proj)
+  }
+
   /** Detaches from the renderer and session. Does not dispose the renderer. */
   fun dispose() {
     if (disposed) return

@@ -88,6 +88,7 @@ import {
 import {
   hitTestPlanes,
   normalizeBox,
+  parseDetections,
   unprojectDetectionTo3D,
   XRTapeMeasure,
   XRWorldUnderstandingController,
@@ -299,6 +300,15 @@ function testWorldUnderstanding(): void {
   assert(normalizeBox([100, 200, 300, 400])![1] === 0.2, 'Gemini 0..1000 boxes normalized');
   assert(normalizeBox([0.5, 0.1, 0.2, 0.3])![0] === 0.2, 'inverted boxes reordered');
   assert(normalizeBox([NaN, 0, 1, 1]) === null, 'non-finite boxes rejected');
+  {
+    const parsed = parseDetections('[{"label":"cup","box":[100,200,300,400]},{"label":"x","box_2d":[0,0,1,1]},{"box":[1,2]},7]');
+    assert(parsed.length === 2 && parsed[0].label === 'cup' && parsed[1].box[3] === 1, 'detections JSON parsed (box / box_2d)');
+    const many = JSON.stringify(Array.from({length: 40}, () => ({label: 'a', box: [0, 0, 1, 1]})));
+    assert(parseDetections(many).length === 32, 'detections capped at 32');
+    assert(parseDetections('not json').length === 0 && parseDetections('{}').length === 0, 'malformed detections ignored');
+    assert(parseDetections('[' + '{"box":[0,0,1,1]},'.repeat(2000) + '{}]').length === 0, 'oversized detections JSON rejected');
+    assert(parseDetections(JSON.stringify([{label: 'y'.repeat(500), box: [0, 0, 1, 1]}]))[0].label.length === 256, 'labels clipped');
+  }
 
   const proj = mat4Create();
   proj[0] = 1;

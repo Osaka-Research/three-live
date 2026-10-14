@@ -161,6 +161,41 @@ object ThreeLiveDetections {
   /** One 2D detection: [box] is `[ymin, xmin, ymax, xmax]` normalized 0..1 or 0..1000. */
   class Box(val box: DoubleArray, val label: String = "")
 
+  /** Maximum size of a `detections` JSON string, in characters (same as web). */
+  const val MAX_DETECTIONS_JSON_CHARS: Int = 16 * 1024
+
+  /**
+   * Parses a `detections` JSON string (`[{label, box: [ymin, xmin, ymax, xmax]}]`, 0–1 or Gemini
+   * 0–1000; `box_2d` is accepted as an alias) into at most [MAX_DETECTIONS] boxes. Malformed entries
+   * are skipped; malformed or oversized input yields an empty list. Mirrors web `parseDetections`.
+   */
+  @JvmStatic
+  fun parse(json: String?): List<Box> {
+    if (json.isNullOrEmpty() || json.length > MAX_DETECTIONS_JSON_CHARS) return emptyList()
+    val root = MiniJson.parseOrNull(json, maxDepth = 8, maxChars = MAX_DETECTIONS_JSON_CHARS) as? List<*>
+      ?: return emptyList()
+    val out = ArrayList<Box>()
+    for (item in root) {
+      if (out.size >= MAX_DETECTIONS) break
+      val rec = item as? Map<*, *> ?: continue
+      val box = (rec["box"] as? List<*>) ?: (rec["box_2d"] as? List<*>) ?: continue
+      if (box.size < 4) continue
+      val nums = DoubleArray(4)
+      var ok = true
+      for (i in 0 until 4) {
+        val v = (box[i] as? Number)?.toDouble()
+        if (v == null || !v.isFinite()) {
+          ok = false
+          break
+        }
+        nums[i] = v
+      }
+      if (!ok) continue
+      out.add(Box(nums, (rec["label"] as? String)?.take(256) ?: ""))
+    }
+    return out
+  }
+
   /**
    * Unprojects up to [MAX_DETECTIONS] boxes with the camera's column-major [cameraWorld] and
    * [proj] matrices. [depthAt] optionally samples view-space depth (meters) at normalized (u, v);

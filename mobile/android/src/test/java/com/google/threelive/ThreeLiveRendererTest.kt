@@ -316,11 +316,44 @@ class ThreeLiveRendererTest {
     assertEquals(1, moved)
   }
 
+  @Test
+  fun detectUnprojectsAgainstRendererCamera() {
+    val r = FakeRenderer()
+    val b = ThreeLiveRuntimeBinding(r, glbOf(HIERARCHY))
+    val boxes = ThreeLiveDetections.parse("""[{"label":"cup","box":[400,400,600,600]}]""")
+    assertTrue(b.detect(boxes).isEmpty())
+    r.hasCamera = true
+    val out = b.detect(boxes)
+    assertEquals(1, out.size)
+    assertEquals("cup", out[0].label)
+    // Camera at (0, 0, 5) looking down -Z: the center box lands at fallback depth in front of it.
+    assertEquals(0.0, out[0].x, 1e-6)
+    assertEquals(5.0 - WorldUnderstanding.FALLBACK_DEPTH_METERS, out[0].z, 1e-6)
+  }
+
   private class FakeRenderer : ThreeLiveSceneRenderer {
     override var listener: ThreeLiveRendererListener? = null
     val visible = HashMap<Int, Boolean>()
     val transforms = HashMap<Int, FloatArray>()
     val animations = ArrayList<Int>()
+    var hasCamera = false
+
+    override fun cameraMatrices(world: FloatArray, projection: FloatArray): Boolean {
+      if (!hasCamera) return false
+      world.fill(0f)
+      world[0] = 1f
+      world[5] = 1f
+      world[10] = 1f
+      world[14] = 5f
+      world[15] = 1f
+      projection.fill(0f)
+      projection[0] = 1f
+      projection[5] = 1f
+      projection[10] = -1f
+      projection[11] = -1f
+      projection[14] = -0.2f
+      return true
+    }
 
     override fun load(glb: ByteBuffer) {}
 

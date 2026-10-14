@@ -122,6 +122,7 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private var captureInFlight = false
   private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-capture").apply { isDaemon = true } }
   private val cameraWorld = FloatArray(16)
+  private val projScratch = DoubleArray(16)
   private val eye = DoubleArray(3)
   private val target = DoubleArray(3)
   private val rootMatrix = FloatArray(16)
@@ -281,6 +282,14 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   override fun sceneRootMatrix(out: FloatArray): Boolean {
     if (asset == null || out.size < 16) return false
     orbit.turntableMatrix(out)
+    return true
+  }
+
+  override fun cameraMatrices(world: FloatArray, projection: FloatArray): Boolean {
+    if (disposed || world.size < 16 || projection.size < 16 || viewportWidth <= 0) return false
+    System.arraycopy(cameraWorld, 0, world, 0, 16)
+    val m = camera.getProjectionMatrix(projScratch)
+    for (i in 0 until 16) projection[i] = m[i].toFloat()
     return true
   }
 

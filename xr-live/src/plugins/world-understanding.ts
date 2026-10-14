@@ -76,6 +76,40 @@ export interface Detection2D {
   readonly box: readonly [number, number, number, number];
 }
 
+/** Maximum size of a `detections` JSON string, in characters. */
+export const MAX_DETECTIONS_JSON_CHARS = 16 * 1024;
+
+/**
+ * Parses a `detections` JSON string (`[{label, box: [ymin, xmin, ymax, xmax]}]`, 0–1 or Gemini
+ * 0–1000; `box_2d` is accepted as an alias) into at most {@link MAX_DETECTIONS} detections.
+ * Malformed entries are skipped; malformed or oversized input yields `[]`.
+ */
+export function parseDetections(json: unknown): Detection2D[] {
+  if (typeof json !== 'string' || !json || json.length > MAX_DETECTIONS_JSON_CHARS) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: Detection2D[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_DETECTIONS) break;
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const box = Array.isArray(rec['box']) ? rec['box'] : rec['box_2d'];
+    if (!Array.isArray(box) || box.length < 4) continue;
+    const nums = box.slice(0, 4).map(Number);
+    if (!nums.every(Number.isFinite)) continue;
+    out.push({
+      label: typeof rec['label'] === 'string' ? rec['label'].slice(0, 256) : '',
+      box: [nums[0], nums[1], nums[2], nums[3]],
+    });
+  }
+  return out;
+}
+
 /** A detection located in 3D world space. */
 export interface Detection3D {
   readonly label: string;
