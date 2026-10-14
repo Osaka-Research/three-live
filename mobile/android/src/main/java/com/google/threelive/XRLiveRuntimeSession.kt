@@ -456,6 +456,16 @@ class XRLiveRuntimeSession(gltfJson: String) {
     return floatArrayOf(mA[12].toFloat(), mA[13].toFloat(), mA[14].toFloat())
   }
 
+  /**
+   * Writes the node's scene-space matrix (column-major, through its parent chain) into [out].
+   * Returns `false` for an invalid index or a too-small [out].
+   */
+  fun nodeWorldMatrix(nodeIndex: Int, out: DoubleArray): Boolean {
+    if (nodeIndex !in 0 until nodeCount || out.size < 16) return false
+    worldMatrix(nodeIndex, out)
+    return true
+  }
+
   /** Returns the node's own visibility flag (`false` for an invalid index). */
   fun isVisible(nodeIndex: Int): Boolean = nodeIndex in 0 until nodeCount && visible[nodeIndex]
 

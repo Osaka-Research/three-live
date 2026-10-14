@@ -246,6 +246,7 @@ public final class XRLiveRuntimeSession {
   private var parentOf: [Int: Int] = [:]
   private var materials: [MaterialData] = []
   private var meshMaterials: [[Int]] = []
+  private var meshNames: [String?] = []
   private var animationNames: [String?] = []
   private var nodeIndexByName: [String: Int] = [:]
 
@@ -386,6 +387,7 @@ public final class XRLiveRuntimeSession {
         list.append(mat ?? -1)
       }
       meshMaterials.append(list)
+      meshNames.append(XRJSON.string(XRJSON.object(raw)?["name"]))
     }
 
     for raw in (XRJSON.array(root["animations"]) ?? []).prefix(Self.maxSceneElements) {
@@ -522,6 +524,14 @@ public final class XRLiveRuntimeSession {
     guard index >= 0, index < nodes.count, let mesh = nodes[index].mesh, mesh < meshMaterials.count
     else { return [] }
     return meshMaterials[mesh]
+  }
+
+  /// The glTF mesh name (`meshes[nodes[index].mesh].name`) of node `index`, if any. Event
+  /// payloads report this as `mesh`, matching the web exporter.
+  public func meshName(forNode index: Int) -> String? {
+    guard index >= 0, index < nodes.count, let mesh = nodes[index].mesh, mesh < meshNames.count
+    else { return nil }
+    return meshNames[mesh]
   }
 
   /// The local transform of node `index`.

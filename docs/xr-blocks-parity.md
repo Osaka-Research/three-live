@@ -78,16 +78,16 @@ most `SECURITY_3D_MAX_MESHES × 4` nodes.
 | --- | --- | --- | --- |
 | `KHR_interactivity` | `plugins/interactivity.ts` | `XRLiveRuntimeSession.kt` | `XRLiveRuntimeSession.swift` |
 | Lazy follow + orbit | `plugins/head-follow.ts` | `XRLiveRuntimeSession.step()` | `XRLiveRuntimeSession.step()` |
-| Manipulation handles | `plugins/manipulation-handles.ts` | `ManipulationHandles` + SceneCore `ResizableComponent` | `ManipulationHandles` + RealityKit gestures |
+| Manipulation handles | `plugins/manipulation-handles.ts` | `XRBlocksFeatures` (any `ThreeLiveSceneRenderer` with dynamic meshes) | `XRBlocksRealityKitFeatures` |
 | World understanding | `plugins/world-understanding.ts` | `WorldUnderstanding.unprojectDetection()` + ARCore | `WorldUnderstanding.unprojectDetection()` + ARKit |
 | Gemini Live / hold-to-ask | `plugins/gemini-live.ts` | `gemini/XRGeminiLiveController` + `HoldToAskController` | `Gemini/XRGeminiLiveController` + `HoldToAskController` |
 | Camera + `camera-change` | `three-view.ts` orbit camera | `OrbitCameraState` (via `ThreeLiveRenderer`) | `XROrbitCameraState` |
 | Hand gestures | `xr-gestures.ts` | `XRHandGestures` (host supplies joints) | `XRHandGestureClassifier` + `XRHandTrackingSource` (visionOS) |
 | Object detection | `world-understanding.ts` | `ThreeLiveDetections.detect()` | `XRDetections.detect()` |
 | Rendering | WebGL2 viewer | `ThreeLiveRenderer`; optional `:mobile:android-filament` | RealityKit |
-| Spatial paint | `plugins/spatial-paint.ts` | `TubeStrokeBuilder` | `TubeStrokeBuilder` |
-| Depth particles | `plugins/depth-particles.ts` | `ParticleEmitter` | `ParticleEmitter` |
-| Gaussian splats | `plugins/splat-loader.ts` | `SplatParser` | `SplatParser` |
+| Spatial paint | `plugins/spatial-paint.ts` | `XRBlocksFeatures.paintColor` (`TubeStrokeBuilder`) | `XRBlocksRealityKitFeatures.paintColor` |
+| Depth particles | `plugins/depth-particles.ts` | `XRBlocksFeatures` (`ParticleEmitter`, camera-facing quads) | `XRBlocksRealityKitFeatures` |
+| Gaussian splats | `plugins/splat-loader.ts` | `SplatParser` (parse only; rendering not yet native) | `SplatParser` (parse only; rendering not yet native) |
 
 Native source locations:
 
@@ -161,3 +161,26 @@ extra dependencies.
   `NSSpeechRecognitionUsageDescription`). Without speech permission,
   hold-to-ask sends the trait's default prompt.
 - Connect only after a user interaction, never at load.
+
+## 5. Native XR Blocks features
+
+`XRBlocksFeatures` (Android, renderer-agnostic) and `XRBlocksRealityKitFeatures`
+(iOS / visionOS) consume world-space pointer rays from the host and draw with
+dynamic meshes:
+
+- **Handles** on nodes with a `handles` trait (needs mesh bounds: `POSITION`
+  accessor `min` / `max` on Android, RealityKit visual bounds on iOS). Corner
+  drags scale uniformly within the trait's limits; the pedestal bar yaws.
+  Reports `{mesh, scale, yawDeg}`.
+- **Spatial paint** when a paint color is set: a drag that starts on empty
+  space draws a tube 0.4 m in front of the camera (the web screen-paint depth),
+  rebuilt every 3 points, capped at 256 strokes × 2048 points. Reports
+  `{index, points, lengthMeters}`.
+- **Particles** on nodes with a `particles` trait, using the shared
+  `ParticleEmitter` (same presets and seeds) as camera-facing quads, with an
+  optional floor height.
+- **Splats** are parsed natively (`SplatParser`), but native point-sprite
+  rendering is not implemented yet; use `<xr-live>` for splat scenes.
+
+Handles use the session's scene-space transforms, so turn auto-rotate off on
+scenes that use handles (the turntable rotates the model, as on web).

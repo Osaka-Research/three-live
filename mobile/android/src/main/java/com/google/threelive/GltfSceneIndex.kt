@@ -44,6 +44,12 @@ class GltfSceneIndex(gltfJson: String) {
   /** Material index of every primitive of every mesh (`-1` for the default material). */
   val meshPrimitiveMaterials: List<IntArray>
 
+  /**
+   * Local bounds of every mesh (`[minX, minY, minZ, maxX, maxY, maxZ]`, the union of its primitives'
+   * `POSITION` accessor `min` / `max`), or `null` when the GLB does not declare them.
+   */
+  val meshBounds: List<DoubleArray?>
+
   /** Root nodes of the default scene (or every parentless node when there is no scene). */
   val sceneRoots: IntArray
 
@@ -75,6 +81,24 @@ class GltfSceneIndex(gltfJson: String) {
       meshes.map { m ->
         val prims = MiniJson.asList(MiniJson.asMap(m)?.get("primitives")) ?: emptyList()
         IntArray(prims.size) { p -> index(MiniJson.asMap(prims[p])?.get("material"), Int.MAX_VALUE) }
+      }
+    val accessors = MiniJson.asList(root["accessors"]) ?: emptyList()
+    meshBounds =
+      meshes.map { m ->
+        var out: DoubleArray? = null
+        for (prim in MiniJson.asList(MiniJson.asMap(m)?.get("primitives")) ?: emptyList()) {
+          val attrs = MiniJson.asMap(MiniJson.asMap(prim)?.get("attributes")) ?: continue
+          val acc = MiniJson.asMap(accessors.getOrNull(index(attrs["POSITION"], accessors.size))) ?: continue
+          val lo = MiniJson.asList(acc["min"])?.mapNotNull { MiniJson.asFiniteDouble(it) } ?: continue
+          val hi = MiniJson.asList(acc["max"])?.mapNotNull { MiniJson.asFiniteDouble(it) } ?: continue
+          if (lo.size < 3 || hi.size < 3) continue
+          val b = out ?: doubleArrayOf(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]).also { out = it }
+          for (k in 0 until 3) {
+            b[k] = minOf(b[k], lo[k])
+            b[3 + k] = maxOf(b[3 + k], hi[k])
+          }
+        }
+        out
       }
     val scenes = MiniJson.asList(root["scenes"]) ?: emptyList()
     val sceneIdx = index(root["scene"], scenes.size).let { if (it < 0 && scenes.isNotEmpty()) 0 else it }
