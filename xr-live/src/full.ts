@@ -17,9 +17,12 @@
  * @fileoverview All-in-one 3D & XR bundle entry point for <xr-live> (xr-live-full.min.js).
  * Includes standard <xr-live> (with Three.js authoring), all xr-live-extras (Depth, Physics,
  * Hand Gestures, Desktop Simulator, Spatial Audio, WebMCP), plus all three-live plugins
- * (three-live-extras studio lighting/materials/shadows and three-live-animation keyframes/skinning/morph).
+ * (three-live-extras studio lighting/materials/shadows and three-live-animation keyframes/skinning/morph),
+ * and the seven XR Blocks plugins (head-follow, manipulation-handles, world-understanding,
+ * gemini-live, spatial-paint, depth-particles, splat-loader).
  */
 
 export * from '../../three-live/src/full';
 export * from './bundle';
 export * from './extras';
+export * from './plugins/index';

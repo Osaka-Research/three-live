@@ -64,6 +64,7 @@ import {
   stepCriticallyDampedSpring,
   XRHeadFollowController,
 } from '../src/plugins/head-follow';
+import * as xrLiveFull from '../src/full';
 import {xrBlocksPlugins} from '../src/plugins/index';
 import {
   computeHandleLayout,
@@ -136,6 +137,10 @@ function meshAt(name: string, pos: [number, number, number], xr: Record<string, 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
   assert(xrBlocksPlugins.length === 7, 'exports seven plugins');
+  assert(
+    xrLiveFull.xrBlocksPlugins === xrBlocksPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
+    'xr-live-full includes the XR Blocks plugins',
+  );
   const names = getRegisteredPlugins().map((p) => p.name);
   for (const n of [
     'xr-live-head-follow',
