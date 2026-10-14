@@ -94,6 +94,22 @@ class XRLiveRuntimeSession(gltfJson: String) {
   /** State-change receiver; may be replaced at any time. */
   var listener: Listener? = null
 
+  /**
+   * World matrix (column-major 4x4) of the scene root: renderers that move the whole model (for
+   * example a turntable auto-rotate) report it here so world-space features (follow, orbit,
+   * handles, paint) line up with what is drawn. Non-finite values are ignored. Default identity.
+   */
+  var rootTransform: DoubleArray
+    get() = root.copyOf()
+    set(value) {
+      if (value.size < 16 || value.take(16).any { !it.isFinite() }) return
+      value.copyInto(root, 0, 0, 16)
+      rootIsIdentity = (0 until 16).all { root[it] == if (it % 5 == 0) 1.0 else 0.0 }
+    }
+
+  private val root = DoubleArray(16).also { for (k in 0 until 16 step 5) it[k] = 1.0 }
+  private var rootIsIdentity = true
+
   /** Number of glTF nodes. */
   val nodeCount: Int
 
@@ -1563,6 +1579,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
       cur = parent[cur]
       d++
     }
+    if (!rootIsIdentity) {
+      XRBlocksMath.mat4Multiply(root, out, mC)
+      mC.copyInto(out)
+    }
   }
 
   /**
@@ -1571,11 +1591,12 @@ class XRLiveRuntimeSession(gltfJson: String) {
    */
   private fun setWorldPose(i: Int, pos: DoubleArray, quat: DoubleArray?) {
     val p = parent[i]
-    if (p < 0) {
+    if (p < 0 && rootIsIdentity) {
       for (k in 0 until 3) translation[i * 3 + k] = pos[k]
       if (quat != null) for (k in 0 until 4) rotation[i * 4 + k] = quat[k]
     } else {
-      worldMatrix(p, mA)
+      // Convert through the parent's world matrix (the scene root for root nodes).
+      if (p < 0) root.copyInto(mA) else worldMatrix(p, mA)
       if (!XRBlocksMath.mat4Invert(mA, mB)) return
       val local = XRBlocksMath.transformPoint(mB, pos[0], pos[1], pos[2], localScratch)
       for (k in 0 until 3) translation[i * 3 + k] = local[k]

@@ -69,6 +69,9 @@ class ThreeLiveRuntimeBinding(
   var frameHandler: ((dtSeconds: Double, cameraWorld: FloatArray) -> Unit)? = null
 
   private val pendingVisibility = LinkedHashSet<Int>()
+  private val rootF = FloatArray(16)
+  private val rootD = DoubleArray(16)
+  private var rootWasSet = false
   private val m = DoubleArray(16)
   private val q = DoubleArray(4)
   private var disposed = false
@@ -150,6 +153,7 @@ class ThreeLiveRuntimeBinding(
 
       override fun onFrame(dtSeconds: Double, cameraWorld: FloatArray) {
         if (disposed) return
+        syncRootTransform()
         session.step(dtSeconds, headPoseOf(cameraWorld))
         applyPendingVisibility()
         frameHandler?.invoke(dtSeconds, cameraWorld)
@@ -195,6 +199,19 @@ class ThreeLiveRuntimeBinding(
         if (done.add(i)) renderer.setNodeVisible(i, session.isEffectivelyVisible(i))
       }
     }
+  }
+
+  /** Feeds the renderer's scene-root motion (e.g. turntable) into the session's world space. */
+  private fun syncRootTransform() {
+    val hasRoot = renderer.sceneRootMatrix(rootF)
+    if (hasRoot) {
+      for (k in 0 until 16) rootD[k] = rootF[k].toDouble()
+      session.rootTransform = rootD
+    } else if (rootWasSet) {
+      for (k in 0 until 16) rootD[k] = if (k % 5 == 0) 1.0 else 0.0
+      session.rootTransform = rootD
+    }
+    rootWasSet = hasRoot
   }
 
   private fun headPoseOf(cameraWorld: FloatArray): XRPose {

@@ -269,6 +269,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     }
   }
 
+  override fun sceneRootMatrix(out: FloatArray): Boolean {
+    if (asset == null || out.size < 16) return false
+    orbit.turntableMatrix(out)
+    return true
+  }
+
   override fun playAnimation(animationIndex: Int) {
     val count = asset?.instance?.animator?.animationCount ?: 0
     if (animationIndex >= count) return

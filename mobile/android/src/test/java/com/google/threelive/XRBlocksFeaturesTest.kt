@@ -70,6 +70,53 @@ class XRBlocksFeaturesTest {
   }
 
   @Test
+  fun turntableRootRotatesHandleLayoutAndDragStillScales() {
+    val r = FakeRenderer()
+    val b = ThreeLiveRuntimeBinding(r, glbOf(SCENE))
+    val f = XRBlocksFeatures(b, r)
+    // 90° about +Y: the box at (0, 0, -2) moves to (-2, 0, 0).
+    r.root = floatArrayOf(0f, 0f, -1f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 1f)
+    r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    val world = DoubleArray(16).also { assertTrue(b.session.nodeWorldMatrix(0, it)) }
+    assertEquals(-2.0, world[12], 1e-9)
+    assertEquals(0.0, world[14], 1e-9)
+    val layout = ManipulationHandles.computeLayout(doubleArrayOf(-0.5, 0.0, -0.5), doubleArrayOf(0.5, 1.0, 0.5), world)
+    val corner = layout.corners[0]
+    assertTrue(corner[0] < -1.0)
+    val origin = doubleArrayOf(0.0, 0.5, 0.0)
+    val toCorner = doubleArrayOf(corner[0] - origin[0], corner[1] - origin[1], corner[2] - origin[2])
+    assertTrue(r.listener!!.onPointerDown(ThreeLivePointer(origin, toCorner, null)))
+    // Aim beyond the corner, away from the node's pivot, to scale up.
+    val pivot = doubleArrayOf(world[12], world[13], world[14])
+    val target = DoubleArray(3) { pivot[it] + (corner[it] - pivot[it]) * 1.6 }
+    val far = DoubleArray(3) { target[it] - origin[it] }
+    r.listener!!.onPointerMove(ThreeLivePointer(origin, far, null))
+    r.listener!!.onPointerUp(ThreeLivePointer(origin, far, null))
+    // Local scale grew (the drag was interpreted in the rotated world frame).
+    assertTrue(b.session.nodeTransform(0)!!.scale[0] > 1.05f)
+    // Local translation is untouched by the root.
+    assertArrayEquals(floatArrayOf(0f, 0f, -2f), b.session.nodeTransform(0)!!.translation, 1e-6f)
+    f.dispose()
+  }
+
+  @Test
+  fun lazyFollowHudStaysPutInWorldWhileTurntableSpins() {
+    val r = FakeRenderer()
+    val b =
+      ThreeLiveRuntimeBinding(
+        r,
+        glbOf("""{"nodes":[{"name":"Hud","extras":{"xr":{"follow":{"mode":"head","lazy":true,"distance":1.0}}}}],"scenes":[{"nodes":[0]}]}"""),
+      )
+    repeat(120) { r.listener!!.onFrame(1.0 / 60, IDENTITY) }
+    val before = DoubleArray(16).also { b.session.nodeWorldMatrix(0, it) }
+    // Spin the root 90°; the HUD's world position must not jump with it.
+    r.root = floatArrayOf(0f, 0f, -1f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 1f)
+    repeat(120) { r.listener!!.onFrame(1.0 / 60, IDENTITY) }
+    val after = DoubleArray(16).also { b.session.nodeWorldMatrix(0, it) }
+    for (k in 12..14) assertEquals(before[k], after[k], 0.02)
+  }
+
+  @Test
   fun emptySpaceDragPaintsStrokeAtScreenDepth() {
     val r = FakeRenderer()
     val b = ThreeLiveRuntimeBinding(r, glbOf("""{"nodes":[{"name":"A"}],"scenes":[{"nodes":[0]}]}"""))
@@ -125,6 +172,14 @@ class XRBlocksFeaturesTest {
 
   private class FakeRenderer : ThreeLiveSceneRenderer {
     override var listener: ThreeLiveRendererListener? = null
+    /** Scene-root matrix reported to the binding (e.g. a turntable), or `null` for none. */
+    var root: FloatArray? = null
+
+    override fun sceneRootMatrix(out: FloatArray): Boolean {
+      val r = root ?: return false
+      r.copyInto(out)
+      return true
+    }
     val meshes = LinkedHashMap<Int, Mesh>()
     val transforms = HashMap<Int, List<FloatArray>>()
     private var next = 1

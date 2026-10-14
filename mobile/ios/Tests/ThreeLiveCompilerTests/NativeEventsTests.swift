@@ -138,6 +138,29 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertEqual(withDepth[0].position.z, -1, accuracy: 1e-5)
   }
 
+  // MARK: Scene root (turntable) parity with Android
+
+  func testRootTransformRotatesWorldAndLazyFollowStaysPut() throws {
+    let json = #"""
+      {"nodes":[{"name":"Box","translation":[0,0,-2]},
+                {"name":"Hud","extras":{"xr":{"follow":{"mode":"head","lazy":true,"distance":1.0}}}}],
+       "scenes":[{"nodes":[0,1]}]}
+      """#
+    let s = try XCTUnwrap(XRLiveRuntimeSession(gltfJSONData: Data(json.utf8)))
+    for _ in 0..<120 { s.step(dt: 1.0 / 60, headPose: XRPose()) }
+    let before = s.worldMatrix(of: 1).columns.3
+    // 90° about +Y: (0, 0, -2) -> (-2, 0, 0).
+    s.rootTransform = simd_float4x4(simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 1, 0)))
+    let box = s.worldMatrix(of: 0).columns.3
+    XCTAssertEqual(box.x, -2, accuracy: 1e-5)
+    XCTAssertEqual(box.z, 0, accuracy: 1e-5)
+    for _ in 0..<120 { s.step(dt: 1.0 / 60, headPose: XRPose()) }
+    let after = s.worldMatrix(of: 1).columns.3
+    XCTAssertEqual(before.x, after.x, accuracy: 0.02)
+    XCTAssertEqual(before.y, after.y, accuracy: 0.02)
+    XCTAssertEqual(before.z, after.z, accuracy: 0.02)
+  }
+
   // MARK: Gemini Live
 
   private final class FakeTransport: GeminiLiveTransport {

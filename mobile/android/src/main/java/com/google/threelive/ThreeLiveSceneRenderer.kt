@@ -71,6 +71,13 @@ interface ThreeLiveSceneRenderer {
   /** Updates a glTF material's `alphaCutoff` where the material is masked. */
   fun setMaterialAlphaCutoff(materialIndex: Int, alphaCutoff: Float) {}
 
+  /**
+   * Writes the world matrix (column-major 4x4) the renderer applies to the whole scene, for example
+   * a turntable auto-rotate, into [out]. Returns `false` (the default) when the scene root is not
+   * moved.
+   */
+  fun sceneRootMatrix(out: FloatArray): Boolean = false
+
   /** Starts (looping) the glTF animation at [animationIndex]; `-1` plays every animation. */
   fun playAnimation(animationIndex: Int) {}
 
