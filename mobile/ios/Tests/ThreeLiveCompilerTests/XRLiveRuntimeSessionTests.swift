@@ -308,7 +308,9 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     let q = try XCTUnwrap(s.nodeTransform(at: 0)?.rotation)
     XCTAssertEqual(XRBlocksMath.yawFromQuat(q), Float.pi / 4, accuracy: 1e-3, "slerp halfway")
     XCTAssertEqual(simd_length(q.vector), 1, accuracy: 1e-4)
-    s.step(dt: 0.6)
+    // `step` clamps dt to 0.25 s (web VM parity), so finish the 1 s tween in two steps.
+    s.step(dt: 0.25)
+    s.step(dt: 0.25)
     XCTAssertEqual(
       XRBlocksMath.yawFromQuat(try XCTUnwrap(s.nodeTransform(at: 0)?.rotation)), Float.pi / 2,
       accuracy: 1e-3)
@@ -432,9 +434,12 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(r.animationStarts.first?.0, 0)
     XCTAssertEqual(r.animationStarts.first?.1, "Spin")
     XCTAssertEqual(r.animationStops, 1)
-    s.step(dt: 0.5)
+    // dt is clamped to 0.25 s per step (web VM parity), so advance in 0.25 s increments.
+    s.step(dt: 0.25)
+    s.step(dt: 0.25)
+    s.step(dt: 0.25)
     XCTAssertTrue(s.isVisible(0), "delay still pending")
-    s.step(dt: 0.6)
+    s.step(dt: 0.25)
     XCTAssertFalse(s.isVisible(0), "delay fired")
   }
 
