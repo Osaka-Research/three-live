@@ -896,7 +896,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     for k in 0..<4 { v3[32 + k] = UInt8(truncatingIfNeeded: comp >> (8 * k)) }
     let r3 = try SplatParser.parseSpzPayload(Data(v3))
     XCTAssertEqual(r3.rotations[0], 0.5, accuracy: 0.01, ".spz v3 smallest-three rotation")
-    XCTAssertEqual(r3.rotations[3], 0.75.squareRoot(), accuracy: 0.01)
+    XCTAssertEqual(r3.rotations[3], Float(0.75).squareRoot(), accuracy: 0.01)
     XCTAssertLessThanOrEqual(abs(Int(r3.colors[0]) - 128), 2, "SH DC color decode")
     var badBits = v3
     badBits[13] = 31

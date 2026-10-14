@@ -157,9 +157,10 @@ class XRLiveRuntimeSessionTest {
     assertEquals("head", moon.follow)
     assertFalse(moon.followLazy)
     assertNull(moon.lazyFollow)
-    assertEquals("Lamp", moon.orbit?.targetName)
-    assertEquals(0.4, moon.orbit!!.radius, 1e-9)
-    assertEquals(0.6, moon.orbit.speed, 1e-9)
+    val orbit = moon.orbit!!
+    assertEquals("Lamp", orbit.targetName)
+    assertEquals(0.4, orbit.radius, 1e-9)
+    assertEquals(0.6, orbit.speed, 1e-9)
     assertEquals(XRHandlesTrait("y", 0.5, 3.0), moon.handles)
     assertEquals(XRSpatialAudioTrait("hum.mp3", 1.0, true), moon.audio)
     assertEquals("room.spz", moon.splatUrl)

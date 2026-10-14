@@ -56,3 +56,6 @@ mobile/examples/ios_swiftui/Info.plist
 # OS / Editor files
 .DS_Store
 *.swp
+
+# Android SDK location (machine-specific).
+local.properties
