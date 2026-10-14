@@ -27,6 +27,13 @@ import {
   setEnvironmentSH,
 } from './plugins/envmap';
 import {hotspotPlugin} from './plugins/hotspots';
+import {
+  getInteractivityVM,
+  interactivityPlugin,
+  InteractivityVM,
+  parseSafeGltfPointer,
+  sendInteractivityEvent,
+} from './plugins/interactivity';
 import {materialsPlugin, registerMaterialShader} from './plugins/materials';
 import {contactShadowPlugin} from './plugins/shadows';
 import {webxrPlugin} from './plugins/webxr';
@@ -37,14 +44,20 @@ registerPlugin(hotspotPlugin);
 registerPlugin(environmentMapPlugin);
 registerPlugin(materialsPlugin);
 registerPlugin(webxrPlugin);
+registerPlugin(interactivityPlugin);
 
 export {
   contactShadowPlugin,
   environmentMapPlugin,
   getEnvironmentSH,
+  getInteractivityVM,
   hotspotPlugin,
+  interactivityPlugin,
+  InteractivityVM,
   materialsPlugin,
+  parseSafeGltfPointer,
   registerMaterialShader,
+  sendInteractivityEvent,
   setEnvironmentSH,
   webxrPlugin,
 };

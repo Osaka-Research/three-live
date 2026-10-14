@@ -29,6 +29,7 @@
 export interface HitDetail {
   meshIndex: number;
   meshName: string;
+  nodeIndex?: number;
   distance: number;
   hitPoint: [number, number, number];
   normal: [number, number, number];
@@ -1544,6 +1545,10 @@ export class ThreeView {
       this.playAnimation(this.animationName || undefined);
     }
 
+    for (const plugin of registeredPlugins) {
+      plugin.onLoadModel?.(this, this.gltf);
+    }
+
     if (!this.customDistance) {
       this.initialDistance = bounds.radius * 2.5;
       this.targetDistance = this.initialDistance;
@@ -2617,6 +2622,7 @@ export class ThreeView {
     const detail: HitDetail = {
       meshIndex,
       meshName: bestHitMesh.name,
+      nodeIndex: bestHitMesh.nodeIndex,
       distance: bestHitDistance,
       hitPoint: bestHitPoint,
       normal: bestHitNormal,
@@ -2625,6 +2631,9 @@ export class ThreeView {
     };
 
     if (emit) {
+      for (const plugin of registeredPlugins) {
+        plugin.onMeshSelect?.(this, detail);
+      }
       if (this.opts.onMeshClick) {
         this.opts.onMeshClick(detail);
       }

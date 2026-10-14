@@ -29,6 +29,8 @@ export interface ThreeLivePlugin {
   onCameraChange?(viewer: any, element?: any): void;
   onElementDisconnected?(element: any): void;
   onParseGLB?(glbData: any): void;
+  onLoadModel?(viewer: any, gltf: any): void;
+  onMeshSelect?(viewer: any, hit: any): void;
   onResolveShader?(
     primitiveDef: any,
     materialDef: any,

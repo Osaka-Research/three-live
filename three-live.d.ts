@@ -41,6 +41,21 @@ import type {
 
 export * from './three-live/src/core';
 export {
+  getInteractivityVM,
+  interactivityPlugin,
+  InteractivityVM,
+  parseSafeGltfPointer,
+  sendInteractivityEvent,
+  type InteractivityDeclaration,
+  type InteractivityEventDef,
+  type InteractivityFlowTarget,
+  type InteractivityGraph,
+  type InteractivityNode,
+  type InteractivityValue,
+  type InteractivityValueSocket,
+  type InteractivityVariableDef,
+} from './three-live/src/plugins/interactivity';
+export {
   ThreeLiveElement,
   type ARLaunchOptions,
   type ARLaunchResult,

@@ -24,6 +24,7 @@ import {
   mat4FromRotationTranslationScale,
   rayIntersectsTriangle,
 } from '../../three-live/src/math';
+import {registeredPlugins} from '../../three-live/src/plugin';
 import {
   extractPosition,
   extractQuaternion,
@@ -468,6 +469,7 @@ export class XRInputManager {
       if (isNowSelecting && !wasSelecting) {
         this.isPinching[handedness] = true;
         if (hit) {
+          this.notifyMeshSelectPlugins(viewer, hit);
           this.traitSystem.startGrab(hit.mesh, handedness, currentPose);
           if (hit.mesh.isSpatialSlot && this.onSpatialSlotHit) {
             this.onSpatialSlotHit(hit, 'click');
@@ -523,6 +525,7 @@ export class XRInputManager {
     if (type === 'start') {
       this.isPinching[hand] = true;
       if (hit) {
+        this.notifyMeshSelectPlugins(viewer, hit);
         this.traitSystem.startGrab(hit.mesh, hand, pose);
         if (hit.mesh.isSpatialSlot && this.onSpatialSlotHit) {
           this.onSpatialSlotHit(hit, 'click');
@@ -538,6 +541,24 @@ export class XRInputManager {
     }
 
     return hit;
+  }
+
+  private notifyMeshSelectPlugins(viewer: any, hit: XRInputHit): void {
+    const meshes = viewer?.meshes || [];
+    const meshIndex = meshes.indexOf(hit.mesh);
+    const detail = {
+      meshIndex,
+      meshName: hit.mesh?.name || '',
+      nodeIndex: hit.mesh?.nodeIndex,
+      distance: hit.distance,
+      hitPoint: hit.point,
+      normal: [0, 1, 0] as [number, number, number],
+      screenX: 0,
+      screenY: 0,
+    };
+    for (const plugin of registeredPlugins) {
+      plugin.onMeshSelect?.(viewer, detail);
+    }
   }
 
   private dispatchXREvent(name: string, detail: XRSelectEventDetail): void {
