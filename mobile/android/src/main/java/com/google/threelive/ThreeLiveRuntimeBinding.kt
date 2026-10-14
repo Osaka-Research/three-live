@@ -19,7 +19,7 @@ package com.google.threelive
 import java.nio.ByteBuffer
 
 /**
- * Connects an [XRLiveRuntimeSession] to a [ThreeLiveRenderer]: behavior-graph and trait changes
+ * Connects an [XRLiveRuntimeSession] to a [ThreeLiveSceneRenderer]: behavior-graph and trait changes
  * become renderer calls, taps become `pointer/onSelect`, and every frame steps the session with the
  * camera as the head pose. Host-facing events (mesh clicks, camera changes, graph events) are
  * reported through [Callbacks] with the same payload fields as the web element.
@@ -28,7 +28,7 @@ import java.nio.ByteBuffer
  * and [dispose] it before loading another.
  */
 class ThreeLiveRuntimeBinding(
-  private val renderer: ThreeLiveRenderer,
+  private val renderer: ThreeLiveSceneRenderer,
   glb: ByteBuffer,
 ) {
   /** Host callbacks; every method is optional. */

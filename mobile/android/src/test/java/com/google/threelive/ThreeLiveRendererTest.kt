@@ -16,8 +16,6 @@
 
 package com.google.threelive
 
-import android.content.Context
-import android.view.View
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.junit.Assert.assertArrayEquals
@@ -228,16 +226,6 @@ class ThreeLiveRendererTest {
   // ---- ThreeLiveRuntimeBinding ------------------------------------------------------------------
 
   @Test
-  fun registryHoldsOneFactory() {
-    ThreeLiveRenderers.clear()
-    assertNull(ThreeLiveRenderers.current())
-    val f = ThreeLiveRendererFactory { FakeRenderer() }
-    ThreeLiveRenderers.register(f)
-    assertSame(f, ThreeLiveRenderers.current())
-    ThreeLiveRenderers.clear()
-  }
-
-  @Test
   fun tapTogglesGroupVisibilityAndPropagatesToDescendants() {
     val r = FakeRenderer()
     val clicks = ArrayList<String>()
@@ -326,13 +314,11 @@ class ThreeLiveRendererTest {
     assertEquals(1, moved)
   }
 
-  private class FakeRenderer : ThreeLiveRenderer {
+  private class FakeRenderer : ThreeLiveSceneRenderer {
     override var listener: ThreeLiveRendererListener? = null
     val visible = HashMap<Int, Boolean>()
     val transforms = HashMap<Int, FloatArray>()
     val animations = ArrayList<Int>()
-
-    override fun createView(context: Context): View = throw UnsupportedOperationException()
 
     override fun load(glb: ByteBuffer) {}
 
