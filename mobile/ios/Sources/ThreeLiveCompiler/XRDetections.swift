@@ -38,8 +38,15 @@ public enum XRDetections {
   public static func parse(json: String?) -> [Box] {
     guard let json = json, !json.isEmpty, json.utf16.count <= maxDetectionsJSONChars,
       let data = json.data(using: .utf8),
-      let root = (try? JSONSerialization.jsonObject(with: data, options: [])) as? [Any]
+      let root = try? JSONSerialization.jsonObject(with: data, options: [])
     else { return [] }
+    return fromList(root)
+  }
+
+  /// Validates an already-parsed detection list (e.g. Gemini `report_objects` tool arguments,
+  /// which are untrusted model output) with the same rules as `parse(json:)`.
+  public static func fromList(_ raw: Any?) -> [Box] {
+    guard let root = raw as? [Any] else { return [] }
     var out: [Box] = []
     for item in root {
       if out.count >= WorldUnderstanding.maxDetections { break }

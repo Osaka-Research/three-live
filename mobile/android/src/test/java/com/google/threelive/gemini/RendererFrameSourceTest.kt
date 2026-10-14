@@ -18,8 +18,10 @@ package com.google.threelive.gemini
 
 import com.google.threelive.CapturedFrame
 import com.google.threelive.ThreeLiveCameraOptions
+import com.google.threelive.ThreeLiveDetections
 import com.google.threelive.ThreeLiveRendererListener
 import com.google.threelive.ThreeLiveSceneRenderer
+import com.google.threelive.WorldUnderstanding
 import java.nio.ByteBuffer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -80,6 +82,19 @@ class RendererFrameSourceTest {
     assertEquals("image/jpeg", (chunk[0] as Map<*, *>)["mimeType"])
   }
 
+  @Test
+  fun locateUsesLatestFrameCameraOrFallsBackToRenderer() {
+    val r = FakeRenderer()
+    val src = RendererFrameSource(r)
+    val boxes = ThreeLiveDetections.parse("""[{"label":"cup","box":[400,400,600,600]}]""")
+    assertTrue(src.locate(boxes).isEmpty())
+    r.frameCameraZ = 3f
+    src.captureJpeg {}
+    val fromFrame = src.locate(boxes)
+    assertEquals(3.0 - WorldUnderstanding.FALLBACK_DEPTH_METERS, fromFrame.single().z, 1e-6)
+    assertTrue(src.locate(emptyList()).isEmpty())
+  }
+
   private class FakeTransport : GeminiLiveTransport {
     override var listener: GeminiLiveTransport.Listener? = null
     val sent = ArrayList<Map<String, Any?>>()
@@ -96,6 +111,7 @@ class RendererFrameSourceTest {
     var calls = 0
     var lastMaxEdge = 0
     var fail = false
+    var frameCameraZ = 0f
 
     override fun captureFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
       calls++
@@ -104,7 +120,9 @@ class RendererFrameSourceTest {
         callback(null)
         return
       }
-      callback(CapturedFrame(byteArrayOf(calls.toByte()), 4, 3, FloatArray(16), FloatArray(16), calls.toLong()))
+      val world = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[14] = frameCameraZ; it[15] = 1f }
+      val proj = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = -1f; it[11] = -1f; it[14] = -0.2f }
+      callback(CapturedFrame(byteArrayOf(calls.toByte()), 4, 3, world, proj, calls.toLong()))
     }
 
     override fun load(glb: ByteBuffer) {}

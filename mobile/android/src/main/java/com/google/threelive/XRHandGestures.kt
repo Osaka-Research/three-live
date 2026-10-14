@@ -172,8 +172,16 @@ object ThreeLiveDetections {
   @JvmStatic
   fun parse(json: String?): List<Box> {
     if (json.isNullOrEmpty() || json.length > MAX_DETECTIONS_JSON_CHARS) return emptyList()
-    val root = MiniJson.parseOrNull(json, maxDepth = 8, maxChars = MAX_DETECTIONS_JSON_CHARS) as? List<*>
-      ?: return emptyList()
+    return fromList(MiniJson.parseOrNull(json, maxDepth = 8, maxChars = MAX_DETECTIONS_JSON_CHARS))
+  }
+
+  /**
+   * Validates an already-parsed detection list (e.g. Gemini `report_objects` tool arguments, which
+   * are untrusted model output) with the same rules as [parse].
+   */
+  @JvmStatic
+  fun fromList(raw: Any?): List<Box> {
+    val root = raw as? List<*> ?: return emptyList()
     val out = ArrayList<Box>()
     for (item in root) {
       if (out.size >= MAX_DETECTIONS) break

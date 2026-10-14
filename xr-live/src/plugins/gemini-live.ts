@@ -35,6 +35,12 @@ import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
 import {type HoldToAskOptions, parseHoldToAsk} from '../../../three-live/src/xr-trait-schema';
 import {getMeshXRTraits} from '../xr-traits';
 import {clampNum, emitPluginEvent, isEventClaimed} from './common';
+import {
+  type DetectionCamera,
+  detectionsFromList,
+  detectObjects,
+  snapshotDetectionCamera,
+} from './world-understanding';
 
 /** Maximum characters of any single transcript or prompt forwarded. */
 export const MAX_TEXT_CHARS = 4000;
@@ -218,6 +224,63 @@ export class PcmPlayer {
   }
 }
 
+/** Name of the opt-in object-detection function exposed to the model. */
+export const REPORT_OBJECTS_TOOL = 'report_objects';
+
+/** Maximum function calls handled per `toolCall` message. */
+export const MAX_TOOL_CALLS = 8;
+
+/**
+ * Live API function declaration for {@link REPORT_OBJECTS_TOOL}: the model
+ * reports objects it sees in the latest frame with Gemini's native 0–1000
+ * `box_2d` boxes, which the client locates in 3D (`xr-object-detected`).
+ */
+export const REPORT_OBJECTS_DECLARATION: Readonly<Record<string, unknown>> = {
+  name: REPORT_OBJECTS_TOOL,
+  description:
+    'Reports objects visible in the most recent image of the 3D scene or camera view so the app ' +
+    'can locate them in 3D. Call it when the user asks where something is or to find objects.',
+  parameters: {
+    type: 'OBJECT',
+    properties: {
+      objects: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            label: {type: 'STRING', description: 'Short name of the object.'},
+            box_2d: {
+              type: 'ARRAY',
+              items: {type: 'NUMBER'},
+              description: 'Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.',
+            },
+          },
+          required: ['label', 'box_2d'],
+        },
+      },
+    },
+    required: ['objects'],
+  },
+};
+
+/**
+ * Returns a copy of `setup` whose `tools` include {@link REPORT_OBJECTS_DECLARATION}
+ * (added once). Without a `setup` there is nothing to extend: an
+ * ephemeral token must then declare the tool in its locked setup.
+ */
+export function withDetectionTool(
+  setup: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> | undefined {
+  if (!setup || typeof setup !== 'object') return undefined;
+  const tools = Array.isArray(setup['tools']) ? [...(setup['tools'] as unknown[])] : [];
+  const declared = tools.some((t) => {
+    const decls = (t as {functionDeclarations?: unknown})?.functionDeclarations;
+    return Array.isArray(decls) && decls.some((d) => (d as {name?: unknown})?.name === REPORT_OBJECTS_TOOL);
+  });
+  if (!declared) tools.push({functionDeclarations: [REPORT_OBJECTS_DECLARATION]});
+  return {...setup, tools};
+}
+
 /** Options for {@link XRGeminiLiveController.connect}. */
 export interface GeminiLiveOptions {
   /** Pre-built transport (preferred), or... */
@@ -234,6 +297,12 @@ export interface GeminiLiveOptions {
   readonly speakReplies?: boolean;
   /** Play streamed model audio (`inlineData` PCM). Default `true`. */
   readonly playAudio?: boolean;
+  /**
+   * Expose {@link REPORT_OBJECTS_TOOL} to the model and turn its calls into
+   * `xr-object-detected` events, unprojected with the camera of the last
+   * frame sent. Default `false`.
+   */
+  readonly detectObjects?: boolean;
 }
 
 interface CaptureHost {
@@ -253,6 +322,9 @@ export class XRGeminiLiveController {
   private playAudio = true;
   /** Set once output transcription arrives this turn; text parts are then ignored. */
   private turnHasOutputTranscription = false;
+  private detectObjects = false;
+  /** Camera of the last frame sent, for unprojecting the model's boxes. */
+  private frameCamera: DetectionCamera | null = null;
   readonly audio = new PcmPlayer();
 
   constructor(private readonly element: unknown) {}
@@ -271,12 +343,15 @@ export class XRGeminiLiveController {
     this.transport = transport;
     this.speakReplies = options.speakReplies === true;
     this.playAudio = options.playAudio !== false;
+    this.detectObjects = options.detectObjects === true;
+    this.frameCamera = null;
     transport.onMessage = (m) => this.handleServerMessage(m);
     transport.onClose = () => {
       if (this.transport === transport) this.stopFrames();
       if (this.transport === transport) this.transport = null;
     };
-    if (options.setup) transport.send({setup: options.setup});
+    const setup = this.detectObjects ? withDetectionTool(options.setup) : options.setup;
+    if (setup) transport.send({setup});
     if (options.streamFrames !== false) {
       const interval = clampNum(options.frameIntervalMs, 250, 10000, 1000);
       this.frameTimer = setInterval(() => void this.sendFrame(), interval);
@@ -301,8 +376,11 @@ export class XRGeminiLiveController {
     }
     this.captureInFlight = true;
     try {
+      // The frame renders from the camera at capture time.
+      const camera = this.detectObjects ? snapshotDetectionCamera(this.element) : null;
       const frame = await host.captureViewFrame({format: 'image/jpeg', quality: 0.6});
       if (!frame?.base64 || !this.transport) return false;
+      if (camera) this.frameCamera = camera;
       this.transport.send({
         realtimeInput: {mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}]},
       });
@@ -336,7 +414,9 @@ export class XRGeminiLiveController {
 
   /** Processes one server message (exposed for custom transports and tests). */
   handleServerMessage(message: Record<string, unknown>): void {
-    const content = message['serverContent'] as Record<string, unknown> | undefined;
+    const toolCall = message?.['toolCall'];
+    if (toolCall && typeof toolCall === 'object') this.handleToolCall(toolCall as Record<string, unknown>);
+    const content = message?.['serverContent'] as Record<string, unknown> | undefined;
     if (!content || typeof content !== 'object') return;
     if (content['interrupted'] === true) {
       cancelSpeech();
@@ -382,6 +462,28 @@ export class XRGeminiLiveController {
         if (ev.speaker === 'model' && this.speakReplies) speak(ev.text);
       }
     }
+  }
+
+  /**
+   * Answers {@link REPORT_OBJECTS_TOOL} calls (when `detectObjects` is on). The
+   * arguments are untrusted model output: only labels and boxes are read,
+   * through the same validation as the `detections` prop. Other functions
+   * are left to the host.
+   */
+  private handleToolCall(toolCall: Record<string, unknown>): void {
+    const calls = toolCall['functionCalls'];
+    if (!this.detectObjects || !this.transport || !Array.isArray(calls)) return;
+    const functionResponses: Array<Record<string, unknown>> = [];
+    for (const call of calls.slice(0, MAX_TOOL_CALLS)) {
+      const c = call as {id?: unknown; name?: unknown; args?: unknown} | null;
+      if (c?.name !== REPORT_OBJECTS_TOOL) continue;
+      const objects = (c.args as {objects?: unknown} | null)?.objects;
+      const located = detectObjects(this.element, detectionsFromList(objects), this.frameCamera ?? undefined);
+      const response: Record<string, unknown> = {name: REPORT_OBJECTS_TOOL, response: {ok: true, located: located.length}};
+      if (typeof c.id === 'string') response['id'] = c.id.slice(0, 256);
+      functionResponses.push(response);
+    }
+    if (functionResponses.length) this.transport.send({toolResponse: {functionResponses}});
   }
 
   private emitTranscript(ev: TranscriptEvent): void {

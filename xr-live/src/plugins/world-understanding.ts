@@ -92,6 +92,15 @@ export function parseDetections(json: unknown): Detection2D[] {
   } catch {
     return [];
   }
+  return detectionsFromList(raw);
+}
+
+/**
+ * Validates an already-parsed detection list (e.g. Gemini `report_objects`
+ * tool arguments, which are untrusted model output) with the same rules as
+ * {@link parseDetections}.
+ */
+export function detectionsFromList(raw: unknown): Detection2D[] {
   if (!Array.isArray(raw)) return [];
   const out: Detection2D[] = [];
   for (const item of raw) {
@@ -108,6 +117,26 @@ export function parseDetections(json: unknown): Detection2D[] {
     });
   }
   return out;
+}
+
+/** Column-major camera world and projection matrices a frame was rendered with. */
+export interface DetectionCamera {
+  readonly world: Float32Array;
+  readonly projection: Float32Array;
+}
+
+/**
+ * Snapshots the viewer's current camera (world and projection matrices), e.g.
+ * when a frame is sent to a model, so later detections can be unprojected
+ * against the camera that produced the image.
+ */
+// tslint:disable-next-line:no-any Host element is `<xr-live>`.
+export function snapshotDetectionCamera(element: any): DetectionCamera {
+  const viewer: PluginViewer | undefined = element?._view ?? element?.viewer;
+  return {
+    world: Float32Array.from(resolveHeadPose(viewer).matrix),
+    projection: Float32Array.from(resolveProjection(viewer) ?? defaultProjection()),
+  };
 }
 
 /** A detection located in 3D world space. */
@@ -311,17 +340,21 @@ export class XRWorldUnderstandingController {
     this.meshCount = frame.detectedMeshes?.size ?? 0;
   }
 
-  /** Projects 2D detections into 3D for the viewer's current camera. */
+  /**
+   * Projects 2D detections into 3D for `camera` (e.g. the camera of the frame
+   * the detections were computed from), or the viewer's current camera.
+   */
   locateDetections(
     detections: readonly Detection2D[],
     viewer: PluginViewer | undefined,
     sampleDepth?: DepthSampler,
+    camera?: DetectionCamera,
   ): Detection3D[] {
-    const head = resolveHeadPose(viewer);
-    const proj = resolveProjection(viewer) ?? defaultProjection();
+    const world = camera?.world ?? resolveHeadPose(viewer).matrix;
+    const proj = camera?.projection ?? resolveProjection(viewer) ?? defaultProjection();
     const out: Detection3D[] = [];
     for (const d of detections.slice(0, MAX_DETECTIONS)) {
-      const located = unprojectDetectionTo3D(d, head.matrix, proj, this.planes, sampleDepth);
+      const located = unprojectDetectionTo3D(d, world, proj, this.planes, sampleDepth);
       if (located) out.push(located);
     }
     return out;
@@ -439,14 +472,22 @@ function depthSamplerFor(host: unknown): DepthSampler | undefined {
 /**
  * Locates 2D detections in 3D for an `<xr-live>` element and dispatches one
  * `xr-object-detected` event per located object. Returns the located objects.
+ * Pass `camera` (see {@link snapshotDetectionCamera}) to unproject against the
+ * camera of the image the detections came from instead of the current one.
  */
-// tslint:disable-next-line:no-any Host element is `<xr-live>`.
-export function detectObjects(element: any, detections: readonly Detection2D[]): Detection3D[] {
+export function detectObjects(
+  // tslint:disable-next-line:no-any Host element is `<xr-live>`.
+  element: any,
+  detections: readonly Detection2D[],
+  camera?: DetectionCamera,
+): Detection3D[] {
   const viewer: PluginViewer | undefined = element?._view ?? element?.viewer;
+  // Depth is only sampled for the live camera; a past frame's depth is gone.
   const located = getWorldUnderstandingController(element).locateDetections(
     detections,
     viewer,
-    depthSamplerFor(element),
+    camera ? undefined : depthSamplerFor(element),
+    camera,
   );
   for (const d of located) emitPluginEvent(element, 'xr-object-detected', d);
   return located;

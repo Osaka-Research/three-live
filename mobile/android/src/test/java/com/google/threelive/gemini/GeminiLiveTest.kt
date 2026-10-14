@@ -236,6 +236,56 @@ class GeminiLiveTest {
   }
 
   @Test
+  fun reportObjectsToolMergesIntoSetupAndAnswersCalls() {
+    val merged = XRGeminiLiveController.withDetectionTool(mapOf("model" to "m", "tools" to listOf(mapOf("googleSearch" to emptyMap<String, Any?>()))))!!
+    assertEquals(2, MiniJson.asList(merged["tools"])!!.size)
+    assertEquals(2, MiniJson.asList(XRGeminiLiveController.withDetectionTool(merged)!!["tools"])!!.size)
+    assertNull(XRGeminiLiveController.withDetectionTool(null))
+
+    val t = FakeTransport()
+    val c = XRGeminiLiveController()
+    val reported = ArrayList<List<com.google.threelive.ThreeLiveDetections.Box>>()
+    c.listener =
+      object : XRGeminiLiveController.Listener {
+        override fun onObjectsReported(boxes: List<com.google.threelive.ThreeLiveDetections.Box>) {
+          reported.add(boxes)
+        }
+      }
+    c.connect(t, GeminiLiveOptions(setup = mapOf("model" to "m"), streamFrames = false, detectObjects = true))
+    assertTrue(MiniJson.stringify(t.sent[0]).contains("\"name\":\"report_objects\""))
+    t.sent.clear()
+    c.handleServerMessage(
+      msg(
+        """{"toolCall":{"functionCalls":[
+          {"id":"c1","name":"report_objects","args":{"objects":[{"label":"cup","box_2d":[400,400,600,600]}]}},
+          {"id":"c2","name":"host_tool","args":{}},
+          {"id":"c3","name":"report_objects","args":{"objects":[{"label":"x","box_2d":[1,"y",3,4]},7,{"box_2d":[1]}]}},
+          {"id":"c4","name":"report_objects","args":null}]}}"""
+      )
+    )
+    assertEquals(1, reported.size)
+    assertEquals("cup", reported[0][0].label)
+    val responses = MiniJson.asList(MiniJson.asMap(t.sent.single()["toolResponse"])!!["functionResponses"])!!
+    assertEquals(listOf("c1", "c3", "c4"), responses.map { MiniJson.asMap(it)!!["id"] })
+    assertEquals(
+      listOf(1, 0, 0),
+      responses.map { MiniJson.asMap(MiniJson.asMap(it)!!["response"])!!["located"] },
+    )
+    t.sent.clear()
+    val many = (0 until 20).joinToString(",") { """{"id":"$it","name":"report_objects","args":{"objects":[]}}""" }
+    c.handleServerMessage(msg("""{"toolCall":{"functionCalls":[$many]}}"""))
+    val capped = MiniJson.asList(MiniJson.asMap(t.sent.single()["toolResponse"])!!["functionResponses"])!!
+    assertEquals(XRGeminiLiveController.MAX_TOOL_CALLS, capped.size)
+
+    // Without detectObjects, tool calls are left to the host.
+    val plain = FakeTransport()
+    c.connect(plain, GeminiLiveOptions(setup = mapOf("model" to "m"), streamFrames = false))
+    c.handleServerMessage(msg("""{"toolCall":{"functionCalls":[{"id":"c","name":"report_objects","args":{"objects":[]}}]}}"""))
+    assertEquals(1, plain.sent.size)
+    assertFalse(MiniJson.stringify(plain.sent).contains("toolResponse"))
+  }
+
+  @Test
   fun holdToAskPromptMatchesWeb() {
     val opts = XRHoldToAskTrait(prompt = "What is this?")
     assertEquals(

@@ -17,6 +17,7 @@
 package com.google.threelive.gemini
 
 import com.google.threelive.MiniJson
+import com.google.threelive.ThreeLiveDetections
 import com.google.threelive.XRHoldToAskTrait
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -87,6 +88,11 @@ data class GeminiLiveOptions(
   val streamFrames: Boolean = true,
   /** Play streamed model audio through the [PcmAudioSink]. */
   val playAudio: Boolean = true,
+  /**
+   * Declare the `report_objects` function (merged into [setup] tools) and deliver its calls to
+   * [XRGeminiLiveController.Listener.onObjectsReported]. Default `false`.
+   */
+  val detectObjects: Boolean = false,
 )
 
 /**
@@ -111,6 +117,13 @@ constructor(
     fun onInterrupted() {}
 
     fun onDisconnected() {}
+
+    /**
+     * The model called `report_objects` (only with [GeminiLiveOptions.detectObjects]). [boxes] are
+     * validated like the `detections` prop; locate them against the camera of the last frame sent,
+     * e.g. with [RendererFrameSource.locate].
+     */
+    fun onObjectsReported(boxes: List<ThreeLiveDetections.Box>) {}
   }
 
   @Volatile var listener: Listener? = null
@@ -121,6 +134,7 @@ constructor(
   private val lock = Any()
   private var transport: GeminiLiveTransport? = null
   private var playAudio = true
+  private var detectObjects = false
   private var scheduler: ScheduledExecutorService? = null
   private var frameTask: ScheduledFuture<*>? = null
   private val captureInFlight = AtomicBoolean(false)
@@ -136,6 +150,7 @@ constructor(
     synchronized(lock) {
       transport = liveTransport
       playAudio = options.playAudio
+      detectObjects = options.detectObjects
       turnHasOutputTranscription = false
     }
     liveTransport.listener =
@@ -157,7 +172,8 @@ constructor(
           if (wasCurrent) emit { it.onDisconnected() }
         }
       }
-    options.setup?.let { liveTransport.send(mapOf("setup" to it)) }
+    val setup = if (options.detectObjects) withDetectionTool(options.setup) else options.setup
+    setup?.let { liveTransport.send(mapOf("setup" to it)) }
     if (options.streamFrames && frameSource != null) {
       val interval = options.frameIntervalMs.coerceIn(250, 10_000)
       synchronized(lock) {
@@ -235,6 +251,7 @@ constructor(
 
   /** Processes one server message (exposed for custom transports and tests). */
   fun handleServerMessage(message: Map<String, Any?>) {
+    MiniJson.asMap(message["toolCall"])?.let { handleToolCall(it) }
     val content = MiniJson.asMap(message["serverContent"]) ?: return
     if (content["interrupted"] == true) {
       audioSink?.flush()
@@ -280,6 +297,29 @@ constructor(
     }
   }
 
+  /**
+   * Answers `report_objects` calls (when [GeminiLiveOptions.detectObjects] is on). Arguments are
+   * untrusted model output: only labels and boxes are read, through [ThreeLiveDetections.fromList].
+   * Other functions are left to the host.
+   */
+  private fun handleToolCall(toolCall: Map<String, Any?>) {
+    val t = synchronized(lock) { transport.takeIf { detectObjects } } ?: return
+    val calls = MiniJson.asList(toolCall["functionCalls"]) ?: return
+    val responses = ArrayList<Map<String, Any?>>()
+    for (raw in calls.take(MAX_TOOL_CALLS)) {
+      val call = MiniJson.asMap(raw) ?: continue
+      if (call["name"] != REPORT_OBJECTS_TOOL) continue
+      val boxes = ThreeLiveDetections.fromList(MiniJson.asMap(call["args"])?.get("objects"))
+      if (boxes.isNotEmpty()) emit { it.onObjectsReported(boxes) }
+      val response = LinkedHashMap<String, Any?>()
+      (call["id"] as? String)?.let { response["id"] = it.take(256) }
+      response["name"] = REPORT_OBJECTS_TOOL
+      response["response"] = mapOf("ok" to true, "located" to boxes.size)
+      responses.add(response)
+    }
+    if (responses.isNotEmpty()) t.send(mapOf("toolResponse" to mapOf("functionResponses" to responses)))
+  }
+
   private fun stopFramesLocked() {
     frameTask?.cancel(false)
     frameTask = null
@@ -301,6 +341,67 @@ constructor(
   companion object {
     /** Matches the web client's text caps. */
     const val MAX_TEXT_CHARS: Int = 4000
+
+    /** Name of the opt-in object-detection function exposed to the model. */
+    const val REPORT_OBJECTS_TOOL: String = "report_objects"
+
+    /** Maximum function calls handled per `toolCall` message. */
+    const val MAX_TOOL_CALLS: Int = 8
+
+    /** Live API declaration of [REPORT_OBJECTS_TOOL] (same as web `REPORT_OBJECTS_DECLARATION`). */
+    @JvmField
+    val REPORT_OBJECTS_DECLARATION: Map<String, Any?> =
+      mapOf(
+        "name" to REPORT_OBJECTS_TOOL,
+        "description" to
+          "Reports objects visible in the most recent image of the 3D scene or camera view so the app " +
+            "can locate them in 3D. Call it when the user asks where something is or to find objects.",
+        "parameters" to
+          mapOf(
+            "type" to "OBJECT",
+            "properties" to
+              mapOf(
+                "objects" to
+                  mapOf(
+                    "type" to "ARRAY",
+                    "items" to
+                      mapOf(
+                        "type" to "OBJECT",
+                        "properties" to
+                          mapOf(
+                            "label" to mapOf("type" to "STRING", "description" to "Short name of the object."),
+                            "box_2d" to
+                              mapOf(
+                                "type" to "ARRAY",
+                                "items" to mapOf("type" to "NUMBER"),
+                                "description" to "Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.",
+                              ),
+                          ),
+                        "required" to listOf("label", "box_2d"),
+                      ),
+                  )
+              ),
+            "required" to listOf("objects"),
+          ),
+      )
+
+    /**
+     * Returns a copy of [setup] whose `tools` include [REPORT_OBJECTS_DECLARATION] (added once), or
+     * `null` without a setup (an ephemeral token must then declare the tool in its locked setup).
+     */
+    @JvmStatic
+    fun withDetectionTool(setup: Map<String, Any?>?): Map<String, Any?>? {
+      if (setup == null) return null
+      val tools = ArrayList<Any?>(MiniJson.asList(setup["tools"]) ?: emptyList())
+      val declared =
+        tools.any { tool ->
+          MiniJson.asList(MiniJson.asMap(tool)?.get("functionDeclarations"))?.any {
+            MiniJson.asMap(it)?.get("name") == REPORT_OBJECTS_TOOL
+          } == true
+        }
+      if (!declared) tools.add(mapOf("functionDeclarations" to listOf(REPORT_OBJECTS_DECLARATION)))
+      return LinkedHashMap(setup).apply { put("tools", tools) }
+    }
 
     private const val MAX_FRAME_BYTES = 4 * 1024 * 1024
     private const val MAX_AUDIO_BASE64_CHARS = 8 * 1024 * 1024

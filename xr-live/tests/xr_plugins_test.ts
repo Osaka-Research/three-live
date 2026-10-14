@@ -51,8 +51,11 @@ import {
   decodePcm16Base64,
   pcmRateFromMime,
   isAllowedLiveUrl,
+  MAX_TOOL_CALLS,
   parseHoldToAsk,
+  REPORT_OBJECTS_TOOL,
   TranscriptionManager,
+  withDetectionTool,
   XRGeminiLiveController,
   type GeminiLiveTransport,
 } from '../src/plugins/gemini-live';
@@ -411,6 +414,61 @@ async function testGeminiLive(): Promise<void> {
   ctrl.disconnect();
   assert(!ctrl.connected, 'disconnect closes transport');
   assert(!(await ctrl.sendFrame()), 'sendFrame no-ops when disconnected');
+
+  // Opt-in report_objects tool: setup merge, toolCall -> events -> toolResponse.
+  const merged = withDetectionTool({model: 'm', tools: [{googleSearch: {}}]})!;
+  const mergedTools = merged['tools'] as unknown[];
+  assert(mergedTools.length === 2 && JSON.stringify(mergedTools[1]).includes(REPORT_OBJECTS_TOOL), 'detection tool merged into setup tools');
+  assert((withDetectionTool(merged)!['tools'] as unknown[]).length === 2, 'detection tool merged once');
+  assert(withDetectionTool(undefined) === undefined, 'no setup, nothing to extend');
+  sent.length = 0;
+  events.length = 0;
+  const detCtrl = new XRGeminiLiveController(element);
+  detCtrl.connect({transport, setup: {model: 'm'}, streamFrames: false, detectObjects: true});
+  assert(JSON.stringify(sent[0]).includes(REPORT_OBJECTS_TOOL), 'detectObjects declares report_objects in setup');
+  assert(await detCtrl.sendFrame(), 'frame sent (camera snapshot kept)');
+  sent.length = 0;
+  detCtrl.handleServerMessage({
+    toolCall: {
+      functionCalls: [
+        {id: 'c1', name: REPORT_OBJECTS_TOOL, args: {objects: [{label: 'cup', box_2d: [400, 400, 600, 600]}]}},
+        {id: 'c2', name: 'host_tool', args: {}},
+      ],
+    },
+  });
+  const detected = events.filter((e) => e.type === 'xr-object-detected');
+  assert(detected.length === 1 && (detected[0].detail as {label: string}).label === 'cup', 'tool call locates objects');
+  const reply = sent[0] as {toolResponse?: {functionResponses: Array<{id: string; response: {located: number}}>}};
+  assert(
+    sent.length === 1 && reply.toolResponse?.functionResponses.length === 1 &&
+      reply.toolResponse.functionResponses[0].id === 'c1' &&
+      reply.toolResponse.functionResponses[0].response.located === 1,
+    'toolResponse answers only report_objects with the located count',
+  );
+  sent.length = 0;
+  events.length = 0;
+  detCtrl.handleServerMessage({
+    toolCall: {
+      functionCalls: [
+        {id: 'x', name: REPORT_OBJECTS_TOOL, args: {objects: [{label: 'a', box_2d: [1, 'x', 3, 4]}, {box_2d: [1]}, 7]}},
+        {id: 'y', name: REPORT_OBJECTS_TOOL, args: {objects: {__proto__: {polluted: true}}}},
+        {id: 'z', name: REPORT_OBJECTS_TOOL, args: null},
+      ],
+    },
+  });
+  assert(!events.some((e) => e.type === 'xr-object-detected'), 'malformed tool arguments locate nothing');
+  const bad = sent[0] as {toolResponse: {functionResponses: Array<{response: {located: number}}>}};
+  assert(bad.toolResponse.functionResponses.every((r) => r.response.located === 0), 'malformed calls still answered (located 0)');
+  sent.length = 0;
+  const many = Array.from({length: 20}, (_, i) => ({id: String(i), name: REPORT_OBJECTS_TOOL, args: {objects: []}}));
+  detCtrl.handleServerMessage({toolCall: {functionCalls: many}});
+  assert((sent[0] as typeof bad).toolResponse.functionResponses.length === MAX_TOOL_CALLS, 'tool calls per message capped');
+  detCtrl.disconnect();
+  sent.length = 0;
+  ctrl.connect({transport, setup: {model: 'm'}, streamFrames: false});
+  ctrl.handleServerMessage({toolCall: {functionCalls: [{id: 'c', name: REPORT_OBJECTS_TOOL, args: {objects: []}}]}});
+  assert(sent.length === 1 && !JSON.stringify(sent).includes('toolResponse'), 'tool calls ignored unless detectObjects');
+  ctrl.disconnect();
 
   assert(parseHoldToAsk(undefined) === null, 'holdToAsk absent');
   const h = parseHoldToAsk({holdMs: 1})!;

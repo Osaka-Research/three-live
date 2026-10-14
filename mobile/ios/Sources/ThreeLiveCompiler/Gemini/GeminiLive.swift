@@ -247,6 +247,10 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   public var onTranscript: ((TranscriptEvent) -> Void)?
   public var onInterrupted: (() -> Void)?
   public var onDisconnected: (() -> Void)?
+  /// The model called `report_objects` (only when connected with `detectObjects: true`). Boxes are
+  /// validated like the `detections` prop; locate them against the camera of the last frame sent
+  /// (for example `ARViewFrameSource.history.latest`).
+  public var onObjectsReported: (([XRDetections.Box]) -> Void)?
 
   public let transcripts = TranscriptionManager()
 
@@ -256,6 +260,7 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   private let lock = NSLock()
   private var transport: GeminiLiveTransport?
   private var playAudio = true
+  private var detectObjects = false
   private var frameTimer: DispatchSourceTimer?
   private var captureInFlight = false
   private var turnHasOutputTranscription = false
@@ -276,12 +281,13 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   /// `frameInterval` (clamped 0.25–10 s) when a frame provider exists.
   public func connect(
     _ transport: GeminiLiveTransport, setup: [String: Any]? = nil, frameInterval: TimeInterval = 1,
-    streamFrames: Bool = true, playAudio: Bool = true
+    streamFrames: Bool = true, playAudio: Bool = true, detectObjects: Bool = false
   ) {
     disconnect()
     lock.lock()
     self.transport = transport
     self.playAudio = playAudio
+    self.detectObjects = detectObjects
     turnHasOutputTranscription = false
     lock.unlock()
     transport.onMessage = { [weak self, weak transport] m in
@@ -299,7 +305,7 @@ public final class XRGeminiLiveController: @unchecked Sendable {
       self.lock.unlock()
       if current { self.emit { $0.onDisconnected?() } }
     }
-    if let setup = setup { transport.send(["setup": setup]) }
+    if let setup = detectObjects ? Self.withDetectionTool(setup) : setup { transport.send(["setup": setup]) }
     if streamFrames, frameProvider != nil {
       let interval = min(10, max(0.25, frameInterval.isFinite ? frameInterval : 1))
       let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
@@ -375,6 +381,7 @@ public final class XRGeminiLiveController: @unchecked Sendable {
 
   /// Processes one server message (exposed for custom transports and tests).
   public func handleServerMessage(_ message: [String: Any]) {
+    if let toolCall = message["toolCall"] as? [String: Any] { handleToolCall(toolCall) }
     guard let content = message["serverContent"] as? [String: Any] else { return }
     if XRJSON.bool(content["interrupted"]) == true {
       audioSink?.flush()
@@ -411,6 +418,80 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     if XRJSON.bool(content["turnComplete"]) == true {
       setTurnHasOutput(false)
       for ev in transcripts.finalize() { emit { $0.onTranscript?(ev) } }
+    }
+  }
+
+  // MARK: Object detection tool
+
+  /// Name of the opt-in object-detection function exposed to the model.
+  public static let reportObjectsTool = "report_objects"
+  /// Maximum function calls handled per `toolCall` message.
+  public static let maxToolCalls = 8
+
+  /// Live API declaration of `reportObjectsTool` (same as web `REPORT_OBJECTS_DECLARATION`).
+  public static var reportObjectsDeclaration: [String: Any] {
+    let box: [String: Any] = [
+      "type": "ARRAY", "items": ["type": "NUMBER"],
+      "description": "Bounding box [ymin, xmin, ymax, xmax], normalized to 0-1000.",
+    ]
+    let item: [String: Any] = [
+      "type": "OBJECT",
+      "properties": [
+        "label": ["type": "STRING", "description": "Short name of the object."] as [String: Any],
+        "box_2d": box,
+      ] as [String: Any],
+      "required": ["label", "box_2d"],
+    ]
+    let parameters: [String: Any] = [
+      "type": "OBJECT",
+      "properties": ["objects": ["type": "ARRAY", "items": item] as [String: Any]] as [String: Any],
+      "required": ["objects"],
+    ]
+    return [
+      "name": reportObjectsTool,
+      "description":
+        "Reports objects visible in the most recent image of the 3D scene or camera view so the app "
+        + "can locate them in 3D. Call it when the user asks where something is or to find objects.",
+      "parameters": parameters,
+    ]
+  }
+
+  /// Returns `setup` with `reportObjectsDeclaration` added to its `tools` once, or `nil` without a
+  /// setup (an ephemeral token must then declare the tool in its locked setup).
+  public static func withDetectionTool(_ setup: [String: Any]?) -> [String: Any]? {
+    guard var out = setup else { return nil }
+    var tools = (out["tools"] as? [Any]) ?? []
+    let declared = tools.contains { tool in
+      guard let decls = (tool as? [String: Any])?["functionDeclarations"] as? [Any] else { return false }
+      return decls.contains { ($0 as? [String: Any])?["name"] as? String == reportObjectsTool }
+    }
+    if !declared { tools.append(["functionDeclarations": [reportObjectsDeclaration]] as [String: Any]) }
+    out["tools"] = tools
+    return out
+  }
+
+  /// Answers `report_objects` calls when `detectObjects` is on. Arguments are untrusted model
+  /// output: only labels and boxes are read, through `XRDetections.fromList`. Other functions are
+  /// left to the host.
+  private func handleToolCall(_ toolCall: [String: Any]) {
+    lock.lock()
+    let t = detectObjects ? transport : nil
+    lock.unlock()
+    guard let transport = t, let calls = toolCall["functionCalls"] as? [Any] else { return }
+    var responses: [[String: Any]] = []
+    for raw in calls.prefix(Self.maxToolCalls) {
+      guard let call = raw as? [String: Any], call["name"] as? String == Self.reportObjectsTool else { continue }
+      let boxes = XRDetections.fromList((call["args"] as? [String: Any])?["objects"])
+      if !boxes.isEmpty { emit { $0.onObjectsReported?(boxes) } }
+      var response: [String: Any] = [
+        "name": Self.reportObjectsTool,
+        "response": ["ok": true, "located": boxes.count] as [String: Any],
+      ]
+      if let id = call["id"] as? String { response["id"] = String(id.prefix(256)) }
+      responses.append(response)
+    }
+    if !responses.isEmpty {
+      transport.send(["toolResponse": ["functionResponses": responses] as [String: Any]])
     }
   }
 

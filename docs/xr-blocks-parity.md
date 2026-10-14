@@ -173,6 +173,19 @@ extra dependencies.
   `ARViewFrameSource(arView:)` (`ARView.snapshot`; includes the camera feed in AR mode). Both
   keep the camera matrices of recently sent frames so detections reported for an image can be
   unprojected against the camera that produced it. Pause them while the view is hidden.
+- **Object detection tool (opt-in).** With `detectObjects` (web `GeminiLiveOptions`, Android
+  `GeminiLiveOptions`, iOS `connect(..., detectObjects: true)`), the client adds a
+  `report_objects({objects: [{label, box_2d: [ymin, xmin, ymax, xmax]}]})` function
+  declaration (Gemini's native 0–1000 boxes) to the `setup` tools, answers each call with
+  `toolResponse {ok: true, located: n}`, and turns the boxes into object detections: web fires
+  `xr-object-detected` (unprojected with the camera of the last frame sent); Android
+  `Listener.onObjectsReported(boxes)` and iOS `onObjectsReported` hand them to the host, which
+  locates them with `RendererFrameSource.locate()` / `ARViewFrameSource.history.latest`. Tool
+  arguments are untrusted model output and go through the same validation as the `detections`
+  prop (at most 8 calls per message). Calls to other functions are left to the host. With
+  ephemeral tokens whose setup is locked on the backend, declare the tool there (e.g. in
+  `live_connect_constraints.config.tools`, using the declaration exported as
+  `REPORT_OBJECTS_DECLARATION`), because the client cannot change a locked setup.
 
 ## 5. Native XR Blocks features
 

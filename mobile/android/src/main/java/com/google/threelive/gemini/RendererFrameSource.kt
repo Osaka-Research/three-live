@@ -17,7 +17,9 @@
 package com.google.threelive.gemini
 
 import com.google.threelive.CapturedFrame
+import com.google.threelive.ThreeLiveDetections
 import com.google.threelive.ThreeLiveSceneRenderer
+import com.google.threelive.WorldUnderstanding
 
 /**
  * A Gemini Live [FrameSource] that captures frames from a [ThreeLiveSceneRenderer] and remembers
@@ -55,6 +57,20 @@ constructor(
   /** The most recently delivered frame (its matrices describe what the model last saw), or `null`. */
   val latestFrame: CapturedFrame?
     get() = synchronized(recent) { recent.lastOrNull() }
+
+  /**
+   * Unprojects [boxes] the model reported for the last image it saw, using that frame's camera, or
+   * the renderer's current camera when no frame was delivered yet.
+   */
+  fun locate(boxes: List<ThreeLiveDetections.Box>): List<WorldUnderstanding.Detection3D> {
+    if (boxes.isEmpty()) return emptyList()
+    val frame = latestFrame
+    if (frame != null) return ThreeLiveDetections.detect(boxes, frame.cameraWorld, frame.projection)
+    val world = FloatArray(16)
+    val proj = FloatArray(16)
+    if (!renderer.cameraMatrices(world, proj)) return emptyList()
+    return ThreeLiveDetections.detect(boxes, world, proj)
+  }
 
   /** Delivered frames, oldest first (at most [HISTORY]). */
   fun recentFrames(): List<CapturedFrame> = synchronized(recent) { recent.toList() }

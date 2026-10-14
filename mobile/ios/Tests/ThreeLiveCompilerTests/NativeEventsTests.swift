@@ -231,6 +231,53 @@ final class NativeEventsTests: XCTestCase {
     wait(for: [e], timeout: 1)
   }
 
+  func testReportObjectsToolMergesIntoSetupAndAnswersCalls() throws {
+    let merged = try XCTUnwrap(
+      XRGeminiLiveController.withDetectionTool(["model": "m", "tools": [["googleSearch": [String: Any]()]]]))
+    XCTAssertEqual((merged["tools"] as? [Any])?.count, 2)
+    XCTAssertEqual((XRGeminiLiveController.withDetectionTool(merged)?["tools"] as? [Any])?.count, 2)
+    XCTAssertNil(XRGeminiLiveController.withDetectionTool(nil))
+
+    let t = FakeTransport()
+    let c = XRGeminiLiveController()
+    var reported: [[XRDetections.Box]] = []
+    c.onObjectsReported = { reported.append($0) }
+    c.connect(t, setup: ["model": "m"], streamFrames: false, detectObjects: true)
+    let setup = try XCTUnwrap(t.sent.first?["setup"] as? [String: Any])
+    XCTAssertEqual((setup["tools"] as? [Any])?.count, 1)
+    t.sent.removeAll()
+    let json = #"""
+      {"toolCall":{"functionCalls":[
+        {"id":"c1","name":"report_objects","args":{"objects":[{"label":"cup","box_2d":[400,400,600,600]}]}},
+        {"id":"c2","name":"host_tool","args":{}},
+        {"id":"c3","name":"report_objects","args":{"objects":[{"label":"x","box_2d":[1,"y",3,4]},7,{"box_2d":[1]}]}},
+        {"id":"c4","name":"report_objects","args":null}]}}
+      """#
+    let message = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    c.handleServerMessage(message)
+    drainMain()
+    XCTAssertEqual(reported.count, 1)
+    XCTAssertEqual(reported.first?.first?.label, "cup")
+    XCTAssertEqual(t.sent.count, 1)
+    let responses = try XCTUnwrap(
+      (t.sent.first?["toolResponse"] as? [String: Any])?["functionResponses"] as? [[String: Any]])
+    XCTAssertEqual(responses.compactMap { $0["id"] as? String }, ["c1", "c3", "c4"])
+    XCTAssertEqual(responses.compactMap { ($0["response"] as? [String: Any])?["located"] as? Int }, [1, 0, 0])
+
+    t.sent.removeAll()
+    let many: [Any] = (0..<20).map { ["id": "\($0)", "name": "report_objects", "args": ["objects": [Any]()]] as [String: Any] }
+    c.handleServerMessage(["toolCall": ["functionCalls": many] as [String: Any]])
+    let capped = (t.sent.first?["toolResponse"] as? [String: Any])?["functionResponses"] as? [Any]
+    XCTAssertEqual(capped?.count, XRGeminiLiveController.maxToolCalls)
+
+    // Without detectObjects, tool calls are left to the host.
+    let plain = FakeTransport()
+    c.connect(plain, setup: ["model": "m"], streamFrames: false)
+    c.handleServerMessage(message)
+    XCTAssertEqual(plain.sent.count, 1)
+    XCTAssertNil(plain.sent.last?["toolResponse"])
+  }
+
   func testLiveURLPolicyAndEphemeralTokenURL() throws {
     XCTAssertTrue(GeminiLiveEndpoints.isAllowedLiveURL("wss://example.com/live"))
     XCTAssertTrue(GeminiLiveEndpoints.isAllowedLiveURL("ws://localhost:8080/x"))
