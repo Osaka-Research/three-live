@@ -1045,5 +1045,48 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     persp.columns.2.w = -1
     persp.columns.3.w = 0
     XCTAssertEqual(SplatParser.sortByDepth(data, mvp: persp), [1, 2, 0], "back-to-front")
+
+    // URL policy (mirrors web resolveSplatUrl vectors).
+    XCTAssertNotNil(SplatParser.resolveSplatURL("https://a.com/x.spz"))
+    XCTAssertNil(SplatParser.resolveSplatURL("javascript:alert(1)"))
+    XCTAssertNil(SplatParser.resolveSplatURL("data:application/octet-stream;base64,AA"))
+    XCTAssertNil(SplatParser.resolveSplatURL("http://evil.com/x.splat"))
+    XCTAssertEqual(SplatParser.resolveSplatURL("http://localhost:8080/x.spz")?.absoluteString, "http://localhost:8080/x.spz")
+    XCTAssertEqual(
+      SplatParser.resolveSplatURL("/scans/room.spz", baseURL: "https://site.test/app/")?.absoluteString,
+      "https://site.test/scans/room.spz")
+    XCTAssertNil(SplatParser.resolveSplatURL("https://cdn.test/x.spz", baseURL: "https://site.test/", allowCrossOrigin: false))
+    XCTAssertNotNil(SplatParser.resolveSplatURL("https://site.test/x.spz", baseURL: "https://site.test/", allowCrossOrigin: false))
+    XCTAssertNil(SplatParser.resolveSplatURL("//evil.com/x.spz", baseURL: "https://site.test/", allowCrossOrigin: true))
+
+    // Deterministic stride downsampling.
+    var ten = SplatData(count: 10)
+    for i in 0..<10 {
+      ten.positions[i * 3] = Float(i)
+      ten.scales[i * 3] = 0.1
+      ten.colors[i * 4 + 3] = 255
+    }
+    let sampled = SplatParser.downsample(ten, maxSplats: 4)
+    let sampledAgain = SplatParser.downsample(ten, maxSplats: 4)
+    XCTAssertEqual(sampled.count, 4)
+    XCTAssertEqual(sampled, sampledAgain)
+    XCTAssertEqual(sampled.positions[0], 0)
+    XCTAssertEqual(sampled.positions[3], 2)
+    XCTAssertEqual(sampled.positions[6], 5)
+    XCTAssertEqual(sampled.positions[9], 7)
+
+    // Resort threshold and billboard quad builder.
+    let id = matrix_identity_float4x4
+    XCTAssertTrue(SplatParser.shouldResort(lastCameraWorld: nil, cameraWorld: id, lastNodeWorld: nil, nodeWorld: id))
+    XCTAssertFalse(SplatParser.shouldResort(lastCameraWorld: id, cameraWorld: id, lastNodeWorld: id, nodeWorld: id))
+    var moved = id
+    moved.columns.3.x = 0.08
+    XCTAssertTrue(SplatParser.shouldResort(lastCameraWorld: id, cameraWorld: moved, lastNodeWorld: id, nodeWorld: id))
+    let quads = SplatParser.buildSplatQuads(sampled, order: [0, 1], nodeWorld: id, cameraWorld: id)
+    XCTAssertEqual(quads.positions.count, 8)
+    XCTAssertEqual(quads.uvs.count, 8)
+    XCTAssertEqual(quads.colors.count, 32)
+    XCTAssertEqual(quads.indices.count, 12)
+    XCTAssertEqual(SplatParser.gaussianFalloffRGBA(size: 64).count, 64 * 64 * 4)
   }
 }

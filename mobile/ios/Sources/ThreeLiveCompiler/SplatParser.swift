@@ -81,10 +81,40 @@ public enum SplatParserError: Error, Equatable, LocalizedError {
 public enum SplatParser {
   /// Maximum splats accepted from a single file.
   public static let maxSplats = 1_000_000
+  /// Default CPU-billboard splat cap on iOS / visionOS (100 k).
+  public static let defaultMaxCpuSplats = 100_000
   /// Maximum (compressed) file size in bytes.
   public static let maxFileBytes = 128 * 1024 * 1024
   /// Maximum decompressed `.spz` payload size in bytes (hard ceiling for `gunzip`).
   public static let maxSpzDecompressedBytes = 128 * 1024 * 1024
+
+  /// Camera-facing quad geometry built from a sorted `SplatData` cloud.
+  public struct QuadGeometry: Sendable, Equatable {
+    /// World-space `xyz` per vertex (`4 * count`).
+    public var positions: [SIMD3<Float>]
+    /// Quad `uv` per vertex (`4 * count`).
+    public var uvs: [SIMD2<Float>]
+    /// RGBA8 per vertex (`4 * count * 4`).
+    public var colors: [UInt8]
+    /// Average RGBA `[0..1]` of the splat cloud for materials without vertex-color attributes.
+    public var averageColor: SIMD4<Float>
+    /// Triangle indices (`6 * count`).
+    public var indices: [UInt32]
+
+    public init(
+      positions: [SIMD3<Float>] = [],
+      uvs: [SIMD2<Float>] = [],
+      colors: [UInt8] = [],
+      averageColor: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 1),
+      indices: [UInt32] = []
+    ) {
+      self.positions = positions
+      self.uvs = uvs
+      self.colors = colors
+      self.averageColor = averageColor
+      self.indices = indices
+    }
+  }
 
   static let splatRecordBytes = 32
   static let spzMagic: UInt32 = 0x5053_474E
@@ -353,5 +383,233 @@ public enum SplatParser {
       out[counts[keys[i]]] = UInt32(i)
     }
     return out
+  }
+
+  /// Validates a splat URL: `https:`, or `http:` on loopback (`localhost` / `127.0.0.1`), plus
+  /// relative URLs resolved against `baseURL`. Unless `allowCrossOrigin` is `true` (host prop
+  /// `allowRemoteSplats`), the resolved URL must share the origin of `baseURL`. Returns `nil` when
+  /// rejected.
+  public static func resolveSplatURL(
+    _ raw: String?,
+    baseURL: String? = nil,
+    allowCrossOrigin: Bool = true
+  ) -> URL? {
+    guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !trimmed.isEmpty, trimmed.count <= 4096, !trimmed.hasPrefix("//")
+    else { return nil }
+    let fallback =
+      baseURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+      ? baseURL!.trimmingCharacters(in: .whitespacesAndNewlines)
+      : "https://localhost/"
+    guard let base = URL(string: fallback), let resolved = URL(string: trimmed, relativeTo: base)?.absoluteURL,
+      let scheme = resolved.scheme?.lowercased(), let host = resolved.host?.lowercased(), !host.isEmpty
+    else { return nil }
+    let loopback = host == "localhost" || host == "127.0.0.1"
+    let schemeOk = scheme == "https" || (scheme == "http" && loopback)
+    guard schemeOk else { return nil }
+    if !allowCrossOrigin && origin(of: resolved) != origin(of: base) { return nil }
+    return resolved
+  }
+
+  private static func origin(of url: URL) -> String {
+    let scheme = url.scheme?.lowercased() ?? ""
+    let host = url.host?.lowercased() ?? ""
+    let port = url.port ?? -1
+    let isDefault = (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+    return (port <= 0 || isDefault) ? "\(scheme)://\(host)" : "\(scheme)://\(host):\(port)"
+  }
+
+  /// Deterministic stride downsampling when `data.count > maxSplats`, keeping at most `maxSplats`
+  /// splats. Returns `data` unchanged when `data.count <= maxSplats`.
+  public static func downsample(_ data: SplatData, maxSplats: Int = defaultMaxCpuSplats) -> SplatData {
+    let cap = max(1, min(maxSplats, Self.maxSplats))
+    guard data.count > cap else { return data }
+    var out = SplatData(count: cap)
+    let step = Double(data.count) / Double(cap)
+    for i in 0..<cap {
+      let src = min(data.count - 1, Int((Double(i) * step).rounded(.down)))
+      for k in 0..<3 {
+        out.positions[i * 3 + k] = data.positions[src * 3 + k]
+        out.scales[i * 3 + k] = data.scales[src * 3 + k]
+      }
+      for k in 0..<4 {
+        out.colors[i * 4 + k] = data.colors[src * 4 + k]
+        out.rotations[i * 4 + k] = data.rotations[src * 4 + k]
+      }
+    }
+    return out
+  }
+
+  /// Returns `true` when the camera or splat node moved by more than `minMoveMeters` (default 5 cm)
+  /// or rotated by more than `minAngleDeg` (default 5°).
+  public static func shouldResort(
+    lastCameraWorld: simd_float4x4?,
+    cameraWorld: simd_float4x4,
+    lastNodeWorld: simd_float4x4?,
+    nodeWorld: simd_float4x4,
+    minMoveMeters: Float = 0.05,
+    minAngleDeg: Float = 5.0
+  ) -> Bool {
+    guard let lastCam = lastCameraWorld, let lastNode = lastNodeWorld else { return true }
+    let camDelta = SIMD3<Float>(
+      cameraWorld.columns.3.x - lastCam.columns.3.x,
+      cameraWorld.columns.3.y - lastCam.columns.3.y,
+      cameraWorld.columns.3.z - lastCam.columns.3.z)
+    if simd_length_squared(camDelta) > minMoveMeters * minMoveMeters { return true }
+    let nodeDelta = SIMD3<Float>(
+      nodeWorld.columns.3.x - lastNode.columns.3.x,
+      nodeWorld.columns.3.y - lastNode.columns.3.y,
+      nodeWorld.columns.3.z - lastNode.columns.3.z)
+    if simd_length_squared(nodeDelta) > minMoveMeters * minMoveMeters { return true }
+    let cosLimit = cos(minAngleDeg * .pi / 180)
+    let f0 = SIMD3<Float>(lastCam.columns.2.x, lastCam.columns.2.y, lastCam.columns.2.z)
+    let f1 = SIMD3<Float>(cameraWorld.columns.2.x, cameraWorld.columns.2.y, cameraWorld.columns.2.z)
+    if simd_dot(f0, f1) < cosLimit { return true }
+    let nDot = (axisDot(lastNode.columns.0, nodeWorld.columns.0) + axisDot(lastNode.columns.2, nodeWorld.columns.2)) * 0.5
+    return nDot < cosLimit
+  }
+
+  private static func axisDot(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> Float {
+    let va = SIMD3<Float>(a.x, a.y, a.z)
+    let vb = SIMD3<Float>(b.x, b.y, b.z)
+    let la = simd_length(va)
+    let lb = simd_length(vb)
+    guard la > 1e-6 && lb > 1e-6 else { return 1 }
+    return simd_dot(va, vb) / (la * lb)
+  }
+
+  /// Builds a column-major matrix whose row 3 (`columns.*.w`) equals the view depth along `-Z` of
+  /// `cameraWorld` for local positions under `nodeWorld`, for `sortByDepth(_:mvp:)`.
+  public static func viewDepthMatrix(nodeWorld: simd_float4x4, cameraWorld: simd_float4x4) -> simd_float4x4 {
+    let f = -SIMD3<Float>(cameraWorld.columns.2.x, cameraWorld.columns.2.y, cameraWorld.columns.2.z)
+    let camPos = SIMD3<Float>(cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
+    let c0 = SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z)
+    let c1 = SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z)
+    let c2 = SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z)
+    let c3 = SIMD3<Float>(nodeWorld.columns.3.x, nodeWorld.columns.3.y, nodeWorld.columns.3.z) - camPos
+    var m = matrix_identity_float4x4
+    m.columns.0.w = simd_dot(f, c0)
+    m.columns.1.w = simd_dot(f, c1)
+    m.columns.2.w = simd_dot(f, c2)
+    m.columns.3.w = simd_dot(f, c3)
+    return m
+  }
+
+  /// Builds camera-facing billboard quads in world space for `data` in back-to-front `order`.
+  public static func buildSplatQuads(
+    _ data: SplatData,
+    order: [UInt32],
+    nodeWorld: simd_float4x4,
+    cameraWorld: simd_float4x4
+  ) -> QuadGeometry {
+    let n = min(data.count, order.count)
+    guard n > 0 else { return QuadGeometry() }
+    let sx = simd_length(SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z))
+    let sy = simd_length(SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z))
+    let sz = simd_length(SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z))
+    let nodeScale = max(max(sx, max(sy, sz)), 1e-6)
+    let right = SIMD3<Float>(cameraWorld.columns.0.x, cameraWorld.columns.0.y, cameraWorld.columns.0.z)
+    let up = SIMD3<Float>(cameraWorld.columns.1.x, cameraWorld.columns.1.y, cameraWorld.columns.1.z)
+
+    var positions: [SIMD3<Float>] = []
+    positions.reserveCapacity(n * 4)
+    var uvs: [SIMD2<Float>] = []
+    uvs.reserveCapacity(n * 4)
+    var colors: [UInt8] = []
+    colors.reserveCapacity(n * 16)
+    var indices: [UInt32] = []
+    indices.reserveCapacity(n * 6)
+    var sumR: Double = 0
+    var sumG: Double = 0
+    var sumB: Double = 0
+    var sumA: Double = 0
+    var validCount = 0
+
+    for k in 0..<n {
+      let s = Int(order[k])
+      guard s >= 0 && s < data.count else { continue }
+      validCount += 1
+      let lp = SIMD4<Float>(data.positions[s * 3], data.positions[s * 3 + 1], data.positions[s * 3 + 2], 1)
+      let wp4 = nodeWorld * lp
+      let wp = SIMD3<Float>(wp4.x, wp4.y, wp4.z)
+      let r0 = max(data.scales[s * 3], max(data.scales[s * 3 + 1], data.scales[s * 3 + 2]))
+      let half = min(max(r0 * nodeScale * 1.5, 0.001), 10.0)
+      let dr = right * half
+      let du = up * half
+      let base = UInt32(positions.count)
+      positions.append(wp - dr - du)
+      positions.append(wp + dr - du)
+      positions.append(wp + dr + du)
+      positions.append(wp - dr + du)
+      uvs.append(SIMD2<Float>(0, 0))
+      uvs.append(SIMD2<Float>(1, 0))
+      uvs.append(SIMD2<Float>(1, 1))
+      uvs.append(SIMD2<Float>(0, 1))
+      let c0 = data.colors[s * 4]
+      let c1 = data.colors[s * 4 + 1]
+      let c2 = data.colors[s * 4 + 2]
+      let c3 = data.colors[s * 4 + 3]
+      sumR += Double(c0)
+      sumG += Double(c1)
+      sumB += Double(c2)
+      sumA += Double(c3)
+      for _ in 0..<4 {
+        colors.append(c0)
+        colors.append(c1)
+        colors.append(c2)
+        colors.append(c3)
+      }
+      indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
+    }
+    let avg: SIMD4<Float>
+    if validCount > 0 {
+      let denom = Double(validCount) * 255.0
+      avg = SIMD4<Float>(Float(sumR / denom), Float(sumG / denom), Float(sumB / denom), Float(sumA / denom))
+    } else {
+      avg = SIMD4<Float>(1, 1, 1, 1)
+    }
+    return QuadGeometry(positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
+  }
+
+  /// Generates a `size x size` RGBA8 radial Gaussian falloff image (`exp(-4 * r^2)` for `r <= 1`).
+  public static func gaussianFalloffRGBA(size: Int = 64) -> [UInt8] {
+    let n = max(4, min(size, 256))
+    var out = [UInt8](repeating: 255, count: n * n * 4)
+    let half = Double(n - 1) * 0.5
+    for y in 0..<n {
+      let dy = (Double(y) - half) / half
+      for x in 0..<n {
+        let dx = (Double(x) - half) / half
+        let r2 = dx * dx + dy * dy
+        let a = r2 > 1.0 ? 0 : Int((255.0 * exp(-4.0 * r2)).rounded()).clamped(to: 0...255)
+        out[(y * n + x) * 4 + 3] = UInt8(a)
+      }
+    }
+    return out
+  }
+
+  /// Downloads and decodes a `.splat` / `.spz` file from `url`, enforcing `resolveSplatURL` and
+  /// `maxFileBytes`.
+  public static func loadURL(
+    _ url: String,
+    baseURL: String? = nil,
+    allowCrossOrigin: Bool = true,
+    maxBytes: Int = maxFileBytes
+  ) async throws -> SplatData {
+    guard let resolved = resolveSplatURL(url, baseURL: baseURL, allowCrossOrigin: allowCrossOrigin) else {
+      throw SplatParserError.badMagic
+    }
+    let (data, response) = try await URLSession.shared.data(from: resolved)
+    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+      throw SplatParserError.decompressionFailed
+    }
+    if data.count > maxBytes { throw SplatParserError.fileTooLarge }
+    return try parse(data, fileName: resolved.lastPathComponent)
+  }
+}
+
+private extension Comparable {
+  func clamped(to range: ClosedRange<Self>) -> Self {
+    min(max(self, range.lowerBound), range.upperBound)
   }
 }

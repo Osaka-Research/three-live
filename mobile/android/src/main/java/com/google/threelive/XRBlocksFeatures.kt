@@ -16,6 +16,9 @@
 
 package com.google.threelive
 
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+
 /**
  * Native XR Blocks features on top of any [ThreeLiveSceneRenderer] that supports dynamic meshes:
  *
@@ -26,12 +29,29 @@ package com.google.threelive
  *   in front of the camera (web screen-paint depth), reported as `{index, points, lengthMeters}`.
  * - **Particles** for nodes with a `particles` trait, simulated with the shared `ParticleEmitter`
  *   (same presets and seeds as web) and drawn as camera-facing quads.
+ * - **Gaussian splats** for nodes with a `splatUrl` trait: downloaded and parsed off-thread with
+ *   [SplatParser], stride-downsampled to [maxSplats], depth-sorted off-thread at most at 15 Hz when
+ *   the camera or node moves (> 5 cm or > 5°), and drawn as camera-facing Gaussian quads via
+ *   [ThreeLiveSceneRenderer.addSplatMesh].
  *
  * Attach after creating the [binding]; [dispose] removes everything. Main thread only.
  */
-class XRBlocksFeatures(
+class XRBlocksFeatures
+@JvmOverloads
+constructor(
   private val binding: ThreeLiveRuntimeBinding,
   private val renderer: ThreeLiveSceneRenderer,
+  /** Base URL used to resolve relative `splatUrl` values and enforce same-origin policy. */
+  val baseUrl: String? = null,
+  /** Whether cross-origin `splatUrl` downloads are permitted (host `allowRemoteSplats`). */
+  val allowRemoteSplats: Boolean = false,
+  /** Maximum splats rendered per cloud (deterministic stride downsampling when exceeded). */
+  val maxSplats: Int = SplatParser.DEFAULT_MAX_CPU_SPLATS,
+  /** Custom loader for tests; defaults to [SplatParser.loadUrl]. */
+  private val splatLoader: (url: String, baseUrl: String?, allowCrossOrigin: Boolean) -> SplatData =
+    { u, b, a -> SplatParser.loadUrl(u, b, a) },
+  /** Background executor for splat downloads and depth sorting. */
+  private val backgroundExecutor: Executor? = null,
 ) {
   /** Feature events, matching the web `xr-handles-change` / `xr-paint-stroke` details. */
   interface Listener {
@@ -61,13 +81,34 @@ class XRBlocksFeatures(
 
   private class Stroke(val builder: TubeStrokeBuilder, var meshId: Int, val index: Int)
 
+  private class SplatCloud(val node: Int, val url: String) {
+    @Volatile var data: SplatData? = null
+    @Volatile var pendingGeometry: SplatQuadGeometry? = null
+    @Volatile var sorting: Boolean = false
+    var meshId: Int = -1
+    var lastCameraWorld: FloatArray? = null
+    var lastNodeWorld: DoubleArray? = null
+    var sinceLastSortSec: Double = SPLAT_RESORT_MIN_INTERVAL_SEC
+    var wasVisible: Boolean = true
+    var depths: FloatArray? = null
+    var keys: IntArray? = null
+    var counts: IntArray? = null
+    var order: IntArray? = null
+  }
+
   private val handles = ArrayList<HandleNode>()
   private val emitters = ArrayList<Emitter>()
   private val strokes = ArrayList<Stroke>()
+  private val splats = ArrayList<SplatCloud>()
+  private var ownedExecutor = false
+  private val executor: Executor =
+    backgroundExecutor
+      ?: Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-splat").apply { isDaemon = true } }
+        .also { ownedExecutor = true }
   private var dragging: HandleNode? = null
   private var painting: Stroke? = null
   private var strokeCount = 0
-  private var disposed = false
+  @Volatile private var disposed = false
 
   private val world = DoubleArray(16)
   private val matrix = FloatArray(16)
@@ -79,6 +120,22 @@ class XRBlocksFeatures(
       if (node !in 0 until scene.nodeCount) continue
       t.handles?.let { if (scene.meshBounds.getOrNull(scene.nodeMesh[node]) != null) handles.add(HandleNode(node, it)) }
       t.particles?.let { emitters.add(Emitter(node, ParticleEmitter(it, seed = node + 1))) }
+      t.splatUrl?.let { raw ->
+        val resolved = SplatParser.resolveSplatUrl(raw, baseUrl, allowRemoteSplats)
+        if (resolved != null) {
+          val cloud = SplatCloud(node, resolved)
+          splats.add(cloud)
+          executor.execute {
+            if (disposed) return@execute
+            try {
+              val loaded = splatLoader(resolved, baseUrl, allowRemoteSplats)
+              if (!disposed) cloud.data = SplatParser.downsample(loaded, maxSplats)
+            } catch (e: RuntimeException) {
+              // Malformed or unreachable splat URLs are ignored without crashing the scene.
+            }
+          }
+        }
+      }
     }
     for (h in handles) {
       for (k in 0 until 5) h.meshIds[k] = renderer.addDynamicMesh(UNIT_CUBE_POSITIONS, null, UNIT_CUBE_INDICES, HANDLE_COLOR)
@@ -109,18 +166,27 @@ class XRBlocksFeatures(
   val emitterCount: Int
     get() = emitters.size
 
+  /** Number of accepted `splatUrl` clouds. */
+  val splatCount: Int
+    get() = splats.size
+
   /** Removes every dynamic mesh and detaches from the binding. */
   fun dispose() {
     if (disposed) return
     disposed = true
+    if (ownedExecutor && executor is java.util.concurrent.ExecutorService) {
+      executor.shutdown()
+    }
     binding.pointerHandler = null
     binding.frameHandler = null
     for (h in handles) for (id in h.meshIds) renderer.removeDynamicMesh(id)
     for (e in emitters) renderer.removeDynamicMesh(e.meshId)
     for (s in strokes) renderer.removeDynamicMesh(s.meshId)
+    for (sc in splats) if (sc.meshId >= 0) renderer.removeDynamicMesh(sc.meshId)
     handles.clear()
     emitters.clear()
     strokes.clear()
+    splats.clear()
   }
 
   // ---- Input -----------------------------------------------------------------------------------
@@ -200,6 +266,7 @@ class XRBlocksFeatures(
     if (disposed) return
     for (h in handles) placeHandles(h)
     for (e in emitters) stepEmitter(e, dt, cameraWorld)
+    for (sc in splats) stepSplat(sc, dt, cameraWorld)
   }
 
   private fun layoutOf(h: HandleNode): ManipulationHandles.Layout? {
@@ -254,10 +321,73 @@ class XRBlocksFeatures(
     }
   }
 
+  private fun stepSplat(sc: SplatCloud, dt: Double, cameraWorld: FloatArray) {
+    val data = sc.data ?: return
+    if (data.count == 0 || !session.nodeWorldMatrix(sc.node, world)) return
+    val visible = session.isEffectivelyVisible(sc.node)
+    if (visible != sc.wasVisible && sc.meshId >= 0) {
+      sc.wasVisible = visible
+      val k = if (visible) 1f else 0f
+      matrix.fill(0f)
+      matrix[0] = k
+      matrix[5] = k
+      matrix[10] = k
+      matrix[15] = 1f
+      renderer.setDynamicMeshTransform(sc.meshId, matrix)
+    }
+    if (!visible) return
+
+    // Consume any geometry already built on the background thread before kicking off a new sort,
+    // or immediately after a synchronous executor runs below.
+    consumePendingSplatGeometry(sc)
+
+    sc.sinceLastSortSec += dt.coerceAtLeast(0.0)
+    if (sc.sorting || sc.sinceLastSortSec < SPLAT_RESORT_MIN_INTERVAL_SEC) return
+    if (!SplatParser.shouldResort(sc.lastCameraWorld, cameraWorld, sc.lastNodeWorld, world)) return
+
+    sc.sinceLastSortSec = 0.0
+    sc.sorting = true
+    val camSnap = cameraWorld.copyOf(16)
+    val nodeSnap = world.copyOf(16)
+    sc.lastCameraWorld = camSnap
+    sc.lastNodeWorld = nodeSnap
+
+    executor.execute {
+      try {
+        if (disposed) return@execute
+        val mvp = SplatParser.viewDepthMatrix(nodeSnap, camSnap)
+        val n = data.count
+        val out = sc.order?.takeIf { it.size >= n } ?: IntArray(n).also { sc.order = it }
+        val depths = sc.depths?.takeIf { it.size >= n } ?: FloatArray(n).also { sc.depths = it }
+        val keys = sc.keys?.takeIf { it.size >= n } ?: IntArray(n).also { sc.keys = it }
+        val counts = sc.counts ?: IntArray(65536).also { sc.counts = it }
+        val sorted = SplatParser.sortSplatsByDepth(n, data.positions, mvp, out, depths, keys, counts)
+        if (!disposed) {
+          sc.pendingGeometry = SplatParser.buildSplatQuads(data, sorted, nodeSnap, camSnap)
+        }
+      } finally {
+        sc.sorting = false
+      }
+    }
+    consumePendingSplatGeometry(sc)
+  }
+
+  private fun consumePendingSplatGeometry(sc: SplatCloud) {
+    val geo = sc.pendingGeometry ?: return
+    sc.pendingGeometry = null
+    if (sc.meshId < 0) {
+      sc.meshId = renderer.addSplatMesh(geo.positions, geo.uvs, geo.colors, geo.indices)
+    } else {
+      renderer.updateSplatMesh(sc.meshId, geo.positions, geo.uvs, geo.colors, geo.indices)
+    }
+  }
+
   companion object {
     const val MAX_STROKES: Int = 256
     const val MAX_STROKE_POINTS: Int = 2048
     const val SCREEN_PAINT_DEPTH: Double = 0.4
+    /** At most 15 Hz depth re-sort cadence. */
+    const val SPLAT_RESORT_MIN_INTERVAL_SEC: Double = 1.0 / 15.0
     private const val REBUILD_EVERY = 3
     private const val PARTICLE_SIZE = 0.012
 

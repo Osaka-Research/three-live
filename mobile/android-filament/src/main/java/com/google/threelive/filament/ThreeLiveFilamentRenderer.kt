@@ -45,6 +45,7 @@ import com.google.android.filament.Renderer
 import com.google.android.filament.Scene
 import com.google.android.filament.SwapChain
 import com.google.android.filament.Texture
+import com.google.android.filament.TextureSampler
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.gltfio.AssetLoader
@@ -55,6 +56,7 @@ import com.google.android.filament.gltfio.UbershaderProvider
 import com.google.threelive.CapturedFrame
 import com.google.threelive.GltfSceneIndex
 import com.google.threelive.OrbitCameraState
+import com.google.threelive.SplatParser
 import com.google.threelive.ThreeLiveCameraOptions
 import com.google.threelive.ThreeLivePick
 import com.google.threelive.ThreeLivePointer
@@ -111,6 +113,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private var nextDynamicId = 1
   private var templateAsset: FilamentAsset? = null
   private var templateMaterial: MaterialInstance? = null
+  private var splatTemplateAsset: FilamentAsset? = null
+  private var splatTemplateMaterial: MaterialInstance? = null
+  private var gaussianTexture: Texture? = null
 
   private val choreographer = Choreographer.getInstance()
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -345,6 +350,40 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     dynamicMeshes.remove(meshId)?.let { destroyDynamicMesh(it) }
   }
 
+  override fun addSplatMesh(
+    positions: FloatArray,
+    uvs: FloatArray,
+    colors: ByteArray,
+    indices: IntArray,
+  ): Int {
+    if (disposed) return -1
+    val material = splatMaterial() ?: return -1
+    val mi = MaterialInstance.duplicate(material, "three-live-splat")
+    mi.setDepthWrite(false)
+    val entity = EntityManager.get().create()
+    val mesh = DynamicMesh(entity, mi)
+    if (!uploadSplatGeometry(mesh, positions, uvs, colors, indices, create = true)) {
+      engine.destroyMaterialInstance(mi)
+      EntityManager.get().destroy(entity)
+      return -1
+    }
+    scene.addEntity(entity)
+    val id = nextDynamicId++
+    dynamicMeshes[id] = mesh
+    return id
+  }
+
+  override fun updateSplatMesh(
+    meshId: Int,
+    positions: FloatArray,
+    uvs: FloatArray,
+    colors: ByteArray,
+    indices: IntArray,
+  ) {
+    val mesh = dynamicMeshes[meshId] ?: return
+    val unused = uploadSplatGeometry(mesh, positions, uvs, colors, indices, create = false)
+  }
+
   override fun dispose() {
     if (disposed) return
     disposed = true
@@ -361,6 +400,14 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     }
     templateAsset = null
     templateMaterial = null
+    splatTemplateAsset?.let {
+      resourceLoader.evictResourceData()
+      assetLoader.destroyAsset(it)
+    }
+    splatTemplateAsset = null
+    splatTemplateMaterial = null
+    gaussianTexture?.let { engine.destroyTexture(it) }
+    gaussianTexture = null
     resourceLoader.destroy()
     assetLoader.destroy()
     materialProvider.destroyMaterials()
@@ -619,6 +666,103 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     templateAsset = template
     templateMaterial = template.instance.materialInstances.firstOrNull()
     return templateMaterial
+  }
+
+  /**
+   * Unlit, alpha-blended material with vertex colors and a 64x64 radial Gaussian falloff
+   * `baseColorMap` texture used for Gaussian splat billboards.
+   */
+  private fun splatMaterial(): MaterialInstance? {
+    splatTemplateMaterial?.let { return it }
+    val template = assetLoader.createAsset(DynamicMeshTemplate.splatGlb()) ?: return null
+    resourceLoader.loadResources(template)
+    template.releaseSourceData()
+    val mi = template.instance.materialInstances.firstOrNull() ?: return null
+    val texSize = 64
+    val tex =
+      Texture.Builder()
+        .width(texSize)
+        .height(texSize)
+        .levels(1)
+        .sampler(Texture.Sampler.SAMPLER_2D)
+        .format(Texture.InternalFormat.RGBA8)
+        .build(engine)
+    tex.setImage(
+      engine,
+      0,
+      Texture.PixelBufferDescriptor(SplatParser.gaussianFalloffRgba(texSize), Texture.Format.RGBA, Texture.Type.UBYTE),
+    )
+    if (mi.material.hasParameter("baseColorMap")) {
+      val sampler =
+        TextureSampler(
+          TextureSampler.MinFilter.LINEAR,
+          TextureSampler.MagFilter.LINEAR,
+          TextureSampler.WrapMode.CLAMP_TO_EDGE,
+        )
+      mi.setParameter("baseColorMap", tex, sampler)
+    }
+    mi.setDepthWrite(false)
+    splatTemplateAsset = template
+    splatTemplateMaterial = mi
+    gaussianTexture = tex
+    return mi
+  }
+
+  private fun uploadSplatGeometry(
+    mesh: DynamicMesh,
+    positions: FloatArray,
+    uvs: FloatArray,
+    colors: ByteArray,
+    indices: IntArray,
+    create: Boolean,
+  ): Boolean {
+    val vertexCount = positions.size / 3
+    val indexCount = indices.size - indices.size % 3
+    if (vertexCount == 0 || indexCount == 0 || vertexCount > MAX_DYNAMIC_VERTICES) return false
+    if (uvs.size < vertexCount * 2 || colors.size < vertexCount * 4) return false
+    if (indices.any { it < 0 || it >= vertexCount }) return false
+
+    val vb =
+      VertexBuffer.Builder()
+        .vertexCount(vertexCount)
+        .bufferCount(3)
+        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+        .attribute(VertexBuffer.VertexAttribute.UV0, 1, VertexBuffer.AttributeType.FLOAT2, 0, 8)
+        .attribute(VertexBuffer.VertexAttribute.COLOR, 2, VertexBuffer.AttributeType.UBYTE4, 0, 4)
+        .normalized(VertexBuffer.VertexAttribute.COLOR)
+        .build(engine)
+    vb.setBufferAt(engine, 0, floatBuffer(positions, vertexCount * 3))
+    vb.setBufferAt(engine, 1, floatBuffer(uvs, vertexCount * 2))
+    val cbuf = ByteBuffer.allocateDirect(vertexCount * 4).order(ByteOrder.nativeOrder())
+    cbuf.put(colors, 0, vertexCount * 4).rewind()
+    vb.setBufferAt(engine, 2, cbuf)
+    val ib = IndexBuffer.Builder().indexCount(indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT).build(engine)
+    val ibuf = ByteBuffer.allocateDirect(indexCount * 4).order(ByteOrder.nativeOrder())
+    ibuf.asIntBuffer().put(indices, 0, indexCount)
+    ib.setBuffer(engine, ibuf)
+
+    val bounds = boundsOf(positions, vertexCount)
+    val rm = engine.renderableManager
+    if (create) {
+      RenderableManager.Builder(1)
+        .boundingBox(bounds)
+        .geometry(0, RenderableManager.PrimitiveType.TRIANGLES, vb, ib, 0, indexCount)
+        .material(0, mesh.material)
+        .culling(false)
+        .castShadows(false)
+        .receiveShadows(false)
+        .priority(7)
+        .build(engine, mesh.entity)
+    } else {
+      val ri = rm.getInstance(mesh.entity)
+      rm.setGeometryAt(ri, 0, RenderableManager.PrimitiveType.TRIANGLES, vb, ib, 0, indexCount)
+      rm.setAxisAlignedBoundingBox(ri, bounds)
+    }
+    mesh.vertexBuffer?.let { engine.destroyVertexBuffer(it) }
+    mesh.indexBuffer?.let { engine.destroyIndexBuffer(it) }
+    mesh.vertexBuffer = vb
+    mesh.indexBuffer = ib
+    return true
   }
 
   private fun uploadGeometry(mesh: DynamicMesh, positions: FloatArray, indices: IntArray, create: Boolean): Boolean {

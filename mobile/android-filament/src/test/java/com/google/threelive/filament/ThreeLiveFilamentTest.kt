@@ -59,13 +59,14 @@ class ThreeLiveFilamentTest {
 
   @Test
   fun dynamicMeshTemplateIsAValidUnlitGlb() {
-    val glb = DynamicMeshTemplate.glb()
-    val json = XRLiveSceneCoreHelper.extractGlbJsonChunk(glb)
-    assertNotNull(json)
-    val index = GltfSceneIndex(json!!)
-    assertEquals(1, index.nodeCount)
-    assertArrayEquals(intArrayOf(0), index.materialsOfNode(0))
-    assertEquals(glb.capacity(), glb.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(8))
+    for (glb in listOf(DynamicMeshTemplate.glb(), DynamicMeshTemplate.splatGlb())) {
+      val json = XRLiveSceneCoreHelper.extractGlbJsonChunk(glb)
+      assertNotNull(json)
+      val index = GltfSceneIndex(json!!)
+      assertEquals(1, index.nodeCount)
+      assertArrayEquals(intArrayOf(0), index.materialsOfNode(0))
+      assertEquals(glb.capacity(), glb.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(8))
+    }
   }
 
   @Test

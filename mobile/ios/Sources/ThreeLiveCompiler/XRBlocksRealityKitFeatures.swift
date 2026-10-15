@@ -18,6 +18,7 @@
 
 #if canImport(RealityKit) && !os(tvOS)
   import Combine
+  import CoreGraphics
   import Foundation
   import RealityKit
   import simd
@@ -37,6 +38,8 @@
 
     public static let maxStrokes = 256
     public static let screenPaintDepth: Float = 0.4
+    /// At most 15 Hz depth re-sort cadence for splats.
+    public static let splatResortMinInterval: TimeInterval = 1.0 / 15.0
 
     private let live: XRLiveRealityKitSession
     private let container = Entity()
@@ -61,15 +64,41 @@
       let index: Int
     }
 
+    private final class SplatCloud {
+      let node: Int
+      let url: URL
+      let entity: ModelEntity
+      var data: SplatData?
+      var pendingGeometry: SplatParser.QuadGeometry?
+      var sorting: Bool = false
+      var lastCameraWorld: simd_float4x4?
+      var lastNodeWorld: simd_float4x4?
+      var sinceLastSort: TimeInterval = XRBlocksRealityKitFeatures.splatResortMinInterval
+      var loadTask: Task<Void, Never>?
+
+      init(node: Int, url: URL, entity: ModelEntity) {
+        self.node = node
+        self.url = url
+        self.entity = entity
+      }
+    }
+
     private var handles: [HandleNode] = []
     private var emitters: [Emitter] = []
     private var strokes: [Stroke] = []
+    private var splats: [SplatCloud] = []
+    private var gaussianTexture: TextureResource?
     private var drag: (node: Int, drag: ManipulationHandles.Drag)?
     private var painting: Int?
     private var strokeCount = 0
     private var updateSubscription: Combine.Cancellable?
 
-    public init(live: XRLiveRealityKitSession) {
+    public init(
+      live: XRLiveRealityKitSession,
+      baseURL: String? = nil,
+      allowRemoteSplats: Bool = false,
+      maxSplats: Int = SplatParser.defaultMaxCpuSplats
+    ) {
       self.live = live
       container.name = "XRBlocksFeatures"
       live.root.addChild(container)
@@ -97,11 +126,32 @@
           container.addChild(entity)
           emitters.append(Emitter(node: i, emitter: emitter, entity: entity))
         }
+        if let rawSplat = traits.splatUrl,
+          let resolved = SplatParser.resolveSplatURL(
+            rawSplat, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
+        {
+          let entity = ModelEntity()
+          container.addChild(entity)
+          let cloud = SplatCloud(node: i, url: resolved, entity: entity)
+          cloud.loadTask = Task.detached(priority: .utility) { [weak cloud] in
+            guard let loaded = try? await SplatParser.loadURL(
+              resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
+            else { return }
+            let sampled = SplatParser.downsample(loaded, maxSplats: maxSplats)
+            await MainActor.run {
+              cloud?.data = sampled
+            }
+          }
+          splats.append(cloud)
+        }
       }
     }
 
     /// Number of nodes with handles.
     public var handleCount: Int { handles.count }
+
+    /// Number of accepted `splatUrl` clouds.
+    public var splatCount: Int { splats.count }
 
     /// Steps handles and particles from `scene`'s update events.
     public func startUpdates(in scene: RealityKit.Scene) {
@@ -115,10 +165,12 @@
     public func dispose() {
       updateSubscription?.cancel()
       updateSubscription = nil
+      for sc in splats { sc.loadTask?.cancel() }
       container.removeFromParent()
       handles.removeAll()
       emitters.removeAll()
       strokes.removeAll()
+      splats.removeAll()
     }
 
     // MARK: Pointer input (world-space rays)
@@ -219,6 +271,7 @@
         camera = matrix_identity_float4x4
       }
       for e in emitters { stepEmitter(e, dt: dt, camera: camera) }
+      for sc in splats { stepSplat(sc, dt: dt, camera: camera) }
     }
 
     private func handleLayout(for h: HandleNode) -> ManipulationHandles.Layout? {
@@ -260,6 +313,90 @@
         e.entity.model?.mesh = mesh
       }
       e.entity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+    }
+
+    private func stepSplat(_ sc: SplatCloud, dt: TimeInterval, camera: simd_float4x4) {
+      guard let data = sc.data, data.count > 0 else { return }
+      let visible = live.session.isEffectivelyVisible(sc.node)
+      sc.entity.isEnabled = visible
+      guard visible else { return }
+
+      if let geo = sc.pendingGeometry {
+        sc.pendingGeometry = nil
+        if let mesh = Self.splatMesh(geo) {
+          let mat = splatMaterial(color: geo.averageColor)
+          sc.entity.model = ModelComponent(mesh: mesh, materials: [mat])
+          sc.entity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+        }
+      }
+
+      sc.sinceLastSort += max(0, dt)
+      if sc.sorting || sc.sinceLastSort < Self.splatResortMinInterval { return }
+      let nodeWorld = live.session.worldMatrix(of: sc.node)
+      if !SplatParser.shouldResort(
+        lastCameraWorld: sc.lastCameraWorld, cameraWorld: camera,
+        lastNodeWorld: sc.lastNodeWorld, nodeWorld: nodeWorld)
+      {
+        return
+      }
+
+      sc.sinceLastSort = 0
+      sc.sorting = true
+      sc.lastCameraWorld = camera
+      sc.lastNodeWorld = nodeWorld
+      Task.detached(priority: .userInitiated) { [weak sc] in
+        let mvp = SplatParser.viewDepthMatrix(nodeWorld: nodeWorld, cameraWorld: camera)
+        let order = SplatParser.sortByDepth(data, mvp: mvp)
+        let geo = SplatParser.buildSplatQuads(data, order: order, nodeWorld: nodeWorld, cameraWorld: camera)
+        await MainActor.run {
+          sc?.pendingGeometry = geo
+          sc?.sorting = false
+        }
+      }
+    }
+
+    private func splatMaterial(color: SIMD4<Float>) -> UnlitMaterial {
+      var mat = Self.material(color)
+      if gaussianTexture == nil {
+        gaussianTexture = Self.makeGaussianTexture()
+      }
+      if let tex = gaussianTexture {
+        if #available(iOS 15.0, macOS 12.0, visionOS 1.0, *) {
+          mat.color = .init(
+            tint: XRPlatformColor(
+              red: CGFloat(color.x), green: CGFloat(color.y), blue: CGFloat(color.z), alpha: 1),
+            texture: .init(tex))
+          mat.blending = .transparent(opacity: .init(floatLiteral: max(0.05, min(1, color.w))))
+        }
+      }
+      return mat
+    }
+
+    private static func makeGaussianTexture(size: Int = 64) -> TextureResource? {
+      let rgba = SplatParser.gaussianFalloffRGBA(size: size)
+      let colorSpace = CGColorSpaceCreateDeviceRGB()
+      let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+      guard let provider = CGDataProvider(data: Data(rgba) as CFData),
+        let cgImage = CGImage(
+          width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
+          space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
+          shouldInterpolate: true, intent: .defaultIntent)
+      else { return nil }
+      if #available(iOS 15.0, macOS 12.0, visionOS 1.0, *) {
+        return try? TextureResource.generate(from: cgImage, options: .init(semantic: .color))
+      }
+      return nil
+    }
+
+    static func splatMesh(_ g: SplatParser.QuadGeometry) -> MeshResource? {
+      guard !g.positions.isEmpty, !g.indices.isEmpty else { return nil }
+      var descriptor = MeshDescriptor(name: "xr-splats")
+      descriptor.positions = MeshBuffers.Positions(g.positions)
+      if g.uvs.count == g.positions.count {
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(g.uvs)
+      }
+      descriptor.primitives = .triangles(g.indices)
+      return try? MeshResource.generate(from: [descriptor])
     }
 
     // MARK: Geometry helpers

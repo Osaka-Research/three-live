@@ -996,6 +996,50 @@ class XRLiveRuntimeSessionTest {
     }
     val order = SplatParser.sortSplatsByDepth(3, floatArrayOf(0f, 0f, -1f, 0f, 0f, -5f, 0f, 0f, -3f), persp)
     assertArrayEquals(intArrayOf(1, 2, 0), order)
+
+    // URL policy (mirrors web resolveSplatUrl vectors).
+    assertNotNull(SplatParser.resolveSplatUrl("https://a.com/x.spz"))
+    assertNull(SplatParser.resolveSplatUrl("javascript:alert(1)"))
+    assertNull(SplatParser.resolveSplatUrl("data:application/octet-stream;base64,AA"))
+    assertNull(SplatParser.resolveSplatUrl("http://evil.com/x.splat"))
+    assertEquals("http://localhost:8080/x.spz", SplatParser.resolveSplatUrl("http://localhost:8080/x.spz"))
+    assertEquals(
+      "https://site.test/scans/room.spz",
+      SplatParser.resolveSplatUrl("/scans/room.spz", "https://site.test/app/"),
+    )
+    assertNull(SplatParser.resolveSplatUrl("https://cdn.test/x.spz", "https://site.test/", false))
+    assertNotNull(SplatParser.resolveSplatUrl("https://site.test/x.spz", "https://site.test/", false))
+    assertNull(SplatParser.resolveSplatUrl("//evil.com/x.spz", "https://site.test/", true))
+
+    // Deterministic stride downsampling.
+    val ten = SplatData(10)
+    for (i in 0 until 10) {
+      ten.positions[i * 3] = i.toFloat()
+      ten.scales[i * 3] = 0.1f
+      ten.colors[i * 4 + 3] = 255.toByte()
+    }
+    val sampled = SplatParser.downsample(ten, 4)
+    val sampledAgain = SplatParser.downsample(ten, 4)
+    assertEquals(4, sampled.count)
+    assertArrayEquals(sampled.positions, sampledAgain.positions, 0f)
+    assertEquals(0f, sampled.positions[0], 0f)
+    assertEquals(2f, sampled.positions[3], 0f)
+    assertEquals(5f, sampled.positions[6], 0f)
+    assertEquals(7f, sampled.positions[9], 0f)
+
+    // Resort threshold (5 cm move or 5° rotation) and billboard quad corners.
+    val camId = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
+    val nodeId = DoubleArray(16).also { it[0] = 1.0; it[5] = 1.0; it[10] = 1.0; it[15] = 1.0 }
+    assertTrue(SplatParser.shouldResort(null, camId, null, nodeId))
+    assertFalse(SplatParser.shouldResort(camId, camId, nodeId, nodeId))
+    val camMoved = camId.copyOf().also { it[12] = 0.08f }
+    assertTrue(SplatParser.shouldResort(camId, camMoved, nodeId, nodeId))
+    val quads = SplatParser.buildSplatQuads(sampled, intArrayOf(0, 1), nodeId, camId)
+    assertEquals(2 * 12, quads.positions.size)
+    assertEquals(2 * 8, quads.uvs.size)
+    assertEquals(2 * 16, quads.colors.size)
+    assertEquals(2 * 6, quads.indices.size)
+    assertEquals(64 * 64 * 4, SplatParser.gaussianFalloffRgba(64).remaining())
   }
 
   // =============================================================================================

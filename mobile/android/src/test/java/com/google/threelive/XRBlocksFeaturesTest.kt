@@ -168,6 +168,55 @@ class XRBlocksFeaturesTest {
     f.dispose()
   }
 
+  @Test
+  fun splatCloudDownloadsSortsAndDrawsQuadsWhenCameraMoves() {
+    val r = FakeRenderer()
+    val glb =
+      glbOf(
+        """{"nodes":[{"name":"Room","translation":[0,0,-2],"extras":{"xr":{"splatUrl":"https://cdn.test/room.spz"}}}],
+          "scenes":[{"nodes":[0]}]}"""
+      )
+    val b = ThreeLiveRuntimeBinding(r, glb)
+    // Cross-origin URL rejected when allowRemoteSplats = false against a different baseUrl.
+    val blocked =
+      XRBlocksFeatures(
+        b,
+        r,
+        baseUrl = "https://site.test/scene.glb",
+        allowRemoteSplats = false,
+        splatLoader = { _, _, _ -> error("must not load") },
+        backgroundExecutor = java.util.concurrent.Executor { it.run() },
+      )
+    assertEquals(0, blocked.splatCount)
+    blocked.dispose()
+
+    // Allowed when allowRemoteSplats = true.
+    val fakeData = SplatData(2)
+    fakeData.positions[2] = -1f
+    fakeData.positions[5] = -3f
+    fakeData.scales.fill(0.2f)
+    fakeData.colors.fill(200.toByte())
+    val allowed =
+      XRBlocksFeatures(
+        b,
+        r,
+        baseUrl = "https://site.test/scene.glb",
+        allowRemoteSplats = true,
+        splatLoader = { _, _, _ -> fakeData },
+        backgroundExecutor = java.util.concurrent.Executor { it.run() },
+      )
+    assertEquals(1, allowed.splatCount)
+    r.listener!!.onFrame(0.1, IDENTITY)
+    assertEquals(1, r.splatMeshes.size)
+    val firstMesh = r.splatMeshes.values.single()
+    // 2 splats -> 8 vertices (24 floats), 12 indices; farthest (-3) sorted first (z = -5 in world).
+    assertEquals(24, firstMesh.positions.size)
+    assertEquals(-5f, firstMesh.positions[2], 1e-4f)
+    assertEquals(-3f, firstMesh.positions[14], 1e-4f)
+    allowed.dispose()
+    assertTrue(r.splatMeshes.isEmpty())
+  }
+
   private class Mesh(var positions: FloatArray, var indices: IntArray)
 
   private class FakeRenderer : ThreeLiveSceneRenderer {
@@ -181,6 +230,7 @@ class XRBlocksFeaturesTest {
       return true
     }
     val meshes = LinkedHashMap<Int, Mesh>()
+    val splatMeshes = LinkedHashMap<Int, Mesh>()
     val transforms = HashMap<Int, List<FloatArray>>()
     private var next = 1
 
@@ -217,6 +267,26 @@ class XRBlocksFeaturesTest {
 
     override fun removeDynamicMesh(meshId: Int) {
       meshes.remove(meshId)
+      splatMeshes.remove(meshId)
+    }
+
+    override fun addSplatMesh(positions: FloatArray, uvs: FloatArray, colors: ByteArray, indices: IntArray): Int {
+      val id = next++
+      splatMeshes[id] = Mesh(positions, indices)
+      return id
+    }
+
+    override fun updateSplatMesh(
+      meshId: Int,
+      positions: FloatArray,
+      uvs: FloatArray,
+      colors: ByteArray,
+      indices: IntArray,
+    ) {
+      splatMeshes[meshId]?.let {
+        it.positions = positions
+        it.indices = indices
+      }
     }
 
     override fun dispose() {}

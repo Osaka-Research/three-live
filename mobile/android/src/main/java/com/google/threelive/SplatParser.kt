@@ -19,7 +19,24 @@ package com.google.threelive
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.zip.GZIPInputStream
+
+/** Camera-facing quad geometry built from a sorted [SplatData] cloud. */
+class SplatQuadGeometry(
+  /** World-space xyz per vertex (`4 * count * 3` floats). */
+  val positions: FloatArray,
+  /** Two-triangle quad UV0 per vertex (`4 * count * 2` floats). */
+  val uvs: FloatArray,
+  /** RGBA8 per vertex (`4 * count * 4` bytes). */
+  val colors: ByteArray,
+  /** Triangle indices (`6 * count` ints). */
+  val indices: IntArray,
+)
 
 /** Decoded Gaussian splat cloud (structure of arrays). */
 class SplatData(
@@ -54,10 +71,18 @@ object SplatParser {
    */
   const val MAX_SPZ_DECOMPRESSED_BYTES = 128 * 1024 * 1024
 
+  /** Maximum downloaded (compressed) splat file size in bytes (128 MiB). */
+  const val MAX_SPLAT_FILE_BYTES = 128 * 1024 * 1024
+
+  /** Default CPU-billboard splat cap on Android / Filament (150 k). */
+  const val DEFAULT_MAX_CPU_SPLATS = 150_000
+
   private const val SPLAT_RECORD_BYTES = 32
   private const val SPZ_MAGIC = 0x5053474e
   private const val SH_C0 = 0.28209479177387814
   private const val SQRT1_2 = 0.7071067811865476
+  private const val MAX_URL_CHARS = 4096
+  private const val NETWORK_TIMEOUT_MS = 15_000
 
   private fun u8(b: ByteArray, i: Int): Int = b[i].toInt() and 0xFF
 
@@ -278,5 +303,309 @@ object SplatParser {
     for (k in 1 until buckets) counts[k] += counts[k - 1]
     for (i in count - 1 downTo 0) out[--counts[keys[i]]] = i
     return out
+  }
+
+  /**
+   * Validates a splat URL: `https:`, or `http:` on loopback (`localhost` / `127.0.0.1`), plus
+   * relative URLs resolved against [baseUrl]. Unless [allowCrossOrigin] is `true` (host prop
+   * `allowRemoteSplats`), the resolved URL must share the origin of [baseUrl] so a third-party
+   * `.glb` cannot make the viewer contact arbitrary servers. Returns `null` when rejected.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun resolveSplatUrl(
+    raw: String?,
+    baseUrl: String? = null,
+    allowCrossOrigin: Boolean = true,
+  ): String? {
+    val trimmed = raw?.trim() ?: return null
+    if (trimmed.isEmpty() || trimmed.length > MAX_URL_CHARS || trimmed.startsWith("//")) return null
+    val fallback = baseUrl?.trim()?.takeIf { it.isNotEmpty() } ?: "https://localhost/"
+    return try {
+      val baseUri = URI(fallback)
+      val resolved = baseUri.resolve(trimmed)
+      val scheme = resolved.scheme?.lowercase() ?: return null
+      val host = resolved.host?.lowercase() ?: return null
+      val loopback = host == "localhost" || host == "127.0.0.1"
+      val schemeOk = scheme == "https" || (scheme == "http" && loopback)
+      if (!schemeOk) return null
+      if (!allowCrossOrigin && originOf(resolved) != originOf(baseUri)) return null
+      resolved.toASCIIString()
+    } catch (e: RuntimeException) {
+      null
+    }
+  }
+
+  private fun originOf(uri: URI): String {
+    val scheme = uri.scheme?.lowercase() ?: ""
+    val host = uri.host?.lowercase() ?: ""
+    val port = uri.port
+    val defaultPort = (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+    return if (port <= 0 || defaultPort) "$scheme://$host" else "$scheme://$host:$port"
+  }
+
+  /**
+   * Deterministic stride downsampling when [data] exceeds [maxSplats], keeping at most [maxSplats]
+   * splats. Returns [data] unchanged when `data.count <= maxSplats`.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun downsample(data: SplatData, maxSplats: Int = DEFAULT_MAX_CPU_SPLATS): SplatData {
+    val cap = maxSplats.coerceIn(1, MAX_SPLATS)
+    if (data.count <= cap) return data
+    val out = allocate(cap)
+    val step = data.count.toDouble() / cap
+    for (i in 0 until cap) {
+      val src = Math.min(data.count - 1, Math.floor(i * step).toInt())
+      System.arraycopy(data.positions, src * 3, out.positions, i * 3, 3)
+      System.arraycopy(data.scales, src * 3, out.scales, i * 3, 3)
+      System.arraycopy(data.colors, src * 4, out.colors, i * 4, 4)
+      System.arraycopy(data.rotations, src * 4, out.rotations, i * 4, 4)
+    }
+    return out
+  }
+
+  /**
+   * Returns `true` when the camera or splat node moved by more than [minMoveMeters] (default 5 cm)
+   * or rotated by more than [minAngleDeg] (default 5°).
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun shouldResort(
+    lastCameraWorld: FloatArray?,
+    cameraWorld: FloatArray,
+    lastNodeWorld: DoubleArray?,
+    nodeWorld: DoubleArray,
+    minMoveMeters: Double = 0.05,
+    minAngleDeg: Double = 5.0,
+  ): Boolean {
+    if (lastCameraWorld == null || lastNodeWorld == null) return true
+    if (lastCameraWorld.size < 16 || cameraWorld.size < 16 || lastNodeWorld.size < 16 || nodeWorld.size < 16) {
+      return true
+    }
+    val cdx = (cameraWorld[12] - lastCameraWorld[12]).toDouble()
+    val cdy = (cameraWorld[13] - lastCameraWorld[13]).toDouble()
+    val cdz = (cameraWorld[14] - lastCameraWorld[14]).toDouble()
+    if (cdx * cdx + cdy * cdy + cdz * cdz > minMoveMeters * minMoveMeters) return true
+    val ndx = nodeWorld[12] - lastNodeWorld[12]
+    val ndy = nodeWorld[13] - lastNodeWorld[13]
+    val ndz = nodeWorld[14] - lastNodeWorld[14]
+    if (ndx * ndx + ndy * ndy + ndz * ndz > minMoveMeters * minMoveMeters) return true
+    val cosLimit = Math.cos(Math.toRadians(minAngleDeg))
+    // Camera -Z forward axis (column 2 of column-major cameraWorld).
+    val fDot =
+      lastCameraWorld[8].toDouble() * cameraWorld[8] +
+        lastCameraWorld[9].toDouble() * cameraWorld[9] +
+        lastCameraWorld[10].toDouble() * cameraWorld[10]
+    if (fDot < cosLimit) return true
+    // Node +X and +Z axes (normalized).
+    val nDot = axisDot(lastNodeWorld, nodeWorld, 0) * 0.5 + axisDot(lastNodeWorld, nodeWorld, 8) * 0.5
+    return nDot < cosLimit
+  }
+
+  private fun axisDot(a: DoubleArray, b: DoubleArray, colOffset: Int): Double {
+    val ax = a[colOffset]
+    val ay = a[colOffset + 1]
+    val az = a[colOffset + 2]
+    val bx = b[colOffset]
+    val by = b[colOffset + 1]
+    val bz = b[colOffset + 2]
+    val la = Math.sqrt(ax * ax + ay * ay + az * az)
+    val lb = Math.sqrt(bx * bx + by * by + bz * bz)
+    if (la < 1e-9 || lb < 1e-9) return 1.0
+    return (ax * bx + ay * by + az * bz) / (la * lb)
+  }
+
+  /**
+   * Builds a 16-float column-major matrix whose row 3 (`mvp[3], mvp[7], mvp[11], mvp[15]`) equals
+   * `dot(-cameraForward, nodeWorld * localPos - cameraPos)`, so [sortSplatsByDepth] sorts by view
+   * distance along the camera's `-Z` axis.
+   */
+  @JvmStatic
+  fun viewDepthMatrix(nodeWorld: DoubleArray, cameraWorld: FloatArray): FloatArray {
+    val out = FloatArray(16)
+    if (nodeWorld.size < 16 || cameraWorld.size < 16) return out
+    val fx = -cameraWorld[8].toDouble()
+    val fy = -cameraWorld[9].toDouble()
+    val fz = -cameraWorld[10].toDouble()
+    val cx = cameraWorld[12].toDouble()
+    val cy = cameraWorld[13].toDouble()
+    val cz = cameraWorld[14].toDouble()
+    out[3] = (fx * nodeWorld[0] + fy * nodeWorld[1] + fz * nodeWorld[2]).toFloat()
+    out[7] = (fx * nodeWorld[4] + fy * nodeWorld[5] + fz * nodeWorld[6]).toFloat()
+    out[11] = (fx * nodeWorld[8] + fy * nodeWorld[9] + fz * nodeWorld[10]).toFloat()
+    out[15] =
+      (fx * (nodeWorld[12] - cx) + fy * (nodeWorld[13] - cy) + fz * (nodeWorld[14] - cz)).toFloat()
+    return out
+  }
+
+  /**
+   * Builds camera-facing billboard quads in world space for [data] in back-to-front [order].
+   * Each splat is sized to `1.5 * max(scale.x, scale.y, scale.z) * maxAxisScale(nodeWorld)`
+   * (matching the web `3.0 * radius` diameter) and oriented along the camera's right and up axes.
+   */
+  @JvmStatic
+  fun buildSplatQuads(
+    data: SplatData,
+    order: IntArray,
+    nodeWorld: DoubleArray,
+    cameraWorld: FloatArray,
+  ): SplatQuadGeometry {
+    val n = minOf(data.count, order.size)
+    val positions = FloatArray(n * 12)
+    val uvs = FloatArray(n * 8)
+    val colors = ByteArray(n * 16)
+    val indices = IntArray(n * 6)
+    if (n == 0 || nodeWorld.size < 16 || cameraWorld.size < 16) {
+      return SplatQuadGeometry(positions, uvs, colors, indices)
+    }
+    val sx = Math.sqrt(nodeWorld[0] * nodeWorld[0] + nodeWorld[1] * nodeWorld[1] + nodeWorld[2] * nodeWorld[2])
+    val sy = Math.sqrt(nodeWorld[4] * nodeWorld[4] + nodeWorld[5] * nodeWorld[5] + nodeWorld[6] * nodeWorld[6])
+    val sz = Math.sqrt(nodeWorld[8] * nodeWorld[8] + nodeWorld[9] * nodeWorld[9] + nodeWorld[10] * nodeWorld[10])
+    val nodeScale = maxOf(sx, sy, sz, 1e-6).toFloat()
+    val rx = cameraWorld[0]
+    val ry = cameraWorld[1]
+    val rz = cameraWorld[2]
+    val ux = cameraWorld[4]
+    val uy = cameraWorld[5]
+    val uz = cameraWorld[6]
+
+    for (k in 0 until n) {
+      val s = order[k]
+      if (s !in 0 until data.count) continue
+      val lx = data.positions[s * 3].toDouble()
+      val ly = data.positions[s * 3 + 1].toDouble()
+      val lz = data.positions[s * 3 + 2].toDouble()
+      val wx = (nodeWorld[0] * lx + nodeWorld[4] * ly + nodeWorld[8] * lz + nodeWorld[12]).toFloat()
+      val wy = (nodeWorld[1] * lx + nodeWorld[5] * ly + nodeWorld[9] * lz + nodeWorld[13]).toFloat()
+      val wz = (nodeWorld[2] * lx + nodeWorld[6] * ly + nodeWorld[10] * lz + nodeWorld[14]).toFloat()
+      val r0 = maxOf(data.scales[s * 3], data.scales[s * 3 + 1], data.scales[s * 3 + 2])
+      val half = (r0 * nodeScale * 1.5f).coerceIn(0.001f, 10f)
+      val drx = rx * half
+      val dry = ry * half
+      val drz = rz * half
+      val dux = ux * half
+      val duy = uy * half
+      val duz = uz * half
+
+      val po = k * 12
+      positions[po] = wx - drx - dux
+      positions[po + 1] = wy - dry - duy
+      positions[po + 2] = wz - drz - duz
+      positions[po + 3] = wx + drx - dux
+      positions[po + 4] = wy + dry - duy
+      positions[po + 5] = wz + drz - duz
+      positions[po + 6] = wx + drx + dux
+      positions[po + 7] = wy + dry + duy
+      positions[po + 8] = wz + drz + duz
+      positions[po + 9] = wx - drx + dux
+      positions[po + 10] = wy - dry + duy
+      positions[po + 11] = wz - drz + duz
+
+      val uo = k * 8
+      uvs[uo] = 0f
+      uvs[uo + 1] = 0f
+      uvs[uo + 2] = 1f
+      uvs[uo + 3] = 0f
+      uvs[uo + 4] = 1f
+      uvs[uo + 5] = 1f
+      uvs[uo + 6] = 0f
+      uvs[uo + 7] = 1f
+
+      val co = k * 16
+      val c0 = data.colors[s * 4]
+      val c1 = data.colors[s * 4 + 1]
+      val c2 = data.colors[s * 4 + 2]
+      val c3 = data.colors[s * 4 + 3]
+      for (v in 0 until 4) {
+        colors[co + v * 4] = c0
+        colors[co + v * 4 + 1] = c1
+        colors[co + v * 4 + 2] = c2
+        colors[co + v * 4 + 3] = c3
+      }
+
+      val vo = k * 4
+      val io = k * 6
+      indices[io] = vo
+      indices[io + 1] = vo + 1
+      indices[io + 2] = vo + 2
+      indices[io + 3] = vo
+      indices[io + 4] = vo + 2
+      indices[io + 5] = vo + 3
+    }
+    return SplatQuadGeometry(positions, uvs, colors, indices)
+  }
+
+  /**
+   * Generates a `[size] x [size]` RGBA8 radial Gaussian falloff texture (`RGB = 255`,
+   * `A = round(255 * exp(-4 * r^2))` for `r <= 1`, `0` outside) matching the web fragment shader.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun gaussianFalloffRgba(size: Int = 64): ByteBuffer {
+    val n = size.coerceIn(4, 256)
+    val buf = ByteBuffer.allocateDirect(n * n * 4).order(ByteOrder.nativeOrder())
+    val half = (n - 1) * 0.5
+    for (y in 0 until n) {
+      val dy = (y - half) / half
+      for (x in 0 until n) {
+        val dx = (x - half) / half
+        val r2 = dx * dx + dy * dy
+        val a = if (r2 > 1.0) 0 else Math.round(255.0 * Math.exp(-4.0 * r2)).toInt().coerceIn(0, 255)
+        buf.put(0xFF.toByte())
+        buf.put(0xFF.toByte())
+        buf.put(0xFF.toByte())
+        buf.put(a.toByte())
+      }
+    }
+    buf.rewind()
+    return buf
+  }
+
+  /**
+   * Downloads and decodes a `.splat` / `.spz` file from [url], enforcing [resolveSplatUrl] and
+   * [MAX_SPLAT_FILE_BYTES]. Blocking call; invoke from a background thread.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun loadUrl(
+    url: String,
+    baseUrl: String? = null,
+    allowCrossOrigin: Boolean = true,
+    maxBytes: Int = MAX_SPLAT_FILE_BYTES,
+  ): SplatData {
+    val resolved =
+      resolveSplatUrl(url, baseUrl, allowCrossOrigin)
+        ?: throw IllegalArgumentException("splat-loader: URL rejected")
+    val conn = URL(resolved).openConnection() as HttpURLConnection
+    conn.connectTimeout = NETWORK_TIMEOUT_MS
+    conn.readTimeout = NETWORK_TIMEOUT_MS
+    conn.instanceFollowRedirects = false
+    try {
+      val code = conn.responseCode
+      require(code == HttpURLConnection.HTTP_OK) { "splat-loader: HTTP $code" }
+      val declared = conn.contentLengthLong
+      require(declared <= maxBytes) { "splat-loader: file too large" }
+      val bytes =
+        conn.inputStream.use { input ->
+          val out = ByteArrayOutputStream()
+          val buf = ByteArray(64 * 1024)
+          var total = 0L
+          while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            total += n
+            require(total <= maxBytes) { "splat-loader: file too large" }
+            out.write(buf, 0, n)
+          }
+          out.toByteArray()
+        }
+      val path = URI(resolved).path?.lowercase() ?: ""
+      return if (path.endsWith(".spz")) parseSpz(bytes) else parseAuto(bytes)
+    } catch (e: IOException) {
+      throw IllegalArgumentException("splat-loader: download failed", e)
+    } finally {
+      conn.disconnect()
+    }
   }
 }

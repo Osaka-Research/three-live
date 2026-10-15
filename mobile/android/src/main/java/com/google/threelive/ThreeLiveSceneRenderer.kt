@@ -129,6 +129,27 @@ interface ThreeLiveSceneRenderer {
   /** Removes a dynamic mesh. Unknown ids are ignored. */
   fun removeDynamicMesh(meshId: Int) {}
 
+  /**
+   * Adds a world-space Gaussian splat quad mesh ([positions] 3 floats/vertex, [uvs] 2 floats/vertex,
+   * [colors] 4 RGBA8 bytes/vertex, [indices] triangle indices) drawn with an unlit alpha-blended
+   * radial Gaussian falloff material. Returns a mesh id, or `-1` when unsupported.
+   */
+  fun addSplatMesh(
+    positions: FloatArray,
+    uvs: FloatArray,
+    colors: ByteArray,
+    indices: IntArray,
+  ): Int = -1
+
+  /** Replaces the geometry of a splat mesh created by [addSplatMesh]. */
+  fun updateSplatMesh(
+    meshId: Int,
+    positions: FloatArray,
+    uvs: FloatArray,
+    colors: ByteArray,
+    indices: IntArray,
+  ) {}
+
   /** Releases every resource. The renderer is unusable afterwards; safe to call twice. */
   fun dispose()
 }
