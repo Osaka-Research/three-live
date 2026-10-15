@@ -143,16 +143,18 @@
           let entity = ModelEntity()
           container.addChild(entity)
           let cloud = SplatCloud(node: i, url: resolved, entity: entity)
-          cloud.loadTask = Task.detached(priority: .utility) { [weak cloud] in
-            guard let loaded = try? await SplatParser.loadURL(
-              resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
-            else { return }
-            let sampled = SplatParser.downsample(loaded, maxSplats: effectiveMaxSplats)
-            let staticGpu = useGpuBillboard ? SplatParser.buildStaticGpuSplatVertices(sampled) : nil
-            await MainActor.run {
-              cloud?.staticGpuGeometry = staticGpu
-              cloud?.data = sampled
-            }
+          cloud.loadTask = Task { @MainActor [weak cloud] in
+            let result = await Task.detached(priority: .utility) { () -> (SplatData, SplatParser.StaticGpuGeometry?)? in
+              guard let loaded = try? await SplatParser.loadURL(
+                resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
+              else { return nil }
+              let sampled = SplatParser.downsample(loaded, maxSplats: effectiveMaxSplats)
+              let staticGpu = useGpuBillboard ? SplatParser.buildStaticGpuSplatVertices(sampled) : nil
+              return (sampled, staticGpu)
+            }.value
+            guard let (sampled, staticGpu) = result else { return }
+            cloud?.staticGpuGeometry = staticGpu
+            cloud?.data = sampled
           }
           splats.append(cloud)
         }
@@ -360,21 +362,25 @@
       sc.sorting = true
       sc.lastCameraWorld = camera
       sc.lastNodeWorld = nodeWorld
-      Task.detached(priority: .userInitiated) { [weak sc] in
-        let mvp = SplatParser.viewDepthMatrix(nodeWorld: nodeWorld, cameraWorld: camera)
-        let order = SplatParser.sortByDepth(data, mvp: mvp)
+      let count = data.count
+      Task { @MainActor [weak sc] in
         if useGpuBillboard {
-          let indices = SplatParser.buildSortedSplatIndices(order: order, count: data.count)
-          await MainActor.run {
-            sc?.pendingIndices = indices
-            sc?.sorting = false
-          }
+          let indices = await Task.detached(priority: .userInitiated) {
+            let mvp = SplatParser.viewDepthMatrix(nodeWorld: nodeWorld, cameraWorld: camera)
+            let order = SplatParser.sortByDepth(data, mvp: mvp)
+            return SplatParser.buildSortedSplatIndices(order: order, count: count)
+          }.value
+          sc?.pendingIndices = indices
+          sc?.sorting = false
         } else {
-          let geo = SplatParser.buildSplatQuads(data, order: order, nodeWorld: nodeWorld, cameraWorld: camera)
-          await MainActor.run {
-            sc?.pendingGeometry = geo
-            sc?.sorting = false
-          }
+          let geo = await Task.detached(priority: .userInitiated) {
+            let mvp = SplatParser.viewDepthMatrix(nodeWorld: nodeWorld, cameraWorld: camera)
+            let order = SplatParser.sortByDepth(data, mvp: mvp)
+            return SplatParser.buildSplatQuads(
+              data, order: order, nodeWorld: nodeWorld, cameraWorld: camera)
+          }.value
+          sc?.pendingGeometry = geo
+          sc?.sorting = false
         }
       }
     }

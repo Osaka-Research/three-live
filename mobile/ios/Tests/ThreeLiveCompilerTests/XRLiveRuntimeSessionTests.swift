@@ -1137,6 +1137,16 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         SIMD4<Float>(f[12], f[13], f[14], f[15])
       )
     }
+    func assertNear(
+      _ actual: SIMD3<Float>,
+      _ expected: SIMD3<Float>,
+      accuracy: Float,
+      _ message: String
+    ) {
+      XCTAssertEqual(actual.x, expected.x, accuracy: accuracy, "\(message) x")
+      XCTAssertEqual(actual.y, expected.y, accuracy: accuracy, "\(message) y")
+      XCTAssertEqual(actual.z, expected.z, accuracy: accuracy, "\(message) z")
+    }
 
     var detectionsOut: [WorldUnderstanding.Detection3D] = []
     for step in steps {
@@ -1154,7 +1164,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         let hq = floats(step["headQuaternion"])
         let pose = XRPose(
           position: SIMD3<Float>(hp[0], hp[1], hp[2]),
-          quaternion: simd_quatf(ix: hq[0], iy: hq[1], iz: hq[2], r: hq[3])
+          orientation: simd_quatf(ix: hq[0], iy: hq[1], iz: hq[2], r: hq[3])
         )
         for _ in 0..<count {
           s.step(dt: dt, headPose: pose)
@@ -1211,7 +1221,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         let proj = mat4(floats(step["projection"]))
         let depth = (step["depthMeters"] as? NSNumber)?.floatValue ?? 2.0
         detectionsOut = XRDetections.detect(
-          boxes: boxes,
+          boxes,
           cameraWorld: camWorld,
           projection: proj,
           depthSampler: { _, _ in depth },
@@ -1274,9 +1284,9 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(d0.label, ed0["label"] as? String)
     let ep = floats(ed0["position"])
     let esz = floats(ed0["size"])
-    XCTAssertEqual(d0.x, ep[0], accuracy: 1e-4)
-    XCTAssertEqual(d0.y, ep[1], accuracy: 1e-4)
-    XCTAssertEqual(d0.z, ep[2], accuracy: 1e-4)
+    XCTAssertEqual(d0.position.x, ep[0], accuracy: 1e-4)
+    XCTAssertEqual(d0.position.y, ep[1], accuracy: 1e-4)
+    XCTAssertEqual(d0.position.z, ep[2], accuracy: 1e-4)
     XCTAssertEqual(d0.widthMeters, esz[0], accuracy: 1e-4)
     XCTAssertEqual(d0.heightMeters, esz[1], accuracy: 1e-4)
     XCTAssertEqual(d0.depthSource.rawValue, ed0["depthSource"] as? String)
