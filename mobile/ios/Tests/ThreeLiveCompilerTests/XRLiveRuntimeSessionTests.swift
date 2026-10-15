@@ -1088,5 +1088,22 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(quads.colors.count, 32)
     XCTAssertEqual(quads.indices.count, 12)
     XCTAssertEqual(SplatParser.gaussianFalloffRGBA(size: 64).count, 64 * 64 * 4)
+
+    // GPU billboard static vertices + sorted index buffer builder.
+    let staticGpu = SplatParser.buildStaticGpuSplatVertices(sampled)
+    XCTAssertEqual(staticGpu.positions.count, 16)
+    XCTAssertEqual(staticGpu.uvs.count, 16)
+    XCTAssertLessThan(staticGpu.uvs[0].x, 0)
+    XCTAssertGreaterThan(staticGpu.uvs[2].x, 0)
+    let sortedIdx = SplatParser.buildSortedSplatIndices(order: [1, 0], count: 2)
+    XCTAssertEqual(sortedIdx, [4, 5, 6, 4, 6, 7, 0, 1, 2, 0, 2, 3])
+    XCTAssertTrue(SplatParser.metalShaderSource.contains("threeLiveSplatGeometry"))
+    XCTAssertTrue(SplatParser.metalShaderSource.contains("threeLiveSplatSurface"))
+    #if canImport(Metal)
+      if let lib = SplatParser.makeMetalLibrary() {
+        XCTAssertNotNil(lib.makeFunction(name: "threeLiveSplatGeometry"))
+        XCTAssertNotNil(lib.makeFunction(name: "threeLiveSplatSurface"))
+      }
+    #endif
   }
 }

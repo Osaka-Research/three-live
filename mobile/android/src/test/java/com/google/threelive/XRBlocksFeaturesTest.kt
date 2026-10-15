@@ -215,6 +215,31 @@ class XRBlocksFeaturesTest {
     assertEquals(-3f, firstMesh.positions[14], 1e-4f)
     allowed.dispose()
     assertTrue(r.splatMeshes.isEmpty())
+
+    // GPU billboard path: static local positions uploaded once, only indices updated on re-sort.
+    r.gpuSplats = true
+    val gpuFeatures =
+      XRBlocksFeatures(
+        b,
+        r,
+        baseUrl = "https://site.test/scene.glb",
+        allowRemoteSplats = true,
+        splatLoader = { _, _, _ -> fakeData },
+        backgroundExecutor = java.util.concurrent.Executor { it.run() },
+      )
+    assertEquals(SplatParser.DEFAULT_MAX_GPU_SPLATS, gpuFeatures.maxSplats)
+    r.listener!!.onFrame(0.1, IDENTITY)
+    val gpuMesh = r.splatMeshes.values.single()
+    // Static vertices are in local space (-1 and -3); sorted indices draw splat 1 (vertices 4..7) first.
+    assertEquals(-1f, gpuMesh.positions[2], 1e-4f)
+    assertEquals(-3f, gpuMesh.positions[14], 1e-4f)
+    assertArrayEquals(intArrayOf(4, 5, 6, 4, 6, 7, 0, 1, 2, 0, 2, 3), gpuMesh.indices)
+    // Move camera behind splats (+Z looking toward +Z) so splat 0 (-1) is farther than splat 1 (-3).
+    val flippedCam = IDENTITY.copyOf().also { it[8] = 0f; it[9] = 0f; it[10] = -1f; it[14] = -10f }
+    r.listener!!.onFrame(0.1, flippedCam)
+    assertEquals(1, r.indexOnlyUpdates)
+    assertArrayEquals(intArrayOf(0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7), gpuMesh.indices)
+    gpuFeatures.dispose()
   }
 
   private class Mesh(var positions: FloatArray, var indices: IntArray)
@@ -223,6 +248,11 @@ class XRBlocksFeaturesTest {
     override var listener: ThreeLiveRendererListener? = null
     /** Scene-root matrix reported to the binding (e.g. a turntable), or `null` for none. */
     var root: FloatArray? = null
+    var gpuSplats: Boolean = false
+    var indexOnlyUpdates: Int = 0
+
+    override val supportsGpuSplats: Boolean
+      get() = gpuSplats
 
     override fun sceneRootMatrix(out: FloatArray): Boolean {
       val r = root ?: return false
@@ -286,6 +316,13 @@ class XRBlocksFeaturesTest {
       splatMeshes[meshId]?.let {
         it.positions = positions
         it.indices = indices
+      }
+    }
+
+    override fun updateSplatMeshIndices(meshId: Int, indices: IntArray) {
+      splatMeshes[meshId]?.let {
+        it.indices = indices
+        indexOnlyUpdates++
       }
     }
 

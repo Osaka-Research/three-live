@@ -115,7 +115,18 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private var templateMaterial: MaterialInstance? = null
   private var splatTemplateAsset: FilamentAsset? = null
   private var splatTemplateMaterial: MaterialInstance? = null
+  private var compiledSplatMaterial: Material? = null
   private var gaussianTexture: Texture? = null
+  private val hasFilamatAsset: Boolean =
+    try {
+      appContext.assets.open(SPLAT_FILAMAT_ASSET).close()
+      true
+    } catch (e: Throwable) {
+      false
+    }
+
+  override val supportsGpuSplats: Boolean
+    get() = hasFilamatAsset
 
   private val choreographer = Choreographer.getInstance()
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -384,6 +395,31 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val unused = uploadSplatGeometry(mesh, positions, uvs, colors, indices, create = false)
   }
 
+  override fun updateSplatMeshIndices(meshId: Int, indices: IntArray) {
+    val mesh = dynamicMeshes[meshId] ?: return
+    val vb = mesh.vertexBuffer ?: return
+    val indexCount = indices.size - indices.size % 3
+    if (indexCount <= 0) return
+    val vertexCount = vb.vertexCount
+    if (indices.any { it < 0 || it >= vertexCount }) return
+    val ibuf = ByteBuffer.allocateDirect(indexCount * 4).order(ByteOrder.nativeOrder())
+    ibuf.asIntBuffer().put(indices, 0, indexCount)
+    val existingIb = mesh.indexBuffer
+    if (existingIb != null && existingIb.indexCount == indexCount) {
+      existingIb.setBuffer(engine, ibuf)
+      return
+    }
+    val ib = IndexBuffer.Builder().indexCount(indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT).build(engine)
+    ib.setBuffer(engine, ibuf)
+    val rm = engine.renderableManager
+    val ri = rm.getInstance(mesh.entity)
+    if (ri != 0) {
+      rm.setGeometryAt(ri, 0, RenderableManager.PrimitiveType.TRIANGLES, vb, ib, 0, indexCount)
+    }
+    existingIb?.let { engine.destroyIndexBuffer(it) }
+    mesh.indexBuffer = ib
+  }
+
   override fun dispose() {
     if (disposed) return
     disposed = true
@@ -405,7 +441,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       assetLoader.destroyAsset(it)
     }
     splatTemplateAsset = null
+    if (compiledSplatMaterial != null) {
+      splatTemplateMaterial?.let { engine.destroyMaterialInstance(it) }
+    }
     splatTemplateMaterial = null
+    compiledSplatMaterial?.let { engine.destroyMaterial(it) }
+    compiledSplatMaterial = null
     gaussianTexture?.let { engine.destroyTexture(it) }
     gaussianTexture = null
     resourceLoader.destroy()
@@ -669,11 +710,33 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   }
 
   /**
-   * Unlit, alpha-blended material with vertex colors and a 64x64 radial Gaussian falloff
-   * `baseColorMap` texture used for Gaussian splat billboards.
+   * Unlit, alpha-blended material for Gaussian splats. Loads the compiled `materials/splat.filamat`
+   * GPU billboard material when packaged in assets, falling back to `DynamicMeshTemplate.splatGlb()`
+   * + a 64x64 radial Gaussian falloff `baseColorMap` texture otherwise.
    */
   private fun splatMaterial(): MaterialInstance? {
     splatTemplateMaterial?.let { return it }
+    if (hasFilamatAsset) {
+      try {
+        val bytes = appContext.assets.open(SPLAT_FILAMAT_ASSET).use { it.readBytes() }
+        val buf =
+          ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).apply {
+            put(bytes)
+            rewind()
+          }
+        val mat = Material.Builder().payload(buf, buf.remaining()).build(engine)
+        val mi = mat.createInstance()
+        if (mat.hasParameter("gpuBillboard")) {
+          mi.setParameter("gpuBillboard", 1.0f)
+        }
+        mi.setDepthWrite(false)
+        compiledSplatMaterial = mat
+        splatTemplateMaterial = mi
+        return mi
+      } catch (e: Throwable) {
+        // Fall back to the ubershader template if the asset cannot be loaded.
+      }
+    }
     val template = assetLoader.createAsset(DynamicMeshTemplate.splatGlb()) ?: return null
     resourceLoader.loadResources(template)
     template.releaseSourceData()
@@ -718,7 +781,7 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   ): Boolean {
     val vertexCount = positions.size / 3
     val indexCount = indices.size - indices.size % 3
-    if (vertexCount == 0 || indexCount == 0 || vertexCount > MAX_DYNAMIC_VERTICES) return false
+    if (vertexCount == 0 || indexCount == 0 || vertexCount > MAX_SPLAT_VERTICES) return false
     if (uvs.size < vertexCount * 2 || colors.size < vertexCount * 4) return false
     if (indices.any { it < 0 || it >= vertexCount }) return false
 
@@ -928,6 +991,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     private const val MAX_DEPTH = 256
     private const val MAX_MATERIALS = 4096
     private const val MAX_DYNAMIC_VERTICES = 1_000_000
+    private const val MAX_SPLAT_VERTICES = SplatParser.MAX_SPLATS * 4
+    internal const val SPLAT_FILAMAT_ASSET = "materials/splat.filamat"
 
     private const val JPEG_QUALITY = 60
 

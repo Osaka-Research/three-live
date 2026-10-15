@@ -77,6 +77,9 @@ object SplatParser {
   /** Default CPU-billboard splat cap on Android / Filament (150 k). */
   const val DEFAULT_MAX_CPU_SPLATS = 150_000
 
+  /** Default GPU-billboard splat cap on Android / Filament (1 M). */
+  const val DEFAULT_MAX_GPU_SPLATS = 1_000_000
+
   private const val SPLAT_RECORD_BYTES = 32
   private const val SPZ_MAGIC = 0x5053474e
   private const val SH_C0 = 0.28209479177387814
@@ -534,6 +537,94 @@ object SplatParser {
       indices[io + 5] = vo + 3
     }
     return SplatQuadGeometry(positions, uvs, colors, indices)
+  }
+
+  /**
+   * Builds a static local-space vertex buffer for GPU-billboarded splat rendering (`splat.mat`).
+   * Each splat emits 4 vertices at its local center `(cx, cy, cz)`, with `uv0` set to the signed
+   * local half-size `(-r, -r)`, `(+r, -r)`, `(+r, +r)`, `(-r, +r)` (expanded along camera right/up
+   * in the vertex shader) and RGBA8 vertex colors. Only the index buffer needs to be updated when
+   * the back-to-front depth sort changes; see [buildSortedSplatIndices].
+   */
+  @JvmStatic
+  fun buildStaticGpuSplatVertices(data: SplatData): SplatQuadGeometry {
+    val n = data.count
+    val positions = FloatArray(n * 12)
+    val uvs = FloatArray(n * 8)
+    val colors = ByteArray(n * 16)
+    val indices = IntArray(n * 6)
+    for (s in 0 until n) {
+      val lx = data.positions[s * 3]
+      val ly = data.positions[s * 3 + 1]
+      val lz = data.positions[s * 3 + 2]
+      val r0 = maxOf(data.scales[s * 3], data.scales[s * 3 + 1], data.scales[s * 3 + 2])
+      val half = (r0 * 1.5f).coerceIn(0.001f, 10f)
+
+      val po = s * 12
+      for (v in 0 until 4) {
+        positions[po + v * 3] = lx
+        positions[po + v * 3 + 1] = ly
+        positions[po + v * 3 + 2] = lz
+      }
+
+      val uo = s * 8
+      uvs[uo] = -half
+      uvs[uo + 1] = -half
+      uvs[uo + 2] = half
+      uvs[uo + 3] = -half
+      uvs[uo + 4] = half
+      uvs[uo + 5] = half
+      uvs[uo + 6] = -half
+      uvs[uo + 7] = half
+
+      val co = s * 16
+      val c0 = data.colors[s * 4]
+      val c1 = data.colors[s * 4 + 1]
+      val c2 = data.colors[s * 4 + 2]
+      val c3 = data.colors[s * 4 + 3]
+      for (v in 0 until 4) {
+        colors[co + v * 4] = c0
+        colors[co + v * 4 + 1] = c1
+        colors[co + v * 4 + 2] = c2
+        colors[co + v * 4 + 3] = c3
+      }
+
+      val vo = s * 4
+      val io = s * 6
+      indices[io] = vo
+      indices[io + 1] = vo + 1
+      indices[io + 2] = vo + 2
+      indices[io + 3] = vo
+      indices[io + 4] = vo + 2
+      indices[io + 5] = vo + 3
+    }
+    return SplatQuadGeometry(positions, uvs, colors, indices)
+  }
+
+  /**
+   * Builds the `6 * count` triangle indices referencing the static 4-vertex-per-splat buffer from
+   * [buildStaticGpuSplatVertices] in back-to-front [order].
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun buildSortedSplatIndices(
+    order: IntArray,
+    count: Int = order.size,
+    out: IntArray = IntArray(count * 6),
+  ): IntArray {
+    val n = minOf(count, order.size)
+    require(out.size >= n * 6) { "buildSortedSplatIndices: out buffer too small" }
+    for (k in 0 until n) {
+      val vo = order[k] * 4
+      val io = k * 6
+      out[io] = vo
+      out[io + 1] = vo + 1
+      out[io + 2] = vo + 2
+      out[io + 3] = vo
+      out[io + 4] = vo + 2
+      out[io + 5] = vo + 3
+    }
+    return out
   }
 
   /**

@@ -46,7 +46,8 @@ constructor(
   /** Whether cross-origin `splatUrl` downloads are permitted (host `allowRemoteSplats`). */
   val allowRemoteSplats: Boolean = false,
   /** Maximum splats rendered per cloud (deterministic stride downsampling when exceeded). */
-  val maxSplats: Int = SplatParser.DEFAULT_MAX_CPU_SPLATS,
+  val maxSplats: Int =
+    if (renderer.supportsGpuSplats) SplatParser.DEFAULT_MAX_GPU_SPLATS else SplatParser.DEFAULT_MAX_CPU_SPLATS,
   /** Custom loader for tests; defaults to [SplatParser.loadUrl]. */
   private val splatLoader: (url: String, baseUrl: String?, allowCrossOrigin: Boolean) -> SplatData =
     { u, b, a -> SplatParser.loadUrl(u, b, a) },
@@ -83,7 +84,9 @@ constructor(
 
   private class SplatCloud(val node: Int, val url: String) {
     @Volatile var data: SplatData? = null
+    @Volatile var staticGpuGeometry: SplatQuadGeometry? = null
     @Volatile var pendingGeometry: SplatQuadGeometry? = null
+    @Volatile var pendingIndices: IntArray? = null
     @Volatile var sorting: Boolean = false
     var meshId: Int = -1
     var lastCameraWorld: FloatArray? = null
@@ -129,7 +132,13 @@ constructor(
             if (disposed) return@execute
             try {
               val loaded = splatLoader(resolved, baseUrl, allowRemoteSplats)
-              if (!disposed) cloud.data = SplatParser.downsample(loaded, maxSplats)
+              if (!disposed) {
+                val downsampled = SplatParser.downsample(loaded, maxSplats)
+                if (renderer.supportsGpuSplats) {
+                  cloud.staticGpuGeometry = SplatParser.buildStaticGpuSplatVertices(downsampled)
+                }
+                cloud.data = downsampled
+              }
             } catch (e: RuntimeException) {
               // Malformed or unreachable splat URLs are ignored without crashing the scene.
             }
@@ -325,20 +334,36 @@ constructor(
     val data = sc.data ?: return
     if (data.count == 0 || !session.nodeWorldMatrix(sc.node, world)) return
     val visible = session.isEffectivelyVisible(sc.node)
-    if (visible != sc.wasVisible && sc.meshId >= 0) {
-      sc.wasVisible = visible
-      val k = if (visible) 1f else 0f
-      matrix.fill(0f)
-      matrix[0] = k
-      matrix[5] = k
-      matrix[10] = k
-      matrix[15] = 1f
-      renderer.setDynamicMeshTransform(sc.meshId, matrix)
+    val gpuPath = renderer.supportsGpuSplats
+    if (sc.meshId >= 0) {
+      if (!visible) {
+        if (sc.wasVisible) {
+          sc.wasVisible = false
+          matrix.fill(0f)
+          matrix[15] = 1f
+          renderer.setDynamicMeshTransform(sc.meshId, matrix)
+        }
+        return
+      }
+      if (gpuPath) {
+        sc.wasVisible = true
+        for (i in 0 until 16) matrix[i] = world[i].toFloat()
+        renderer.setDynamicMeshTransform(sc.meshId, matrix)
+      } else if (!sc.wasVisible) {
+        sc.wasVisible = true
+        matrix.fill(0f)
+        matrix[0] = 1f
+        matrix[5] = 1f
+        matrix[10] = 1f
+        matrix[15] = 1f
+        renderer.setDynamicMeshTransform(sc.meshId, matrix)
+      }
+    } else if (!visible) {
+      return
     }
-    if (!visible) return
 
-    // Consume any geometry already built on the background thread before kicking off a new sort,
-    // or immediately after a synchronous executor runs below.
+    // Consume any geometry/indices already built on the background thread before kicking off a new
+    // sort, or immediately after a synchronous executor runs below.
     consumePendingSplatGeometry(sc)
 
     sc.sinceLastSortSec += dt.coerceAtLeast(0.0)
@@ -363,7 +388,11 @@ constructor(
         val counts = sc.counts ?: IntArray(65536).also { sc.counts = it }
         val sorted = SplatParser.sortSplatsByDepth(n, data.positions, mvp, out, depths, keys, counts)
         if (!disposed) {
-          sc.pendingGeometry = SplatParser.buildSplatQuads(data, sorted, nodeSnap, camSnap)
+          if (gpuPath) {
+            sc.pendingIndices = SplatParser.buildSortedSplatIndices(sorted, n)
+          } else {
+            sc.pendingGeometry = SplatParser.buildSplatQuads(data, sorted, nodeSnap, camSnap)
+          }
         }
       } finally {
         sc.sorting = false
@@ -373,6 +402,21 @@ constructor(
   }
 
   private fun consumePendingSplatGeometry(sc: SplatCloud) {
+    if (renderer.supportsGpuSplats) {
+      val idx = sc.pendingIndices ?: return
+      sc.pendingIndices = null
+      if (sc.meshId < 0) {
+        val staticGeo = sc.staticGpuGeometry ?: return
+        sc.meshId = renderer.addSplatMesh(staticGeo.positions, staticGeo.uvs, staticGeo.colors, idx)
+        if (sc.meshId >= 0) {
+          for (i in 0 until 16) matrix[i] = world[i].toFloat()
+          renderer.setDynamicMeshTransform(sc.meshId, matrix)
+        }
+      } else {
+        renderer.updateSplatMeshIndices(sc.meshId, idx)
+      }
+      return
+    }
     val geo = sc.pendingGeometry ?: return
     sc.pendingGeometry = null
     if (sc.meshId < 0) {

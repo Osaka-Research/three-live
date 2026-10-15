@@ -24,6 +24,9 @@ import simd
 #if canImport(Compression)
   import Compression
 #endif
+#if canImport(Metal)
+  import Metal
+#endif
 
 /// Decoded Gaussian splat cloud (structure of arrays).
 public struct SplatData: Sendable, Equatable {
@@ -83,6 +86,8 @@ public enum SplatParser {
   public static let maxSplats = 1_000_000
   /// Default CPU-billboard splat cap on iOS / visionOS (100 k).
   public static let defaultMaxCpuSplats = 100_000
+  /// Default GPU-billboard splat cap on iOS / visionOS (1 M).
+  public static let defaultMaxGpuSplats = 1_000_000
   /// Maximum (compressed) file size in bytes.
   public static let maxFileBytes = 128 * 1024 * 1024
   /// Maximum decompressed `.spz` payload size in bytes (hard ceiling for `gunzip`).
@@ -570,6 +575,218 @@ public enum SplatParser {
     }
     return QuadGeometry(positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
   }
+
+  /// Builds a static local-space vertex buffer for GPU-billboarded splat rendering (`CustomMaterial`).
+  /// Each splat emits 4 vertices at its local center `(cx, cy, cz)`, with `uvs` set to the signed
+  /// local half-size `(-r, -r)`, `(+r, -r)`, `(+r, +r)`, `(-r, +r)` (expanded along camera right/up
+  /// in `threeLiveSplatGeometry`) and RGBA8 vertex colors. Only the index buffer needs to be updated
+  /// when the back-to-front depth sort changes; see `buildSortedSplatIndices(order:count:)`.
+  public static func buildStaticGpuSplatVertices(_ data: SplatData) -> QuadGeometry {
+    let n = data.count
+    guard n > 0 else { return QuadGeometry() }
+    var positions: [SIMD3<Float>] = []
+    positions.reserveCapacity(n * 4)
+    var uvs: [SIMD2<Float>] = []
+    uvs.reserveCapacity(n * 4)
+    var colors: [UInt8] = []
+    colors.reserveCapacity(n * 16)
+    var indices: [UInt32] = []
+    indices.reserveCapacity(n * 6)
+    var sumR: Double = 0
+    var sumG: Double = 0
+    var sumB: Double = 0
+    var sumA: Double = 0
+
+    for s in 0..<n {
+      let lp = SIMD3<Float>(data.positions[s * 3], data.positions[s * 3 + 1], data.positions[s * 3 + 2])
+      let r0 = max(data.scales[s * 3], max(data.scales[s * 3 + 1], data.scales[s * 3 + 2]))
+      let half = min(max(r0 * 1.5, 0.001), 10.0)
+      let base = UInt32(s * 4)
+      for _ in 0..<4 { positions.append(lp) }
+      uvs.append(SIMD2<Float>(-half, -half))
+      uvs.append(SIMD2<Float>(half, -half))
+      uvs.append(SIMD2<Float>(half, half))
+      uvs.append(SIMD2<Float>(-half, half))
+      let c0 = data.colors[s * 4]
+      let c1 = data.colors[s * 4 + 1]
+      let c2 = data.colors[s * 4 + 2]
+      let c3 = data.colors[s * 4 + 3]
+      sumR += Double(c0)
+      sumG += Double(c1)
+      sumB += Double(c2)
+      sumA += Double(c3)
+      for _ in 0..<4 {
+        colors.append(c0)
+        colors.append(c1)
+        colors.append(c2)
+        colors.append(c3)
+      }
+      indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
+    }
+    let denom = Double(n) * 255.0
+    let avg = SIMD4<Float>(Float(sumR / denom), Float(sumG / denom), Float(sumB / denom), Float(sumA / denom))
+    return QuadGeometry(positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
+  }
+
+  /// Builds the `6 * count` triangle indices referencing the static 4-vertex-per-splat buffer from
+  /// `buildStaticGpuSplatVertices` in back-to-front `order`.
+  public static func buildSortedSplatIndices(order: [UInt32], count: Int? = nil) -> [UInt32] {
+    let n = min(count ?? order.count, order.count)
+    guard n > 0 else { return [] }
+    var out = [UInt32](repeating: 0, count: n * 6)
+    for k in 0..<n {
+      let vo = order[k] &* 4
+      let io = k * 6
+      out[io] = vo
+      out[io + 1] = vo &+ 1
+      out[io + 2] = vo &+ 2
+      out[io + 3] = vo
+      out[io + 4] = vo &+ 2
+      out[io + 5] = vo &+ 3
+    }
+    return out
+  }
+
+  /// Metal Shading Language source for RealityKit `CustomMaterial` Gaussian splats (`threeLiveSplatGeometry`
+  /// geometry modifier + `threeLiveSplatSurface` surface shader).
+  public static let metalShaderSource: String = """
+    #include <metal_stdlib>
+    using namespace metal;
+
+    #if __has_include(<RealityKit/RealityKit.h>) && !defined(__VISION_OS_VERSION_MIN_REQUIRED) && !defined(__TV_OS_VERSION_MIN_REQUIRED)
+    #include <RealityKit/RealityKit.h>
+    #else
+    namespace realitykit {
+    namespace geometry_modifier {
+    struct geometry_data_t;
+    namespace api {
+    [[visible]] float4x4 model_to_view(thread geometry_data_t &data);
+    [[visible]] float2 uv0(thread geometry_data_t &data);
+    [[visible]] void set_uv0(float2 value, thread geometry_data_t &data);
+    [[visible]] void set_model_position_offset(float3 value, thread geometry_data_t &data);
+    [[visible]] float4 color(thread geometry_data_t &data);
+    [[visible]] void set_custom_attribute(float4 value, thread geometry_data_t &data);
+    }
+    struct uniforms {
+      thread geometry_data_t &data;
+      inline __attribute__((__always_inline__)) float4x4 model_to_view() const thread {
+        return api::model_to_view(data);
+      }
+    };
+    struct geometry {
+      thread geometry_data_t &data;
+      inline __attribute__((__always_inline__)) float2 uv0() const thread { return api::uv0(data); }
+      inline __attribute__((__always_inline__)) void set_uv0(float2 v) thread { api::set_uv0(v, data); }
+      inline __attribute__((__always_inline__)) void set_model_position_offset(float3 v) thread {
+        api::set_model_position_offset(v, data);
+      }
+      inline __attribute__((__always_inline__)) float4 color() const thread { return api::color(data); }
+      inline __attribute__((__always_inline__)) void set_custom_attribute(float4 v) thread {
+        api::set_custom_attribute(v, data);
+      }
+    };
+    }
+    struct geometry_parameters {
+      thread geometry_modifier::geometry_data_t &data;
+      inline __attribute__((__always_inline__)) geometry_modifier::uniforms uniforms() const thread {
+        return {data};
+      }
+      inline __attribute__((__always_inline__)) geometry_modifier::geometry geometry() thread {
+        return {data};
+      }
+    };
+    namespace surface {
+    struct surface_data_t;
+    namespace api {
+    [[visible]] float2 uv0(thread surface_data_t &data);
+    [[visible]] float4 color(thread surface_data_t &data);
+    [[visible]] float4 custom_attribute(thread surface_data_t &data);
+    [[visible]] void set_base_color(half3 value, thread surface_data_t &data);
+    [[visible]] void set_emissive_color(half3 value, thread surface_data_t &data);
+    [[visible]] void set_opacity(half value, thread surface_data_t &data);
+    }
+    struct geometry {
+      thread surface_data_t &data;
+      inline __attribute__((__always_inline__)) float2 uv0() const thread { return api::uv0(data); }
+      inline __attribute__((__always_inline__)) float4 color() const thread { return api::color(data); }
+      inline __attribute__((__always_inline__)) float4 custom_attribute() const thread {
+        return api::custom_attribute(data);
+      }
+    };
+    struct surface_properties {
+      thread surface_data_t &data;
+      inline __attribute__((__always_inline__)) void set_base_color(half3 v) thread {
+        api::set_base_color(v, data);
+      }
+      inline __attribute__((__always_inline__)) void set_emissive_color(half3 v) thread {
+        api::set_emissive_color(v, data);
+      }
+      inline __attribute__((__always_inline__)) void set_opacity(half v) thread {
+        api::set_opacity(v, data);
+      }
+    };
+    }
+    struct surface_parameters {
+      thread surface::surface_data_t &data;
+      inline __attribute__((__always_inline__)) surface::geometry geometry() const thread {
+        return {data};
+      }
+      inline __attribute__((__always_inline__)) surface::surface_properties surface() thread {
+        return {data};
+      }
+    };
+    }
+    #endif
+
+    [[visible]]
+    void threeLiveSplatGeometry(realitykit::geometry_parameters params) {
+      auto geo = params.geometry();
+      float2 offset = geo.uv0();
+      float4x4 mv = params.uniforms().model_to_view();
+      float3 c0 = normalize(mv[0].xyz);
+      float3 c1 = normalize(mv[1].xyz);
+      float3 c2 = normalize(mv[2].xyz);
+      float3 rightModel = float3(c0.x, c1.x, c2.x);
+      float3 upModel = float3(c0.y, c1.y, c2.y);
+      geo.set_model_position_offset(rightModel * offset.x + upModel * offset.y);
+      geo.set_uv0(sign(offset) * 0.5f + 0.5f);
+      geo.set_custom_attribute(geo.color());
+    }
+
+    [[visible]]
+    void threeLiveSplatSurface(realitykit::surface_parameters params) {
+      auto geo = params.geometry();
+      float2 d = geo.uv0() * 2.0f - 1.0f;
+      float r2 = dot(d, d);
+      float w = (r2 > 1.0f) ? 0.0f : exp(-4.0f * r2);
+      float4 col = geo.custom_attribute();
+      if (col.a <= 0.0f && dot(col.rgb, col.rgb) <= 0.0f) {
+        col = geo.color();
+      }
+      if (col.a <= 0.0f && dot(col.rgb, col.rgb) <= 0.0f) {
+        col = float4(1.0f, 1.0f, 1.0f, 1.0f);
+      }
+      auto surf = params.surface();
+      surf.set_base_color(half3(col.rgb));
+      surf.set_emissive_color(half3(col.rgb));
+      surf.set_opacity(half(col.a * w));
+    }
+    """
+
+  #if canImport(Metal)
+    /// Compiles `metalShaderSource` into an `MTLLibrary` suitable for RealityKit `CustomMaterial`,
+    /// or returns `nil` if the device does not support visible functions (Metal 2.3+).
+    public static func makeMetalLibrary(
+      device: MTLDevice? = MTLCreateSystemDefaultDevice()
+    ) -> MTLLibrary? {
+      guard let device = device else { return nil }
+      let options = MTLCompileOptions()
+      if #available(iOS 15.0, macOS 12.0, tvOS 15.0, visionOS 1.0, *) {
+        options.languageVersion = .version2_4
+      }
+      return try? device.makeLibrary(source: metalShaderSource, options: options)
+    }
+  #endif
 
   /// Generates a `size x size` RGBA8 radial Gaussian falloff image (`exp(-4 * r^2)` for `r <= 1`).
   public static func gaussianFalloffRGBA(size: Int = 64) -> [UInt8] {

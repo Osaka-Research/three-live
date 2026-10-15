@@ -1,0 +1,72 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// GPU-billboarded 3D Gaussian Splat material for three-live on Android / Filament.
+// Compiled at build time via Filament's `matc` into `assets/materials/splat.filamat`.
+material {
+    name : ThreeLiveSplat,
+    shadingModel : unlit,
+    blending : fade,
+    depthWrite : false,
+    culling : none,
+    requires : [
+        uv0,
+        color
+    ],
+    parameters : [
+        {
+            type : float,
+            name : gpuBillboard
+        }
+    ],
+    variantFilter : [
+        directionalLighting,
+        dynamicLighting,
+        shadowReceiver,
+        skinning,
+        vsm,
+        ssr
+    ]
+}
+
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+        if (materialParams.gpuBillboard > 0.5) {
+            vec2 offset = material.uv0;
+            mat4 worldFromModel = getWorldFromModelMatrix();
+            float modelScale = (
+                length(worldFromModel[0].xyz) +
+                length(worldFromModel[1].xyz) +
+                length(worldFromModel[2].xyz)
+            ) * (1.0 / 3.0);
+            mat4 worldFromView = getWorldFromViewMatrix();
+            vec3 right = worldFromView[0].xyz;
+            vec3 up = worldFromView[1].xyz;
+            material.worldPosition.xyz += (right * offset.x + up * offset.y) * max(modelScale, 1e-6);
+            material.uv0 = sign(offset) * 0.5 + 0.5;
+        }
+    }
+}
+
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec2 d = getUV0() * 2.0 - 1.0;
+        float r2 = dot(d, d);
+        float w = (r2 > 1.0) ? 0.0 : exp(-4.0 * r2);
+        vec4 c = getColor();
+        float alpha = c.a * w;
+        material.baseColor = vec4(c.rgb * alpha, alpha);
+    }
+}

@@ -130,7 +130,15 @@ interface ThreeLiveSceneRenderer {
   fun removeDynamicMesh(meshId: Int) {}
 
   /**
-   * Adds a world-space Gaussian splat quad mesh ([positions] 3 floats/vertex, [uvs] 2 floats/vertex,
+   * Whether [addSplatMesh] uses a GPU-billboarded splat shader (`splat.filamat`) where vertex
+   * `positions` are local splat centers, `uvs` are signed local half-sizes `(±r, ±r)`, and only
+   * [updateSplatMeshIndices] + [setDynamicMeshTransform] need to run after initial upload.
+   */
+  val supportsGpuSplats: Boolean
+    get() = false
+
+  /**
+   * Adds a Gaussian splat quad mesh ([positions] 3 floats/vertex, [uvs] 2 floats/vertex,
    * [colors] 4 RGBA8 bytes/vertex, [indices] triangle indices) drawn with an unlit alpha-blended
    * radial Gaussian falloff material. Returns a mesh id, or `-1` when unsupported.
    */
@@ -149,6 +157,12 @@ interface ThreeLiveSceneRenderer {
     colors: ByteArray,
     indices: IntArray,
   ) {}
+
+  /**
+   * Replaces only the index buffer of a GPU-billboarded splat mesh created by [addSplatMesh],
+   * leaving its static vertex buffer intact. Falls back to no-op when unsupported.
+   */
+  fun updateSplatMeshIndices(meshId: Int, indices: IntArray) {}
 
   /** Releases every resource. The renderer is unusable afterwards; safe to call twice. */
   fun dispose()

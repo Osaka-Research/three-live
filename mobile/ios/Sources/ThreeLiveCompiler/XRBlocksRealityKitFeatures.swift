@@ -22,6 +22,9 @@
   import Foundation
   import RealityKit
   import simd
+  #if canImport(Metal)
+    import Metal
+  #endif
 
   @MainActor
   public final class XRBlocksRealityKitFeatures {
@@ -69,7 +72,10 @@
       let url: URL
       let entity: ModelEntity
       var data: SplatData?
+      var staticGpuGeometry: SplatParser.QuadGeometry?
       var pendingGeometry: SplatParser.QuadGeometry?
+      var pendingIndices: [UInt32]?
+      var lowLevelMeshBox: AnyObject?
       var sorting: Bool = false
       var lastCameraWorld: simd_float4x4?
       var lastNodeWorld: simd_float4x4?
@@ -88,6 +94,8 @@
     private var strokes: [Stroke] = []
     private var splats: [SplatCloud] = []
     private var gaussianTexture: TextureResource?
+    private var customSplatMaterial: RealityKit.Material?
+    private var customSplatMaterialChecked = false
     private var drag: (node: Int, drag: ManipulationHandles.Drag)?
     private var painting: Int?
     private var strokeCount = 0
@@ -97,11 +105,13 @@
       live: XRLiveRealityKitSession,
       baseURL: String? = nil,
       allowRemoteSplats: Bool = false,
-      maxSplats: Int = SplatParser.defaultMaxCpuSplats
+      maxSplats: Int? = nil
     ) {
       self.live = live
       container.name = "XRBlocksFeatures"
       live.root.addChild(container)
+      let useGpuBillboard = Self.probeGpuBillboardMaterial(into: &customSplatMaterial, checked: &customSplatMaterialChecked)
+      let effectiveMaxSplats = maxSplats ?? (useGpuBillboard ? SplatParser.defaultMaxGpuSplats : SplatParser.defaultMaxCpuSplats)
       let session = live.session
       for i in 0..<session.nodeCount {
         guard let traits = session.traits(at: i) else { continue }
@@ -137,8 +147,10 @@
             guard let loaded = try? await SplatParser.loadURL(
               resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
             else { return }
-            let sampled = SplatParser.downsample(loaded, maxSplats: maxSplats)
+            let sampled = SplatParser.downsample(loaded, maxSplats: effectiveMaxSplats)
+            let staticGpu = useGpuBillboard ? SplatParser.buildStaticGpuSplatVertices(sampled) : nil
             await MainActor.run {
+              cloud?.staticGpuGeometry = staticGpu
               cloud?.data = sampled
             }
           }
@@ -320,19 +332,23 @@
       let visible = live.session.isEffectivelyVisible(sc.node)
       sc.entity.isEnabled = visible
       guard visible else { return }
+      let nodeWorld = live.session.worldMatrix(of: sc.node)
+      let useGpuBillboard = Self.probeGpuBillboardMaterial(
+        into: &customSplatMaterial, checked: &customSplatMaterialChecked)
 
-      if let geo = sc.pendingGeometry {
-        sc.pendingGeometry = nil
-        if let mesh = Self.splatMesh(geo) {
-          let mat = splatMaterial(color: geo.averageColor)
-          sc.entity.model = ModelComponent(mesh: mesh, materials: [mat])
-          sc.entity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+      if useGpuBillboard {
+        sc.entity.setTransformMatrix(nodeWorld, relativeTo: nil)
+        if let idx = sc.pendingIndices {
+          sc.pendingIndices = nil
+          applyGpuSplatIndices(sc, indices: idx)
         }
+      } else if let geo = sc.pendingGeometry {
+        sc.pendingGeometry = nil
+        applyCpuSplatGeometry(sc, geometry: geo)
       }
 
       sc.sinceLastSort += max(0, dt)
       if sc.sorting || sc.sinceLastSort < Self.splatResortMinInterval { return }
-      let nodeWorld = live.session.worldMatrix(of: sc.node)
       if !SplatParser.shouldResort(
         lastCameraWorld: sc.lastCameraWorld, cameraWorld: camera,
         lastNodeWorld: sc.lastNodeWorld, nodeWorld: nodeWorld)
@@ -347,13 +363,163 @@
       Task.detached(priority: .userInitiated) { [weak sc] in
         let mvp = SplatParser.viewDepthMatrix(nodeWorld: nodeWorld, cameraWorld: camera)
         let order = SplatParser.sortByDepth(data, mvp: mvp)
-        let geo = SplatParser.buildSplatQuads(data, order: order, nodeWorld: nodeWorld, cameraWorld: camera)
-        await MainActor.run {
-          sc?.pendingGeometry = geo
-          sc?.sorting = false
+        if useGpuBillboard {
+          let indices = SplatParser.buildSortedSplatIndices(order: order, count: data.count)
+          await MainActor.run {
+            sc?.pendingIndices = indices
+            sc?.sorting = false
+          }
+        } else {
+          let geo = SplatParser.buildSplatQuads(data, order: order, nodeWorld: nodeWorld, cameraWorld: camera)
+          await MainActor.run {
+            sc?.pendingGeometry = geo
+            sc?.sorting = false
+          }
         }
       }
     }
+
+    private func applyGpuSplatIndices(_ sc: SplatCloud, indices: [UInt32]) {
+      guard let staticGeo = sc.staticGpuGeometry, let mat = customSplatMaterial else { return }
+      #if compiler(>=6.0) && canImport(Metal)
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+          if let llm = sc.lowLevelMeshBox as? LowLevelMesh, llm.indexCapacity == indices.count {
+            llm.withUnsafeMutableIndices { raw in
+              indices.withUnsafeBytes { src in raw.copyMemory(from: src) }
+            }
+            return
+          }
+          var initial = staticGeo
+          initial.indices = indices
+          if let (llm, resource) = Self.makeLowLevelSplatMesh(initial) {
+            sc.lowLevelMeshBox = llm
+            sc.entity.model = ModelComponent(mesh: resource, materials: [mat])
+            return
+          }
+        }
+      #endif
+      var updated = staticGeo
+      updated.indices = indices
+      if let mesh = Self.splatMesh(updated) {
+        sc.entity.model = ModelComponent(mesh: mesh, materials: [mat])
+      }
+    }
+
+    private func applyCpuSplatGeometry(_ sc: SplatCloud, geometry geo: SplatParser.QuadGeometry) {
+      let mat = splatMaterial(color: geo.averageColor)
+      #if compiler(>=6.0) && canImport(Metal)
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+          if let llm = sc.lowLevelMeshBox as? LowLevelMesh,
+            llm.vertexCapacity == geo.positions.count,
+            llm.indexCapacity == geo.indices.count
+          {
+            llm.withUnsafeMutableBytes(bufferIndex: 0) { raw in
+              geo.positions.withUnsafeBytes { src in raw.copyMemory(from: src) }
+            }
+            if geo.colors.count >= geo.positions.count * 4 {
+              llm.withUnsafeMutableBytes(bufferIndex: 2) { raw in
+                geo.colors.withUnsafeBytes { src in
+                  raw.copyMemory(from: UnsafeRawBufferPointer(rebasing: src.prefix(geo.positions.count * 4)))
+                }
+              }
+            }
+            sc.entity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+            return
+          }
+          if let (llm, resource) = Self.makeLowLevelSplatMesh(geo) {
+            sc.lowLevelMeshBox = llm
+            sc.entity.model = ModelComponent(mesh: resource, materials: [mat])
+            sc.entity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+            return
+          }
+        }
+      #endif
+      if let mesh = Self.splatMesh(geo) {
+        sc.entity.model = ModelComponent(mesh: mesh, materials: [mat])
+        sc.entity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+      }
+    }
+
+    private static func probeGpuBillboardMaterial(
+      into slot: inout RealityKit.Material?,
+      checked: inout Bool
+    ) -> Bool {
+      if checked { return slot != nil }
+      checked = true
+      #if (os(iOS) || os(macOS)) && canImport(Metal)
+        if #available(iOS 15.0, macOS 12.0, *), let lib = SplatParser.makeMetalLibrary() {
+          let geoMod = CustomMaterial.GeometryModifier(named: "threeLiveSplatGeometry", in: lib)
+          let surfShader = CustomMaterial.SurfaceShader(named: "threeLiveSplatSurface", in: lib)
+          if var mat = try? CustomMaterial(
+            surfaceShader: surfShader,
+            geometryModifier: geoMod,
+            lightingModel: .unlit
+          ) {
+            mat.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+            mat.faceCulling = .none
+            slot = mat
+            return true
+          }
+        }
+      #endif
+      return false
+    }
+
+    #if compiler(>=6.0) && canImport(Metal)
+      @available(iOS 18.0, macOS 15.0, visionOS 2.0, *)
+      private static func makeLowLevelSplatMesh(
+        _ g: SplatParser.QuadGeometry
+      ) -> (LowLevelMesh, MeshResource)? {
+        let vCount = g.positions.count
+        let iCount = g.indices.count
+        guard vCount > 0, iCount > 0, g.uvs.count == vCount else { return nil }
+        let attrs: [LowLevelMesh.Attribute] = [
+          LowLevelMesh.Attribute(semantic: .position, format: .float3, layoutIndex: 0, offset: 0),
+          LowLevelMesh.Attribute(semantic: .uv0, format: .float2, layoutIndex: 1, offset: 0),
+          LowLevelMesh.Attribute(semantic: .color, format: .uchar4Normalized, layoutIndex: 2, offset: 0),
+        ]
+        let layouts: [LowLevelMesh.Layout] = [
+          LowLevelMesh.Layout(
+            bufferIndex: 0, bufferOffset: 0, bufferStride: MemoryLayout<SIMD3<Float>>.stride),
+          LowLevelMesh.Layout(
+            bufferIndex: 1, bufferOffset: 0, bufferStride: MemoryLayout<SIMD2<Float>>.stride),
+          LowLevelMesh.Layout(bufferIndex: 2, bufferOffset: 0, bufferStride: 4),
+        ]
+        let desc = LowLevelMesh.Descriptor(
+          vertexCapacity: vCount,
+          vertexAttributes: attrs,
+          vertexLayouts: layouts,
+          indexCapacity: iCount,
+          indexType: .uint32
+        )
+        guard let llm = try? LowLevelMesh(descriptor: desc) else { return nil }
+        llm.withUnsafeMutableBytes(bufferIndex: 0) { raw in
+          g.positions.withUnsafeBytes { src in raw.copyMemory(from: src) }
+        }
+        llm.withUnsafeMutableBytes(bufferIndex: 1) { raw in
+          g.uvs.withUnsafeBytes { src in raw.copyMemory(from: src) }
+        }
+        if g.colors.count >= vCount * 4 {
+          llm.withUnsafeMutableBytes(bufferIndex: 2) { raw in
+            g.colors.withUnsafeBytes { src in
+              raw.copyMemory(from: UnsafeRawBufferPointer(rebasing: src.prefix(vCount * 4)))
+            }
+          }
+        }
+        llm.withUnsafeMutableIndices { raw in
+          g.indices.withUnsafeBytes { src in raw.copyMemory(from: src) }
+        }
+        let bounds = BoundingBox(
+          min: SIMD3<Float>(repeating: -1000), max: SIMD3<Float>(repeating: 1000))
+        llm.parts.replaceAll([
+          LowLevelMesh.Part(
+            indexOffset: 0, indexCount: iCount, topology: .triangle, materialIndex: 0,
+            bounds: bounds)
+        ])
+        guard let resource = try? MeshResource(from: llm) else { return nil }
+        return (llm, resource)
+      }
+    #endif
 
     private func splatMaterial(color: SIMD4<Float>) -> UnlitMaterial {
       var mat = Self.material(color)

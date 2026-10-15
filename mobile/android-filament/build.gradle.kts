@@ -15,10 +15,72 @@
 // Optional Filament renderer for three-live. The core `:mobile:android` library stays free of
 // rendering dependencies; apps opt in by adding this module and calling ThreeLiveFilament.install().
 
+import java.net.URL
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
 plugins {
   id("com.android.library")
   id("org.jetbrains.kotlin.android")
   `maven-publish`
+}
+
+val filamentVersion = "1.51.0"
+val compiledMaterialsDir = layout.buildDirectory.dir("generated/filamentAssets")
+
+val compileFilamentMaterials by tasks.registering {
+  val matFile = layout.projectDirectory.file("src/main/materials/splat.mat")
+  val outDir = compiledMaterialsDir
+  val matcCacheDir = layout.buildDirectory.dir("matc")
+  inputs.file(matFile)
+  outputs.dir(outDir)
+
+  doLast {
+    val osName = System.getProperty("os.name").lowercase()
+    val platformTag =
+      when {
+        osName.contains("mac") || osName.contains("darwin") -> "mac"
+        osName.contains("win") -> "windows"
+        else -> "linux"
+      }
+    val exeSuffix = if (platformTag == "windows") ".exe" else ""
+    val matcRoot = matcCacheDir.get().asFile
+    val matcBin = matcRoot.resolve("filament/bin/matc$exeSuffix")
+    if (!matcBin.canExecute()) {
+      matcRoot.mkdirs()
+      val archive = matcRoot.resolve("filament-v$filamentVersion-$platformTag.tgz")
+      val downloadUrl =
+        "https://github.com/google/filament/releases/download/v$filamentVersion/filament-v$filamentVersion-$platformTag.tgz"
+      URL(downloadUrl).openStream().use { input ->
+        Files.copy(input, archive.toPath(), StandardCopyOption.REPLACE_EXISTING)
+      }
+      project.copy {
+        from(project.tarTree(project.resources.gzip(archive))) {
+          include("filament/bin/matc$exeSuffix")
+        }
+        into(matcRoot)
+      }
+      matcBin.setExecutable(true)
+    }
+
+    val targetFile = outDir.get().asFile.resolve("materials/splat.filamat")
+    targetFile.parentFile.mkdirs()
+    project.exec {
+      commandLine(
+        matcBin.absolutePath,
+        "-p",
+        "mobile",
+        "-a",
+        "opengl",
+        "-a",
+        "vulkan",
+        "-S",
+        "-o",
+        targetFile.absolutePath,
+        matFile.asFile.absolutePath,
+      )
+    }
+  }
 }
 
 base { archivesName.set("three-live-filament") }
@@ -26,6 +88,12 @@ base { archivesName.set("three-live-filament") }
 android {
   namespace = "com.google.threelive.filament"
   compileSdk = 34
+
+  sourceSets {
+    getByName("main") {
+      assets.srcDir(compiledMaterialsDir)
+    }
+  }
 
   defaultConfig {
     minSdk = 24
@@ -59,10 +127,14 @@ dependencies {
   api(project(":mobile:android"))
 
   // Keep in sync with mobile/examples/android_compose/build.gradle.kts.
-  api("com.google.android.filament:filament-android:1.51.0")
-  api("com.google.android.filament:gltfio-android:1.51.0")
+  api("com.google.android.filament:filament-android:$filamentVersion")
+  api("com.google.android.filament:gltfio-android:$filamentVersion")
 
   testImplementation("junit:junit:4.13.2")
+}
+
+tasks.named("preBuild") {
+  dependsOn(compileFilamentMaterials)
 }
 
 publishing {
