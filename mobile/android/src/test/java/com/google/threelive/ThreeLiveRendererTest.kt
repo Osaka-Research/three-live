@@ -357,6 +357,51 @@ class ThreeLiveRendererTest {
     loop.stop()
   }
 
+  @Test
+  fun bindingPollsHandSourceWhenHandsEnabledAndReportsGestures() {
+    val r = FakeRenderer()
+    val b = ThreeLiveRuntimeBinding(r, glbOf(HIERARCHY))
+    val gestures = ArrayList<String>()
+    b.callbacks =
+      object : ThreeLiveRuntimeBinding.Callbacks {
+        override fun onGesture(event: XRHandGestureEvent) {
+          gestures.add("${event.hand}:${event.gesture.wireName}")
+        }
+      }
+    val fist =
+      mapOf(
+        "wrist" to doubleArrayOf(0.0, 0.0, 0.0),
+        "thumb-metacarpal" to doubleArrayOf(0.02, 0.03, 0.0),
+        "thumb-tip" to doubleArrayOf(0.01, 0.01, 0.0),
+        "index-finger-metacarpal" to doubleArrayOf(0.0, 0.06, 0.0),
+        "index-finger-tip" to doubleArrayOf(0.0, 0.02, 0.0),
+        "middle-finger-metacarpal" to doubleArrayOf(0.0, 0.06, 0.0),
+        "middle-finger-tip" to doubleArrayOf(0.0, 0.02, 0.0),
+        "ring-finger-metacarpal" to doubleArrayOf(0.0, 0.06, 0.0),
+        "ring-finger-tip" to doubleArrayOf(0.0, 0.02, 0.0),
+        "pinky-finger-metacarpal" to doubleArrayOf(0.0, 0.06, 0.0),
+        "pinky-finger-tip" to doubleArrayOf(0.0, 0.02, 0.0),
+      )
+    var rightJoints: Map<String, DoubleArray>? = fist
+    HandJointSources.register(HandJointSource { side -> if (side == "right") rightJoints else null })
+    val cam = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
+    // Disabled by default (`xrHands == "none"`).
+    r.listener!!.onFrame(0.016, cam)
+    assertTrue(gestures.isEmpty())
+    // Enabled (`xrHands != "none"`): reports once on change, then re-arms when tracking drops.
+    b.handsEnabled = true
+    r.listener!!.onFrame(0.016, cam)
+    r.listener!!.onFrame(0.016, cam)
+    assertEquals(listOf("right:fist"), gestures)
+    rightJoints = null
+    r.listener!!.onFrame(0.016, cam)
+    rightJoints = fist
+    r.listener!!.onFrame(0.016, cam)
+    assertEquals(listOf("right:fist", "right:fist"), gestures)
+    HandJointSources.register(null)
+    b.dispose()
+  }
+
   private class FakeRenderer : ThreeLiveSceneRenderer {
     override var listener: ThreeLiveRendererListener? = null
     val visible = HashMap<Int, Boolean>()

@@ -44,4 +44,8 @@ include(":mobile:android-firebase-ai")
 
 include(":mobile:android-detect-mlkit")
 
+include(":mobile:android-hands-androidxr")
+
+include(":mobile:android-hands-mediapipe")
+
 include(":mobile:examples:android_compose")

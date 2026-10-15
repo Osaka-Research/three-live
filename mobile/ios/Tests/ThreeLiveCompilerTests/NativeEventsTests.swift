@@ -121,6 +121,43 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertNil(tracker.update(hand: .left, joints: hand("fist")))
     XCTAssertNil(tracker.update(hand: .left, joints: [:]))
     XCTAssertNotNil(tracker.update(hand: .left, joints: hand("fist")))
+
+    // MediaPipe 21-landmark conversion (+Y downward flipped to +Y upward) and XRHandJointSources.
+    var mp = Array(repeating: SIMD3<Float>(0, -0.02, 0), count: 21)
+    mp[0] = SIMD3<Float>(0, 0, 0)
+    mp[1] = SIMD3<Float>(0, -0.03, 0)
+    mp[2] = SIMD3<Float>(0, -0.05, 0)
+    mp[3] = SIMD3<Float>(0, -0.10, 0)
+    mp[4] = SIMD3<Float>(0, -0.16, 0)
+    for base in [5, 9, 13, 17] {
+      mp[base] = SIMD3<Float>(0, -0.05, 0)
+      mp[base + 1] = SIMD3<Float>(0, -0.06, 0)
+      mp[base + 2] = SIMD3<Float>(0, -0.04, 0)
+      mp[base + 3] = SIMD3<Float>(0, -0.02, 0)
+    }
+    let mpJoints = XRHandGestureClassifier.fromMediaPipeLandmarks(mp)
+    XCTAssertEqual(mpJoints.count, 21)
+    XCTAssertEqual(XRHandGestureClassifier.classify(mpJoints).gesture, .thumbsUp)
+    XCTAssertTrue(XRHandGestureClassifier.fromMediaPipeLandmarks(Array(mp.prefix(5))).isEmpty)
+
+    let source = XRMediaPipeHandJointSource.install()
+    XCTAssertTrue(XRHandJointSources.current() === source)
+    source.update(hand: .right, mediaPipeLandmarks: mp)
+    XCTAssertEqual(XRHandJointSources.handPoses().count, 1)
+    var polled: [XRHandGestureEvent] = []
+    var pollTracker = XRHandGestureTracker()
+    pollTracker.poll(from: source) { polled.append($0) }
+    pollTracker.poll(from: source) { polled.append($0) }
+    XCTAssertEqual(polled.count, 1)
+    XCTAssertEqual(polled.first?.hand, .right)
+    XCTAssertEqual(polled.first?.gesture, .thumbsUp)
+    source.clear()
+    pollTracker.poll(from: source) { polled.append($0) }
+    source.update(hand: .right, mediaPipeLandmarks: mp)
+    pollTracker.poll(from: source) { polled.append($0) }
+    XCTAssertEqual(polled.count, 2)
+    XRHandJointSources.register(nil)
+    XCTAssertNil(XRHandJointSources.current())
   }
 
   // MARK: Detections

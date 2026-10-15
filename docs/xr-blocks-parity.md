@@ -82,7 +82,7 @@ most `SECURITY_3D_MAX_MESHES × 4` nodes.
 | World understanding | `plugins/world-understanding.ts` | `WorldUnderstanding.unprojectDetection()` + ARCore | `WorldUnderstanding.unprojectDetection()` + ARKit |
 | Gemini Live / hold-to-ask | `plugins/gemini-live.ts` | `gemini/XRGeminiLiveController` + `HoldToAskController` | `Gemini/XRGeminiLiveController` + `HoldToAskController` |
 | Camera + `camera-change` | `three-view.ts` orbit camera | `OrbitCameraState` (via `ThreeLiveRenderer`) | `XROrbitCameraState` |
-| Hand gestures | `xr-gestures.ts` | `XRHandGestures` (host supplies joints) | `XRHandGestureClassifier` + `XRHandTrackingSource` (visionOS) |
+| Hand gestures | `xr-gestures.ts` | `XRHandGestures` + `HandJointSource` / `HandJointSources`; optional `:mobile:android-hands-androidxr` and `:mobile:android-hands-mediapipe` | `XRHandGestureClassifier` + `XRHandJointSource` / `XRHandJointSources` + `XRMediaPipeHandJointSource` + `XRHandTrackingSource` (visionOS) |
 | Object detection | `world-understanding.ts` | `ThreeLiveDetections.detect()` | `XRDetections.detect()` |
 | Rendering | WebGL2 viewer | `ThreeLiveRenderer`; optional `:mobile:android-filament` | RealityKit |
 | Spatial paint | `plugins/spatial-paint.ts` | `XRBlocksFeatures.paintColor` (`TubeStrokeBuilder`) | `XRBlocksRealityKitFeatures.paintColor` |
@@ -123,6 +123,22 @@ Shared algorithms (all platforms):
 - **Handles**: corner drag scales uniformly about the mesh origin by the
   ratio of pointer distances; pedestal drag yaws about +Y by the pointer
   angle delta (`atan2(dx, dz)`).
+- **Hand gestures (`xrHands` / `onGesture`)**: the 25-joint geometric
+  classifier (`classifyHandJoints`, Android `XRHandGestures.classify`, iOS
+  `XRHandGestureClassifier.classify`) classifies `pinch`, `point`, `fist`,
+  `open-palm`, `thumbs-up`, and `spread` with a per-hand change filter
+  (`XRHandGestureTracker`, re-arming on `none`). When `xrHands != "none"`,
+  Android `ThreeLiveRuntimeBinding` polls `HandJointSources.current()` (and
+  feeds wrist poses into `XRLiveRuntimeSession.step` for hand-anchored
+  follows); optional adapters `:mobile:android-hands-androidxr`
+  (`ThreeLiveAndroidXrHands.install(session)`) and
+  `:mobile:android-hands-mediapipe` (`ThreeLiveMediaPipeHands.install(...)`)
+  supply headset or 21-landmark camera joints. On iOS / visionOS,
+  `XRLiveRealityKitSession` polls `XRHandJointSources.current()` (visionOS
+  `XRHandTrackingSource.install()` or camera-driven
+  `XRMediaPipeHandJointSource.install()`). Both platforms share the pure
+  21-landmark MediaPipe → WebXR joint mapper (`fromMediaPipeLandmarks`,
+  flipping MediaPipe `+Y` downward to WebXR `+Y` upward).
 - **Detection unprojection**: boxes are `[ymin, xmin, ymax, xmax]` in 0–1
   or Gemini 0–1000; the box center is unprojected along the camera ray to the
   sampled depth, a tracked plane, or 1.5 m. Host-supplied detections arrive as

@@ -48,6 +48,66 @@ data class XRHandGestureEvent(val hand: String, val gesture: XRHandGesture, val 
  * `XRHand` names (`"wrist"`, `"index-finger-tip"`, ...) mapped to xyz positions in meters.
  */
 object XRHandGestures {
+  /**
+   * The 21 MediaPipe Hand Landmarker landmark indices (`0 = WRIST` .. `20 = PINKY_TIP`) mapped to
+   * their corresponding WebXR `XRHand` joint names.
+   *
+   * Note that MediaPipe provides 21 landmarks (no separate metacarpal for the four fingers), so
+   * `INDEX_FINGER_MCP` (5) maps to `"index-finger-metacarpal"` and `INDEX_FINGER_PIP` (6) maps to
+   * `"index-finger-phalanx-proximal"`, matching [classify]'s proximal → metacarpal fallback.
+   */
+  @JvmField
+  val MEDIAPIPE_JOINT_NAMES: List<String> =
+    listOf(
+      "wrist",
+      "thumb-metacarpal",
+      "thumb-phalanx-proximal",
+      "thumb-phalanx-distal",
+      "thumb-tip",
+      "index-finger-metacarpal",
+      "index-finger-phalanx-proximal",
+      "index-finger-phalanx-distal",
+      "index-finger-tip",
+      "middle-finger-metacarpal",
+      "middle-finger-phalanx-proximal",
+      "middle-finger-phalanx-distal",
+      "middle-finger-tip",
+      "ring-finger-metacarpal",
+      "ring-finger-phalanx-proximal",
+      "ring-finger-phalanx-distal",
+      "ring-finger-tip",
+      "pinky-finger-metacarpal",
+      "pinky-finger-phalanx-proximal",
+      "pinky-finger-phalanx-distal",
+      "pinky-finger-tip",
+    )
+
+  /**
+   * Converts 21 MediaPipe 3D hand landmarks (`[x, y, z]` in meters or normalized coordinates) into a
+   * WebXR joint map suitable for [classify].
+   *
+   * MediaPipe image/world coordinates use `+Y` downward (`0` at top), whereas WebXR uses `+Y`
+   * upward. When [flipY] is `true` (the default), `y` and `z` are negated so upward gestures such as
+   * [XRHandGesture.THUMBS_UP] have `+Y` thumb vectors. Non-finite coordinates are skipped; returns
+   * an empty map if fewer than 21 points are supplied.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun fromMediaPipeLandmarks(
+    landmarks: List<DoubleArray>,
+    flipY: Boolean = true,
+  ): Map<String, DoubleArray> {
+    if (landmarks.size < MEDIAPIPE_JOINT_NAMES.size) return emptyMap()
+    val out = LinkedHashMap<String, DoubleArray>(MEDIAPIPE_JOINT_NAMES.size)
+    val sign = if (flipY) -1.0 else 1.0
+    for (i in MEDIAPIPE_JOINT_NAMES.indices) {
+      val p = landmarks[i]
+      if (p.size < 3 || !p[0].isFinite() || !p[1].isFinite() || !p[2].isFinite()) continue
+      out[MEDIAPIPE_JOINT_NAMES[i]] = doubleArrayOf(p[0], p[1] * sign, p[2] * sign)
+    }
+    return out
+  }
+
   /** Classifies one hand pose. */
   @JvmStatic
   fun classify(joints: Map<String, DoubleArray>): XRGestureResult {
@@ -150,6 +210,75 @@ class XRHandGestureTracker {
   /** Forgets [hand]'s last gesture (e.g. tracking lost). */
   fun reset(hand: String) {
     last[hand] = XRHandGesture.NONE
+  }
+
+  /**
+   * Polls `"left"` and `"right"` from [source] and invokes [onGesture] for each hand whose gesture
+   * changed to a non-`NONE` gesture; resets any hand that is no longer tracked.
+   */
+  fun poll(source: HandJointSource, onGesture: (XRHandGestureEvent) -> Unit) {
+    for (hand in HANDS) {
+      val joints = source.joints(hand)
+      if (joints.isNullOrEmpty()) {
+        reset(hand)
+      } else {
+        update(hand, joints)?.let(onGesture)
+      }
+    }
+  }
+
+  companion object {
+    private val HANDS = arrayOf("left", "right")
+  }
+}
+
+/**
+ * Supplies 3D hand joint positions for `xrHands` gesture classification and hand-anchored
+ * lazy-follow traits (for example from Jetpack XR `androidx.xr.arcore` or MediaPipe Hand
+ * Landmarker).
+ */
+fun interface HandJointSource {
+  /**
+   * Returns the latest WebXR joint map (`"wrist"`, `"index-finger-tip"`, ...) in meters for [hand]
+   * (`"left"` or `"right"`), or `null` / empty when that hand is not currently tracked.
+   */
+  fun joints(hand: String): Map<String, DoubleArray>?
+
+  /**
+   * Returns the latest world-space wrist pose for [hand], used by `follow = "left-hand"` /
+   * `"right-hand"` traits. Defaults to the `"wrist"` entry of [joints] with identity rotation.
+   */
+  fun wristPose(hand: String): XRPose? {
+    val w = joints(hand)?.get("wrist") ?: return null
+    if (w.size < 3 || !w[0].isFinite() || !w[1].isFinite() || !w[2].isFinite()) return null
+    return XRPose(floatArrayOf(w[0].toFloat(), w[1].toFloat(), w[2].toFloat()))
+  }
+}
+
+/** Process-wide registry for the [HandJointSource] used when `xrHands != "none"`. */
+object HandJointSources {
+  @Volatile private var source: HandJointSource? = null
+
+  /** Registers [value] (replacing any previous source); `null` unregisters. */
+  @JvmStatic
+  fun register(value: HandJointSource?) {
+    source = value
+  }
+
+  /** The registered source, or `null` when the app installed none. */
+  @JvmStatic fun current(): HandJointSource? = source
+
+  /** Returns a `"left"` / `"right"` wrist pose map for [XRLiveRuntimeSession.step] from [src]. */
+  @JvmStatic
+  fun handPoses(src: HandJointSource? = source): Map<String, XRPose> {
+    if (src == null) return emptyMap()
+    val left = src.wristPose("left")
+    val right = src.wristPose("right")
+    if (left == null && right == null) return emptyMap()
+    val out = LinkedHashMap<String, XRPose>(2)
+    if (left != null) out["left"] = left
+    if (right != null) out["right"] = right
+    return out
   }
 }
 

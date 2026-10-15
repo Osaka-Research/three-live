@@ -78,6 +78,43 @@ public enum XRHandGestureClassifier {
     "pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal", "pinky-finger-tip",
   ]
 
+  /// The 21 MediaPipe Hand Landmarker landmark indices (`0 = WRIST` .. `20 = PINKY_TIP`) mapped to
+  /// their corresponding WebXR `XRHand` joint names (matching Android
+  /// `XRHandGestures.MEDIAPIPE_JOINT_NAMES`).
+  public static let mediaPipeJointNames: [String] = [
+    "wrist",
+    "thumb-metacarpal", "thumb-phalanx-proximal", "thumb-phalanx-distal", "thumb-tip",
+    "index-finger-metacarpal", "index-finger-phalanx-proximal", "index-finger-phalanx-distal",
+    "index-finger-tip",
+    "middle-finger-metacarpal", "middle-finger-phalanx-proximal", "middle-finger-phalanx-distal",
+    "middle-finger-tip",
+    "ring-finger-metacarpal", "ring-finger-phalanx-proximal", "ring-finger-phalanx-distal",
+    "ring-finger-tip",
+    "pinky-finger-metacarpal", "pinky-finger-phalanx-proximal", "pinky-finger-phalanx-distal",
+    "pinky-finger-tip",
+  ]
+
+  /// Converts 21 MediaPipe 3D hand landmarks into a WebXR joint map suitable for `classify(_:)`.
+  ///
+  /// MediaPipe image/world coordinates use `+Y` downward (`0` at top), whereas WebXR uses `+Y`
+  /// upward. When `flipY` is `true` (the default), `y` and `z` are negated so upward gestures such
+  /// as `.thumbsUp` have `+Y` thumb vectors. Non-finite coordinates are skipped; returns an empty
+  /// map if fewer than 21 points are supplied.
+  public static func fromMediaPipeLandmarks(
+    _ landmarks: [SIMD3<Float>], flipY: Bool = true
+  ) -> XRHandJointMap {
+    guard landmarks.count >= mediaPipeJointNames.count else { return [:] }
+    var out: XRHandJointMap = [:]
+    out.reserveCapacity(mediaPipeJointNames.count)
+    let sign: Float = flipY ? -1 : 1
+    for i in 0..<mediaPipeJointNames.count {
+      let p = landmarks[i]
+      guard p.x.isFinite, p.y.isFinite, p.z.isFinite else { continue }
+      out[mediaPipeJointNames[i]] = SIMD3<Float>(p.x, p.y * sign, p.z * sign)
+    }
+    return out
+  }
+
   private static func vec(_ v: SIMD3<Float>) -> SIMD3<Double> {
     SIMD3<Double>(Double(v.x), Double(v.y), Double(v.z))
   }
@@ -215,6 +252,128 @@ public struct XRHandGestureTracker: Sendable {
   public mutating func reset(_ hand: XRHand) {
     lastGestures[hand] = XRHandGesture.none
   }
+
+  /// Polls `.left` and `.right` from `source` and invokes `onGesture` for each hand whose gesture
+  /// changed to a non-`.none` gesture; resets any hand that is no longer tracked.
+  public mutating func poll(
+    from source: XRHandJointSource, onGesture: (XRHandGestureEvent) -> Void
+  ) {
+    for hand in [XRHand.left, XRHand.right] {
+      guard let joints = source.joints(for: hand), !joints.isEmpty else {
+        reset(hand)
+        continue
+      }
+      if let event = update(hand: hand, joints: joints) {
+        onGesture(event)
+      }
+    }
+  }
+}
+
+/// Supplies 3D hand joint positions for `xrHands` gesture classification and hand-anchored
+/// lazy-follow traits (for example from visionOS `XRHandTrackingSource` or a MediaPipe Hand
+/// Landmarker camera feed).
+public protocol XRHandJointSource: AnyObject {
+  /// Returns the latest WebXR joint map (`"wrist"`, `"index-finger-tip"`, ...) in meters for
+  /// `hand`, or `nil` / empty when that hand is not currently tracked.
+  func joints(for hand: XRHand) -> XRHandJointMap?
+
+  /// Returns the latest world-space wrist pose for `hand`, used by `follow = "left-hand"` /
+  /// `"right-hand"` traits. Defaults to the `"wrist"` entry of `joints(for:)` with identity
+  /// rotation.
+  func wristPose(for hand: XRHand) -> XRPose?
+}
+
+extension XRHandJointSource {
+  public func wristPose(for hand: XRHand) -> XRPose? {
+    guard let w = joints(for: hand)?["wrist"], w.x.isFinite, w.y.isFinite, w.z.isFinite else {
+      return nil
+    }
+    return XRPose(position: w)
+  }
+}
+
+/// Process-wide registry for the `XRHandJointSource` used when `xrHands != "none"`.
+public enum XRHandJointSources {
+  private static let lock = NSLock()
+  private static var source: XRHandJointSource?
+
+  /// Registers `value` (replacing any previous source); `nil` unregisters.
+  public static func register(_ value: XRHandJointSource?) {
+    lock.lock()
+    source = value
+    lock.unlock()
+  }
+
+  /// The registered source, or `nil` when the app installed none.
+  public static func current() -> XRHandJointSource? {
+    lock.lock()
+    defer { lock.unlock() }
+    return source
+  }
+
+  /// Returns a `.left` / `.right` wrist pose map for `XRLiveRuntimeSession.step` from `src`.
+  public static func handPoses(from src: XRHandJointSource? = current()) -> [XRHand: XRPose] {
+    guard let src = src else { return [:] }
+    var out: [XRHand: XRPose] = [:]
+    if let left = src.wristPose(for: .left) { out[.left] = left }
+    if let right = src.wristPose(for: .right) { out[.right] = right }
+    return out
+  }
+}
+
+/// Thread-safe in-memory `XRHandJointSource` for hosts that push 21-landmark MediaPipe Hand
+/// Landmarker results or pre-mapped WebXR joint dictionaries from a camera pipeline.
+public final class XRMediaPipeHandJointSource: XRHandJointSource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var leftJoints: XRHandJointMap?
+  private var rightJoints: XRHandJointMap?
+
+  public init() {}
+
+  /// Creates an `XRMediaPipeHandJointSource` and registers it with `XRHandJointSources`.
+  @discardableResult
+  public static func install() -> XRMediaPipeHandJointSource {
+    let s = XRMediaPipeHandJointSource()
+    XRHandJointSources.register(s)
+    return s
+  }
+
+  public func joints(for hand: XRHand) -> XRHandJointMap? {
+    lock.lock()
+    defer { lock.unlock() }
+    switch hand {
+    case .left: return leftJoints
+    case .right: return rightJoints
+    }
+  }
+
+  /// Updates the tracked joints for `hand` from 21 MediaPipe 3D landmarks (`flipY` converts
+  /// MediaPipe `+Y` downward to WebXR `+Y` upward). Passing `nil` clears that hand.
+  public func update(hand: XRHand, mediaPipeLandmarks: [SIMD3<Float>]?, flipY: Bool = true) {
+    let mapped = mediaPipeLandmarks.map {
+      XRHandGestureClassifier.fromMediaPipeLandmarks($0, flipY: flipY)
+    }
+    update(hand: hand, joints: (mapped?.isEmpty == false) ? mapped : nil)
+  }
+
+  /// Updates the tracked WebXR joint map for `hand` (`nil` clears that hand).
+  public func update(hand: XRHand, joints: XRHandJointMap?) {
+    lock.lock()
+    switch hand {
+    case .left: leftJoints = joints
+    case .right: rightJoints = joints
+    }
+    lock.unlock()
+  }
+
+  /// Clears both hands.
+  public func clear() {
+    lock.lock()
+    leftJoints = nil
+    rightJoints = nil
+    lock.unlock()
+  }
 }
 
 #if os(visionOS) && canImport(ARKit)
@@ -234,7 +393,7 @@ public struct XRHandGestureTracker: Sendable {
   /// ```
   @available(visionOS 1.0, *)
   @MainActor
-  public final class XRHandTrackingSource {
+  public final class XRHandTrackingSource: XRHandJointSource {
     /// Called when a hand's gesture changes to something other than `.none`.
     public var onGesture: ((XRHandGestureEvent) -> Void)?
     /// Called for every tracked hand update with world-space joint positions.
@@ -246,6 +405,9 @@ public struct XRHandGestureTracker: Sendable {
     private let provider = HandTrackingProvider()
     private var tracker = XRHandGestureTracker()
     private var updatesTask: Task<Void, Never>?
+    private let jointsLock = NSLock()
+    private var latestJoints: [XRHand: XRHandJointMap] = [:]
+    private var latestPoses: [XRHand: XRPose] = [:]
 
     /// ARKit joint names mapped to WebXR names.
     static let jointNames: [(HandSkeleton.JointName, String)] = [
@@ -281,6 +443,26 @@ public struct XRHandGestureTracker: Sendable {
 
     public init() {}
 
+    /// Creates an `XRHandTrackingSource` and registers it with `XRHandJointSources`.
+    @discardableResult
+    public static func install() -> XRHandTrackingSource {
+      let s = XRHandTrackingSource()
+      XRHandJointSources.register(s)
+      return s
+    }
+
+    public nonisolated func joints(for hand: XRHand) -> XRHandJointMap? {
+      jointsLock.lock()
+      defer { jointsLock.unlock() }
+      return latestJoints[hand]
+    }
+
+    public nonisolated func wristPose(for hand: XRHand) -> XRPose? {
+      jointsLock.lock()
+      defer { jointsLock.unlock() }
+      return latestPoses[hand]
+    }
+
     /// Starts hand tracking (prompts for authorization on first use).
     public func start() async throws {
       guard updatesTask == nil else { return }
@@ -301,6 +483,10 @@ public struct XRHandGestureTracker: Sendable {
       updatesTask = nil
       arSession.stop()
       handPoses.removeAll()
+      jointsLock.lock()
+      latestJoints.removeAll()
+      latestPoses.removeAll()
+      jointsLock.unlock()
       tracker.reset(.left)
       tracker.reset(.right)
     }
@@ -309,6 +495,10 @@ public struct XRHandGestureTracker: Sendable {
       let hand: XRHand = anchor.chirality == .left ? .left : .right
       guard !removed, anchor.isTracked, let skeleton = anchor.handSkeleton else {
         handPoses[hand] = nil
+        jointsLock.lock()
+        latestJoints[hand] = nil
+        latestPoses[hand] = nil
+        jointsLock.unlock()
         tracker.reset(hand)
         return
       }
@@ -321,7 +511,12 @@ public struct XRHandGestureTracker: Sendable {
         joints[webName] = SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
       }
       let wrist = origin * skeleton.joint(.wrist).anchorFromJointTransform
-      handPoses[hand] = XRPose(matrix: wrist)
+      let pose = XRPose(matrix: wrist)
+      handPoses[hand] = pose
+      jointsLock.lock()
+      latestJoints[hand] = joints
+      latestPoses[hand] = pose
+      jointsLock.unlock()
       onJoints?(hand, joints)
       if let event = tracker.update(hand: hand, joints: joints) {
         onGesture?(event)

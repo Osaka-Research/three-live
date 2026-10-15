@@ -98,6 +98,14 @@
     public var headPoseProvider: (() -> XRPose?)?
     /// Supplies world-space hand poses each frame for hand-anchored lazy follows.
     public var handPoseProvider: (() -> [XRHand: XRPose])?
+    /// When `true` (`xrHands != "none"`), polls `handSource` (or `XRHandJointSources.current()`)
+    /// each frame, feeds wrist poses into `session.step` when `handPoseProvider` is `nil`, and
+    /// reports gesture changes via `onGesture`.
+    public var handsEnabled: Bool = false
+    /// Per-session override for `XRHandJointSources.current()`.
+    public var handSource: XRHandJointSource?
+    /// Called when a hand's gesture changes to a non-`.none` gesture (when `handsEnabled` is `true`).
+    public var onGesture: ((XRHandGestureEvent) -> Void)?
     /// Called for every `event/send` with the event id and JSON payload.
     public var onInteractivityEvent: ((String, String) -> Void)?
     /// Overrides the default `animation/start` handling (play `root.availableAnimations`).
@@ -108,6 +116,7 @@
     private var nodeByEntity: [ObjectIdentifier: Int] = [:]
     private var referenceEntity: Entity?
     private let collector = XRLiveChangeCollector()
+    private var gestureTracker = XRHandGestureTracker()
     private var updateSubscription: Combine.Cancellable?
 
     /// Binds `session` to the entity hierarchy under `root`.
@@ -231,7 +240,14 @@
     public func step(dt: TimeInterval) {
       let reference = referenceEntity ?? root
       session.rootTransform = reference.transformMatrix(relativeTo: nil)
-      session.step(dt: dt, headPose: headPoseProvider?(), handPoses: handPoseProvider?() ?? [:])
+      let hands = handsEnabled ? (handSource ?? XRHandJointSources.current()) : nil
+      let poses = handPoseProvider?() ?? XRHandJointSources.handPoses(from: hands)
+      session.step(dt: dt, headPose: headPoseProvider?(), handPoses: poses)
+      if let hands = hands {
+        gestureTracker.poll(from: hands) { [weak self] event in
+          self?.onGesture?(event)
+        }
+      }
       applyPendingChanges()
     }
 

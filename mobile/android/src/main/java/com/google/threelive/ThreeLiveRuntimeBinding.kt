@@ -47,6 +47,9 @@ class ThreeLiveRuntimeBinding(
 
     /** A long press began on a node (hold-to-ask). */
     fun onLongPress(nodeIndex: Int, nodeName: String?, meshName: String?, pressed: Boolean) {}
+
+    /** A hand's gesture changed to a non-`NONE` gesture (when [handsEnabled] is `true`). */
+    fun onGesture(event: XRHandGestureEvent) {}
   }
 
   /** The behavior / trait runtime for the loaded scene. */
@@ -60,6 +63,16 @@ class ThreeLiveRuntimeBinding(
   var callbacks: Callbacks? = null
 
   /**
+   * When `true` (`xrHands != "none"`), polls [handSource] (or [HandJointSources.current] when
+   * `null`) each frame, feeds wrist poses into [XRLiveRuntimeSession.step] for hand-anchored
+   * lazy-follow traits, and reports gesture changes via [Callbacks.onGesture].
+   */
+  var handsEnabled: Boolean = false
+
+  /** Per-binding override for [HandJointSources.current]. */
+  var handSource: HandJointSource? = null
+
+  /**
    * Extra pointer handler consulted before camera orbiting (XR Blocks features such as handles
    * and paint plug in here).
    */
@@ -69,6 +82,7 @@ class ThreeLiveRuntimeBinding(
   var frameHandler: ((dtSeconds: Double, cameraWorld: FloatArray) -> Unit)? = null
 
   private val pendingVisibility = LinkedHashSet<Int>()
+  private val gestureTracker = XRHandGestureTracker()
   private val rootF = FloatArray(16)
   private val rootD = DoubleArray(16)
   private var rootWasSet = false
@@ -154,7 +168,12 @@ class ThreeLiveRuntimeBinding(
       override fun onFrame(dtSeconds: Double, cameraWorld: FloatArray) {
         if (disposed) return
         syncRootTransform()
-        session.step(dtSeconds, headPoseOf(cameraWorld))
+        val hands = if (handsEnabled) (handSource ?: HandJointSources.current()) else null
+        val handPoses = HandJointSources.handPoses(hands)
+        session.step(dtSeconds, headPoseOf(cameraWorld), handPoses)
+        if (hands != null) {
+          gestureTracker.poll(hands) { event -> callbacks?.onGesture(event) }
+        }
         applyPendingVisibility()
         frameHandler?.invoke(dtSeconds, cameraWorld)
       }

@@ -155,10 +155,10 @@ jobs:
           gradle-version: '8.5'
 
       - name: Run Android unit tests
-        run: gradle :mobile:android:testReleaseUnitTest :mobile:android-filament:testReleaseUnitTest :mobile:android-firebase-ai:testReleaseUnitTest :mobile:android-detect-mlkit:testReleaseUnitTest --stacktrace
+        run: gradle :mobile:android:testReleaseUnitTest :mobile:android-filament:testReleaseUnitTest :mobile:android-firebase-ai:testReleaseUnitTest :mobile:android-detect-mlkit:testReleaseUnitTest :mobile:android-hands-androidxr:testReleaseUnitTest :mobile:android-hands-mediapipe:testReleaseUnitTest --stacktrace
 
-      - name: Assemble Android release AARs (core + optional Filament / Firebase AI / ML Kit modules)
-        run: gradle :mobile:android:assembleRelease :mobile:android-filament:assembleRelease :mobile:android-firebase-ai:assembleRelease :mobile:android-detect-mlkit:assembleRelease --stacktrace
+      - name: Assemble Android release AARs (core + optional Filament / Firebase AI / ML Kit / Hands modules)
+        run: gradle :mobile:android:assembleRelease :mobile:android-filament:assembleRelease :mobile:android-firebase-ai:assembleRelease :mobile:android-detect-mlkit:assembleRelease :mobile:android-hands-androidxr:assembleRelease :mobile:android-hands-mediapipe:assembleRelease --stacktrace
 
       # The example app is not shipped, but it is the first thing a new user runs, and it is the
       # only consumer of the library's public API. Compiling it here is what catches breakage in

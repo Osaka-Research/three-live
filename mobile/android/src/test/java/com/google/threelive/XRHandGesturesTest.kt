@@ -49,6 +49,50 @@ class XRHandGesturesTest {
   }
 
   @Test
+  fun mediaPipeLandmarksMapAndHandJointSourcesPoll() {
+    // 21 MediaPipe points with +Y downward: thumbs-up has negative Y for the thumb tip.
+    val mp = MutableList(21) { doubleArrayOf(0.0, -0.02, 0.0) }
+    mp[0] = doubleArrayOf(0.0, 0.0, 0.0)
+    mp[1] = doubleArrayOf(0.0, -0.03, 0.0)
+    mp[2] = doubleArrayOf(0.0, -0.05, 0.0)
+    mp[3] = doubleArrayOf(0.0, -0.10, 0.0)
+    mp[4] = doubleArrayOf(0.0, -0.16, 0.0)
+    for (base in intArrayOf(5, 9, 13, 17)) {
+      mp[base] = doubleArrayOf(0.0, -0.05, 0.0)
+      mp[base + 1] = doubleArrayOf(0.0, -0.06, 0.0)
+      mp[base + 2] = doubleArrayOf(0.0, -0.04, 0.0)
+      mp[base + 3] = doubleArrayOf(0.0, -0.02, 0.0)
+    }
+    val joints = XRHandGestures.fromMediaPipeLandmarks(mp)
+    assertEquals(21, joints.size)
+    assertEquals(XRHandGesture.THUMBS_UP, XRHandGestures.classify(joints).gesture)
+    assertTrue(XRHandGestures.fromMediaPipeLandmarks(mp.take(10)).isEmpty())
+
+    var leftJoints: Map<String, DoubleArray>? = hand("pinch")
+    val src = HandJointSource { side -> if (side == "left") leftJoints else null }
+    HandJointSources.register(src)
+    assertEquals(src, HandJointSources.current())
+    val poses = HandJointSources.handPoses()
+    assertEquals(1, poses.size)
+    assertNotNull(poses["left"])
+
+    val events = ArrayList<XRHandGestureEvent>()
+    val tracker = XRHandGestureTracker()
+    tracker.poll(src) { events.add(it) }
+    tracker.poll(src) { events.add(it) }
+    assertEquals(1, events.size)
+    assertEquals("left", events[0].hand)
+    assertEquals(XRHandGesture.PINCH, events[0].gesture)
+    leftJoints = null
+    tracker.poll(src) { events.add(it) }
+    leftJoints = hand("pinch")
+    tracker.poll(src) { events.add(it) }
+    assertEquals(2, events.size)
+    HandJointSources.register(null)
+    assertNull(HandJointSources.current())
+  }
+
+  @Test
   fun detectionsUseFallbackDepthAndCap() {
     val identity = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
     // Symmetric perspective (90° vertical FOV, aspect 1).
