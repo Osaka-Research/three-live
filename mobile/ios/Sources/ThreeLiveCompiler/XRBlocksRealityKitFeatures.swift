@@ -42,7 +42,7 @@
     public static let maxStrokes = 256
     public static let screenPaintDepth: Float = 0.4
     /// At most 15 Hz depth re-sort cadence for splats.
-    public static let splatResortMinInterval: TimeInterval = 1.0 / 15.0
+    public nonisolated static let splatResortMinInterval: TimeInterval = 1.0 / 15.0
 
     private let live: XRLiveRealityKitSession
     private let container = Entity()
@@ -144,7 +144,7 @@
           container.addChild(entity)
           let cloud = SplatCloud(node: i, url: resolved, entity: entity)
           cloud.loadTask = Task { @MainActor [weak cloud] in
-            let result = await Task.detached(priority: .utility) { () -> (SplatData, SplatParser.StaticGpuGeometry?)? in
+            let result = await Task.detached(priority: .utility) { () -> (SplatData, SplatParser.QuadGeometry?)? in
               guard let loaded = try? await SplatParser.loadURL(
                 resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
               else { return nil }
