@@ -157,10 +157,16 @@ jobs:
           path: mobile/android/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
-      # The optional Filament renderer is pure Kotlin on top of the core AAR (no native code
-      # of its own; Filament ships its .so files through its Maven artifacts).
-      - name: Build and upload optional Filament renderer AAR
-        run: gradle :mobile:android-filament:assembleRelease --stacktrace
+      # Optional Android adapter modules are pure Kotlin on top of the core AAR.
+      - name: Build optional Android adapter AARs
+        run: >
+          gradle
+          :mobile:android-filament:assembleRelease
+          :mobile:android-firebase-ai:assembleRelease
+          :mobile:android-detect-mlkit:assembleRelease
+          :mobile:android-hands-androidxr:assembleRelease
+          :mobile:android-hands-mediapipe:assembleRelease
+          --stacktrace
 
       - name: Upload Filament renderer AAR Artifact
         uses: actions/upload-artifact@v4
@@ -169,12 +175,67 @@ jobs:
           path: mobile/android-filament/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
-      # Runs here rather than in a separate job: publication must happen on a runner that has the
-      # cross-compiled .so files, otherwise it produces a Java-only AAR. This currently targets
-      # mavenLocal, which validates the POM and publication wiring end to end. Point it at the
-      # real repository (and add credentials) when one is provisioned.
-      - name: Publish Android AAR to Maven Local
-        run: gradle :mobile:android:publishReleasePublicationToMavenLocal :mobile:android-filament:publishReleasePublicationToMavenLocal --stacktrace
+      - name: Upload Firebase AI adapter AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-live-firebase-ai-release-aar
+          path: mobile/android-firebase-ai/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
+      - name: Upload ML Kit detector AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-live-detect-mlkit-release-aar
+          path: mobile/android-detect-mlkit/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
+      - name: Upload Android XR hands AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-live-hands-androidxr-release-aar
+          path: mobile/android-hands-androidxr/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
+      - name: Upload MediaPipe hands AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-live-hands-mediapipe-release-aar
+          path: mobile/android-hands-mediapipe/build/outputs/aar/*-release.aar
+          if-no-files-found: error
+
+      # Always validate POMs and publication wiring against mavenLocal, then publish to Maven Central
+      # when Sonatype Central Portal credentials are provisioned in repository secrets.
+      - name: Publish Android AARs to Maven Local
+        run: >
+          gradle
+          :mobile:android:publishReleasePublicationToMavenLocal
+          :mobile:android-filament:publishReleasePublicationToMavenLocal
+          :mobile:android-firebase-ai:publishReleasePublicationToMavenLocal
+          :mobile:android-detect-mlkit:publishReleasePublicationToMavenLocal
+          :mobile:android-hands-androidxr:publishReleasePublicationToMavenLocal
+          :mobile:android-hands-mediapipe:publishReleasePublicationToMavenLocal
+          --stacktrace
+
+      - name: Publish Android AARs to Maven Central
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_CENTRAL_REPO_URL: ${{ secrets.MAVEN_CENTRAL_REPO_URL }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "${MAVEN_CENTRAL_USERNAME:-}" ] || [ -z "${MAVEN_CENTRAL_PASSWORD:-}" ]; then
+            echo "::notice::MAVEN_CENTRAL_USERNAME / MAVEN_CENTRAL_PASSWORD secrets are not configured yet; skipping Maven Central publish."
+            exit 0
+          fi
+          gradle \
+            :mobile:android:publishReleasePublicationToMavenCentralRepository \
+            :mobile:android-filament:publishReleasePublicationToMavenCentralRepository \
+            :mobile:android-firebase-ai:publishReleasePublicationToMavenCentralRepository \
+            :mobile:android-detect-mlkit:publishReleasePublicationToMavenCentralRepository \
+            :mobile:android-hands-androidxr:publishReleasePublicationToMavenCentralRepository \
+            :mobile:android-hands-mediapipe:publishReleasePublicationToMavenCentralRepository \
+            --stacktrace
 
   build-ios:
     name: Build Apple XCFramework

@@ -14,7 +14,7 @@
 
 [package]
 name = "three-live-compiler"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "High-performance procedural Three.js to binary glTF 2.0 (GLB) compiler powered by Boa"
 license = "Apache-2.0"

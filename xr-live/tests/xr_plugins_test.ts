@@ -20,7 +20,10 @@
 import {
   mat4Create,
   mat4FromRotationTranslationScale,
+  mat4Multiply,
+  resolveNodeWorldMatrices,
 } from '../../three-live/src/math';
+import {interactivityPlugin} from '../../three-live/src/plugins/interactivity';
 import {getRegisteredPlugins, getSharedRegistry} from '../../three-live/src/plugin';
 import {THREE} from '../../three-live/src/three-author';
 import {sceneToCanvas3D} from '../../three-live/src/three-convert';
@@ -35,6 +38,7 @@ import {
   buildBoxGeometry,
   computeLocalBounds,
   createDynamicMesh,
+  quatFromYaw,
   removeDynamicMesh,
   updateDynamicMesh,
 } from '../src/plugins/common';
@@ -97,7 +101,13 @@ import {
   XRWorldUnderstandingController,
   type TrackedPlane,
 } from '../src/plugins/world-understanding';
-import {extractPosition, extractScale, type XRPose6DoF, XRTraitSystem} from '../src/xr-traits';
+import {
+  extractPosition,
+  extractQuaternion,
+  extractScale,
+  type XRPose6DoF,
+  XRTraitSystem,
+} from '../src/xr-traits';
 
 let passed = 0;
 let failed = 0;
@@ -716,6 +726,209 @@ function testSchema(): void {
   assert(glb.gltf.extensionsUsed?.includes('ANDROID_xr_scenecore'), 'node extensions declared in extensionsUsed');
 }
 
+function testGoldenParity(): void {
+  console.log('\n🏆 Cross-platform golden parity');
+  // tslint:disable-next-line:no-require-imports
+  const fs = require('fs');
+  // tslint:disable-next-line:no-require-imports
+  const path = require('path');
+  const goldenDir = path.resolve(__dirname, '../../../testdata/golden');
+  const gltf = JSON.parse(fs.readFileSync(path.join(goldenDir, 'scene.glb.json'), 'utf8'));
+  const script = JSON.parse(fs.readFileSync(path.join(goldenDir, 'script.json'), 'utf8'));
+
+  const events: Array<{id: string; payload: Record<string, unknown>}> = [];
+  const wm0 = resolveNodeWorldMatrices(gltf);
+  const boxPositions = new Float32Array([
+    -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 1, -0.5, -0.5, 1, -0.5,
+    -0.5, 0, 0.5, 0.5, 0, 0.5, 0.5, 1, 0.5, -0.5, 1, 0.5,
+  ]);
+  // tslint:disable-next-line:no-any
+  const meshes: any[] = [];
+  for (let i = 0; i < gltf.nodes.length; i++) {
+    const n = gltf.nodes[i];
+    if (typeof n.mesh === 'number') {
+      const transform = new Float32Array(wm0[i]);
+      meshes.push({
+        name: n.name ?? `node_${i}`,
+        nodeIndex: i,
+        transform,
+        normalMatrix: new Float32Array(9),
+        visible: true,
+        extras: n.extras ?? {},
+        userData: n.extras ?? {},
+        primitives: [{positions: boxPositions, materialIndex: 0}],
+      });
+    }
+  }
+  if (typeof (globalThis as {CustomEvent?: unknown}).CustomEvent === 'undefined') {
+    (globalThis as {CustomEvent?: unknown}).CustomEvent = class {
+      readonly type: string;
+      readonly detail: unknown;
+      constructor(type: string, init?: {detail?: unknown}) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    };
+  }
+  const viewer = {
+    meshes,
+    worldMatrices: wm0,
+    modelRootMatrix: mat4Create(),
+    container: {
+      dispatchEvent(ev: {type?: string; detail?: {id: string; values: Record<string, unknown>}}) {
+        if (ev?.type === 'interactivityEvent' && ev.detail) {
+          events.push({id: ev.detail.id, payload: ev.detail.values});
+        }
+        return true;
+      },
+    },
+  };
+
+  const headFollow = new XRHeadFollowController();
+  const handles = new XRManipulationHandlesController();
+  let detectionsOut: Array<{
+    label: string;
+    position: [number, number, number];
+    size: [number, number];
+    depthSource: string;
+  }> = [];
+
+  const syncRootMeshesToGltf = () => {
+    for (const m of meshes) {
+      if (m.nodeIndex >= 2) {
+        const gn = gltf.nodes[m.nodeIndex];
+        gn.translation = [...extractPosition(m.transform)];
+        gn.rotation = [...extractQuaternion(m.transform)];
+        gn.scale = [...extractScale(m.transform)];
+      }
+    }
+  };
+
+  for (const step of script.steps) {
+    if (step.action === 'start') {
+      interactivityPlugin.onLoadModel?.(viewer as never, gltf);
+    } else if (step.action === 'select') {
+      interactivityPlugin.onMeshSelect?.(viewer as never, {nodeIndex: step.nodeIndex});
+    } else if (step.action === 'step') {
+      const hp: [number, number, number] = step.headPosition;
+      const hq: [number, number, number, number] = step.headQuaternion;
+      const hm = mat4Create();
+      mat4FromRotationTranslationScale(hm, hq, hp, [1, 1, 1]);
+      const headPose: XRPose6DoF = {position: hp, quaternion: hq, matrix: hm};
+      for (let r = 0; r < (step.repeat ?? 1); r++) {
+        interactivityPlugin.onUpdate?.(viewer as never, step.dt);
+        headFollow.update(meshes, headPose, {}, step.dt, () => false, viewer as never);
+        syncRootMeshesToGltf();
+      }
+    } else if (step.action === 'dragCorner') {
+      const targetMesh = meshes.find((m) => m.nodeIndex === step.nodeIndex);
+      const layout = computeHandleLayout(targetMesh, viewer as never);
+      const c = layout.corners[step.cornerIndex];
+      handles.beginDrag([targetMesh], [c[0], c[1], c[2] + 0.5], [0, 0, -1], 'screen', viewer as never);
+      handles.updateDrag(step.rayOrigin, step.rayDirection);
+      handles.endDrag();
+      syncRootMeshesToGltf();
+    } else if (step.action === 'autoRotate') {
+      const rad = (step.angleDeg * Math.PI) / 180;
+      mat4FromRotationTranslationScale(
+        viewer.modelRootMatrix,
+        quatFromYaw(rad),
+        [0, 0, 0],
+        [1, 1, 1],
+      );
+    } else if (step.action === 'detect') {
+      const parsed = parseDetections(JSON.stringify(step.detections));
+      const camWorld = new Float32Array(step.cameraWorld);
+      const proj = new Float32Array(step.projection);
+      detectionsOut = parsed.map((d) => {
+        const res = unprojectDetectionTo3D(d, camWorld, proj, [], () => step.depthMeters as number)!;
+        return {
+          label: res.label,
+          position: [res.x, res.y, res.z],
+          size: [res.widthMeters, res.heightMeters],
+          depthSource: res.depthSource,
+        };
+      });
+    }
+  }
+
+  const finalSceneMatrices = resolveNodeWorldMatrices(gltf);
+  const actualNodes = gltf.nodes.map(
+    // tslint:disable-next-line:no-any
+    (n: any, i: number) => {
+      const world = mat4Create();
+      mat4Multiply(world, viewer.modelRootMatrix, finalSceneMatrices[i]);
+      const vis =
+        n.extensions?.KHR_node_visibility?.visible !== undefined
+          ? Boolean(n.extensions.KHR_node_visibility.visible)
+          : n.visible !== undefined
+            ? Boolean(n.visible)
+            : true;
+      return {
+        name: n.name,
+        translation: (n.translation ?? [0, 0, 0]) as [number, number, number],
+        rotation: (n.rotation ?? [0, 0, 0, 1]) as [number, number, number, number],
+        scale: (n.scale ?? [1, 1, 1]) as [number, number, number],
+        worldPosition: [world[12], world[13], world[14]] as [number, number, number],
+        visible: vis,
+      };
+    },
+  );
+  const mat0 = gltf.materials[0].pbrMetallicRoughness;
+  const actual = {
+    nodes: actualNodes,
+    materials: [
+      {
+        baseColorFactor: mat0.baseColorFactor as [number, number, number, number],
+        metallicFactor: mat0.metallicFactor as number,
+        roughnessFactor: mat0.roughnessFactor as number,
+      },
+    ],
+    events,
+    detections: detectionsOut,
+  };
+
+  const expectedPath = path.join(goldenDir, 'expected.json');
+  const expected = JSON.parse(fs.readFileSync(expectedPath, 'utf8'));
+  const nearVec = (a: readonly number[], b: readonly number[], eps = 1e-4): boolean =>
+    a.length === b.length && a.every((v, idx) => Math.abs(v - b[idx]) <= eps);
+  const nearQuat = (a: readonly number[], b: readonly number[], eps = 1e-4): boolean =>
+    nearVec(a, b, eps) || nearVec(a, b.map((x) => -x), eps);
+
+  assert(actual.nodes.length === expected.nodes.length, 'golden node count matches');
+  for (let i = 0; i < expected.nodes.length; i++) {
+    const an = actual.nodes[i];
+    const en = expected.nodes[i];
+    assert(
+      an.name === en.name &&
+        nearVec(an.translation, en.translation) &&
+        nearQuat(an.rotation, en.rotation) &&
+        nearVec(an.scale, en.scale) &&
+        nearVec(an.worldPosition, en.worldPosition) &&
+        an.visible === en.visible,
+      `golden node[${i}] (${en.name}) matches within 1e-4`,
+    );
+  }
+  assert(
+    nearVec(actual.materials[0].baseColorFactor, expected.materials[0].baseColorFactor) &&
+      Math.abs(actual.materials[0].metallicFactor - expected.materials[0].metallicFactor) <= 1e-4 &&
+      Math.abs(actual.materials[0].roughnessFactor - expected.materials[0].roughnessFactor) <= 1e-4,
+    'golden material[0] matches within 1e-4',
+  );
+  assert(
+    JSON.stringify(actual.events) === JSON.stringify(expected.events),
+    'golden emitted events match',
+  );
+  assert(
+    actual.detections.length === expected.detections.length &&
+      actual.detections[0].label === expected.detections[0].label &&
+      nearVec(actual.detections[0].position, expected.detections[0].position) &&
+      nearVec(actual.detections[0].size, expected.detections[0].size) &&
+      actual.detections[0].depthSource === expected.detections[0].depthSource,
+    'golden detections match within 1e-4',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('🧪 Running XR Blocks plugin unit tests...');
   testSchema();
@@ -728,6 +941,7 @@ async function main(): Promise<void> {
   testSpatialPaint();
   testParticles();
   testSplats();
+  testGoldenParity();
   console.log(`\n📊 XR Blocks plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }

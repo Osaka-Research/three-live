@@ -1538,7 +1538,16 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val center = v3b
     val name = options.targetName
     if (name == null) {
-      for (k in 0 until 3) center[k] = options.targetPosition.getOrElse(k) { 0.0 }
+      val tx = options.targetPosition.getOrElse(0) { 0.0 }
+      val ty = options.targetPosition.getOrElse(1) { 0.0 }
+      val tz = options.targetPosition.getOrElse(2) { 0.0 }
+      if (rootIsIdentity) {
+        center[0] = tx
+        center[1] = ty
+        center[2] = tz
+      } else {
+        XRBlocksMath.transformPoint(root, tx, ty, tz, center)
+      }
     } else if (name == "head") {
       for (k in 0 until 3) center[k] = headPose.position[k].toDouble()
     } else {

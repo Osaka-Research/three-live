@@ -1,6 +1,6 @@
 {
   "name": "xr-live",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "HTML-First Spatial Computing, 6DoF WebXR, Hand Gestures, and AI-Driven XR on top of three-live",
   "author": "Google LLC",
   "license": "Apache-2.0",
@@ -36,7 +36,7 @@
     }
   },
   "dependencies": {
-    "three-live": "1.0.0"
+    "three-live": "1.1.0"
   },
   "scripts": {
     "prepack": "node -e \"require('fs').copyFileSync('../LICENSE', 'LICENSE')\"",

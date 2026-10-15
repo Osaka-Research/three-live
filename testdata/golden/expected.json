@@ -1,0 +1,164 @@
+{
+  "nodes": [
+    {
+      "name": "Pivot",
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0.70710678,
+        0,
+        0.70710678
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "worldPosition": [
+        0,
+        0,
+        0
+      ],
+      "visible": true
+    },
+    {
+      "name": "Crate",
+      "translation": [
+        2,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        2,
+        2,
+        2
+      ],
+      "worldPosition": [
+        -2,
+        0,
+        -6.712126410235442e-9
+      ],
+      "visible": false
+    },
+    {
+      "name": "Hud",
+      "translation": [
+        1.4954712390899658,
+        1.600000023841858,
+        0.006038327235728502
+      ],
+      "rotation": [
+        0,
+        -0.7085328888036662,
+        0,
+        0.7056777915476238
+      ],
+      "scale": [
+        0.999999985743891,
+        1,
+        0.999999985743891
+      ],
+      "worldPosition": [
+        0.006038327235728502,
+        1.600000023841858,
+        -1.4954712390899658
+      ],
+      "visible": true
+    },
+    {
+      "name": "Moon",
+      "translation": [
+        -2,
+        1.5,
+        -2
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "worldPosition": [
+        -2,
+        1.5,
+        2
+      ],
+      "visible": true
+    },
+    {
+      "name": "Table",
+      "translation": [
+        0,
+        0,
+        -2
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1.2247449159622192,
+        1.2247449159622192,
+        1.2247449159622192
+      ],
+      "worldPosition": [
+        -2,
+        0,
+        -4.440892098500626e-16
+      ],
+      "visible": true
+    }
+  ],
+  "materials": [
+    {
+      "baseColorFactor": [
+        0,
+        1,
+        0,
+        1
+      ],
+      "metallicFactor": 0.1,
+      "roughnessFactor": 0.8
+    }
+  ],
+  "events": [
+    {
+      "id": "crate_selected",
+      "payload": {
+        "count": 1
+      }
+    }
+  ],
+  "detections": [
+    {
+      "label": "cup",
+      "position": [
+        0,
+        1.5,
+        -2
+      ],
+      "size": [
+        0.7999999999999998,
+        0.7999999999999998
+      ],
+      "depthSource": "depth"
+    }
+  ]
+}

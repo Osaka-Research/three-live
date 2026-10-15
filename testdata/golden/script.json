@@ -1,0 +1,42 @@
+{
+  "steps": [
+    { "action": "start" },
+    { "action": "select", "nodeIndex": 1 },
+    {
+      "action": "step",
+      "dt": 0.1,
+      "repeat": 5,
+      "headPosition": [0, 1.6, 0],
+      "headQuaternion": [0, 0, 0, 1]
+    },
+    {
+      "action": "dragCorner",
+      "nodeIndex": 4,
+      "localMin": [-0.5, 0, -0.5],
+      "localMax": [0.5, 1, 0.5],
+      "cornerIndex": 2,
+      "rayOrigin": [0, 1, 0],
+      "rayDirection": [1.0, 0, -1.5]
+    },
+    {
+      "action": "autoRotate",
+      "angleDeg": 90
+    },
+    {
+      "action": "step",
+      "dt": 0.1,
+      "repeat": 5,
+      "headPosition": [0, 1.6, 0],
+      "headQuaternion": [0, 0, 0, 1]
+    },
+    {
+      "action": "detect",
+      "detections": [
+        { "label": "cup", "confidence": 0.9, "box": [400, 400, 600, 600] }
+      ],
+      "cameraWorld": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1.5, 0, 1],
+      "projection": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, -0.2, 0],
+      "depthMeters": 2.0
+    }
+  ]
+}

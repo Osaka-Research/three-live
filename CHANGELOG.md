@@ -22,6 +22,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.1.0] - 2026-10-15
+
+Full multi-platform parity across **Web (`three-live` / `xr-live`)**, **Android (`com.google.threelive`)**, and **iOS / visionOS (`ThreeLiveCompiler`)**.
+
+### Added
+
+- **Cross-Platform `KHR_interactivity` VM & Hierarchy Parity:**
+  - Native Rust compiler (`three-live-compiler`) now preserves the full `THREE.Object3D` DFS hierarchy, local TRS, parent-child links, and canonical XR traits (`nodes[i].extras.xr`, `ANDROID_xr_scenecore`, `MOZ_hubs_components`) identically to the web exporter.
+  - Pure-Kotlin (`XRLiveRuntimeSession`) and pure-Swift (`XRLiveRuntimeSession` + `XRLiveRealityKitSession`) `KHR_interactivity` behavior-graph VMs with step/evaluation/tween/delay budgets and RFC 6901 JSON Pointer sandboxing.
+  - Cross-platform golden parity suite (`testdata/golden/`) verified across Web, Android JVM, and iOS XCTest within `1e-4`.
+
+- **XR Blocks Spatial Features on Web, Android & iOS/visionOS:**
+  - **Lazy Head Follow & Orbit:** Critically damped spring follow with angular deadzone and radial/vertical slack, plus orbit around named nodes, literal coordinates, or the user's head, with turntable `autoRotate` (`rootTransform`) compensation.
+  - **Manipulation Handles:** Four top-corner uniform-scale handles and pedestal yaw bar (`ManipulationHandles`, `XRBlocksFeatures`, `XRBlocksRealityKitFeatures`).
+  - **Spatial Paint & Depth Particles:** Parallel-transported Catmull-Rom tube strokes (`TubeStrokeBuilder`) and seeded `mulberry32` particle emitters (`ParticleEmitter` with `rain`, `snow`, `dust`, `sparks` presets and floor/depth collision).
+  - **Gaussian Splats (`.splat` & Niantic `.spz` v2/v3):** Gzip decompression with size caps, 16-bit bucket depth sort, CPU billboard quad baseline, and GPU covariance-projected ellipse paths (compiled Filament `splat.filamat` + index-only re-sorts on Android up to 1 M splats; runtime Metal `CustomMaterial` + `LowLevelMesh` on iOS/visionOS up to 1 M splats).
+  - **World Understanding & Object Detection:** 2D-to-3D bounding-box unprojection (`WorldUnderstanding`), Gemini Live `report_objects` tool calling (`detectObjects`), and optional on-device detectors (`:mobile:android-detect-mlkit` and iOS `XRVisionDetector` + `XRObjectDetectionLoop`).
+  - **Hand Gesture Classification (`onGesture`):** 25-joint classifier (`pinch`, `point`, `fist`, `thumbs-up`, `open-palm`) with `HandJointSource` / `XRHandJointSource` registries and optional adapters for Jetpack XR (`:mobile:android-hands-androidxr`), MediaPipe Hand Landmarker (`:mobile:android-hands-mediapipe` / `XRMediaPipeHandJointSource`), and visionOS ARKit `HandTrackingProvider`.
+  - **Native Gemini Live & Hold-to-Ask:** Zero-dependency WebSocket Live API client (`XRGeminiLiveController`, `HoldToAskController`), viewport frame streaming (`RendererFrameSource`, `ARViewFrameSource`), and optional Firebase AI Logic adapters (`:mobile:android-firebase-ai`, `mobile/ios/FirebaseAdapter`).
+
+---
+
 ## [1.0.0] - 2026-10-06 (Developer Preview)
 
 Initial public **Developer Preview** release of **Three-Live**: an AI-first, multi-platform 3D and spatial computing library with an on-device JIT compiler that turns live, AI-generated Three.js scripts into native **Android Filament & Jetpack XR SceneCore**, **iOS/visionOS RealityKit & Quick Look**, and **WebGL2 / WebXR**.

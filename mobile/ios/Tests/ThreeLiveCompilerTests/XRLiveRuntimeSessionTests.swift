@@ -1106,4 +1106,179 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       }
     #endif
   }
+
+  func testMatchesCrossPlatformGoldenSuite() throws {
+    let goldenDir = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .appendingPathComponent("testdata/golden")
+    let sceneData = try Data(contentsOf: goldenDir.appendingPathComponent("scene.glb.json"))
+    let scriptData = try Data(contentsOf: goldenDir.appendingPathComponent("script.json"))
+    let expectedData = try Data(contentsOf: goldenDir.appendingPathComponent("expected.json"))
+
+    let script = try XCTUnwrap(JSONSerialization.jsonObject(with: scriptData) as? [String: Any])
+    let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: expectedData) as? [String: Any])
+    let steps = try XCTUnwrap(script["steps"] as? [[String: Any]])
+
+    let s = try XCTUnwrap(XRLiveRuntimeSession(gltfJSONData: sceneData))
+    let r = Recorder()
+    s.delegate = r
+
+    func floats(_ any: Any?) -> [Float] {
+      (any as? [NSNumber])?.map { $0.floatValue } ?? []
+    }
+    func mat4(_ f: [Float]) -> simd_float4x4 {
+      simd_float4x4(
+        SIMD4<Float>(f[0], f[1], f[2], f[3]),
+        SIMD4<Float>(f[4], f[5], f[6], f[7]),
+        SIMD4<Float>(f[8], f[9], f[10], f[11]),
+        SIMD4<Float>(f[12], f[13], f[14], f[15])
+      )
+    }
+
+    var detectionsOut: [WorldUnderstanding.Detection3D] = []
+    for step in steps {
+      let action = step["action"] as? String ?? ""
+      switch action {
+      case "start":
+        s.start()
+      case "select":
+        let idx = (step["nodeIndex"] as? NSNumber)?.intValue ?? 0
+        s.dispatchSelect(nodeIndex: idx)
+      case "step":
+        let dt = (step["dt"] as? NSNumber)?.doubleValue ?? 0.1
+        let count = (step["repeat"] as? NSNumber)?.intValue ?? 1
+        let hp = floats(step["headPosition"])
+        let hq = floats(step["headQuaternion"])
+        let pose = XRPose(
+          position: SIMD3<Float>(hp[0], hp[1], hp[2]),
+          quaternion: simd_quatf(ix: hq[0], iy: hq[1], iz: hq[2], r: hq[3])
+        )
+        for _ in 0..<count {
+          s.step(dt: dt, headPose: pose)
+        }
+      case "dragCorner":
+        let nodeIdx = (step["nodeIndex"] as? NSNumber)?.intValue ?? 0
+        let lmin = floats(step["localMin"])
+        let lmax = floats(step["localMax"])
+        let cornerIdx = (step["cornerIndex"] as? NSNumber)?.intValue ?? 0
+        let ro = floats(step["rayOrigin"])
+        let rd = floats(step["rayDirection"])
+        let world = s.worldMatrix(of: nodeIdx)
+        let layout = ManipulationHandles.computeLayout(
+          localMin: SIMD3<Float>(lmin[0], lmin[1], lmin[2]),
+          localMax: SIMD3<Float>(lmax[0], lmax[1], lmax[2]),
+          world: world
+        )
+        let tr = try XCTUnwrap(s.nodeTransform(at: nodeIdx))
+        let hOpts = try XCTUnwrap(s.traits(at: nodeIdx)?.handles)
+        let drag = try XCTUnwrap(
+          ManipulationHandles.Drag(
+            layout: layout,
+            hit: .corner(index: cornerIdx, distance: 0),
+            rayOrigin: SIMD3<Float>(ro[0], ro[1], ro[2]),
+            rayDirection: SIMD3<Float>(rd[0], rd[1], rd[2]),
+            startScale: tr.scale,
+            startRotation: tr.rotation,
+            options: hOpts
+          )
+        )
+        let updated = try XCTUnwrap(
+          drag.update(
+            rayOrigin: SIMD3<Float>(ro[0], ro[1], ro[2]),
+            rayDirection: SIMD3<Float>(rd[0], rd[1], rd[2])
+          )
+        )
+        s.setNodeTransform(
+          nodeIdx,
+          XRNodeTransform(translation: tr.translation, rotation: updated.rotation, scale: updated.scale)
+        )
+      case "autoRotate":
+        let deg = (step["angleDeg"] as? NSNumber)?.floatValue ?? 0
+        let rad = deg * .pi / 180
+        s.rootTransform = XRBlocksMath.compose(
+          translation: .zero,
+          rotation: XRBlocksMath.quatFromYaw(rad),
+          scale: SIMD3<Float>(1, 1, 1)
+        )
+      case "detect":
+        let detData = try JSONSerialization.data(withJSONObject: step["detections"] ?? [])
+        let detJson = String(data: detData, encoding: .utf8) ?? "[]"
+        let boxes = XRDetections.parse(json: detJson)
+        let camWorld = mat4(floats(step["cameraWorld"]))
+        let proj = mat4(floats(step["projection"]))
+        let depth = (step["depthMeters"] as? NSNumber)?.floatValue ?? 2.0
+        detectionsOut = XRDetections.detect(
+          boxes: boxes,
+          cameraWorld: camWorld,
+          projection: proj,
+          depthSampler: { _, _ in depth },
+          planes: []
+        )
+      default:
+        break
+      }
+    }
+
+    let expectedNodes = try XCTUnwrap(expected["nodes"] as? [[String: Any]])
+    XCTAssertEqual(s.nodeCount, expectedNodes.count)
+    for (i, en) in expectedNodes.enumerated() {
+      XCTAssertEqual(s.nodeName(at: i), en["name"] as? String)
+      let tr = try XCTUnwrap(s.nodeTransform(at: i))
+      let et = floats(en["translation"])
+      let er = floats(en["rotation"])
+      let es = floats(en["scale"])
+      let ew = floats(en["worldPosition"])
+      assertNear(tr.translation, SIMD3<Float>(et[0], et[1], et[2]), accuracy: 1e-4, "node[\(i)] translation")
+      let q = tr.rotation.vector
+      let qSame =
+        abs(q.x - er[0]) <= 1e-4 && abs(q.y - er[1]) <= 1e-4 && abs(q.z - er[2]) <= 1e-4
+        && abs(q.w - er[3]) <= 1e-4
+      let qNeg =
+        abs(q.x + er[0]) <= 1e-4 && abs(q.y + er[1]) <= 1e-4 && abs(q.z + er[2]) <= 1e-4
+        && abs(q.w + er[3]) <= 1e-4
+      XCTAssertTrue(qSame || qNeg, "node[\(i)] rotation \(q) vs \(er)")
+      assertNear(tr.scale, SIMD3<Float>(es[0], es[1], es[2]), accuracy: 1e-4, "node[\(i)] scale")
+      let wm = s.worldMatrix(of: i).columns.3
+      assertNear(
+        SIMD3<Float>(wm.x, wm.y, wm.z),
+        SIMD3<Float>(ew[0], ew[1], ew[2]),
+        accuracy: 1e-4,
+        "node[\(i)] worldPosition"
+      )
+      XCTAssertEqual(s.isVisible(i), en["visible"] as? Bool)
+    }
+
+    let expectedMats = try XCTUnwrap(expected["materials"] as? [[String: Any]])
+    let em0 = expectedMats[0]
+    let ebc = floats(em0["baseColorFactor"])
+    let mat0 = try XCTUnwrap(s.material(at: 0))
+    XCTAssertEqual(mat0.baseColorFactor.x, ebc[0], accuracy: 1e-4)
+    XCTAssertEqual(mat0.baseColorFactor.y, ebc[1], accuracy: 1e-4)
+    XCTAssertEqual(mat0.baseColorFactor.z, ebc[2], accuracy: 1e-4)
+    XCTAssertEqual(mat0.baseColorFactor.w, ebc[3], accuracy: 1e-4)
+    XCTAssertEqual(mat0.metallicFactor, (em0["metallicFactor"] as? NSNumber)?.floatValue ?? 0, accuracy: 1e-4)
+    XCTAssertEqual(mat0.roughnessFactor, (em0["roughnessFactor"] as? NSNumber)?.floatValue ?? 0, accuracy: 1e-4)
+
+    let expectedEvents = try XCTUnwrap(expected["events"] as? [[String: Any]])
+    XCTAssertEqual(r.events.count, expectedEvents.count)
+    XCTAssertEqual(r.events.first?.0, expectedEvents[0]["id"] as? String)
+    XCTAssertEqual(r.events.first?.1, #"{"count":1}"#)
+
+    let expectedDets = try XCTUnwrap(expected["detections"] as? [[String: Any]])
+    XCTAssertEqual(detectionsOut.count, expectedDets.count)
+    let ed0 = expectedDets[0]
+    let d0 = detectionsOut[0]
+    XCTAssertEqual(d0.label, ed0["label"] as? String)
+    let ep = floats(ed0["position"])
+    let esz = floats(ed0["size"])
+    XCTAssertEqual(d0.x, ep[0], accuracy: 1e-4)
+    XCTAssertEqual(d0.y, ep[1], accuracy: 1e-4)
+    XCTAssertEqual(d0.z, ep[2], accuracy: 1e-4)
+    XCTAssertEqual(d0.widthMeters, esz[0], accuracy: 1e-4)
+    XCTAssertEqual(d0.heightMeters, esz[1], accuracy: 1e-4)
+    XCTAssertEqual(d0.depthSource.rawValue, ed0["depthSource"] as? String)
+  }
 }

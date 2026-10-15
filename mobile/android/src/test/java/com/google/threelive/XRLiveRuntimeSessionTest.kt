@@ -1269,6 +1269,128 @@ class XRLiveRuntimeSessionTest {
     assertThrows { WorldUnderstanding.viewportRay(0.5, 0.5, FloatArray(16), FloatArray(3)) }
   }
 
+  @Test
+  fun matchesCrossPlatformGoldenSuite() {
+    val dir =
+      listOf(
+          java.io.File("testdata/golden"),
+          java.io.File("../../testdata/golden"),
+          java.io.File("experimental/users/binghamj/three_live/testdata/golden"),
+        )
+        .firstOrNull { java.io.File(it, "scene.glb.json").isFile }
+        ?: error("testdata/golden not found from ${java.io.File(".").absolutePath}")
+
+    val sceneJson = java.io.File(dir, "scene.glb.json").readText(Charsets.UTF_8)
+    val script = MiniJson.parseObjectOrNull(java.io.File(dir, "script.json").readText(Charsets.UTF_8))!!
+    val expected = MiniJson.parseObjectOrNull(java.io.File(dir, "expected.json").readText(Charsets.UTF_8))!!
+
+    val (session, rec) = session(sceneJson)
+    var detectionsOut: List<WorldUnderstanding.Detection3D> = emptyList()
+
+    for (rawStep in MiniJson.asList(script["steps"])!!) {
+      val step = MiniJson.asMap(rawStep)!!
+      when (step["action"] as String) {
+        "start" -> session.start()
+        "select" -> session.dispatchSelect((step["nodeIndex"] as Number).toInt())
+        "step" -> {
+          val dt = (step["dt"] as Number).toDouble()
+          val repeat = (step["repeat"] as? Number)?.toInt() ?: 1
+          val hp = MiniJson.asList(step["headPosition"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val hq = MiniJson.asList(step["headQuaternion"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val pose = XRPose(hp, hq)
+          repeat(repeat) { session.step(dt, pose) }
+        }
+        "dragCorner" -> {
+          val nodeIdx = (step["nodeIndex"] as Number).toInt()
+          val localMin = MiniJson.asList(step["localMin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val localMax = MiniJson.asList(step["localMax"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val cornerIdx = (step["cornerIndex"] as Number).toInt()
+          val rayOrigin = MiniJson.asList(step["rayOrigin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val rawDir = MiniJson.asList(step["rayDirection"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val dirLen = XRBlocksMath.len3(rawDir[0], rawDir[1], rawDir[2])
+          val rayDir = doubleArrayOf(rawDir[0] / dirLen, rawDir[1] / dirLen, rawDir[2] / dirLen)
+          val world = DoubleArray(16)
+          session.nodeWorldMatrix(nodeIdx, world)
+          val layout = ManipulationHandles.computeLayout(localMin, localMax, world)
+          val traits = session.traits.first { it.nodeIndex == nodeIdx }.handles!!
+          val startScale = session.nodeTransform(nodeIdx)!!.scale[0].toDouble()
+          val newScale =
+            ManipulationHandles.cornerScale(
+              startScale,
+              layout.corners[cornerIdx],
+              layout.origin,
+              rayOrigin,
+              rayDir,
+              traits.minScale,
+              traits.maxScale,
+            ).toFloat()
+          session.setNodeTransform(nodeIdx, scale = floatArrayOf(newScale, newScale, newScale))
+        }
+        "autoRotate" -> {
+          val rad = (step["angleDeg"] as Number).toDouble() * Math.PI / 180.0
+          val q = XRBlocksMath.quatFromYaw(rad)
+          val root = DoubleArray(16)
+          XRBlocksMath.mat4FromTRS(doubleArrayOf(0.0, 0.0, 0.0), q, doubleArrayOf(1.0, 1.0, 1.0), root)
+          session.rootTransform = root
+        }
+        "detect" -> {
+          val detJson = MiniJson.stringify(step["detections"])
+          val boxes = ThreeLiveDetections.parse(detJson)
+          val camWorld = MiniJson.asList(step["cameraWorld"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val proj = MiniJson.asList(step["projection"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val depth = (step["depthMeters"] as Number).toDouble()
+          detectionsOut = ThreeLiveDetections.detect(boxes, camWorld, proj, { _, _ -> depth }, emptyList())
+        }
+      }
+    }
+
+    val expectedNodes = MiniJson.asList(expected["nodes"])!!
+    assertEquals(expectedNodes.size, session.nodeCount)
+    for (i in expectedNodes.indices) {
+      val en = MiniJson.asMap(expectedNodes[i])!!
+      assertEquals(en["name"] as String, session.nodeName(i))
+      val tr = session.nodeTransform(i)!!
+      val et = MiniJson.asList(en["translation"])!!.map { (it as Number).toFloat() }.toFloatArray()
+      val er = MiniJson.asList(en["rotation"])!!.map { (it as Number).toFloat() }.toFloatArray()
+      val es = MiniJson.asList(en["scale"])!!.map { (it as Number).toFloat() }.toFloatArray()
+      val ew = MiniJson.asList(en["worldPosition"])!!.map { (it as Number).toFloat() }.toFloatArray()
+      assertArrayEquals("node[$i] translation", et, tr.translation, 1e-4f)
+      val qMatch =
+        (0..3).all { kotlin.math.abs(tr.rotation[it] - er[it]) <= 1e-4f } ||
+          (0..3).all { kotlin.math.abs(tr.rotation[it] + er[it]) <= 1e-4f }
+      assertTrue("node[$i] rotation ${tr.rotation.toList()} vs ${er.toList()}", qMatch)
+      assertArrayEquals("node[$i] scale", es, tr.scale, 1e-4f)
+      assertArrayEquals("node[$i] worldPosition", ew, session.nodeWorldPosition(i)!!, 1e-4f)
+      assertEquals("node[$i] visible", en["visible"] as Boolean, session.isVisible(i))
+    }
+
+    val em0 = MiniJson.asMap(MiniJson.asList(expected["materials"])!![0])!!
+    val ebc = MiniJson.asList(em0["baseColorFactor"])!!.map { (it as Number).toFloat() }.toFloatArray()
+    assertArrayEquals(ebc, session.materialColor(0)!!, 1e-4f)
+    assertEquals((em0["metallicFactor"] as Number).toFloat(), session.materialMetallic(0), 1e-4f)
+    assertEquals((em0["roughnessFactor"] as Number).toFloat(), session.materialRoughness(0), 1e-4f)
+
+    val expectedEvents = MiniJson.asList(expected["events"])!!
+    assertEquals(expectedEvents.size, rec.events.size)
+    val ev0 = MiniJson.asMap(expectedEvents[0])!!
+    assertEquals(ev0["id"] as String, rec.events[0].first)
+    assertEquals(ev0["payload"], MiniJson.parseOrNull(rec.events[0].second))
+
+    val expectedDets = MiniJson.asList(expected["detections"])!!
+    assertEquals(expectedDets.size, detectionsOut.size)
+    val ed0 = MiniJson.asMap(expectedDets[0])!!
+    val d0 = detectionsOut[0]
+    assertEquals(ed0["label"] as String, d0.label)
+    val ep = MiniJson.asList(ed0["position"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+    val esz = MiniJson.asList(ed0["size"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+    assertEquals(ep[0], d0.x, 1e-4)
+    assertEquals(ep[1], d0.y, 1e-4)
+    assertEquals(ep[2], d0.z, 1e-4)
+    assertEquals(esz[0], d0.widthMeters, 1e-4)
+    assertEquals(esz[1], d0.heightMeters, 1e-4)
+    assertEquals(ed0["depthSource"] as String, d0.depthSource.wireName)
+  }
+
   // =============================================================================================
   // Helpers
   // =============================================================================================

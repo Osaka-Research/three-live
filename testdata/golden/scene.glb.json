@@ -1,0 +1,143 @@
+{
+  "asset": { "version": "2.0" },
+  "scenes": [{ "nodes": [0, 2, 3, 4] }],
+  "nodes": [
+    {
+      "name": "Pivot",
+      "rotation": [0, 0.70710678, 0, 0.70710678],
+      "children": [1]
+    },
+    {
+      "name": "Crate",
+      "mesh": 0,
+      "translation": [2, 0, 0]
+    },
+    {
+      "name": "Hud",
+      "mesh": 0,
+      "translation": [2, 1.6, 0],
+      "extras": {
+        "xr": {
+          "follow": {
+            "mode": "head",
+            "lazy": true,
+            "distance": 1.5,
+            "deadzoneDeg": 15,
+            "stiffness": 8,
+            "height": 0,
+            "snapOnStart": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Moon",
+      "mesh": 0,
+      "translation": [0, 0, 0],
+      "extras": {
+        "xr": {
+          "orbit": {
+            "target": [0, 1, -2],
+            "radius": 2.0,
+            "speed": 1.5707963267948966,
+            "height": 0.5,
+            "phase": 0,
+            "faceCenter": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Table",
+      "mesh": 0,
+      "translation": [0, 0, -2],
+      "extras": {
+        "xr": {
+          "handles": {
+            "rotateAxis": "y",
+            "minScale": 0.5,
+            "maxScale": 3.0
+          }
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": { "POSITION": 0 },
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Mat0",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [1, 0, 0, 1],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.8
+      }
+    }
+  ],
+  "accessors": [
+    {
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [-0.5, 0, -0.5],
+      "max": [0.5, 1, 0.5]
+    }
+  ],
+  "extensionsUsed": ["KHR_interactivity", "KHR_node_visibility"],
+  "extensions": {
+    "KHR_interactivity": {
+      "graphs": [
+        {
+          "events": [{ "id": "crate_selected" }],
+          "nodes": [
+            {
+              "op": "pointer/onSelect",
+              "configuration": { "nodeIndex": 1 },
+              "flows": { "out": { "node": 1 } }
+            },
+            {
+              "op": "flow/sequence",
+              "flows": {
+                "0": { "node": 2 },
+                "1": { "node": 3 },
+                "2": { "node": 4 },
+                "3": { "node": 5 }
+              }
+            },
+            {
+              "op": "pointer/set",
+              "configuration": { "pointer": "/nodes/1/extensions/KHR_node_visibility/visible" },
+              "values": { "value": { "value": false } }
+            },
+            {
+              "op": "pointer/interpolate",
+              "configuration": { "pointer": "/nodes/1/scale", "easing": "linear" },
+              "values": {
+                "value": { "value": [2, 2, 2] },
+                "duration": { "value": 1.0 }
+              }
+            },
+            {
+              "op": "pointer/set",
+              "configuration": { "pointer": "/materials/0/pbrMetallicRoughness/baseColorFactor" },
+              "values": { "value": { "value": [0, 1, 0, 1] } }
+            },
+            {
+              "op": "event/send",
+              "configuration": { "event": 0 },
+              "values": { "count": { "value": 1 } }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

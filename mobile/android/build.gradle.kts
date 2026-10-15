@@ -18,6 +18,7 @@ plugins {
   id("com.android.library")
   id("org.jetbrains.kotlin.android")
   `maven-publish`
+  signing
 }
 
 // Controls the AAR file name. Without this, AGP names the artifact after the Gradle project
@@ -80,7 +81,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "compiler"
-      version = "1.0.0"
+      version = "1.1.0"
 
       afterEvaluate { from(components["release"]) }
 
@@ -110,5 +111,31 @@ publishing {
         }
       }
     }
+  }
+  repositories {
+    val centralUser = System.getenv("MAVEN_CENTRAL_USERNAME")
+    val centralPass = System.getenv("MAVEN_CENTRAL_PASSWORD")
+    if (!centralUser.isNullOrBlank() && !centralPass.isNullOrBlank()) {
+      maven {
+        name = "MavenCentral"
+        url =
+          uri(
+            System.getenv("MAVEN_CENTRAL_REPO_URL")
+              ?: "https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/"
+          )
+        credentials {
+          username = centralUser
+          password = centralPass
+        }
+      }
+    }
+  }
+}
+
+signing {
+  val gpgKey = System.getenv("MAVEN_GPG_PRIVATE_KEY")
+  if (!gpgKey.isNullOrBlank()) {
+    useInMemoryPgpKeys(gpgKey, System.getenv("MAVEN_GPG_PASSPHRASE") ?: "")
+    sign(publishing.publications)
   }
 }

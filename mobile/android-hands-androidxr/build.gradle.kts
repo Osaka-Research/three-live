@@ -20,6 +20,7 @@ plugins {
   id("com.android.library")
   id("org.jetbrains.kotlin.android")
   `maven-publish`
+  signing
 }
 
 base { archivesName.set("three-live-hands-androidxr") }
@@ -58,7 +59,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "hands-androidxr"
-      version = "1.0.0"
+      version = "1.1.0"
       afterEvaluate { from(components["release"]) }
 
       pom {
@@ -72,7 +73,44 @@ publishing {
             distribution.set("repo")
           }
         }
+        developers {
+          developer {
+            id.set("google")
+            name.set("Google LLC")
+          }
+        }
+        scm {
+          connection.set("scm:git:git://github.com/google/three-live.git")
+          developerConnection.set("scm:git:ssh://github.com:google/three-live.git")
+          url.set("https://github.com/google/three-live")
+        }
       }
     }
+  }
+  repositories {
+    val centralUser = System.getenv("MAVEN_CENTRAL_USERNAME")
+    val centralPass = System.getenv("MAVEN_CENTRAL_PASSWORD")
+    if (!centralUser.isNullOrBlank() && !centralPass.isNullOrBlank()) {
+      maven {
+        name = "MavenCentral"
+        url =
+          uri(
+            System.getenv("MAVEN_CENTRAL_REPO_URL")
+              ?: "https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/"
+          )
+        credentials {
+          username = centralUser
+          password = centralPass
+        }
+      }
+    }
+  }
+}
+
+signing {
+  val gpgKey = System.getenv("MAVEN_GPG_PRIVATE_KEY")
+  if (!gpgKey.isNullOrBlank()) {
+    useInMemoryPgpKeys(gpgKey, System.getenv("MAVEN_GPG_PASSPHRASE") ?: "")
+    sign(publishing.publications)
   }
 }
