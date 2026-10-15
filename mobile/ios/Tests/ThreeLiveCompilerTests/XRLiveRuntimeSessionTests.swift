@@ -1113,6 +1113,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
+      .deletingLastPathComponent()
       .appendingPathComponent("testdata/golden")
     let sceneData = try Data(contentsOf: goldenDir.appendingPathComponent("scene.glb.json"))
     let scriptData = try Data(contentsOf: goldenDir.appendingPathComponent("script.json"))
