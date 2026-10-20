@@ -26,17 +26,25 @@ plugins {
   signing
 }
 
-val filamentVersion = "1.51.0"
+val filamentVersion = "1.56.0"
 val compiledMaterialsDir = layout.buildDirectory.dir("generated/filamentAssets")
 
 val compileFilamentMaterials by tasks.registering {
   val matFile = layout.projectDirectory.file("src/main/materials/splat.mat")
   val outDir = compiledMaterialsDir
-  val matcCacheDir = layout.buildDirectory.dir("matc")
+  val matcCacheDir = layout.buildDirectory.dir("matc/$filamentVersion")
   inputs.file(matFile)
   outputs.dir(outDir)
 
   doLast {
+    val targetFile = outDir.get().asFile.resolve("materials/splat.filamat")
+    targetFile.parentFile.mkdirs()
+    val prebuilt = layout.projectDirectory.file("src/main/materials/splat.filamat").asFile
+    if (prebuilt.exists()) {
+      Files.copy(prebuilt.toPath(), targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+      return@doLast
+    }
+
     val osName = System.getProperty("os.name").lowercase()
     val platformTag =
       when {
@@ -64,8 +72,6 @@ val compileFilamentMaterials by tasks.registering {
       matcBin.setExecutable(true)
     }
 
-    val targetFile = outDir.get().asFile.resolve("materials/splat.filamat")
-    targetFile.parentFile.mkdirs()
     project.exec {
       commandLine(
         matcBin.absolutePath,
