@@ -324,7 +324,7 @@
           };
           scene.add(gem);
 
-          // 3. Floating Dynamic Moon Orbiter
+          // 3. Floating Dynamic Moon Orbiter (bounces on workbench pedestal)
           const orb = new THREE.Mesh(
             new THREE.SphereGeometry(0.14, 24, 24),
             new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.2, metalness: 0.3 })
@@ -332,7 +332,7 @@
           orb.name = 'Dynamic_Orbiter';
           orb.position.set(0, 0.55, 0);
           orb.userData.xr = {
-            orbit: { target: [0, 0.2, 0], radius: 0.65, speed: 1.35, height: 0.35, faceCenter: true },
+            physics: 'dynamic',
             traits: ['grab', 'scale']
           };
           scene.add(orb);

@@ -389,7 +389,14 @@ class XRLiveRuntimeSession(gltfJson: String) {
       for (ni in 0 until n) {
         if (ni in dynSet || !visible[ni]) continue
         val t = traitByNode[ni]
-        if (t?.orbit != null || t?.lazyFollow != null || !t?.billboard.isNullOrEmpty()) continue
+        if (
+          t?.orbit != null ||
+            t?.lazyFollow != null ||
+            !t?.billboard.isNullOrEmpty() ||
+            t?.grabbable == true
+        ) {
+          continue
+        }
         val mb = meshBounds.getOrNull(nodeMesh[ni]) ?: continue
         sceneMatrix(ni, mA)
         val aabb =
@@ -1949,10 +1956,16 @@ class XRLiveRuntimeSession(gltfJson: String) {
       if (grabbed[i]) continue
       val px = translation[i * 3]
       val pz = translation[i * 3 + 2]
-      val angle = idx * 2.39996
-      body.velocity[0] = -px * 0.85 + Math.cos(angle) * 0.55
-      body.velocity[1] = 3.6 + (idx % 5) * 0.38
-      body.velocity[2] = -pz * 0.85 + Math.sin(angle) * 0.55
+      if (dynamicBodies.size == 1) {
+        body.velocity[0] = -px * 1.5
+        body.velocity[1] = 2.8
+        body.velocity[2] = -pz * 1.5
+      } else {
+        val angle = idx * 2.39996
+        body.velocity[0] = -px * 0.85 + Math.cos(angle) * 0.55
+        body.velocity[1] = 3.6 + (idx % 5) * 0.38
+        body.velocity[2] = -pz * 0.85 + Math.sin(angle) * 0.55
+      }
     }
   }
 

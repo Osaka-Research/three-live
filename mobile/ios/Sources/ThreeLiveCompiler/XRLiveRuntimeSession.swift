@@ -1746,7 +1746,7 @@ public final class XRLiveRuntimeSession {
     for i in 0..<nodes.count {
       let t = nodes[i].traits
       let isDynamic = t?.physics?.caseInsensitiveCompare("dynamic") == .orderedSame
-      if isDynamic || t?.lazyFollow != nil || t?.orbit != nil { continue }
+      if isDynamic || t?.lazyFollow != nil || t?.orbit != nil || t?.grabbable == true { continue }
       let isStaticCollider =
         t?.physics?.caseInsensitiveCompare("static") == .orderedSame
         || t?.anchor != nil
@@ -1869,7 +1869,7 @@ public final class XRLiveRuntimeSession {
               sin(angle) * 0.85
             )
           } else {
-            initVel = SIMD3<Float>(cos(seed) * 0.45, 0, sin(seed * 1.3) * 0.45)
+            initVel = .zero
           }
           return PhysicsBodyState(
             position: p0,
@@ -1939,13 +1939,17 @@ public final class XRLiveRuntimeSession {
       if speedSq < 0.015 && abs(st.position.y - floorY) < 0.025 {
         st.sleepTimer += dt
         if st.sleepTimer > 1.8 {
-          let phase = Float(elapsed) * 2.3 + Float(idx) * 1.1
-          st.position = SIMD3<Float>(
-            st.spawnPosition.x + cos(phase) * 0.12,
-            max(st.spawnPosition.y, floorY + 0.55),
-            st.spawnPosition.z + sin(phase) * 0.12
-          )
-          st.velocity = SIMD3<Float>(cos(phase * 1.7) * 0.55, 1.35 + Float(idx % 4) * 0.25, sin(phase * 1.3) * 0.55)
+          if dynamicIndices.count == 1 {
+            st.velocity = SIMD3<Float>(-st.position.x * 1.5, 2.8, -st.position.z * 1.5)
+          } else {
+            let phase = Float(elapsed) * 2.3 + Float(idx) * 1.1
+            st.position = SIMD3<Float>(
+              st.spawnPosition.x + cos(phase) * 0.12,
+              max(st.spawnPosition.y, floorY + 0.55),
+              st.spawnPosition.z + sin(phase) * 0.12
+            )
+            st.velocity = SIMD3<Float>(cos(phase * 1.7) * 0.55, 1.35 + Float(idx % 4) * 0.25, sin(phase * 1.3) * 0.55)
+          }
           st.sleepTimer = 0
         }
       } else {
