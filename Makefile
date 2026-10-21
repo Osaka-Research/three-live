@@ -165,9 +165,12 @@ ios-demo: engine-asset
 	fi; \
 	cd mobile/examples/ios_swiftui && "$$XCODEGEN_BIN" generate && open ThreeLiveDemo.xcodeproj
 
-android: engine-asset
-	@if command -v rustup >/dev/null 2>&1; then \
-		rustup target add aarch64-linux-android x86_64-linux-android armv7-linux-androideabi; \
+android:
+	@if [ "$(UNAME_S)" != "Darwin" ] || [ "$${THREE_LIVE_BUILD_RUST_FROM_SOURCE:-0}" = "1" ]; then \
+		$(MAKE) engine-asset; \
+		if command -v rustup >/dev/null 2>&1; then \
+			rustup target add aarch64-linux-android x86_64-linux-android armv7-linux-androideabi; \
+		fi; \
 	fi
 	bash scripts/build_android_aar.sh
 

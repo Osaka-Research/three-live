@@ -70,23 +70,14 @@ if [ -z "${GRADLE_BIN}" ]; then
     fi
 fi
 
-# Preserve the files `gradle wrapper` would otherwise overwrite.
-for f in gradlew gradlew.bat; do
-    [ -f "${ROOT_DIR}/${f}" ] && cp -p "${ROOT_DIR}/${f}" "${BACKUP_DIR}/${f}"
-done
-cp -p "${PROPERTIES}" "${BACKUP_DIR}/gradle-wrapper.properties"
+# Run `gradle wrapper` in an isolated empty directory so Gradle does not evaluate the root
+# project's build.gradle.kts (which requires AGP's minimum Gradle version before the wrapper
+# itself exists), and so our checked-in gradlew / gradle-wrapper.properties are never touched.
+mkdir -p "${BACKUP_DIR}/empty"
+echo 'rootProject.name = "wrapper-bootstrap"' > "${BACKUP_DIR}/empty/settings.gradle.kts"
+"${GRADLE_BIN}" -p "${BACKUP_DIR}/empty" wrapper --gradle-version "${GRADLE_VERSION}" --distribution-type bin --quiet
 
-"${GRADLE_BIN}" -p "${ROOT_DIR}" wrapper --gradle-version "${GRADLE_VERSION}" --distribution-type bin
-
-# Restore ours; keep only the generated jar.
-for f in gradlew gradlew.bat; do
-    if [ -f "${BACKUP_DIR}/${f}" ]; then
-        cp -p "${BACKUP_DIR}/${f}" "${ROOT_DIR}/${f}"
-    else
-        rm -f "${ROOT_DIR}/${f}"
-    fi
-done
-cp -p "${BACKUP_DIR}/gradle-wrapper.properties" "${PROPERTIES}"
+cp -p "${BACKUP_DIR}/empty/gradle/wrapper/gradle-wrapper.jar" "${WRAPPER_DIR}/gradle-wrapper.jar"
 chmod +x "${ROOT_DIR}/gradlew"
 
 if [ ! -f "${WRAPPER_DIR}/gradle-wrapper.jar" ]; then

@@ -56,47 +56,155 @@ if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -z "${NDK_HOME:-}" ] && [ -n "${ANDROID_H
     fi
 fi
 
-# Check requirements
-if ! command -v cargo &> /dev/null; then
-    echo "Error: cargo is required but not installed. Install Rust via https://rustup.rs" >&2
-    exit 1
-fi
-
-if ! command -v cargo-ndk &> /dev/null; then
-    echo "--> Installing cargo-ndk via cargo..."
-    cargo install cargo-ndk
-fi
-
-if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -z "${NDK_HOME:-}" ]; then
-    echo "Error: Android NDK not found." >&2
-    echo "In Android Studio, open Settings -> Languages & Frameworks -> Android SDK -> SDK Tools," >&2
-    echo "check 'NDK (Side by side)', and click Apply." >&2
-    exit 1
-fi
-
 # Ensure gradle-wrapper.jar exists before invoking ./gradlew
 if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
-# Start from a clean slate: .so files from a previously-configured ABI would otherwise linger
-# here and be packaged into the AAR.
-rm -rf "${JNILIBS_DIR}"
-mkdir -p "${JNILIBS_DIR}"
+download_prebuilt_jnilibs() {
+    # If all 3 ABI .so files are already present in jniLibs, reuse them directly.
+    if [ -f "${JNILIBS_DIR}/arm64-v8a/libthree_live_compiler.so" ] && \
+       [ -f "${JNILIBS_DIR}/x86_64/libthree_live_compiler.so" ] && \
+       [ -f "${JNILIBS_DIR}/armeabi-v7a/libthree_live_compiler.so" ]; then
+        echo "--> Using existing prebuilt Android JNI libraries in ${JNILIBS_DIR}"
+        return 0
+    fi
 
-TARGETS=("aarch64-linux-android" "x86_64-linux-android" "armv7-linux-androideabi")
-ABI_NAMES=("arm64-v8a" "x86_64" "armeabi-v7a")
+    rm -rf "${JNILIBS_DIR}"
+    mkdir -p "${JNILIBS_DIR}"
 
-echo "--> Cross-compiling native .so libraries..."
-cd "${COMPILER_DIR}"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    local aar_file="${tmp_dir}/three-live-compiler-release.aar"
+    local downloaded=0
 
-for i in "${!TARGETS[@]}"; do
-    target="${TARGETS[$i]}"
-    abi="${ABI_NAMES[$i]}"
-    echo "  Building for ${abi} (${target})..."
+    echo "--> Downloading prebuilt Android JNI libraries from GitHub Releases (skipping local Rust build)..."
 
-    cargo ndk -t "${abi}" -o "${JNILIBS_DIR}" build --release --features jni
-done
+    if command -v gh >/dev/null 2>&1; then
+        if gh release download v1.0.0 --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1; then
+            downloaded=1
+        fi
+    fi
+
+    if [ "${downloaded}" -eq 0 ]; then
+        local gh_token="${GITHUB_TOKEN:-}"
+        if [ -z "${gh_token}" ] && command -v git >/dev/null 2>&1; then
+            gh_token="$(printf "protocol=https\nhost=github.com\n\n" | GIT_TERMINAL_PROMPT=0 git -C "${ROOT_DIR}" credential fill 2>/dev/null | sed -n 's/^password=//p' || true)"
+        fi
+        if [ -n "${gh_token}" ] && command -v python3 >/dev/null 2>&1; then
+            local asset_url
+            asset_url="$(curl -fsSL -H "Authorization: token ${gh_token}" "https://api.github.com/repos/google/three-live/releases/tags/v1.0.0" 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for a in data.get('assets', []):
+    if a.get('name') == 'three-live-compiler-release.aar':
+        print(a.get('url', ''))
+        break
+" 2>/dev/null || true)"
+            if [ -n "${asset_url}" ]; then
+                if curl -fsSL -H "Authorization: token ${gh_token}" -H "Accept: application/octet-stream" "${asset_url}" -o "${aar_file}" 2>/dev/null; then
+                    downloaded=1
+                fi
+            fi
+        fi
+    fi
+
+    if [ "${downloaded}" -eq 0 ]; then
+        if curl -fsSL "https://github.com/google/three-live/releases/download/v1.0.0/three-live-compiler-release.aar" -o "${aar_file}" 2>/dev/null; then
+            downloaded=1
+        fi
+    fi
+
+    if [ "${downloaded}" -eq 1 ] && [ -f "${aar_file}" ]; then
+        unzip -qo "${aar_file}" "jni/*" -d "${tmp_dir}"
+        cp -R "${tmp_dir}/jni/"* "${JNILIBS_DIR}/"
+        rm -rf "${tmp_dir}"
+        echo "--> Extracted prebuilt JNI libraries (arm64-v8a, x86_64, armeabi-v7a) into ${JNILIBS_DIR}"
+        return 0
+    fi
+
+    rm -rf "${tmp_dir}"
+    return 1
+}
+
+UNAME_S="$(uname -s)"
+USE_PREBUILT="${THREE_LIVE_PREBUILT_JNI:-}"
+if [ -z "${USE_PREBUILT}" ]; then
+    # On macOS, default to downloading the prebuilt Android JNI .so libraries from GitHub Releases
+    # unless THREE_LIVE_BUILD_RUST_FROM_SOURCE=1 is set.
+    if [ "${UNAME_S}" = "Darwin" ] && [ "${THREE_LIVE_BUILD_RUST_FROM_SOURCE:-0}" != "1" ]; then
+        USE_PREBUILT="1"
+    else
+        USE_PREBUILT="0"
+    fi
+fi
+
+BUILT_JNI=0
+if [ "${USE_PREBUILT}" = "1" ]; then
+    if download_prebuilt_jnilibs; then
+        BUILT_JNI=1
+    else
+        echo "Warning: Could not download prebuilt JNI libraries; falling back to building from Rust source..." >&2
+    fi
+fi
+
+if [ "${BUILT_JNI}" -eq 0 ]; then
+    rm -rf "${JNILIBS_DIR}"
+    mkdir -p "${JNILIBS_DIR}"
+
+    # Check requirements for source build
+    if ! command -v cargo &> /dev/null; then
+        echo "Error: cargo is required to build from source (and prebuilt JNI download failed)." >&2
+        exit 1
+    fi
+
+    NDK_ROOT="${ANDROID_NDK_HOME:-${NDK_HOME:-}}"
+    if [ -z "${NDK_ROOT}" ]; then
+        echo "Error: Android NDK not found." >&2
+        echo "In Android Studio, open Settings -> Languages & Frameworks -> Android SDK -> SDK Tools," >&2
+        echo "check 'NDK (Side by side)', and click Apply." >&2
+        exit 1
+    fi
+
+    TARGETS=("aarch64-linux-android" "x86_64-linux-android" "armv7-linux-androideabi")
+    ABI_NAMES=("arm64-v8a" "x86_64" "armeabi-v7a")
+
+    echo "--> Cross-compiling native .so libraries..."
+    cd "${COMPILER_DIR}"
+
+    if command -v cargo-ndk &> /dev/null; then
+        for i in "${!TARGETS[@]}"; do
+            target="${TARGETS[$i]}"
+            abi="${ABI_NAMES[$i]}"
+            echo "  Building for ${abi} (${target}) via cargo-ndk..."
+            cargo ndk -t "${abi}" -o "${JNILIBS_DIR}" build --release --features jni
+        done
+    else
+        # Direct NDK clang cross-compilation (no cargo-ndk required!)
+        TOOLCHAIN_BIN="$(ls -d "${NDK_ROOT}/toolchains/llvm/prebuilt/"*/bin 2>/dev/null | head -n 1 || true)"
+        if [ -z "${TOOLCHAIN_BIN}" ] || [ ! -d "${TOOLCHAIN_BIN}" ]; then
+            echo "Error: Could not locate NDK LLVM toolchain under ${NDK_ROOT}/toolchains/llvm/prebuilt/" >&2
+            exit 1
+        fi
+        export PATH="${TOOLCHAIN_BIN}:${PATH}"
+        export CC_aarch64_linux_android="${TOOLCHAIN_BIN}/aarch64-linux-android24-clang"
+        export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${TOOLCHAIN_BIN}/aarch64-linux-android24-clang"
+        export CC_x86_64_linux_android="${TOOLCHAIN_BIN}/x86_64-linux-android24-clang"
+        export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="${TOOLCHAIN_BIN}/x86_64-linux-android24-clang"
+        export CC_armv7_linux_androideabi="${TOOLCHAIN_BIN}/armv7a-linux-androideabi24-clang"
+        export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${TOOLCHAIN_BIN}/armv7a-linux-androideabi24-clang"
+        export AR="${TOOLCHAIN_BIN}/llvm-ar"
+
+        for i in "${!TARGETS[@]}"; do
+            target="${TARGETS[$i]}"
+            abi="${ABI_NAMES[$i]}"
+            echo "  Building for ${abi} (${target}) via NDK clang..."
+            cargo build --target "${target}" --release --features jni
+            mkdir -p "${JNILIBS_DIR}/${abi}"
+            cp "${ROOT_DIR}/target/${target}/release/libthree_live_compiler.so" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
+        done
+    fi
+fi
 
 echo "--> Assembling Android AAR..."
 cd "${ROOT_DIR}"
