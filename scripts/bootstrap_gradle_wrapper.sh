@@ -34,17 +34,18 @@ if [ ! -f "${PROPERTIES}" ]; then
     exit 1
 fi
 
-if ! command -v gradle >/dev/null 2>&1; then
-    echo "Error: 'gradle' is required to generate the wrapper but is not on PATH." >&2
-    echo "Install it via SDKMAN ('sdk install gradle'), Homebrew ('brew install gradle')," >&2
-    echo "or your distribution's package manager, then re-run this script." >&2
-    exit 1
-fi
-
 GRADLE_VERSION="$(sed -n 's|.*/gradle-\([0-9][0-9.]*\)-bin\.zip.*|\1|p' "${PROPERTIES}")"
 if [ -z "${GRADLE_VERSION}" ]; then
     echo "Error: could not parse the pinned Gradle version from ${PROPERTIES}." >&2
     exit 1
+fi
+
+# On macOS, use Android Studio's bundled JBR if no working Java 17+ is configured.
+if [ -z "${JAVA_HOME:-}" ] && [ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]; then
+    if ! java -version >/dev/null 2>&1; then
+        export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+        export PATH="${JAVA_HOME}/bin:${PATH}"
+    fi
 fi
 
 echo "=== Three-Live: generating Gradle ${GRADLE_VERSION} wrapper jar ==="
@@ -52,13 +53,30 @@ echo "=== Three-Live: generating Gradle ${GRADLE_VERSION} wrapper jar ==="
 BACKUP_DIR="$(mktemp -d)"
 trap 'rm -rf "${BACKUP_DIR}"' EXIT
 
+GRADLE_BIN="$(command -v gradle || true)"
+if [ -z "${GRADLE_BIN}" ]; then
+    # Check if Gradle is already cached under ~/.gradle/wrapper/dists
+    CACHED_GRADLE="$(ls "${HOME}/.gradle/wrapper/dists/gradle-${GRADLE_VERSION}-bin"/*/gradle-"${GRADLE_VERSION}"/bin/gradle 2>/dev/null | head -n 1 || true)"
+    if [ -z "${CACHED_GRADLE}" ]; then
+        CACHED_GRADLE="$(ls "${HOME}/.gradle/wrapper/dists"/gradle-*-bin/*/gradle-*/bin/gradle 2>/dev/null | tail -n 1 || true)"
+    fi
+    if [ -n "${CACHED_GRADLE}" ] && [ -x "${CACHED_GRADLE}" ]; then
+        GRADLE_BIN="${CACHED_GRADLE}"
+    else
+        echo "--> Downloading Gradle ${GRADLE_VERSION} distribution to bootstrap wrapper..."
+        curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "${BACKUP_DIR}/gradle.zip"
+        unzip -qo "${BACKUP_DIR}/gradle.zip" -d "${BACKUP_DIR}"
+        GRADLE_BIN="${BACKUP_DIR}/gradle-${GRADLE_VERSION}/bin/gradle"
+    fi
+fi
+
 # Preserve the files `gradle wrapper` would otherwise overwrite.
 for f in gradlew gradlew.bat; do
     [ -f "${ROOT_DIR}/${f}" ] && cp -p "${ROOT_DIR}/${f}" "${BACKUP_DIR}/${f}"
 done
 cp -p "${PROPERTIES}" "${BACKUP_DIR}/gradle-wrapper.properties"
 
-gradle -p "${ROOT_DIR}" wrapper --gradle-version "${GRADLE_VERSION}" --distribution-type bin
+"${GRADLE_BIN}" -p "${ROOT_DIR}" wrapper --gradle-version "${GRADLE_VERSION}" --distribution-type bin
 
 # Restore ours; keep only the generated jar.
 for f in gradlew gradlew.bat; do

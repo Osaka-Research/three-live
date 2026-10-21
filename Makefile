@@ -89,12 +89,16 @@ doctor:
 	@if command -v cargo-ndk >/dev/null 2>&1; then \
 		echo "  [OK]   cargo-ndk:     $$(cargo ndk --version)"; \
 	else \
-		echo "  [INFO] cargo-ndk:     Run 'cargo install cargo-ndk' (needed for 'make android')"; \
+		echo "  [INFO] cargo-ndk:     Will be installed automatically via 'cargo install cargo-ndk' on 'make android'"; \
 	fi
-	@if [ -n "$${ANDROID_NDK_HOME:-}$${NDK_HOME:-}" ]; then \
-		echo "  [OK]   Android NDK:   $${ANDROID_NDK_HOME:-$$NDK_HOME}"; \
+	@DETECTED_NDK="$${ANDROID_NDK_HOME:-$${NDK_HOME:-}}"; \
+	if [ -z "$$DETECTED_NDK" ]; then \
+		DETECTED_NDK=$$(ls -d "$$HOME/Library/Android/sdk/ndk/"* "$$HOME/Android/Sdk/ndk/"* 2>/dev/null | sort -V | tail -n 1 || true); \
+	fi; \
+	if [ -n "$$DETECTED_NDK" ] && [ -d "$$DETECTED_NDK" ]; then \
+		echo "  [OK]   Android NDK:   $$DETECTED_NDK"; \
 	else \
-		echo "  [INFO] Android NDK:   Set ANDROID_NDK_HOME to build Android JNI libraries locally"; \
+		echo "  [INFO] Android NDK:   Install 'NDK (Side by side)' in Android Studio -> Settings -> Android SDK -> SDK Tools"; \
 	fi
 
 ensure-esbuild:
@@ -168,9 +172,25 @@ android: engine-asset
 	bash scripts/build_android_aar.sh
 
 android-demo: android
-	./gradlew :mobile:examples:android_compose:assembleDebug
-	@echo "=== Debug APK built at: mobile/examples/android_compose/build/outputs/apk/debug/ ==="
-	@if [ "$(UNAME_S)" = "Darwin" ] && [ -d "/Applications/Android Studio.app" ]; then \
+	@if [ -z "$${JAVA_HOME:-}" ] && [ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]; then \
+		export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"; \
+		export PATH="$$JAVA_HOME/bin:$$PATH"; \
+	fi; \
+	if [ -z "$${ANDROID_HOME:-}" ] && [ -d "$$HOME/Library/Android/sdk" ]; then \
+		export ANDROID_HOME="$$HOME/Library/Android/sdk"; \
+		export PATH="$$ANDROID_HOME/platform-tools:$$PATH"; \
+	elif [ -z "$${ANDROID_HOME:-}" ] && [ -d "$$HOME/Android/Sdk" ]; then \
+		export ANDROID_HOME="$$HOME/Android/Sdk"; \
+		export PATH="$$ANDROID_HOME/platform-tools:$$PATH"; \
+	fi; \
+	./gradlew :mobile:examples:android_compose:assembleDebug; \
+	echo "=== Debug APK built at: mobile/examples/android_compose/build/outputs/apk/debug/ ==="; \
+	if command -v adb >/dev/null 2>&1 && [ "$$(adb devices | awk 'NR>1 && $$2=="device" {count++} END {print count+0}')" -gt 0 ]; then \
+		echo "--> Running emulator/device detected! Installing and launching Three-Live Studio..."; \
+		./gradlew :mobile:examples:android_compose:installDebug && \
+		adb shell am start -n com.google.threelive.example/.MainActivity; \
+	fi; \
+	if [ "$(UNAME_S)" = "Darwin" ] && [ -d "/Applications/Android Studio.app" ]; then \
 		open -a "Android Studio" .; \
 	fi
 
