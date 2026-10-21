@@ -655,7 +655,8 @@
       cameraAnchor.addChild(camera)
       arView.scene.addAnchor(cameraAnchor)
 
-      // Add 3-point studio lighting rig matching Web (three-view.ts) and Android Filament
+      // Studio lighting rig: key + cool fill match Web (three-view.ts) and Android Filament; a soft
+      // under-fill approximates Web's ground ambient term.
       let lightAnchor = AnchorEntity(world: [0, 0, 0])
       let keyLight = DirectionalLight()
       keyLight.light.intensity = 7500

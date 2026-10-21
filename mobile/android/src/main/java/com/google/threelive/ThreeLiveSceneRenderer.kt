@@ -62,7 +62,11 @@ interface ThreeLiveSceneRenderer {
    */
   fun setNodeVisible(nodeIndex: Int, visible: Boolean)
 
-  /** Updates a glTF material's PBR factors on every primitive that uses it. */
+  /**
+   * Updates a glTF material's PBR factors on every primitive that uses it. Colors are the factors
+   * as stored in the compiled glTF (Three.js colors are sRGB `hex / 255`); renderers convert them
+   * to their shading space.
+   */
   fun setMaterialFactors(
     materialIndex: Int,
     baseColorFactor: FloatArray,
@@ -105,7 +109,8 @@ interface ThreeLiveSceneRenderer {
 
   /**
    * Adds a world-space triangle mesh used by XR Blocks features (handles, paint strokes,
-   * particles). [positions] and [normals] are xyz triples, [color] is linear RGBA. Returns a mesh id,
+   * particles). [positions] and [normals] are xyz triples, [color] is sRGB RGBA (like Three.js hex
+   * colors). Returns a mesh id,
    * or `-1` when dynamic meshes are unsupported.
    */
   fun addDynamicMesh(

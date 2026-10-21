@@ -88,11 +88,11 @@ public struct XRNodeTransform: Sendable, Equatable {
 
 /// PBR material factors addressable by `KHR_interactivity` pointers.
 public struct XRMaterialState: Sendable, Equatable {
-  /// Linear RGBA base color factor.
+  /// RGBA base color factor as stored in the compiled glTF (Three.js colors are sRGB `hex / 255`).
   public var baseColorFactor: SIMD4<Float>
   public var metallicFactor: Float
   public var roughnessFactor: Float
-  /// Linear RGB emissive factor.
+  /// RGB emissive factor as stored in the compiled glTF.
   public var emissiveFactor: SIMD3<Float>
   public var alphaCutoff: Float
 }

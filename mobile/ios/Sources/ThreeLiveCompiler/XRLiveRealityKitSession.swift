@@ -218,9 +218,14 @@
 
       // Apply calibrated studio materials (sRGB tint + calibrated metallic factor) to all
       // bound entities immediately so initial colors and reflections match Web and Android.
-      for materialIndex in 0..<session.materialCount {
-        if let state = session.material(at: materialIndex) {
-          applyMaterial(materialIndex, state)
+      // One pass over bound nodes (O(nodes x primitives)) rather than per material.
+      for (nodeIndex, entity) in entitiesByNode {
+        let primitives = session.materialIndices(forNode: nodeIndex)
+        var seen = Set<Int>()
+        for materialIndex in primitives where materialIndex >= 0 && seen.insert(materialIndex).inserted {
+          guard let state = session.material(at: materialIndex) else { continue }
+          recolor(
+            entity, state: state, primitives: primitives, materialIndex: materialIndex, depth: 0)
         }
       }
     }
@@ -529,9 +534,10 @@
 
     private static let studioMetallicScale: Float = 0.38
 
-    /// Three.js scripts author hex colors in sRGB, which `XRPlatformColor(red:green:blue:alpha:)`
-    /// (`UIColor` / `NSColor`) expects directly and RealityKit linearizes internally.
-    private static func srgb(_ value: Float) -> CGFloat {
+    /// Compiled scenes carry Three.js hex colors as sRGB `hex / 255` factors, which
+    /// `XRPlatformColor(red:green:blue:alpha:)` (`UIColor` / `NSColor`) expects directly and
+    /// RealityKit linearizes internally, so components are only clamped here.
+    private static func srgbComponent(_ value: Float) -> CGFloat {
       let c = max(0, min(1, value.isFinite ? value : 0))
       return CGFloat(c)
     }
@@ -543,7 +549,8 @@
 
     private static func platformColor(_ c: SIMD4<Float>) -> XRPlatformColor {
       let alpha = CGFloat(max(0, min(1, c.w.isFinite ? c.w : 1)))
-      return XRPlatformColor(red: srgb(c.x), green: srgb(c.y), blue: srgb(c.z), alpha: alpha)
+      return XRPlatformColor(
+        red: srgbComponent(c.x), green: srgbComponent(c.y), blue: srgbComponent(c.z), alpha: alpha)
     }
 
     private static func recolored(_ material: Material, _ state: XRMaterialState) -> Material {
@@ -573,23 +580,9 @@
         unlit.color = UnlitMaterial.BaseColor(tint: base, texture: unlit.color.texture)
         return unlit
       }
-      // USDZ-imported `UsdPreviewSurface` materials that do not downcast to `PhysicallyBasedMaterial`
-      // are upgraded to a calibrated `PhysicallyBasedMaterial` so sRGB colors and runtime material
-      // updates (`KHR_interactivity`) take effect identically to Web and Android.
-      var pbr = PhysicallyBasedMaterial()
-      pbr.baseColor = PhysicallyBasedMaterial.BaseColor(tint: base)
-      pbr.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: calMetallic)
-      pbr.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: calRoughness)
-      let e = state.emissiveFactor
-      if e.x > 0 || e.y > 0 || e.z > 0 {
-        pbr.emissiveColor = PhysicallyBasedMaterial.EmissiveColor(
-          color: platformColor(SIMD4<Float>(e.x, e.y, e.z, 1)))
-      }
-      let alpha = max(0, min(1, state.baseColorFactor.w.isFinite ? state.baseColorFactor.w : 1))
-      if alpha < 0.999 {
-        pbr.blending = .transparent(opacity: .init(floatLiteral: alpha))
-      }
-      return pbr
+      // Leave other material kinds (e.g. ShaderGraph / custom materials) untouched: replacing them
+      // would silently drop their textures, shader graphs, and blending settings.
+      return material
     }
   }
 #endif
