@@ -406,8 +406,8 @@ public final class XRMediaPipeHandJointSource: XRHandJointSource, @unchecked Sen
     private var tracker = XRHandGestureTracker()
     private var updatesTask: Task<Void, Never>?
     private let jointsLock = NSLock()
-    private var latestJoints: [XRHand: XRHandJointMap] = [:]
-    private var latestPoses: [XRHand: XRPose] = [:]
+    private nonisolated(unsafe) var latestJoints: [XRHand: XRHandJointMap] = [:]
+    private nonisolated(unsafe) var latestPoses: [XRHand: XRPose] = [:]
 
     /// ARKit joint names mapped to WebXR names.
     static let jointNames: [(HandSkeleton.JointName, String)] = [
