@@ -107,7 +107,7 @@ if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
-PREBUILT_JNI_VERSION="v1.0.0-r2"
+PREBUILT_JNI_VERSION="v1.0.0-r3"
 
 download_prebuilt_jnilibs() {
     # If all 3 ABI .so files and the expected prebuilt version stamp are present in jniLibs, reuse them directly.
@@ -224,7 +224,7 @@ if [ "${BUILT_JNI}" -eq 0 ]; then
         rustup target add "${TARGETS[@]}"
     fi
 
-    echo "--> Cross-compiling native .so libraries..."
+    echo "--> Cross-compiling native .so libraries (16 KB ELF page alignment)..."
     cd "${COMPILER_DIR}"
 
     if command -v cargo-ndk &> /dev/null; then

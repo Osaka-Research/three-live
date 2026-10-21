@@ -20,6 +20,10 @@ fn main() {
     // Notify rustc that this build is executed under Cargo
     println!("cargo:rustc-check-cfg=cfg(cargo_build)");
     println!("cargo:rustc-cfg=cargo_build");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-z,max-page-size=16384");
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-z,common-page-size=16384");
+    }
     println!("cargo:rerun-if-changed=../three-live/src/constants.ts");
     println!("cargo:rerun-if-changed=../three-live/src/three-author.ts");
     println!("cargo:rerun-if-changed=../three-live/src/three-view.ts");
