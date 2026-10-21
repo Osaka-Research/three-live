@@ -189,6 +189,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private val staticColliders: Array<DoubleArray>
   private val physicsFloorY: Double
   private var physicsSettledTime = 0.0
+  private var physicsFountainTimer = 0.0
+  private var physicsFountainIndex = 0
   private val followStates: Array<FollowState?>
   private val orbitTime: DoubleArray
   private val grabbed: BooleanArray
@@ -369,7 +371,18 @@ class XRLiveRuntimeSession(gltfJson: String) {
               Math.max(Math.abs(scale[ni * 3 + 1]), Math.abs(scale[ni * 3 + 2])),
             )
           val r = XRBlocksMath.clampNum(localR * maxS, 0.04, 1.5, 0.12)
-          PhysicsBody(ni, r)
+          val initVel =
+            if (dynNodes.size > 1) {
+              val angle = (idx.toDouble() / dynNodes.size) * Math.PI * 2.0
+              doubleArrayOf(
+                Math.cos(angle) * 0.85,
+                1.1 + (idx % 4) * 0.45,
+                Math.sin(angle) * 0.85,
+              )
+            } else {
+              DoubleArray(3)
+            }
+          PhysicsBody(ni, r, initVel)
         }
       val colliders = ArrayList<DoubleArray>()
       var floorY = -0.85
@@ -1735,11 +1748,33 @@ class XRLiveRuntimeSession(gltfJson: String) {
       py += v[1] * clampedDt
       pz += v[2] * clampedDt
 
-      // 2. Collide against static scene mesh AABBs (e.g. Pedestal_Table, Workbench_Pedestal)
+      // 2. Collide against static scene mesh AABBs / circular pedestals (e.g. Pedestal_Table, Workbench_Pedestal)
       for (box in staticColliders) {
-        val cx = Math.max(box[0], Math.min(box[3], px))
+        val spanX = box[3] - box[0]
+        val spanZ = box[5] - box[2]
+        val isRoundPedestal =
+          box[4] > physicsFloorY + 0.12 &&
+            spanX > 0.25 &&
+            spanX < 2.2 &&
+            Math.abs(spanX - spanZ) < 0.05
+        var cx = Math.max(box[0], Math.min(box[3], px))
         val cy = Math.max(box[1], Math.min(box[4], py))
-        val cz = Math.max(box[2], Math.min(box[5], pz))
+        var cz = Math.max(box[2], Math.min(box[5], pz))
+        if (isRoundPedestal) {
+          val centerX = (box[0] + box[3]) * 0.5
+          val centerZ = (box[2] + box[5]) * 0.5
+          val rad = spanX * 0.5
+          val rdx = px - centerX
+          val rdz = pz - centerZ
+          val rDist = Math.hypot(rdx, rdz)
+          if (rDist > rad && rDist > 1e-5) {
+            cx = centerX + (rdx / rDist) * rad
+            cz = centerZ + (rdz / rDist) * rad
+          } else {
+            cx = px
+            cz = pz
+          }
+        }
         val dx = px - cx
         val dy = py - cy
         val dz = pz - cz
@@ -1806,6 +1841,30 @@ class XRLiveRuntimeSession(gltfJson: String) {
       translation[i * 3] = px
       translation[i * 3 + 1] = py
       translation[i * 3 + 2] = pz
+
+      // Roll sphere rotation quaternion from horizontal velocity
+      val horizSpeed = Math.hypot(v[0], v[2])
+      if (horizSpeed > 0.03) {
+        val halfAngle = 0.5 * (horizSpeed * clampedDt / Math.max(0.04, r))
+        val sinH = Math.sin(halfAngle)
+        val cosH = Math.cos(halfAngle)
+        val ax = v[2] / horizSpeed
+        val az = -v[0] / horizSpeed
+        val dqx = ax * sinH
+        val dqy = 0.0
+        val dqz = az * sinH
+        val dqw = cosH
+        val qx = rotation[i * 4]
+        val qy = rotation[i * 4 + 1]
+        val qz = rotation[i * 4 + 2]
+        val qw = rotation[i * 4 + 3]
+        q4a[0] = dqw * qx + dqx * qw + dqy * qz - dqz * qy
+        q4a[1] = dqw * qy - dqx * qz + dqy * qw + dqz * qx
+        q4a[2] = dqw * qz + dqx * qy - dqy * qx + dqz * qw
+        q4a[3] = dqw * qw - dqx * qx - dqy * qy - dqz * qz
+        normalizeQuatInto(q4a)
+        for (k in 0 until 4) rotation[i * 4 + k] = q4a[k]
+      }
       markTransform(i)
     }
 
@@ -1856,7 +1915,23 @@ class XRLiveRuntimeSession(gltfJson: String) {
       if (spSq > maxSpeedSq) maxSpeedSq = spSq
     }
 
-    // 5. Continuous fountain re-launch once all dynamic spheres settle
+    // 5. Periodic auto-fountain (matching web Ballpit Lab autoFountain) + settled fountain relaunch
+    if (dynamicBodies.size > 1) {
+      physicsFountainTimer += clampedDt
+      if (elapsed >= 2.2 && physicsFountainTimer >= 1.8) {
+        physicsFountainTimer = 0.0
+        val pickIdx = physicsFountainIndex % dynamicBodies.size
+        physicsFountainIndex++
+        val pick = dynamicBodies[pickIdx]
+        val pi = pick.nodeIndex
+        if (!grabbed[pi] && isEffectivelyVisible(pi)) {
+          val angle = (pickIdx * 2.39996) + elapsed
+          pick.velocity[0] = -translation[pi * 3] * 0.8 + Math.cos(angle) * 0.45
+          pick.velocity[1] = 3.4 + (pickIdx % 4) * 0.45
+          pick.velocity[2] = -translation[pi * 3 + 2] * 0.8 + Math.sin(angle) * 0.45
+        }
+      }
+    }
     if (maxSpeedSq < 0.025) {
       physicsSettledTime += clampedDt
       if (physicsSettledTime >= 1.8) {
@@ -1886,9 +1961,28 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val hitBody = dynamicBodies.firstOrNull { it.nodeIndex == nodeIndex }
     if (hitBody != null) {
       val i = hitBody.nodeIndex
-      hitBody.velocity[0] += -translation[i * 3] * 0.6 + 0.35
+      val hx = translation[i * 3]
+      val hy = translation[i * 3 + 1]
+      val hz = translation[i * 3 + 2]
+      val angle = i * 2.39996 + elapsed
+      hitBody.velocity[0] = -hx * 0.9 + Math.cos(angle) * 0.65
       hitBody.velocity[1] = Math.max(hitBody.velocity[1] + 3.8, 3.8)
-      hitBody.velocity[2] += -translation[i * 3 + 2] * 0.6 - 0.25
+      hitBody.velocity[2] = -hz * 0.9 + Math.sin(angle) * 0.65
+      // Radial shockwave to nearby dynamic spheres (matching web Ballpit Lab)
+      for (other in dynamicBodies) {
+        val oi = other.nodeIndex
+        if (oi == i || grabbed[oi]) continue
+        val dx = translation[oi * 3] - hx
+        val dy = translation[oi * 3 + 1] - hy
+        val dz = translation[oi * 3 + 2] - hz
+        val dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        if (dist in 0.01..0.85) {
+          val falloff = (1.0 - dist / 0.85) * 2.2
+          other.velocity[0] += (dx / dist) * falloff
+          other.velocity[1] += 1.6 * (1.0 - dist / 0.85)
+          other.velocity[2] += (dz / dist) * falloff
+        }
+      }
       physicsSettledTime = 0.0
     } else {
       fountainLaunchDynamicBodies()

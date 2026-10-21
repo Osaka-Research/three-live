@@ -1329,4 +1329,33 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     let qSign = s.nodeTransform(at: 2)?.rotation.vector.y ?? 0
     XCTAssertGreaterThan(qSign, 0.1)
   }
+
+  func testBallpitNegativeFloorAndPedestalPhysics() {
+    let json = #"""
+      {"nodes": [
+        {"name": "Room_Floor", "mesh": 0, "translation": [0, -0.85, 0], "extras": {"xr": {"physics": "static"}}},
+        {"name": "Pedestal_Table", "mesh": 1, "translation": [0, -0.25, 0], "extras": {"xr": {"physics": "static"}}},
+        {"name": "Ball_1", "mesh": 2, "translation": [0, 0.85, 0], "extras": {"xr": {"physics": "dynamic"}}},
+        {"name": "Ball_2", "mesh": 2, "translation": [0.95, 0.85, 0], "extras": {"xr": {"physics": "dynamic"}}}
+      ], "meshes": [
+        {"primitives": [{"attributes": {"POSITION": 0}}]},
+        {"primitives": [{"attributes": {"POSITION": 1}}]},
+        {"primitives": [{"attributes": {"POSITION": 2}}]}
+      ], "accessors": [
+        {"min": [-1.7, -0.04, -1.7], "max": [1.7, 0.04, 1.7]},
+        {"min": [-0.65, -0.04, -0.65], "max": [0.65, 0.04, 0.65]},
+        {"min": [-0.11, -0.11, -0.11], "max": [0.11, 0.11, 0.11]}
+      ]}
+      """#
+    let (s, _) = session(json)
+    let head = XRPose(position: SIMD3<Float>(0, 1.6, 0))
+    s.step(dt: 1.0 / 60.0, headPose: head)
+    XCTAssertGreaterThan(translation(s, 2).y, 0.85)
+    for _ in 0..<90 {
+      s.step(dt: 1.0 / 60.0, headPose: head)
+    }
+    XCTAssertGreaterThanOrEqual(translation(s, 2).y, -0.71)
+    XCTAssertGreaterThanOrEqual(translation(s, 3).y, -0.71)
+    XCTAssertLessThan(translation(s, 3).y, 0.5)
+  }
 }

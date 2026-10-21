@@ -62,6 +62,7 @@
                 rotationY: rotationY,
                 rotationX: rotationX,
                 isDragging: isDragging,
+                autoRotate: selectedMode == .threeLive,
                 onTapNode: { nodeLabel in
                   lastEventMessage = "Tapped \(nodeLabel)"
                 }
@@ -312,11 +313,8 @@
         usdzData = data
         usdzSizeBytes = data.count
 
-        // Load entity into RealityKit and wire up native InputTarget/Collision/PhysicsBody/Billboard components
+        // Load entity into RealityKit and wire up runtime session (or static traits fallback)
         let entity = try await RealityKitHelper.loadEntity(fromUSDZ: data)
-        if !traits.isEmpty {
-          RealityKitHelper.applyXRTraits(traits, to: entity)
-        }
         for anim in entity.availableAnimations {
           _ = entity.playAnimation(anim.repeat())
         }
@@ -333,6 +331,9 @@
           live.start()
           runtimeSession = live
         } else {
+          if !traits.isEmpty {
+            RealityKitHelper.applyXRTraits(traits, to: entity)
+          }
           runtimeSession = nil
         }
 
@@ -381,6 +382,7 @@
     let rotationY: Float
     let rotationX: Float
     let isDragging: Bool
+    let autoRotate: Bool
     let onTapNode: ((String) -> Void)?
 
     final class Coordinator: NSObject {
@@ -391,6 +393,7 @@
       var rotationX: Float = 0.2
       var autoRotationAngle: Float = 0.0
       var isDragging: Bool = false
+      var autoRotate: Bool = true
       var updateCancellable: Cancellable?
 
       @MainActor
@@ -444,7 +447,7 @@
       ) { [weak coordinator = context.coordinator] event in
         guard let coordinator = coordinator else { return }
         let dt = min(max(event.deltaTime, 0), 0.1)
-        if !coordinator.isDragging {
+        if coordinator.autoRotate && !coordinator.isDragging {
           coordinator.autoRotationAngle += Float(dt) * 0.42
         }
         if let anchor = coordinator.arView?.scene.findEntity(named: "ModelRoot") {
@@ -464,6 +467,10 @@
       context.coordinator.rotationY = rotationY
       context.coordinator.rotationX = rotationX
       context.coordinator.isDragging = isDragging
+      context.coordinator.autoRotate = autoRotate
+      if !autoRotate {
+        context.coordinator.autoRotationAngle = 0.0
+      }
 
       guard let modelAnchor = uiView.scene.findEntity(named: "ModelRoot") as? AnchorEntity else {
         return

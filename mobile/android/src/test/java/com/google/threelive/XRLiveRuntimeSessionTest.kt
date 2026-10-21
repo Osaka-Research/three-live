@@ -1428,6 +1428,42 @@ class XRLiveRuntimeSessionTest {
   // Helpers
   // =============================================================================================
 
+  @Test
+  fun ballpitNegativeFloorAndPedestalPhysics() {
+    val json =
+      """{
+        "nodes": [
+          {"name": "Room_Floor", "mesh": 0, "translation": [0, -0.85, 0], "extras": {"xr": {"physics": "static"}}},
+          {"name": "Pedestal_Table", "mesh": 1, "translation": [0, -0.25, 0], "extras": {"xr": {"physics": "static"}}},
+          {"name": "Ball_1", "mesh": 2, "translation": [0, 0.85, 0], "extras": {"xr": {"physics": "dynamic"}}},
+          {"name": "Ball_2", "mesh": 2, "translation": [0.95, 0.85, 0], "extras": {"xr": {"physics": "dynamic"}}}
+        ],
+        "meshes": [
+          {"primitives": [{"attributes": {"POSITION": 0}}]},
+          {"primitives": [{"attributes": {"POSITION": 1}}]},
+          {"primitives": [{"attributes": {"POSITION": 2}}]}
+        ],
+        "accessors": [
+          {"min": [-1.7, -0.04, -1.7], "max": [1.7, 0.04, 1.7]},
+          {"min": [-0.65, -0.04, -0.65], "max": [0.65, 0.04, 0.65]},
+          {"min": [-0.11, -0.11, -0.11], "max": [0.11, 0.11, 0.11]}
+        ]
+      }"""
+    val s = XRLiveRuntimeSession(json)
+    val head = XRPose(floatArrayOf(0f, 1.6f, 0f))
+    // Multi-ball scene launches upward on frame 1 then falls under gravity onto the pedestal/floor
+    s.step(1.0 / 60.0, head)
+    val yFirstStep = s.nodeTransform(2)!!.translation[1]
+    assertTrue("Multi-ball initial fountain impulse lifts Ball_1 on first step", yFirstStep > 0.85f)
+    for (k in 0 until 90) {
+      s.step(1.0 / 60.0, head)
+    }
+    val yBall1 = s.nodeTransform(2)!!.translation[1]
+    val yBall2 = s.nodeTransform(3)!!.translation[1]
+    assertTrue("Ball_1 stays above negative-Y Room_Floor (-0.81 + r)", yBall1 >= -0.71f)
+    assertTrue("Ball_2 outside pedestal rim falls below pedestal top (-0.21) toward Room_Floor", yBall2 < 0.5f && yBall2 >= -0.71f)
+  }
+
   private fun assertThrows(block: () -> Unit) {
     try {
       block()

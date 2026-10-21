@@ -140,9 +140,23 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           compiled.use {
             binding?.dispose()
             binding = null
-            renderer.load(it.byteBuffer)
+            renderer.setCameraOptions(
+              if (selectedMode == StudioMode.THREE_LIVE) {
+                ThreeLiveCameraOptions(
+                  autoRotate = true,
+                  autoRotateDelayMs = 800L,
+                  rotationPerSecond = "24deg",
+                )
+              } else {
+                ThreeLiveCameraOptions(
+                  cameraOrbit = "34deg 20deg",
+                  autoRotate = false,
+                )
+              }
+            )
+            renderer.load(it.byteBuffer.duplicate())
             binding =
-              ThreeLiveRuntimeBinding(renderer, it.byteBuffer).apply {
+              ThreeLiveRuntimeBinding(renderer, it.byteBuffer.duplicate()).apply {
                 callbacks =
                   object : ThreeLiveRuntimeBinding.Callbacks {
                     override fun onMeshClick(

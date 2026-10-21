@@ -231,11 +231,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     src.rewind()
     val loaded = assetLoader.createAsset(src) ?: return
     resourceLoader.loadResources(loaded)
-    loaded.releaseSourceData()
     scene.addEntities(loaded.entities)
     asset = loaded
     sceneIndex = index
     mapNodes(loaded, index)
+    loaded.releaseSourceData()
 
     val box = loaded.boundingBox
     val c = box.center
@@ -492,8 +492,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     camera.setProjection(orbit.fieldOfViewDeg, aspect, 0.05, far, Camera.Fov.VERTICAL)
     camera.getModelMatrix(cameraWorld)
 
-    listener?.onFrame(dt, cameraWorld)
     advanceAnimation(dt)
+    listener?.onFrame(dt, cameraWorld)
 
     val sc = swapChain ?: return
     if (renderer.beginFrame(sc, frameTimeNanos)) {
@@ -560,12 +560,38 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   private fun mapNodes(loaded: FilamentAsset, index: GltfSceneIndex) {
     val tm = engine.transformManager
+    val nameByEntity = HashMap<Int, String>()
+    for (name in index.nodeNames) {
+      if (name.isNullOrEmpty()) continue
+      val ents = loaded.getEntitiesByName(name)
+      for (e in ents) {
+        if (e != 0) nameByEntity[e] = name
+      }
+    }
     val childrenOf = { e: Int ->
       val ti = tm.getInstance(e)
-      if (ti == 0) IntArray(0) else tm.getChildren(ti, IntArray(tm.getChildCount(ti)))
+      if (ti == 0) {
+        IntArray(0)
+      } else {
+        // TransformManager stores children as an intrusive linked list with push_front order,
+        // so reversing restores the original glTF node order.
+        tm.getChildren(ti, IntArray(tm.getChildCount(ti))).apply { reverse() }
+      }
     }
-    val rootKids = childrenOf(loaded.root)
-    nodeEntities = index.matchEntities(rootKids, childrenOf, { loaded.getName(it) })
+    // In gltfio AssetLoader, loaded.root has a single child: loaded.instance.root, whose
+    // children are the actual glTF scene root nodes.
+    val instanceRoot = loaded.instance?.root ?: 0
+    val instanceKids = if (instanceRoot != 0) childrenOf(instanceRoot) else IntArray(0)
+    val rootKids = if (instanceKids.isNotEmpty()) instanceKids else childrenOf(loaded.root)
+    nodeEntities = index.matchEntities(rootKids, childrenOf, { nameByEntity[it] ?: loaded.getName(it) })
+    for (node in 0 until index.nodeCount) {
+      if (nodeEntities[node] == 0) {
+        val name = index.nodeNames[node]
+        if (!name.isNullOrEmpty()) {
+          nodeEntities[node] = loaded.getFirstEntityByName(name)
+        }
+      }
+    }
     entityToNode.clear()
     for ((node, e) in nodeEntities.withIndex()) if (e != 0) entityToNode[e] = node
 

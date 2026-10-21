@@ -295,6 +295,9 @@ public final class XRLiveRuntimeSession {
   private var physicsStates: [Int: PhysicsBodyState] = [:]
   private var staticColliders: [StaticAabb] = []
   private var collidersInitialized = false
+  private var physicsDefaultFloorY: Float = -0.85
+  private var physicsFountainTimer: Float = 0.0
+  private var physicsFountainIndex: Int = 0
   private var meshLocalBounds: [(min: SIMD3<Float>, max: SIMD3<Float>)?] = []
   private var grabbed = Set<Int>()
 
@@ -1745,7 +1748,18 @@ public final class XRLiveRuntimeSession {
         Float(pos.y) + bounds.max.y * Float(scl.y),
         Float(pos.z) + bounds.max.z * Float(scl.z)
       )
-      staticColliders.append(StaticAabb(min: simd_min(minP, maxP), max: simd_max(minP, maxP)))
+      let aabb = StaticAabb(min: simd_min(minP, maxP), max: simd_max(minP, maxP))
+      staticColliders.append(aabb)
+    }
+    let wideFloors = staticColliders.filter {
+      ($0.max.x - $0.min.x) > 1.8 && ($0.max.z - $0.min.z) > 1.8
+    }
+    if let lowestWide = wideFloors.map(\.max.y).min() {
+      physicsDefaultFloorY = lowestWide
+    } else if let lowestAny = staticColliders.map(\.max.y).min() {
+      physicsDefaultFloorY = lowestAny
+    } else {
+      physicsDefaultFloorY = -0.85
     }
   }
 
@@ -1768,17 +1782,38 @@ public final class XRLiveRuntimeSession {
     while let c = cur, c >= 0, c < nodes.count, depth < 32 {
       if nodes[c].traits?.physics?.caseInsensitiveCompare("dynamic") == .orderedSame {
         if var st = physicsStates[c] {
-          let phase = Float(c * 137) * 0.7
-          st.velocity.x += cos(phase) * 0.9
-          st.velocity.y = max(st.velocity.y + 2.8, 3.2)
-          st.velocity.z += sin(phase) * 0.9
+          let phase = Float(c * 137) * 0.7 + Float(elapsed)
+          let hitPos = st.position
+          st.velocity.x = -hitPos.x * 0.9 + cos(phase) * 0.65
+          st.velocity.y = max(st.velocity.y + 3.8, 3.8)
+          st.velocity.z = -hitPos.z * 0.9 + sin(phase) * 0.65
           st.sleepTimer = 0
           physicsStates[c] = st
+          for (otherIdx, var otherState) in physicsStates where otherIdx != c {
+            let delta = otherState.position - hitPos
+            let dist = simd_length(delta)
+            if dist > 0.01 && dist < 0.85 {
+              let falloff = (1.0 - dist / 0.85) * 2.2
+              otherState.velocity += (delta / dist) * falloff
+              otherState.velocity.y += 1.6 * (1.0 - dist / 0.85)
+              otherState.sleepTimer = 0
+              physicsStates[otherIdx] = otherState
+            }
+          }
         }
         return
       }
       cur = parentOf[c]
       depth += 1
+    }
+    // Tapping a static collider (pedestal or floor) launches all dynamic bodies in a fountain
+    for (orderIdx, (nodeIdx, var st)) in physicsStates.enumerated() {
+      let angle = Float(orderIdx) * 2.39996
+      st.velocity.x = -st.position.x * 0.85 + cos(angle) * 0.55
+      st.velocity.y = 3.6 + Float(orderIdx % 5) * 0.38
+      st.velocity.z = -st.position.z * 0.85 + sin(angle) * 0.55
+      st.sleepTimer = 0
+      physicsStates[nodeIdx] = st
     }
   }
 
@@ -1798,16 +1833,27 @@ public final class XRLiveRuntimeSession {
     let restitution: Float = 0.68
     let damping = max(0.0, 1.0 - 0.35 * dt)
 
-    for idx in dynamicIndices {
+    for (orderIdx, idx) in dynamicIndices.enumerated() {
       var st =
         physicsStates[idx]
         ?? {
           let n = nodes[idx]
           let seed = Float(idx * 97 + 13)
           let p0 = SIMD3<Float>(Float(n.translation.x), Float(n.translation.y), Float(n.translation.z))
+          let initVel: SIMD3<Float>
+          if dynamicIndices.count > 1 {
+            let angle = (Float(orderIdx) / Float(dynamicIndices.count)) * Float.pi * 2.0
+            initVel = SIMD3<Float>(
+              cos(angle) * 0.85,
+              1.1 + Float(orderIdx % 4) * 0.45,
+              sin(angle) * 0.85
+            )
+          } else {
+            initVel = SIMD3<Float>(cos(seed) * 0.45, 0, sin(seed * 1.3) * 0.45)
+          }
           return PhysicsBodyState(
             position: p0,
-            velocity: SIMD3<Float>(cos(seed) * 0.45, 0, sin(seed * 1.3) * 0.45),
+            velocity: initVel,
             angularVelocity: SIMD3<Float>(sin(seed) * 2.2, cos(seed * 0.7) * 1.8, cos(seed) * 2.2),
             spawnPosition: p0,
             radius: estimateNodeRadius(idx),
@@ -1820,13 +1866,27 @@ public final class XRLiveRuntimeSession {
       st.position += st.velocity * dt
 
       let r = st.radius
-      var surfaceY: Float = 0
+      var surfaceY: Float = physicsDefaultFloorY
       for col in staticColliders {
-        let withinXZ =
-          st.position.x + r * 0.65 >= col.min.x
-          && st.position.x - r * 0.65 <= col.max.x
-          && st.position.z + r * 0.65 >= col.min.z
-          && st.position.z - r * 0.65 <= col.max.z
+        let spanX = col.max.x - col.min.x
+        let spanZ = col.max.z - col.min.z
+        let isRoundPedestal =
+          col.max.y > physicsDefaultFloorY + 0.12
+          && spanX > 0.25 && spanX < 2.2
+          && abs(spanX - spanZ) < 0.05
+        let withinXZ: Bool
+        if isRoundPedestal {
+          let cx = 0.5 * (col.min.x + col.max.x)
+          let cz = 0.5 * (col.min.z + col.max.z)
+          let rad = 0.5 * spanX
+          withinXZ = hypot(st.position.x - cx, st.position.z - cz) <= rad + r * 0.35
+        } else {
+          withinXZ =
+            st.position.x + r * 0.65 >= col.min.x
+            && st.position.x - r * 0.65 <= col.max.x
+            && st.position.z + r * 0.65 >= col.min.z
+            && st.position.z - r * 0.65 <= col.max.z
+        }
         if withinXZ && col.max.y <= st.spawnPosition.y + 0.25 && col.max.y > surfaceY {
           surfaceY = col.max.y
         }
@@ -1845,18 +1905,13 @@ public final class XRLiveRuntimeSession {
         }
       }
 
-      let maxHoriz: Float = 0.85
+      let maxHoriz: Float = 1.55 - r
       if abs(st.position.x) > maxHoriz {
         st.position.x = st.position.x > 0 ? maxHoriz : -maxHoriz
         st.velocity.x = -st.velocity.x * restitution
       }
-      let minZ: Float = -2.2
-      let maxZ: Float = 0.65
-      if st.position.z < minZ {
-        st.position.z = minZ
-        st.velocity.z = -st.velocity.z * restitution
-      } else if st.position.z > maxZ {
-        st.position.z = maxZ
+      if abs(st.position.z) > maxHoriz {
+        st.position.z = st.position.z > 0 ? maxHoriz : -maxHoriz
         st.velocity.z = -st.velocity.z * restitution
       }
 
@@ -1907,6 +1962,22 @@ public final class XRLiveRuntimeSession {
           }
         }
         physicsStates[ia] = sa
+      }
+
+      physicsFountainTimer += dt
+      if elapsed >= 2.2 && physicsFountainTimer >= 1.8 {
+        physicsFountainTimer = 0
+        let pickOrder = physicsFountainIndex % dynamicIndices.count
+        physicsFountainIndex += 1
+        let pickNode = dynamicIndices[pickOrder]
+        if var st = physicsStates[pickNode] {
+          let angle = Float(pickOrder) * 2.39996 + Float(elapsed)
+          st.velocity.x = -st.position.x * 0.8 + cos(angle) * 0.45
+          st.velocity.y = 3.4 + Float(pickOrder % 4) * 0.45
+          st.velocity.z = -st.position.z * 0.8 + sin(angle) * 0.45
+          st.sleepTimer = 0
+          physicsStates[pickNode] = st
+        }
       }
     }
 

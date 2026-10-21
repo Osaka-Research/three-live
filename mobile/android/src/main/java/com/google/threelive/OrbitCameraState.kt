@@ -124,6 +124,9 @@ class OrbitCameraState {
   fun applyOptions(options: ThreeLiveCameraOptions) {
     interactive = options.cameraControls
     autoRotate = options.autoRotate
+    if (!options.autoRotate) {
+      turntableRad = 0.0
+    }
     autoRotateDelayMs = max(0L, options.autoRotateDelayMs)
     autoRotateSpeed = parseRotationPerSecond(options.rotationPerSecond)
     parseFieldOfView(options.fieldOfView)?.let { fieldOfViewDeg = it.coerceIn(10.0, 90.0) }
