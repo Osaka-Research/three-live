@@ -70,6 +70,7 @@ impl ThreeEngine {
     pub fn new() -> Result<Self, String> {
         let mut context = Context::builder()
             .host_hooks(std::rc::Rc::new(ThreeLiveHostHooks))
+            .module_loader(std::rc::Rc::new(boa_engine::module::IdleModuleLoader))
             .build()
             .map_err(|e| format!("Failed to build JS context: {}", e))?;
 

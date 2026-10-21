@@ -107,12 +107,16 @@ if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
+PREBUILT_JNI_VERSION="v1.0.0-r2"
+
 download_prebuilt_jnilibs() {
-    # If all 3 ABI .so files are already present in jniLibs, reuse them directly.
-    if [ -f "${JNILIBS_DIR}/arm64-v8a/libthree_live_compiler.so" ] && \
+    # If all 3 ABI .so files and the expected prebuilt version stamp are present in jniLibs, reuse them directly.
+    if [ -f "${JNILIBS_DIR}/.prebuilt-version" ] && \
+       [ "$(cat "${JNILIBS_DIR}/.prebuilt-version" 2>/dev/null || true)" = "${PREBUILT_JNI_VERSION}" ] && \
+       [ -f "${JNILIBS_DIR}/arm64-v8a/libthree_live_compiler.so" ] && \
        [ -f "${JNILIBS_DIR}/x86_64/libthree_live_compiler.so" ] && \
        [ -f "${JNILIBS_DIR}/armeabi-v7a/libthree_live_compiler.so" ]; then
-        echo "--> Using existing prebuilt Android JNI libraries in ${JNILIBS_DIR}"
+        echo "--> Using existing prebuilt Android JNI libraries (${PREBUILT_JNI_VERSION}) in ${JNILIBS_DIR}"
         return 0
     fi
 
@@ -164,8 +168,9 @@ for a in data.get('assets', []):
     if [ "${downloaded}" -eq 1 ] && [ -f "${aar_file}" ]; then
         unzip -qo "${aar_file}" "jni/*" -d "${tmp_dir}"
         cp -R "${tmp_dir}/jni/"* "${JNILIBS_DIR}/"
+        echo "${PREBUILT_JNI_VERSION}" > "${JNILIBS_DIR}/.prebuilt-version"
         rm -rf "${tmp_dir}"
-        echo "--> Extracted prebuilt JNI libraries (arm64-v8a, x86_64, armeabi-v7a) into ${JNILIBS_DIR}"
+        echo "--> Extracted prebuilt JNI libraries (arm64-v8a, x86_64, armeabi-v7a) [${PREBUILT_JNI_VERSION}] into ${JNILIBS_DIR}"
         return 0
     fi
 
@@ -215,6 +220,10 @@ if [ "${BUILT_JNI}" -eq 0 ]; then
     TARGETS=("aarch64-linux-android" "x86_64-linux-android" "armv7-linux-androideabi")
     ABI_NAMES=("arm64-v8a" "x86_64" "armeabi-v7a")
 
+    if command -v rustup >/dev/null 2>&1; then
+        rustup target add "${TARGETS[@]}"
+    fi
+
     echo "--> Cross-compiling native .so libraries..."
     cd "${COMPILER_DIR}"
 
@@ -247,9 +256,14 @@ if [ "${BUILT_JNI}" -eq 0 ]; then
             echo "  Building for ${abi} (${target}) via NDK clang..."
             cargo build --target "${target}" --release --features jni
             mkdir -p "${JNILIBS_DIR}/${abi}"
-            cp "${ROOT_DIR}/target/${target}/release/libthree_live_compiler.so" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
+            if [ -f "${COMPILER_DIR}/target/${target}/release/libthree_live_compiler.so" ]; then
+                cp "${COMPILER_DIR}/target/${target}/release/libthree_live_compiler.so" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
+            else
+                cp "${ROOT_DIR}/target/${target}/release/libthree_live_compiler.so" "${JNILIBS_DIR}/${abi}/libthree_live_compiler.so"
+            fi
         done
     fi
+    echo "${PREBUILT_JNI_VERSION}" > "${JNILIBS_DIR}/.prebuilt-version"
 fi
 
 echo "--> Assembling Android AAR..."

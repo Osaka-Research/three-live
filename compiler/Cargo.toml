@@ -42,7 +42,10 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
-boa_engine = "0.21"
+# Use enum-based JsValueInner (`jsvalue-enum`) instead of 48-bit NaN-boxing so heap
+# pointers with ARM64 Top-Byte Ignore (TBI) / MTE tags on Android 11+ (`0xb400...`)
+# or 5-level paging (LA57) do not trip Boa's 48-bit pointer mask assertion.
+boa_engine = { version = "0.21", features = ["jsvalue-enum"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 clap = { version = "4.4", features = ["derive"], optional = true }

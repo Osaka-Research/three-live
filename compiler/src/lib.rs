@@ -85,6 +85,16 @@ pub fn clear_thread_local_engine() {
     });
 }
 
+fn panic_payload_message(err: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = err.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = err.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
 /// Pre-warms the thread-local Boa context if thread-local caching is enabled.
 pub fn prewarm_thread_local_engine() -> Result<(), String> {
     if !is_thread_local_cache_enabled() {
@@ -97,10 +107,11 @@ pub fn prewarm_thread_local_engine() -> Result<(), String> {
             match init_res {
                 Ok(Ok(eng)) => *slot.as_mut() = Some(eng),
                 Ok(Err(e)) => return Err(e),
-                Err(_) => {
-                    return Err(
-                        "3D Transcoder failed to prewarm ThreeEngine (internal panic)".to_string()
-                    )
+                Err(panic_err) => {
+                    return Err(format!(
+                        "3D Transcoder failed to prewarm ThreeEngine (internal panic: {})",
+                        panic_payload_message(&*panic_err)
+                    ))
                 }
             }
         }
@@ -124,11 +135,11 @@ where
                 match init_res {
                     Ok(Ok(eng)) => *slot.as_mut() = Some(eng),
                     Ok(Err(e)) => return Err(e),
-                    Err(_) => {
-                        return Err(
-                            "3D Transcoder failed to initialize ThreeEngine (internal panic)"
-                                .to_string(),
-                        );
+                    Err(panic_err) => {
+                        return Err(format!(
+                            "3D Transcoder failed to initialize ThreeEngine (internal panic: {})",
+                            panic_payload_message(&*panic_err)
+                        ));
                     }
                 }
             }
@@ -141,10 +152,13 @@ where
                     slot.clear();
                     Err(err)
                 }
-                Err(_) => {
+                Err(panic_err) => {
                     // On panic, drop the contaminated engine and recover safely
                     slot.clear();
-                    Err("3D Transcoder encountered an internal panic; safely recovered".to_string())
+                    Err(format!(
+                        "3D Transcoder encountered an internal panic ({}); safely recovered",
+                        panic_payload_message(&*panic_err)
+                    ))
                 }
             }
         })
@@ -154,18 +168,20 @@ where
         let mut engine = match init_res {
             Ok(Ok(eng)) => eng,
             Ok(Err(e)) => return Err(e),
-            Err(_) => {
-                return Err(
-                    "3D Transcoder failed to initialize ThreeEngine (internal panic)".to_string()
-                );
+            Err(panic_err) => {
+                return Err(format!(
+                    "3D Transcoder failed to initialize ThreeEngine (internal panic: {})",
+                    panic_payload_message(&*panic_err)
+                ));
             }
         };
         let panic_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut engine)));
         match panic_res {
             Ok(res) => res,
-            Err(_) => {
-                Err("3D Transcoder encountered an internal panic; safely recovered".to_string())
-            }
+            Err(panic_err) => Err(format!(
+                "3D Transcoder encountered an internal panic ({}); safely recovered",
+                panic_payload_message(&*panic_err)
+            )),
         }
     }
 }
