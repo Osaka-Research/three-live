@@ -55,37 +55,52 @@ val compileFilamentMaterials by tasks.registering {
     val exeSuffix = if (platformTag == "windows") ".exe" else ""
     val matcRoot = matcCacheDir.get().asFile
     val matcBin = matcRoot.resolve("filament/bin/matc$exeSuffix")
-    if (!matcBin.canExecute()) {
-      matcRoot.mkdirs()
-      val archive = matcRoot.resolve("filament-v$filamentVersion-$platformTag.tgz")
-      val downloadUrl =
-        "https://github.com/google/filament/releases/download/v$filamentVersion/filament-v$filamentVersion-$platformTag.tgz"
-      URL(downloadUrl).openStream().use { input ->
-        Files.copy(input, archive.toPath(), StandardCopyOption.REPLACE_EXISTING)
-      }
-      project.copy {
-        from(project.tarTree(project.resources.gzip(archive))) {
-          include("filament/bin/matc$exeSuffix")
+    try {
+      if (!matcBin.canExecute()) {
+        matcRoot.mkdirs()
+        val archive = matcRoot.resolve("filament-v$filamentVersion-$platformTag.tgz")
+        val downloadUrl =
+          "https://github.com/google/filament/releases/download/v$filamentVersion/filament-v$filamentVersion-$platformTag.tgz"
+        URL(downloadUrl).openStream().use { input ->
+          Files.copy(input, archive.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
-        into(matcRoot)
+        project.copy {
+          from(project.tarTree(project.resources.gzip(archive))) {
+            include("filament/bin/matc$exeSuffix")
+          }
+          into(matcRoot)
+        }
+        matcBin.setExecutable(true)
       }
-      matcBin.setExecutable(true)
-    }
 
-    project.exec {
-      commandLine(
-        matcBin.absolutePath,
-        "-p",
-        "mobile",
-        "-a",
-        "opengl",
-        "-a",
-        "vulkan",
-        "-S",
-        "-o",
-        targetFile.absolutePath,
-        matFile.asFile.absolutePath,
+      val execResult =
+        project.exec {
+          isIgnoreExitValue = true
+          commandLine(
+            matcBin.absolutePath,
+            "-p",
+            "mobile",
+            "-a",
+            "opengl",
+            "-a",
+            "vulkan",
+            "-S",
+            "-o",
+            targetFile.absolutePath,
+            matFile.asFile.absolutePath,
+          )
+        }
+      if (execResult.exitValue != 0) {
+        logger.warn(
+          "Filament matc exited with code ${execResult.exitValue}; using built-in ubershader fallback for splats."
+        )
+        targetFile.delete()
+      }
+    } catch (e: Throwable) {
+      logger.warn(
+        "Could not run Filament matc (${e.message}); using built-in ubershader fallback for splats."
       )
+      targetFile.delete()
     }
   }
 }
