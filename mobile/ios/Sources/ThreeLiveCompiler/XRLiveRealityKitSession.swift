@@ -215,6 +215,14 @@
           referenceEntity = entity.parent ?? root
         }
       }
+
+      // Apply calibrated studio materials (sRGB tint + calibrated metallic factor) to all
+      // bound entities immediately so initial colors and reflections match Web and Android.
+      for materialIndex in 0..<session.materialCount {
+        if let state = session.material(at: materialIndex) {
+          applyMaterial(materialIndex, state)
+        }
+      }
     }
 
     private static func isInsideUsdMeshesScope(_ entity: Entity, stopAt root: Entity) -> Bool {
@@ -519,11 +527,18 @@
       }
     }
 
-    /// glTF factors are linear; platform colors are sRGB.
-    private static func srgb(_ linear: Float) -> CGFloat {
-      let c = max(0, min(1, linear.isFinite ? linear : 0))
-      let s = c <= 0.003_130_8 ? c * 12.92 : 1.055 * pow(c, 1 / 2.4) - 0.055
-      return CGFloat(s)
+    private static let studioMetallicScale: Float = 0.38
+
+    /// Three.js scripts author hex colors in sRGB, which `XRPlatformColor(red:green:blue:alpha:)`
+    /// (`UIColor` / `NSColor`) expects directly and RealityKit linearizes internally.
+    private static func srgb(_ value: Float) -> CGFloat {
+      let c = max(0, min(1, value.isFinite ? value : 0))
+      return CGFloat(c)
+    }
+
+    private static func effectiveMetallic(_ metallic: Float) -> Float {
+      guard metallic.isFinite else { return 0 }
+      return max(0, min(1, metallic * studioMetallicScale))
     }
 
     private static func platformColor(_ c: SIMD4<Float>) -> XRPlatformColor {
@@ -533,10 +548,12 @@
 
     private static func recolored(_ material: Material, _ state: XRMaterialState) -> Material {
       let base = platformColor(state.baseColorFactor)
+      let calMetallic = effectiveMetallic(state.metallicFactor)
+      let calRoughness = max(0.04, min(1, state.roughnessFactor.isFinite ? state.roughnessFactor : 0.5))
       if var pbr = material as? PhysicallyBasedMaterial {
         pbr.baseColor = PhysicallyBasedMaterial.BaseColor(tint: base, texture: pbr.baseColor.texture)
-        pbr.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: state.metallicFactor)
-        pbr.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: state.roughnessFactor)
+        pbr.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: calMetallic)
+        pbr.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: calRoughness)
         let e = state.emissiveFactor
         pbr.emissiveColor = PhysicallyBasedMaterial.EmissiveColor(
           color: platformColor(SIMD4<Float>(e.x, e.y, e.z, 1)), texture: pbr.emissiveColor.texture)
@@ -548,15 +565,31 @@
       }
       if var simple = material as? SimpleMaterial {
         simple.color = SimpleMaterial.BaseColor(tint: base, texture: simple.color.texture)
-        simple.metallic = .float(state.metallicFactor)
-        simple.roughness = .float(state.roughnessFactor)
+        simple.metallic = .float(calMetallic)
+        simple.roughness = .float(calRoughness)
         return simple
       }
       if var unlit = material as? UnlitMaterial {
         unlit.color = UnlitMaterial.BaseColor(tint: base, texture: unlit.color.texture)
         return unlit
       }
-      return material
+      // USDZ-imported `UsdPreviewSurface` materials that do not downcast to `PhysicallyBasedMaterial`
+      // are upgraded to a calibrated `PhysicallyBasedMaterial` so sRGB colors and runtime material
+      // updates (`KHR_interactivity`) take effect identically to Web and Android.
+      var pbr = PhysicallyBasedMaterial()
+      pbr.baseColor = PhysicallyBasedMaterial.BaseColor(tint: base)
+      pbr.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: calMetallic)
+      pbr.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: calRoughness)
+      let e = state.emissiveFactor
+      if e.x > 0 || e.y > 0 || e.z > 0 {
+        pbr.emissiveColor = PhysicallyBasedMaterial.EmissiveColor(
+          color: platformColor(SIMD4<Float>(e.x, e.y, e.z, 1)))
+      }
+      let alpha = max(0, min(1, state.baseColorFactor.w.isFinite ? state.baseColorFactor.w : 1))
+      if alpha < 0.999 {
+        pbr.blending = .transparent(opacity: .init(floatLiteral: alpha))
+      }
+      return pbr
     }
   }
 #endif

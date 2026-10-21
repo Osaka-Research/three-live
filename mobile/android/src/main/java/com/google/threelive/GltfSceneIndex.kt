@@ -56,10 +56,23 @@ class GltfSceneIndex(gltfJson: String) {
   /** Animation names (`null` when absent). */
   val animationNames: List<String?>
 
+  /** Material `baseColorFactor` RGBA values (defaults to `[1, 1, 1, 1]`). */
+  val materialBaseColors: List<FloatArray>
+
+  /** Material `emissiveFactor` RGB values (defaults to `[0, 0, 0]`). */
+  val materialEmissive: List<FloatArray>
+
+  /** Material `metallicFactor` values (defaults to `1`). */
+  val materialMetallic: FloatArray
+
+  /** Material `roughnessFactor` values (defaults to `1`). */
+  val materialRoughness: FloatArray
+
   init {
     val root = MiniJson.parseObjectOrNull(gltfJson) ?: emptyMap()
     val nodes = (MiniJson.asList(root["nodes"]) ?: emptyList()).take(MAX_NODES)
     val meshes = (MiniJson.asList(root["meshes"]) ?: emptyList()).take(MAX_NODES)
+    val materials = (MiniJson.asList(root["materials"]) ?: emptyList()).take(MAX_NODES)
     val n = nodes.size
     nodeNames = nodes.map { MiniJson.asString(MiniJson.asMap(it)?.get("name")) }
     nodeMesh = IntArray(n) { index(MiniJson.asMap(nodes[it])?.get("mesh"), meshes.size) }
@@ -112,6 +125,37 @@ class GltfSceneIndex(gltfJson: String) {
       (MiniJson.asList(root["animations"]) ?: emptyList()).map {
         MiniJson.asString(MiniJson.asMap(it)?.get("name"))
       }
+    val baseColors = ArrayList<FloatArray>(materials.size)
+    val emissives = ArrayList<FloatArray>(materials.size)
+    val metallics = FloatArray(materials.size) { 1f }
+    val roughnesses = FloatArray(materials.size) { 1f }
+    for (mIdx in materials.indices) {
+      val m = MiniJson.asMap(materials[mIdx])
+      val pbr = MiniJson.asMap(m?.get("pbrMetallicRoughness"))
+      val bc = MiniJson.asList(pbr?.get("baseColorFactor"))
+      baseColors.add(
+        floatArrayOf(
+          finiteFloat(bc?.getOrNull(0), 1f),
+          finiteFloat(bc?.getOrNull(1), 1f),
+          finiteFloat(bc?.getOrNull(2), 1f),
+          finiteFloat(bc?.getOrNull(3), 1f),
+        )
+      )
+      val em = MiniJson.asList(m?.get("emissiveFactor"))
+      emissives.add(
+        floatArrayOf(
+          finiteFloat(em?.getOrNull(0), 0f),
+          finiteFloat(em?.getOrNull(1), 0f),
+          finiteFloat(em?.getOrNull(2), 0f),
+        )
+      )
+      metallics[mIdx] = finiteFloat(pbr?.get("metallicFactor"), 1f)
+      roughnesses[mIdx] = finiteFloat(pbr?.get("roughnessFactor"), 1f)
+    }
+    materialBaseColors = baseColors
+    materialEmissive = emissives
+    materialMetallic = metallics
+    materialRoughness = roughnesses
   }
 
   /** Number of nodes. */
@@ -220,6 +264,11 @@ class GltfSceneIndex(gltfJson: String) {
       val d = v as? Double ?: return -1
       if (!d.isFinite() || d < 0 || d != Math.floor(d) || d >= size.toDouble()) return -1
       return d.toInt()
+    }
+
+    private fun finiteFloat(v: Any?, fallback: Float): Float {
+      val d = v as? Double ?: return fallback
+      return if (d.isFinite()) d.toFloat() else fallback
     }
   }
 }

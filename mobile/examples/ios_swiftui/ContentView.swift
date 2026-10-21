@@ -64,7 +64,7 @@
           VStack(spacing: 0) {
             // Top Section: 3D RealityKit Viewport (42% height in Studio mode, 100% in AR Preview mode)
             ZStack(alignment: .topLeading) {
-              Color(red: 0.06, green: 0.08, blue: 0.12)
+              Color(red: 0.043, green: 0.071, blue: 0.125)
                 .edgesIgnoringSafeArea(.all)
 
               ModelViewportRepresentable(
@@ -644,7 +644,9 @@
 
     func makeUIView(context: Context) -> ARView {
       let arView = ARView(frame: .zero, cameraMode: .nonAR, automaticallyConfigureSession: false)
-      arView.environment.background = .color(.black)
+      arView.environment.background = .color(
+        UIColor(red: 0.043, green: 0.071, blue: 0.125, alpha: 1.0)
+      )
 
       // Add camera anchor
       let cameraAnchor = AnchorEntity(world: [0, 0, 0])
@@ -653,13 +655,25 @@
       cameraAnchor.addChild(camera)
       arView.scene.addAnchor(cameraAnchor)
 
-      // Add studio light anchor
+      // Add 3-point studio lighting rig matching Web (three-view.ts) and Android Filament
       let lightAnchor = AnchorEntity(world: [0, 0, 0])
-      let light = DirectionalLight()
-      light.light.intensity = 15000
-      light.light.color = .white
-      light.look(at: [0, 0, 0], from: [3, 4, 3], relativeTo: nil)
-      lightAnchor.addChild(light)
+      let keyLight = DirectionalLight()
+      keyLight.light.intensity = 7500
+      keyLight.light.color = UIColor(red: 1.0, green: 0.99, blue: 0.97, alpha: 1.0)
+      keyLight.look(at: [0, 0, 0], from: [2.0, 4.0, 3.2], relativeTo: nil)
+      lightAnchor.addChild(keyLight)
+
+      let fillLight = DirectionalLight()
+      fillLight.light.intensity = 3500
+      fillLight.light.color = UIColor(red: 0.85, green: 0.92, blue: 1.0, alpha: 1.0)
+      fillLight.look(at: [0, 0, 0], from: [-3.4, 1.8, -1.4], relativeTo: nil)
+      lightAnchor.addChild(fillLight)
+
+      let rimLight = DirectionalLight()
+      rimLight.light.intensity = 2000
+      rimLight.light.color = UIColor(red: 0.65, green: 0.70, blue: 0.80, alpha: 1.0)
+      rimLight.look(at: [0, 0, 0], from: [0.0, -3.0, -2.0], relativeTo: nil)
+      lightAnchor.addChild(rimLight)
       arView.scene.addAnchor(lightAnchor)
 
       // Model root container

@@ -76,4 +76,53 @@ class ThreeLiveFilamentTest {
     assertNotNull(ThreeLiveRenderers.current())
     ThreeLiveRenderers.clear()
   }
+
+  @Test
+  fun srgbToLinearAndStudioHelpersMatchCrossPlatformCalibration() {
+    // Boundary and Ruby Torus Knot (0xf43f5e = 244/255, 63/255, 94/255) checks.
+    assertEquals(0f, ThreeLiveFilamentRenderer.srgbToLinear(0f), 1e-6f)
+    assertEquals(1f, ThreeLiveFilamentRenderer.srgbToLinear(1f), 1e-6f)
+    assertEquals(0.9046f, ThreeLiveFilamentRenderer.srgbToLinear(244f / 255f), 1e-3f)
+    assertEquals(0.0497f, ThreeLiveFilamentRenderer.srgbToLinear(63f / 255f), 1e-3f)
+    assertEquals(0.1119f, ThreeLiveFilamentRenderer.srgbToLinear(94f / 255f), 1e-3f)
+
+    // Calibrated metallic keeps diffuse body color while preserving specular reflection.
+    assertEquals(0.361f, ThreeLiveFilamentRenderer.effectiveMetallic(0.95f), 1e-3f)
+    assertEquals(0.038f, ThreeLiveFilamentRenderer.effectiveMetallic(0.10f), 1e-3f)
+
+    // IEEE 754 binary16 encoding for 0.0, 0.5, 1.0, and 2.0.
+    assertEquals(0.toShort(), ThreeLiveFilamentRenderer.floatToHalf(0f))
+    assertEquals(0x3800.toShort(), ThreeLiveFilamentRenderer.floatToHalf(0.5f))
+    assertEquals(0x3C00.toShort(), ThreeLiveFilamentRenderer.floatToHalf(1.0f))
+    assertEquals(0x4000.toShort(), ThreeLiveFilamentRenderer.floatToHalf(2.0f))
+
+    // Studio cubemap buffer has 6 faces * size * size * 8 bytes.
+    val buf = ThreeLiveFilamentRenderer.buildStudioCubemapLevelBuffer(8, 0.15f)
+    assertEquals(6 * 8 * 8 * 8, buf.remaining())
+
+    // GltfSceneIndex parses material baseColorFactor, metallicFactor, and roughnessFactor.
+    val index =
+      GltfSceneIndex(
+        """
+        {
+          "materials": [
+            {
+              "name": "RubyMat",
+              "pbrMetallicRoughness": {
+                "baseColorFactor": [0.95686, 0.24706, 0.36863, 1.0],
+                "metallicFactor": 0.95,
+                "roughnessFactor": 0.15
+              },
+              "emissiveFactor": [0.1, 0.2, 0.3]
+            }
+          ]
+        }
+        """.trimIndent()
+      )
+    assertEquals(1, index.materialBaseColors.size)
+    assertArrayEquals(floatArrayOf(0.95686f, 0.24706f, 0.36863f, 1.0f), index.materialBaseColors[0], 1e-4f)
+    assertArrayEquals(floatArrayOf(0.1f, 0.2f, 0.3f), index.materialEmissive[0], 1e-4f)
+    assertEquals(0.95f, index.materialMetallic[0], 1e-4f)
+    assertEquals(0.15f, index.materialRoughness[0], 1e-4f)
+  }
 }

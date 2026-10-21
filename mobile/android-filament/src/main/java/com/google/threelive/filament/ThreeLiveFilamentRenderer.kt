@@ -32,6 +32,7 @@ import android.view.SurfaceView
 import android.view.View
 import com.google.android.filament.Box
 import com.google.android.filament.Camera
+import com.google.android.filament.ColorGrading
 import com.google.android.filament.Engine
 import com.google.android.filament.EntityManager
 import com.google.android.filament.Filament
@@ -46,6 +47,7 @@ import com.google.android.filament.Scene
 import com.google.android.filament.SwapChain
 import com.google.android.filament.Texture
 import com.google.android.filament.TextureSampler
+import com.google.android.filament.ToneMapper
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.gltfio.AssetLoader
@@ -87,8 +89,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private val renderer: Renderer
   private val scene: Scene
   private val filamentView: com.google.android.filament.View
+  private val colorGrading: ColorGrading
   private val camera: Camera
   private val sunEntity: Int
+  private val fillLightEntity: Int
+  private val studioCubemap: Texture
   private val indirectLight: IndirectLight
   private val materialProvider: UbershaderProvider
   private val assetLoader: AssetLoader
@@ -165,24 +170,53 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     camera = engine.createCamera(engine.entityManager.create())
     filamentView.camera = camera
     filamentView.scene = scene
+    colorGrading =
+      ColorGrading.Builder()
+        .toneMapper(ToneMapper.PBRNeutralToneMapper())
+        .build(engine)
+    filamentView.colorGrading = colorGrading
     renderer.clearOptions =
       Renderer.ClearOptions().apply {
         clear = true
-        clearColor = floatArrayOf(0.94f, 0.95f, 0.97f, 1f)
+        // Linear equivalent of sRGB #0B1220 so post-processed output matches Web's dark studio backdrop.
+        clearColor =
+          floatArrayOf(
+            srgbToLinear(0.0431f),
+            srgbToLinear(0.0706f),
+            srgbToLinear(0.1255f),
+            1f,
+          )
       }
 
+    // Key directional light matching Web's default key light from (+0.5, +1.0, +0.8).
     sunEntity = EntityManager.get().create()
     LightManager.Builder(LightManager.Type.DIRECTIONAL)
-      .color(1f, 1f, 1f)
+      .color(1f, 0.99f, 0.97f)
       .intensity(SUN_LUX)
-      .direction(-0.3f, -1f, -0.5f)
+      .direction(-0.5f, -1.0f, -0.8f)
       .castShadows(true)
       .build(engine, sunEntity)
     scene.addEntity(sunEntity)
 
-    // Neutral, uniform ambient light (first SH band only) so unlit sides are not black.
+    // Cool studio fill light matching Web's studio fill lobe from (-0.85, +0.45, -0.35).
+    fillLightEntity = EntityManager.get().create()
+    LightManager.Builder(LightManager.Type.DIRECTIONAL)
+      .color(0.85f, 0.92f, 1.0f)
+      .intensity(FILL_LUX)
+      .direction(0.85f, -0.45f, 0.35f)
+      .castShadows(false)
+      .build(engine, fillLightEntity)
+    scene.addEntity(fillLightEntity)
+
+    // Procedural studio reflection cubemap + 2-band SH sky/ground hemisphere irradiance matching
+    // three-view.ts's getStudioRadiance(R, roughness) and envDiffuse gradient.
+    studioCubemap = createStudioReflectionCubemap(engine)
     indirectLight =
-      IndirectLight.Builder().irradiance(1, floatArrayOf(1f, 1f, 1f)).intensity(AMBIENT_LUX).build(engine)
+      IndirectLight.Builder()
+        .reflections(studioCubemap)
+        .irradiance(2, STUDIO_IRRADIANCE_SH)
+        .intensity(AMBIENT_LUX)
+        .build(engine)
     scene.indirectLight = indirectLight
 
     materialProvider = UbershaderProvider(engine)
@@ -284,16 +318,25 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     metallicFactor: Float,
     roughnessFactor: Float,
   ) {
+    val r = srgbToLinear(baseColorFactor.getOrElse(0) { 1f })
+    val g = srgbToLinear(baseColorFactor.getOrElse(1) { 1f })
+    val b = srgbToLinear(baseColorFactor.getOrElse(2) { 1f })
+    val a = baseColorFactor.getOrElse(3) { 1f }.coerceIn(0f, 1f)
+    val er = srgbToLinear(emissiveFactor.getOrElse(0) { 0f })
+    val eg = srgbToLinear(emissiveFactor.getOrElse(1) { 0f })
+    val eb = srgbToLinear(emissiveFactor.getOrElse(2) { 0f })
+    val calMetallic = effectiveMetallic(metallicFactor)
+    val calRoughness = roughnessFactor.coerceIn(0.04f, 1f)
     for (mi in materialInstances.getOrNull(materialIndex) ?: return) {
       val m = mi.material
       if (m.hasParameter("baseColorFactor") && baseColorFactor.size >= 4) {
-        mi.setParameter("baseColorFactor", baseColorFactor[0], baseColorFactor[1], baseColorFactor[2], baseColorFactor[3])
+        mi.setParameter("baseColorFactor", r, g, b, a)
       }
       if (m.hasParameter("emissiveFactor") && emissiveFactor.size >= 3) {
-        mi.setParameter("emissiveFactor", emissiveFactor[0], emissiveFactor[1], emissiveFactor[2])
+        mi.setParameter("emissiveFactor", er, eg, eb)
       }
-      if (m.hasParameter("metallicFactor")) mi.setParameter("metallicFactor", metallicFactor)
-      if (m.hasParameter("roughnessFactor")) mi.setParameter("roughnessFactor", roughnessFactor)
+      if (m.hasParameter("metallicFactor")) mi.setParameter("metallicFactor", calMetallic)
+      if (m.hasParameter("roughnessFactor")) mi.setParameter("roughnessFactor", calRoughness)
     }
   }
 
@@ -514,12 +557,17 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     scene.removeEntity(sunEntity)
     engine.lightManager.destroy(sunEntity)
     EntityManager.get().destroy(sunEntity)
+    scene.removeEntity(fillLightEntity)
+    engine.lightManager.destroy(fillLightEntity)
+    EntityManager.get().destroy(fillLightEntity)
     engine.destroyIndirectLight(indirectLight)
+    engine.destroyTexture(studioCubemap)
     swapChain?.let { engine.destroySwapChain(it) }
     swapChain = null
     engine.flushAndWait()
     engine.destroyRenderer(renderer)
     engine.destroyView(filamentView)
+    engine.destroyColorGrading(colorGrading)
     engine.destroyScene(scene)
     engine.destroyCameraComponent(camera.entity)
     EntityManager.get().destroy(camera.entity)
@@ -668,10 +716,22 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     }
     @Suppress("UNCHECKED_CAST")
     materialInstances = lists as Array<MutableList<MaterialInstance>>
+    for (m in 0 until minOf(materialInstances.size, index.materialBaseColors.size)) {
+      setMaterialFactors(
+        materialIndex = m,
+        baseColorFactor = index.materialBaseColors[m],
+        emissiveFactor = index.materialEmissive[m],
+        metallicFactor = index.materialMetallic[m],
+        roughnessFactor = index.materialRoughness[m],
+      )
+    }
   }
 
   private fun materialCountOf(index: GltfSceneIndex): Int =
-    (index.meshPrimitiveMaterials.maxOfOrNull { mats -> mats.maxOrNull() ?: -1 } ?: -1) + 1
+    maxOf(
+      index.materialBaseColors.size,
+      (index.meshPrimitiveMaterials.maxOfOrNull { mats -> mats.maxOrNull() ?: -1 } ?: -1) + 1,
+    )
 
   /** Nearest glTF node owning [entity] (the entity itself or an ancestor), or `-1`. */
   private fun nodeOfEntity(entity: Int): Int {
@@ -1070,7 +1130,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   companion object {
     private const val SUN_LUX = 90_000f
-    private const val AMBIENT_LUX = 25_000f
+    private const val FILL_LUX = 28_000f
+    private const val AMBIENT_LUX = 38_400f
+    private const val STUDIO_METALLIC_SCALE = 0.38f
+    private const val STUDIO_CUBEMAP_SIZE = 32
+    private const val STUDIO_CUBEMAP_LEVELS = 6
     private const val VISIBLE_LAYER = 0x01
     private const val MAX_DEPTH = 256
     private const val MAX_MATERIALS = 4096
@@ -1078,7 +1142,163 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     private const val MAX_SPLAT_VERTICES = SplatParser.MAX_SPLATS * 4
     internal const val SPLAT_FILAMAT_ASSET = "materials/splat.filamat"
 
+    // 2-band Spherical Harmonics matching three-view.ts's uAmbientColor + envDiffuse * 0.5
+    // sky-to-ground hemisphere gradient in linear space (band 0 L00, band 1 L1-1/Y, L10/Z, L11/X).
+    private val STUDIO_IRRADIANCE_SH =
+      floatArrayOf(
+        0.20f, 0.21f, 0.23f,
+        0.08f, 0.085f, 0.095f,
+        0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f,
+      )
+
     private const val JPEG_QUALITY = 60
+
+    /** Converts an sRGB channel in `[0, 1]` to linear RGB (IEC 61966-2-1). */
+    internal fun srgbToLinear(c: Float): Float {
+      if (!c.isFinite()) return 0f
+      val v = c.coerceIn(0f, 1f)
+      return if (v <= 0.04045f) {
+        v / 12.92f
+      } else {
+        Math.pow(((v + 0.055) / 1.055), 2.4).toFloat()
+      }
+    }
+
+    /**
+     * Calibrates glTF `metallicFactor` so high-metalness materials retain diffuse body color
+     * matching Web's shader (`directLight += (base.rgb * NdotL * 0.75 + spec)`), while still
+     * exhibiting crisp specular reflections from the procedural studio cubemap.
+     */
+    internal fun effectiveMetallic(metallic: Float): Float {
+      if (!metallic.isFinite()) return 0f
+      return (metallic.coerceIn(0f, 1f) * STUDIO_METALLIC_SCALE).coerceIn(0f, 1f)
+    }
+
+    /** Converts a non-negative finite float to IEEE 754 binary16 (half-precision float) bits. */
+    internal fun floatToHalf(f: Float): Short {
+      if (!f.isFinite() || f <= 0f) return 0
+      val bits = java.lang.Float.floatToRawIntBits(f)
+      val exp = ((bits ushr 23) and 0xFF) - 127 + 15
+      val mant = bits and 0x7FFFFF
+      return when {
+        exp <= 0 -> 0
+        exp >= 31 -> ((30 shl 10) or 0x3FF).toShort()
+        else -> ((exp shl 10) or (mant ushr 13)).toShort()
+      }
+    }
+
+    /**
+     * Evaluates the procedural 3-light studio environment radiance from `three-view.ts`
+     * (`getStudioRadiance(R, roughness)`) in linear RGB for reflection direction `(rx, ry, rz)`.
+     */
+    internal fun studioRadianceLinear(
+      rx: Float,
+      ry: Float,
+      rz: Float,
+      roughness: Float,
+      out: FloatArray,
+    ): FloatArray {
+      val len = Math.sqrt((rx * rx + ry * ry + rz * rz).toDouble()).toFloat().coerceAtLeast(1e-6f)
+      val dx = rx / len
+      val dy = ry / len
+      val dz = rz / len
+      val r = roughness.coerceIn(0f, 1f)
+
+      // Key lobe: normalize(0.0, 1.0, 0.35)
+      val kLen = Math.sqrt(1.0 + 0.35 * 0.35).toFloat()
+      val kDot = maxOf(0f, dy * (1f / kLen) + dz * (0.35f / kLen))
+      val kExp = 48f + (1.5f - 48f) * r
+      val kAmp = 1.8f + (0.5f - 1.8f) * r
+      val ki = Math.pow(kDot.toDouble(), kExp.toDouble()).toFloat() * kAmp
+
+      // Fill lobe: normalize(-0.85, 0.45, -0.35)
+      val fLen = Math.sqrt(0.85 * 0.85 + 0.45 * 0.45 + 0.35 * 0.35).toFloat()
+      val fDot = maxOf(0f, dx * (-0.85f / fLen) + dy * (0.45f / fLen) + dz * (-0.35f / fLen))
+      val fExp = 24f + (1.2f - 24f) * r
+      val fAmp = 1.0f + (0.35f - 1.0f) * r
+      val fi = Math.pow(fDot.toDouble(), fExp.toDouble()).toFloat() * fAmp
+
+      // Horizon rim
+      val rimBase = (1f - Math.abs(dy)).coerceIn(0f, 1f)
+      val ri = rimBase * rimBase * rimBase * 0.25f
+
+      // Sky-ground gradient in linear RGB
+      val t = (dy * 0.5f + 0.5f).coerceIn(0f, 1f)
+      val agR = 0.005f + (0.20f - 0.005f) * t
+      val agG = 0.005f + (0.215f - 0.005f) * t
+      val agB = 0.007f + (0.26f - 0.007f) * t
+
+      out[0] = agR + 1.0f * ki + 0.70f * fi + 0.32f * ri
+      out[1] = agG + 0.96f * ki + 0.83f * fi + 0.32f * ri
+      out[2] = agB + 0.88f * ki + 1.0f * fi + 0.32f * ri
+      return out
+    }
+
+    /** Builds a 6-face RGBA16F (`HALF`) cubemap buffer for one mip [size] and [roughness]. */
+    internal fun buildStudioCubemapLevelBuffer(size: Int, roughness: Float): ByteBuffer {
+      val s = size.coerceAtLeast(1)
+      val buf = ByteBuffer.allocateDirect(6 * s * s * 8).order(ByteOrder.nativeOrder())
+      val shorts = buf.asShortBuffer()
+      val rad = FloatArray(3)
+      val oneHalf = floatToHalf(1f)
+      for (face in 0 until 6) {
+        for (y in 0 until s) {
+          val v = 2f * ((y + 0.5f) / s) - 1f
+          for (x in 0 until s) {
+            val u = 2f * ((x + 0.5f) / s) - 1f
+            val rx: Float
+            val ry: Float
+            val rz: Float
+            when (face) {
+              0 -> { rx = 1f; ry = -v; rz = -u }  // +X
+              1 -> { rx = -1f; ry = -v; rz = u }  // -X
+              2 -> { rx = u; ry = 1f; rz = v }    // +Y
+              3 -> { rx = u; ry = -1f; rz = -v }  // -Y
+              4 -> { rx = u; ry = -v; rz = 1f }   // +Z
+              else -> { rx = -u; ry = -v; rz = -1f } // -Z
+            }
+            studioRadianceLinear(rx, ry, rz, roughness, rad)
+            shorts.put(floatToHalf(rad[0]))
+            shorts.put(floatToHalf(rad[1]))
+            shorts.put(floatToHalf(rad[2]))
+            shorts.put(oneHalf)
+          }
+        }
+      }
+      buf.rewind()
+      return buf
+    }
+
+    private fun createStudioReflectionCubemap(engine: Engine): Texture {
+      val baseSize = STUDIO_CUBEMAP_SIZE
+      val levels = STUDIO_CUBEMAP_LEVELS
+      val texture =
+        Texture.Builder()
+          .width(baseSize)
+          .height(baseSize)
+          .levels(levels)
+          .sampler(Texture.Sampler.SAMPLER_CUBEMAP)
+          .format(Texture.InternalFormat.RGBA16F)
+          .build(engine)
+      for (level in 0 until levels) {
+        val size = (baseSize shr level).coerceAtLeast(1)
+        val roughness = if (levels > 1) level.toFloat() / (levels - 1).toFloat() else 0f
+        val buf = buildStudioCubemapLevelBuffer(size, roughness)
+        texture.setImage(
+          engine,
+          level,
+          0,
+          0,
+          0,
+          size,
+          size,
+          6,
+          Texture.PixelBufferDescriptor(buf, Texture.Format.RGBA, Texture.Type.HALF),
+        )
+      }
+      return texture
+    }
 
     /** RGBA (bottom-up, as read back from GL) → downscaled, upright JPEG; `null` on failure. */
     private fun encodeJpeg(
@@ -1117,7 +1337,13 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
     private fun setColor(mi: MaterialInstance, color: FloatArray) {
       if (color.size >= 4 && mi.material.hasParameter("baseColorFactor")) {
-        mi.setParameter("baseColorFactor", color[0], color[1], color[2], color[3])
+        mi.setParameter(
+          "baseColorFactor",
+          srgbToLinear(color[0]),
+          srgbToLinear(color[1]),
+          srgbToLinear(color[2]),
+          color[3].coerceIn(0f, 1f),
+        )
       }
     }
 

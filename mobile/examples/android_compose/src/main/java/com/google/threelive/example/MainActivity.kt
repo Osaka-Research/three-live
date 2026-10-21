@@ -333,7 +333,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
         modifier =
           Modifier.fillMaxWidth()
             .weight(if (isArPreviewMode) 1f else 0.42f)
-            .background(Color(0xFF0F141C))
+            .background(Color(0xFF0B1220))
       ) {
         AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx -> renderer.createView(ctx) })
         LaunchedEffect(Unit) { triggerCompileAndRender() }
