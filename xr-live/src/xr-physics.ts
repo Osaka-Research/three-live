@@ -99,6 +99,7 @@ export class XRHeightfieldPhysics {
     tableY?: number,
     onBounce?: (mesh: any, speed: number) => void,
   ): void {
+    if (!(dt > 0)) return;
     const clampedDt = Math.max(0.001, Math.min(0.05, dt));
     const dynamicMeshes: Array<{mesh: any; body: PhysicsBodyState}> = [];
 

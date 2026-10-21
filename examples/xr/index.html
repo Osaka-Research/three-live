@@ -1475,6 +1475,7 @@ return scene;`
 
     // Physics step, 6DoF headset locomotion, gaze raycast & telemetry loop
     let lastTime = performance.now();
+    let prevVyByMesh = new WeakMap();
     function tickPlayground(now) {
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
@@ -1578,23 +1579,21 @@ return scene;`
           launchBall();
         }
 
-        const prevVy = viewer.meshes.map((m) => {
-          const b = xrEl.physics?.getOrCreateBody?.(m);
-          return b ? b.velocity[1] : 0;
-        });
-
-        xrEl.stepSpatialFrame(dt, viewer);
-        if (typeof viewer.update === 'function') viewer.update(0);
-        viewer.render();
-
+        // Note: ThreeLiveViewer's internal rAF loop already calls viewer.update(dt) ->
+        // xrLiveSpatialPlugin.onUpdate(viewer, dt) -> xrEl.stepSpatialFrame(dt, viewer)
+        // once per frame at 1x physical time.
         let dynamicCount = 0;
-        viewer.meshes.forEach((m, idx) => {
+        viewer.meshes.forEach((m) => {
           const traits = m?.extras?.xr || m?.userData?.xr;
           if (traits?.physics === 'dynamic') {
             dynamicCount++;
             const b = xrEl.physics?.getOrCreateBody?.(m);
-            if (b && prevVy[idx] < -0.3 && b.velocity[1] > 0.05) {
-              bounceCount++;
+            if (b) {
+              const prevVy = prevVyByMesh.get(m) ?? 0;
+              if (prevVy < -0.3 && b.velocity[1] > 0.05) {
+                bounceCount++;
+              }
+              prevVyByMesh.set(m, b.velocity[1]);
             }
           }
         });

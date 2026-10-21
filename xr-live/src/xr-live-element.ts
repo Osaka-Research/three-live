@@ -248,6 +248,7 @@ export class XRLiveElement extends ThreeLiveElement {
    * for `dt` seconds. Automatically invoked during WebXR frames and desktop simulator loops.
    */
   public stepSpatialFrame(dt = 1 / 60, customViewer?: any): void {
+    if (!(dt > 0)) return;
     const viewer = this._getViewer(customViewer);
     if (!viewer) return;
 
