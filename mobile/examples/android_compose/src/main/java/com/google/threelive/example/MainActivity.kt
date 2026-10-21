@@ -17,7 +17,9 @@
 package com.google.threelive.example
 
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -26,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ViewInAr
@@ -35,12 +38,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.threelive.GlbBuffer
 import com.google.threelive.ThreeCompiler
 import com.google.threelive.ThreeLiveCameraOptions
@@ -49,6 +55,9 @@ import com.google.threelive.XRLiveNodeTraits
 import com.google.threelive.XRLiveSceneCoreHelper
 import com.google.threelive.filament.ThreeLiveFilamentRenderer
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.system.measureNanoTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +90,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
   val coroutineScope = rememberCoroutineScope()
   var selectedMode by remember { mutableStateOf(StudioMode.THREE_LIVE) }
   var selectedPresetIndex by remember { mutableStateOf(0) }
@@ -93,6 +103,18 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   var lastCompiledGlbBytes by remember { mutableStateOf<ByteArray?>(null) }
   var extractedXrTraits by remember { mutableStateOf<List<XRLiveNodeTraits>>(emptyList()) }
   var compileError by remember { mutableStateOf<String?>(null) }
+
+  // Full-screen in-app AR Surface Placement Preview state (used when Google Play Services for AR
+  // is not installed on an emulator or when the external SceneViewerDeeplink gateway immediately
+  // exits because Scene Viewer is disabled on the system image).
+  var isArPreviewMode by remember { mutableStateOf(false) }
+  var arPreviewNote by remember { mutableStateOf<String?>(null) }
+  var arShowReticle by remember { mutableStateOf(true) }
+  var arAutoRotate by remember { mutableStateOf(false) }
+  var arScalePreset by remember { mutableStateOf(1.0f) }
+  var arGridMeshId by remember { mutableStateOf(-1) }
+  var arReticleMeshId by remember { mutableStateOf(-1) }
+  var externalArLaunchTimeMs by remember { mutableStateOf(0L) }
 
   // Owned by the composition rather than created inside the AndroidView factory below:
   // assigning the renderer to composition state from that factory mutates state that
@@ -115,6 +137,103 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   var binding by remember { mutableStateOf<ThreeLiveRuntimeBinding?>(null) }
   var lastEvent by remember { mutableStateOf<String?>(null) }
   DisposableEffect(Unit) { onDispose { binding?.dispose() } }
+
+  fun removeArSurfaceMeshes() {
+    if (arGridMeshId >= 0) {
+      renderer.removeDynamicMesh(arGridMeshId)
+      arGridMeshId = -1
+    }
+    if (arReticleMeshId >= 0) {
+      renderer.removeDynamicMesh(arReticleMeshId)
+      arReticleMeshId = -1
+    }
+  }
+
+  fun attachArSurfaceMeshes(showReticle: Boolean = arShowReticle) {
+    removeArSurfaceMeshes()
+    if (!showReticle) return
+    val (gridPos, gridIdx) = buildArFloorGridGeometry(y = -0.96f, halfExtent = 2.0f, divisions = 8)
+    arGridMeshId =
+      renderer.addDynamicMesh(
+        positions = gridPos,
+        normals = null,
+        indices = gridIdx,
+        color = floatArrayOf(0.18f, 0.34f, 0.46f, 1.0f),
+      )
+    val (retPos, retIdx) = buildArReticleGeometry(y = -0.95f, innerR = 0.52f, outerR = 0.60f)
+    arReticleMeshId =
+      renderer.addDynamicMesh(
+        positions = retPos,
+        normals = null,
+        indices = retIdx,
+        color = floatArrayOf(0.13f, 0.85f, 0.68f, 1.0f),
+      )
+  }
+
+  fun applyArCamera(scaleMultiplier: Float = arScalePreset, autoRotate: Boolean = arAutoRotate) {
+    val fovDeg = (45.0f / scaleMultiplier).coerceIn(22.0f, 68.0f)
+    renderer.setCameraOptions(
+      ThreeLiveCameraOptions(
+        cameraOrbit = "28deg 24deg",
+        fieldOfView = "${fovDeg.toInt()}deg",
+        autoRotate = autoRotate,
+        autoRotateDelayMs = 600L,
+        rotationPerSecond = "20deg",
+      )
+    )
+  }
+
+  fun enterArPreview(note: String) {
+    arPreviewNote = note
+    arScalePreset = 1.0f
+    arAutoRotate = false
+    arShowReticle = true
+    isArPreviewMode = true
+    attachArSurfaceMeshes(showReticle = true)
+    applyArCamera(scaleMultiplier = 1.0f, autoRotate = false)
+  }
+
+  fun exitArPreview() {
+    removeArSurfaceMeshes()
+    isArPreviewMode = false
+    arPreviewNote = null
+    renderer.setCameraOptions(
+      if (selectedMode == StudioMode.THREE_LIVE) {
+        ThreeLiveCameraOptions(
+          autoRotate = true,
+          autoRotateDelayMs = 800L,
+          rotationPerSecond = "24deg",
+        )
+      } else {
+        ThreeLiveCameraOptions(
+          cameraOrbit = "34deg 20deg",
+          autoRotate = false,
+        )
+      }
+    )
+  }
+
+  BackHandler(enabled = isArPreviewMode) { exitArPreview() }
+
+  // Detect if an external SceneViewerDeeplink gateway activity immediately calls finish() within
+  // 800 ms (which happens on emulators where com.google.android.googlequicksearchbox has
+  // SceneViewerConstants.VIEWER_ENABLED = false). When detected, automatically open the built-in
+  // AR Surface Placement Preview.
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME && externalArLaunchTimeMs > 0L) {
+        val elapsedMs = SystemClock.elapsedRealtime() - externalArLaunchTimeMs
+        externalArLaunchTimeMs = 0L
+        if (elapsedMs < 800L) {
+          enterArPreview(
+            "External Scene Viewer immediately exited on this device — using built-in AR Surface Preview"
+          )
+        }
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
 
   fun triggerCompileAndRender() {
     isCompiling = true
@@ -155,6 +274,10 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
               }
             )
             renderer.load(it.byteBuffer.duplicate())
+            if (isArPreviewMode) {
+              attachArSurfaceMeshes()
+              applyArCamera()
+            }
             binding =
               ThreeLiveRuntimeBinding(renderer, it.byteBuffer.duplicate()).apply {
                 callbacks =
@@ -199,8 +322,16 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
     }
     try {
       val title = activePresets.getOrNull(selectedPresetIndex)?.name ?: "Three-Live AR Scene"
-      SceneViewerHelper.presentAR(context = context, glbBytes = glbBytes, title = title)
+      val launchedExternal =
+        SceneViewerHelper.presentAR(context = context, glbBytes = glbBytes, title = title)
       compileError = null
+      if (launchedExternal) {
+        externalArLaunchTimeMs = SystemClock.elapsedRealtime()
+      } else {
+        enterArPreview(
+          "ARCore (com.google.ar.core) is not installed on this emulator — running built-in AR Surface Preview"
+        )
+      }
     } catch (e: Exception) {
       compileError = e.localizedMessage ?: e.message ?: "Failed to launch AR Scene Viewer."
     }
@@ -208,34 +339,43 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
 
   Scaffold(
     topBar = {
-      TopAppBar(
-        title = {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-              Icons.Default.Code,
-              contentDescription = null,
-              tint = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Three-Live & XR-Live Studio", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-          }
-        },
-        colors =
-          TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
-          ),
-      )
+      if (!isArPreviewMode) {
+        TopAppBar(
+          title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(
+                Icons.Default.Code,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Three-Live & XR-Live Studio", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+          },
+          colors =
+            TopAppBarDefaults.topAppBarColors(
+              containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+            ),
+        )
+      }
     }
   ) { innerPadding ->
     Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-      // Top Section: 3D Filament Viewport (42% height)
-      Box(modifier = Modifier.fillMaxWidth().weight(0.42f).background(Color(0xFF0F141C))) {
+      // Top Section: 3D Filament Viewport (42% height in Studio mode, 100% in AR Preview mode)
+      Box(
+        modifier =
+          Modifier.fillMaxWidth()
+            .weight(if (isArPreviewMode) 1f else 0.42f)
+            .background(Color(0xFF0F141C))
+      ) {
         AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx -> renderer.createView(ctx) })
         LaunchedEffect(Unit) { triggerCompileAndRender() }
 
         lastEvent?.let { message ->
           Surface(
-            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+            modifier =
+              Modifier.align(if (isArPreviewMode) Alignment.CenterStart else Alignment.BottomStart)
+                .padding(12.dp),
             shape = RoundedCornerShape(16.dp),
             color = Color(0xFF0F172A).copy(alpha = 0.85f),
           ) {
@@ -248,227 +388,492 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           }
         }
 
-        // Stack status pills vertically at TopStart so they never overlap on narrow phones
-        Column(
-          modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
-          verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          if (
-            selectedMode == StudioMode.XR_LIVE &&
-              extractedXrTraits.isNotEmpty() &&
-              compileError == null
+        if (isArPreviewMode) {
+          val activePresetName =
+            activePresets.getOrNull(selectedPresetIndex)?.name ?: "Three-Live Scene"
+          // Top AR HUD bar
+          Column(
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            val grabCount = extractedXrTraits.count { it.grabbable }
-            val dynCount = extractedXrTraits.count { it.physics == "dynamic" }
-            val bbCount = extractedXrTraits.count { !it.billboard.isNullOrEmpty() }
-            val orbitCount = extractedXrTraits.count { it.orbit != null }
             Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = Color(0xFF581C87).copy(alpha = 0.92f),
+              shape = RoundedCornerShape(14.dp),
+              color = Color(0xFF0F172A).copy(alpha = 0.90f),
             ) {
-              Text(
-                text =
-                  "🥽 XR-Live: ${extractedXrTraits.size} Nodes ($grabCount Grab • $dynCount Physics • $bbCount Billboard • $orbitCount Orbit)",
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Row(
+                  modifier = Modifier.weight(1f),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Icon(
+                    Icons.Default.ViewInAr,
+                    contentDescription = null,
+                    tint = Color(0xFF22C55E),
+                    modifier = Modifier.size(20.dp),
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Column {
+                    Text(
+                      text = "AR Surface Preview • $activePresetName",
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = FontWeight.Bold,
+                      color = Color.White,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                    )
+                    arPreviewNote?.let { note ->
+                      Text(
+                        text = note,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF94A3B8),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                      )
+                    }
+                  }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                FilledTonalButton(
+                  onClick = { exitArPreview() },
+                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                  Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Exit AR",
+                    modifier = Modifier.size(16.dp),
+                  )
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Exit AR", fontSize = 12.sp)
+                }
+              }
+            }
+
+            // Toggle chips for AR Surface Reticle & Turntable Auto-Rotate
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              FilterChip(
+                selected = arShowReticle,
+                onClick = {
+                  val next = !arShowReticle
+                  arShowReticle = next
+                  attachArSurfaceMeshes(showReticle = next)
+                },
+                label = { Text("Surface Reticle & Grid", fontSize = 11.sp) },
+              )
+              FilterChip(
+                selected = arAutoRotate,
+                onClick = {
+                  val next = !arAutoRotate
+                  arAutoRotate = next
+                  applyArCamera(scaleMultiplier = arScalePreset, autoRotate = next)
+                },
+                label = { Text("Auto-Rotate", fontSize = 11.sp) },
               )
             }
           }
 
-          if (compileLatencyMs != null && compileError == null) {
-            Surface(
-              shape = RoundedCornerShape(16.dp),
-              color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+          // Bottom AR Placement Controls Bar
+          Surface(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF0F172A).copy(alpha = 0.90f),
+          ) {
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(12.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
               Text(
                 text =
-                  "⚡ Compiled in ${String.format(Locale.US, "%.2f", compileLatencyMs)} ms • ${glbSizeBytes} B GLB",
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                  "Drag: Orbit • Pinch: Scale • Two-Finger Drag: Move on Surface • Tap: Interact",
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                color = Color(0xFFCBD5E1),
               )
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = "AR Scale:",
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.SemiBold,
+                  color = Color.White,
+                )
+                listOf(0.75f to "0.75×", 1.0f to "1.0×", 1.5f to "1.5×").forEach { (scale, label) ->
+                  FilterChip(
+                    selected = (arScalePreset == scale),
+                    onClick = {
+                      arScalePreset = scale
+                      applyArCamera(scaleMultiplier = scale, autoRotate = arAutoRotate)
+                    },
+                    label = { Text(label, fontSize = 11.sp) },
+                  )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                OutlinedButton(
+                  onClick = {
+                    arScalePreset = 1.0f
+                    applyArCamera(scaleMultiplier = 1.0f, autoRotate = arAutoRotate)
+                  },
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                  Text("Reset Pose", fontSize = 11.sp)
+                }
+              }
+            }
+          }
+        } else {
+          // Stack status pills vertically at TopStart so they never overlap on narrow phones
+          Column(
+            modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            if (
+              selectedMode == StudioMode.XR_LIVE &&
+                extractedXrTraits.isNotEmpty() &&
+                compileError == null
+            ) {
+              val grabCount = extractedXrTraits.count { it.grabbable }
+              val dynCount = extractedXrTraits.count { it.physics == "dynamic" }
+              val bbCount = extractedXrTraits.count { !it.billboard.isNullOrEmpty() }
+              val orbitCount = extractedXrTraits.count { it.orbit != null }
+              Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF581C87).copy(alpha = 0.92f),
+              ) {
+                Text(
+                  text =
+                    "🥽 XR-Live: ${extractedXrTraits.size} Nodes ($grabCount Grab • $dynCount Physics • $bbCount Billboard • $orbitCount Orbit)",
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.SemiBold,
+                  color = Color.White,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+            }
+
+            if (compileLatencyMs != null && compileError == null) {
+              Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+              ) {
+                Text(
+                  text =
+                    "⚡ Compiled in ${String.format(Locale.US, "%.2f", compileLatencyMs)} ms • ${glbSizeBytes} B GLB",
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                  style = MaterialTheme.typography.labelSmall,
+                  fontWeight = FontWeight.SemiBold,
+                  color = MaterialTheme.colorScheme.onPrimaryContainer,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
             }
           }
         }
       }
 
-      // Bottom Section: Editor & Controls (58% height)
-      Column(
-        modifier =
-          Modifier.fillMaxWidth()
-            .weight(0.58f)
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-      ) {
-        // Mode Toggle Row: Three-Live | XR-Live
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalAlignment = Alignment.CenterVertically,
+      if (!isArPreviewMode) {
+        // Bottom Section: Editor & Controls (58% height)
+        Column(
+          modifier =
+            Modifier.fillMaxWidth()
+              .weight(0.58f)
+              .background(MaterialTheme.colorScheme.surface)
+              .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-          Text("Mode:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-          StudioMode.values().forEach { mode ->
-            FilterChip(
-              selected = (selectedMode == mode),
-              onClick = {
-                if (selectedMode != mode) {
-                  selectedMode = mode
-                  selectedPresetIndex = 0
-                  val firstPreset = SampleScenes.presetsFor(mode).first()
-                  jsScriptText = firstPreset.script
-                  triggerCompileAndRender()
-                }
-              },
-              label = { Text(mode.label, fontWeight = FontWeight.SemiBold) },
-            )
-          }
-        }
-
-        // Preset Chips Row
-        Row(
-          modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text(
-            "Presets:",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-          )
-          activePresets.forEachIndexed { index, preset ->
-            FilterChip(
-              selected = (selectedPresetIndex == index),
-              onClick = {
-                selectedPresetIndex = index
-                jsScriptText = preset.script
-                triggerCompileAndRender()
-              },
-              label = { Text(preset.name) },
-            )
-          }
-        }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Three.js Monospace Code Editor Header Row
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Text(
-            text = "Three.js Source (Tap/Edit):",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-          Text(
-            text = "Rust C-ABI + Filament",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline,
-          )
-        }
-        Spacer(modifier = Modifier.height(4.dp))
-
-        OutlinedTextField(
-          value = jsScriptText,
-          onValueChange = { jsScriptText = it },
-          modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 120.dp),
-          textStyle =
-            androidx.compose.ui.text.TextStyle(
-              fontFamily = FontFamily.Monospace,
-              fontSize = 12.sp,
-              lineHeight = 16.sp,
-              color = MaterialTheme.colorScheme.onSurface,
-            ),
-          shape = RoundedCornerShape(8.dp),
-          singleLine = false,
-          maxLines = Int.MAX_VALUE,
-          placeholder = { Text("// Paste your Three.js script here...") },
-        )
-
-        // Error Banner if compilation failed
-        if (compileError != null) {
-          Spacer(modifier = Modifier.height(6.dp))
-          Surface(
+          // Mode Toggle Row: Three-Live | XR-Live
+          Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.errorContainer,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            SelectionContainer {
-              Text(
-                text = "⚠️ Compilation Error: $compileError",
-                modifier = Modifier.padding(8.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                fontFamily = FontFamily.Monospace,
+            Text(
+              "Mode:",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.Bold,
+            )
+            StudioMode.values().forEach { mode ->
+              FilterChip(
+                selected = (selectedMode == mode),
+                onClick = {
+                  if (selectedMode != mode) {
+                    selectedMode = mode
+                    selectedPresetIndex = 0
+                    val firstPreset = SampleScenes.presetsFor(mode).first()
+                    jsScriptText = firstPreset.script
+                    triggerCompileAndRender()
+                  }
+                },
+                label = { Text(mode.label, fontWeight = FontWeight.SemiBold) },
               )
             }
           }
-        }
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Action Bar: Equal-width View in AR + Compile & Render Buttons
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Button(
-            onClick = { triggerLaunchAR() },
-            enabled = !isCompiling && lastCompiledGlbBytes != null,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF16A34A),
-                contentColor = Color.White,
-              ),
+          // Preset Chips Row
+          Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            Icon(
-              Icons.Default.ViewInAr,
-              contentDescription = null,
-              modifier = Modifier.size(18.dp),
+            Text(
+              "Presets:",
+              style = MaterialTheme.typography.labelMedium,
+              fontWeight = FontWeight.Bold,
             )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("View in AR", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            activePresets.forEachIndexed { index, preset ->
+              FilterChip(
+                selected = (selectedPresetIndex == index),
+                onClick = {
+                  selectedPresetIndex = index
+                  jsScriptText = preset.script
+                  triggerCompileAndRender()
+                },
+                label = { Text(preset.name) },
+              )
+            }
           }
 
-          Button(
-            onClick = { triggerCompileAndRender() },
-            enabled = !isCompiling,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            colors =
-              ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+          Spacer(modifier = Modifier.height(4.dp))
+
+          // Three.js Monospace Code Editor Header Row
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            if (isCompiling) {
-              CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onPrimary,
-              )
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("Compiling...", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            } else {
+            Text(
+              text = "Three.js Source (Tap/Edit):",
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+              text = "Rust C-ABI + Filament",
+              style = MaterialTheme.typography.labelSmall,
+              color = MaterialTheme.colorScheme.outline,
+            )
+          }
+          Spacer(modifier = Modifier.height(4.dp))
+
+          OutlinedTextField(
+            value = jsScriptText,
+            onValueChange = { jsScriptText = it },
+            modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 120.dp),
+            textStyle =
+              androidx.compose.ui.text.TextStyle(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+              ),
+            shape = RoundedCornerShape(8.dp),
+            singleLine = false,
+            maxLines = Int.MAX_VALUE,
+            placeholder = { Text("// Paste your Three.js script here...") },
+          )
+
+          // Error Banner if compilation failed
+          if (compileError != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+              modifier = Modifier.fillMaxWidth(),
+              shape = RoundedCornerShape(8.dp),
+              color = MaterialTheme.colorScheme.errorContainer,
+            ) {
+              SelectionContainer {
+                Text(
+                  text = "⚠️ Compilation Error: $compileError",
+                  modifier = Modifier.padding(8.dp),
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onErrorContainer,
+                  fontFamily = FontFamily.Monospace,
+                )
+              }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          // Action Bar: Equal-width View in AR + Compile & Render Buttons
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Button(
+              onClick = { triggerLaunchAR() },
+              enabled = !isCompiling && lastCompiledGlbBytes != null,
+              modifier = Modifier.weight(1f),
+              contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+              colors =
+                ButtonDefaults.buttonColors(
+                  containerColor = Color(0xFF16A34A),
+                  contentColor = Color.White,
+                ),
+            ) {
               Icon(
-                Icons.Default.PlayArrow,
+                Icons.Default.ViewInAr,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
               )
               Spacer(modifier = Modifier.width(6.dp))
-              Text("Compile & Render", maxLines = 1, overflow = TextOverflow.Ellipsis)
+              Text("View in AR", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+
+            Button(
+              onClick = { triggerCompileAndRender() },
+              enabled = !isCompiling,
+              modifier = Modifier.weight(1f),
+              contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+              colors =
+                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            ) {
+              if (isCompiling) {
+                CircularProgressIndicator(
+                  modifier = Modifier.size(16.dp),
+                  strokeWidth = 2.dp,
+                  color = MaterialTheme.colorScheme.onPrimary,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Compiling...", maxLines = 1, overflow = TextOverflow.Ellipsis)
+              } else {
+                Icon(
+                  Icons.Default.PlayArrow,
+                  contentDescription = null,
+                  modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Compile & Render", maxLines = 1, overflow = TextOverflow.Ellipsis)
+              }
             }
           }
         }
       }
     }
   }
+}
+
+/**
+ * Builds a flat ground-plane grid of thin quad lines on height [y] for the built-in AR Surface
+ * Placement Preview.
+ */
+private fun buildArFloorGridGeometry(
+  y: Float,
+  halfExtent: Float,
+  divisions: Int,
+  lineHalfWidth: Float = 0.008f,
+): Pair<FloatArray, IntArray> {
+  val lineCount = (divisions + 1) * 2
+  val positions = FloatArray(lineCount * 4 * 3)
+  val indices = IntArray(lineCount * 6)
+  var vOffset = 0
+  var iOffset = 0
+  val step = (halfExtent * 2f) / divisions
+
+  fun addQuad(x0: Float, z0: Float, x1: Float, z1: Float) {
+    val baseVertex = vOffset / 3
+    positions[vOffset++] = x0
+    positions[vOffset++] = y
+    positions[vOffset++] = z0
+    positions[vOffset++] = x1
+    positions[vOffset++] = y
+    positions[vOffset++] = z0
+    positions[vOffset++] = x1
+    positions[vOffset++] = y
+    positions[vOffset++] = z1
+    positions[vOffset++] = x0
+    positions[vOffset++] = y
+    positions[vOffset++] = z1
+
+    indices[iOffset++] = baseVertex
+    indices[iOffset++] = baseVertex + 1
+    indices[iOffset++] = baseVertex + 2
+    indices[iOffset++] = baseVertex
+    indices[iOffset++] = baseVertex + 2
+    indices[iOffset++] = baseVertex + 3
+  }
+
+  for (i in 0..divisions) {
+    val coord = -halfExtent + i * step
+    // Line parallel to Z axis
+    addQuad(coord - lineHalfWidth, -halfExtent, coord + lineHalfWidth, halfExtent)
+    // Line parallel to X axis
+    addQuad(-halfExtent, coord - lineHalfWidth, halfExtent, coord + lineHalfWidth)
+  }
+  return positions to indices
+}
+
+/**
+ * Builds a circular AR surface placement reticle ring + center crosshairs on height [y].
+ */
+private fun buildArReticleGeometry(
+  y: Float,
+  innerR: Float,
+  outerR: Float,
+  segments: Int = 48,
+): Pair<FloatArray, IntArray> {
+  val ringVertices = segments * 2
+  val crossVertices = 8
+  val positions = FloatArray((ringVertices + crossVertices) * 3)
+  val indices = IntArray(segments * 6 + 12)
+  var vOffset = 0
+  var iOffset = 0
+
+  for (s in 0 until segments) {
+    val angle = (2.0 * PI * s) / segments
+    val c = cos(angle).toFloat()
+    val sn = sin(angle).toFloat()
+    positions[vOffset++] = c * innerR
+    positions[vOffset++] = y
+    positions[vOffset++] = sn * innerR
+    positions[vOffset++] = c * outerR
+    positions[vOffset++] = y
+    positions[vOffset++] = sn * outerR
+
+    val next = (s + 1) % segments
+    val i0 = s * 2
+    val i1 = s * 2 + 1
+    val i2 = next * 2 + 1
+    val i3 = next * 2
+    indices[iOffset++] = i0
+    indices[iOffset++] = i1
+    indices[iOffset++] = i2
+    indices[iOffset++] = i0
+    indices[iOffset++] = i2
+    indices[iOffset++] = i3
+  }
+
+  // Center crosshairs
+  val crossHalfLen = 0.14f
+  val crossHalfWidth = 0.012f
+  fun addCrossBar(x0: Float, z0: Float, x1: Float, z1: Float) {
+    val base = vOffset / 3
+    positions[vOffset++] = x0
+    positions[vOffset++] = y
+    positions[vOffset++] = z0
+    positions[vOffset++] = x1
+    positions[vOffset++] = y
+    positions[vOffset++] = z0
+    positions[vOffset++] = x1
+    positions[vOffset++] = y
+    positions[vOffset++] = z1
+    positions[vOffset++] = x0
+    positions[vOffset++] = y
+    positions[vOffset++] = z1
+    indices[iOffset++] = base
+    indices[iOffset++] = base + 1
+    indices[iOffset++] = base + 2
+    indices[iOffset++] = base
+    indices[iOffset++] = base + 2
+    indices[iOffset++] = base + 3
+  }
+  addCrossBar(-crossHalfLen, -crossHalfWidth, crossHalfLen, crossHalfWidth)
+  addCrossBar(-crossHalfWidth, -crossHalfLen, crossHalfWidth, crossHalfLen)
+
+  return positions to indices
 }
