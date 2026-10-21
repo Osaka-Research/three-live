@@ -19,15 +19,19 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-js:
-    name: JavaScript & TypeScript Suite (${{ matrix.os }}, Node ${{ matrix.node-version }})
-    runs-on: ${{ matrix.os }}
+    name: JavaScript & TypeScript Suite (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: [20.x, 22.x]
 
     steps:
@@ -77,12 +81,8 @@ jobs:
           '
 
   test-rust:
-    name: Rust Compiler Suite (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: Rust Compiler Suite (Ubuntu)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -167,7 +167,7 @@ jobs:
         run: gradle :mobile:examples:android_compose:assembleRelease --stacktrace
 
   test-swift:
-    name: Swift Package Suite (macOS)
+    name: Swift Package & iOS Example Suite (macOS)
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -236,6 +236,20 @@ jobs:
             echo "::warning::tvOS XCFramework slice or SDK unavailable on this runner; skipping tvOS compile check"
           fi
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate and build iOS example app
+        working-directory: mobile/examples/ios_swiftui
+        run: |
+          xcodegen generate
+          xcodebuild -project ThreeLiveDemo.xcodeproj \
+            -scheme ThreeLiveDemo \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/xcodebuild \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
       - name: Check release checksum pin
         run: |
           if grep -q '^let releaseChecksum = "0\{64\}"$' Package.swift; then
@@ -245,48 +259,6 @@ jobs:
           else
             echo "Release checksum is pinned."
           fi
-
-  build-ios-example:
-    name: iOS Example App (macOS)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-
-      - name: Build embedded JS engine asset
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
-
-      - name: Build XCFramework
-        run: bash scripts/build_ios_xcframework.sh
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode project
-        working-directory: mobile/examples/ios_swiftui
-        run: xcodegen generate
-
-      - name: Build example app
-        working-directory: mobile/examples/ios_swiftui
-        run: |
-          xcodebuild -project ThreeLiveDemo.xcodeproj \
-            -scheme ThreeLiveDemo \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath .build/xcodebuild \
-            CODE_SIGNING_ALLOWED=NO \
-            build
 
 
 

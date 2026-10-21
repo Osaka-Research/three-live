@@ -15,6 +15,7 @@
  */
 
 #if os(iOS)
+  import Combine
   import SwiftUI
   import RealityKit
   import ThreeLiveCompiler
@@ -31,10 +32,13 @@
     @State private var usdzData: Data? = nil
     @State private var extractedXrTraits: [String: XRLiveEntityTraits] = [:]
     @State private var errorMessage: String? = nil
+    @State private var lastEventMessage: String? = nil
 
     @State private var currentEntity: Entity? = nil
+    @State private var runtimeSession: XRLiveRealityKitSession? = nil
     @State private var rotationY: Float = 0.0
     @State private var rotationX: Float = 0.0
+    @State private var isDragging: Bool = false
     @State private var lastDragTranslation: CGSize = .zero
 
     private var activePresets: [ScenePreset] {
@@ -48,18 +52,24 @@
         GeometryReader { geo in
           VStack(spacing: 0) {
             // Top Section: 3D RealityKit Viewport (42% height)
-            ZStack {
+            ZStack(alignment: .topLeading) {
               Color(red: 0.06, green: 0.08, blue: 0.12)
                 .edgesIgnoringSafeArea(.all)
 
               ModelViewportRepresentable(
                 entity: currentEntity,
+                runtimeSession: runtimeSession,
                 rotationY: rotationY,
-                rotationX: rotationX
+                rotationX: rotationX,
+                isDragging: isDragging,
+                onTapNode: { nodeLabel in
+                  lastEventMessage = "Tapped \(nodeLabel)"
+                }
               )
-              .gesture(
-                DragGesture()
+              .simultaneousGesture(
+                DragGesture(minimumDistance: 6)
                   .onChanged { value in
+                    isDragging = true
                     let deltaX = Float(value.translation.width - lastDragTranslation.width)
                     let deltaY = Float(value.translation.height - lastDragTranslation.height)
                     rotationY += deltaX * 0.005
@@ -67,61 +77,76 @@
                     lastDragTranslation = value.translation
                   }
                   .onEnded { _ in
+                    isDragging = false
                     lastDragTranslation = .zero
                   }
               )
 
-              // Overlay HUD Metrics (XR-Live Spatial Traits on Top-Left, Compile Latency on Top-Right)
-              VStack {
-                HStack(alignment: .top) {
-                  if !extractedXrTraits.isEmpty, errorMessage == nil {
-                    let grabCount = extractedXrTraits.values.filter { $0.grabbable == true }.count
-                    let dynCount = extractedXrTraits.values.filter { $0.physics == "dynamic" }.count
-                    let bbCount =
-                      extractedXrTraits.values.filter { ($0.billboard ?? "").isEmpty == false }
-                      .count
-                    HStack(spacing: 6) {
-                      Image(systemName: "visionpro")
-                        .foregroundColor(.purple)
-                      Text(
-                        "XR-Live: \(extractedXrTraits.count) Nodes (\(grabCount) Grab • \(dynCount) Dynamic • \(bbCount) Billboard)"
-                      )
-                      .font(.system(.caption2, design: .monospaced))
-                      .fontWeight(.semibold)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-                    .padding(12)
+              // Stacked Top-Left Status Pills (never collide on narrow screens)
+              VStack(alignment: .leading, spacing: 6) {
+                if selectedMode == .xrLive, !extractedXrTraits.isEmpty, errorMessage == nil {
+                  let grabCount = extractedXrTraits.values.filter { $0.grabbable == true }.count
+                  let dynCount = extractedXrTraits.values.filter { $0.physics == "dynamic" }.count
+                  let bbCount =
+                    extractedXrTraits.values.filter { ($0.billboard ?? "").isEmpty == false }
+                    .count
+                  let orbitCount = extractedXrTraits.values.filter { $0.orbit != nil }.count
+                  HStack(spacing: 6) {
+                    Image(systemName: "visionpro")
+                      .foregroundColor(.purple)
+                    Text(
+                      "XR-Live: \(extractedXrTraits.count) Nodes (\(grabCount) Grab • \(dynCount) Physics • \(bbCount) Billboard • \(orbitCount) Orbit)"
+                    )
+                    .font(.system(.caption2, design: .monospaced))
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
                   }
-
-                  Spacer()
-
-                  if let ms = compileLatencyMs, let bytes = usdzSizeBytes, errorMessage == nil {
-                    HStack(spacing: 6) {
-                      Image(systemName: "bolt.fill")
-                        .foregroundColor(.yellow)
-                      Text(
-                        "Compiled in \(String(format: "%.2f", locale: .current, ms)) ms • \(bytes) B USDZ"
-                      )
-                      .font(.system(.caption, design: .monospaced))
-                      .fontWeight(.semibold)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-                    .padding(12)
-                  }
+                  .padding(.horizontal, 10)
+                  .padding(.vertical, 5)
+                  .background(.ultraThinMaterial)
+                  .cornerRadius(12)
                 }
-                Spacer()
+
+                if let ms = compileLatencyMs, let bytes = usdzSizeBytes, errorMessage == nil {
+                  HStack(spacing: 6) {
+                    Image(systemName: "bolt.fill")
+                      .foregroundColor(.yellow)
+                    Text(
+                      "Compiled in \(String(format: "%.2f", locale: .current, ms)) ms • \(bytes) B USDZ"
+                    )
+                    .font(.system(.caption2, design: .monospaced))
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                  }
+                  .padding(.horizontal, 10)
+                  .padding(.vertical, 5)
+                  .background(.ultraThinMaterial)
+                  .cornerRadius(12)
+                }
+              }
+              .padding(10)
+
+              if let eventMsg = lastEventMessage {
+                VStack {
+                  Spacer()
+                  HStack {
+                    Text(eventMsg)
+                      .font(.system(.caption2, design: .monospaced))
+                      .foregroundColor(.white)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 5)
+                      .background(Color.black.opacity(0.75))
+                      .cornerRadius(12)
+                    Spacer()
+                  }
+                  .padding(10)
+                }
               }
             }
             .frame(height: geo.size.height * 0.42)
 
             // Bottom Section: Editor & Controls
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
               // Mode Toggle: Three-Live | XR-Live
               Picker("Mode", selection: $selectedMode) {
                 ForEach(StudioMode.allCases) { mode in
@@ -138,28 +163,41 @@
                 }
               }
 
-              // Preset Picker
-              Picker("Preset", selection: $selectedPresetIndex) {
-                ForEach(0..<activePresets.count, id: \.self) { idx in
-                  Text(activePresets[idx].name).tag(idx)
-                }
-              }
-              .pickerStyle(.segmented)
-              .onChange(of: selectedPresetIndex) { newIdx in
-                let presets = activePresets
-                if presets.indices.contains(newIdx) {
-                  jsScriptText = presets[newIdx].script
-                  Task { await compileAndRender() }
+              // Scrollable Preset Chips Row
+              ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                  Text("Presets:")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                  ForEach(0..<activePresets.count, id: \.self) { idx in
+                    Button(action: {
+                      selectedPresetIndex = idx
+                      jsScriptText = activePresets[idx].script
+                      Task { await compileAndRender() }
+                    }) {
+                      Text(activePresets[idx].name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                          selectedPresetIndex == idx
+                            ? Color.accentColor.opacity(0.22)
+                            : Color(UIColor.secondarySystemBackground)
+                        )
+                        .foregroundColor(selectedPresetIndex == idx ? .accentColor : .primary)
+                        .cornerRadius(8)
+                    }
+                  }
                 }
               }
 
-              // Three.js Code Editor Label
+              // Three.js Code Editor Header Row
               HStack {
-                Text("Three.js JavaScript Source Code (Paste or Edit):")
+                Text("Three.js Source (Tap/Edit):")
                   .font(.caption)
                   .foregroundColor(.secondary)
                 Spacer()
-                Text("\(jsScriptText.count) chars")
+                Text("Rust C-ABI + RealityKit")
                   .font(.caption2)
                   .foregroundColor(.secondary)
               }
@@ -178,7 +216,7 @@
                   .padding(6)
                   .background(Color.clear)
               }
-              .frame(maxHeight: .infinity)
+              .frame(minHeight: 110, maxHeight: .infinity)
 
               // Error Banner
               if let err = errorMessage {
@@ -194,26 +232,19 @@
                 .cornerRadius(6)
               }
 
-              // Action Bar: Compile & AR Buttons
-              HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                  Text("Engine: Rust C-ABI + RealityKit / AR Quick Look")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
+              // Action Bar: Equal-width View in AR + Compile & Render Buttons
+              HStack(spacing: 8) {
                 Button(action: {
                   Task { await launchARQuickLook() }
                 }) {
                   HStack(spacing: 6) {
                     Image(systemName: "arkit")
                     Text("View in AR")
+                      .lineLimit(1)
                   }
                   .font(.system(size: 13, weight: .semibold))
                   .foregroundColor(.white)
-                  .padding(.horizontal, 12)
+                  .frame(maxWidth: .infinity)
                   .padding(.vertical, 10)
                   .background(Color.green)
                   .cornerRadius(10)
@@ -229,14 +260,16 @@
                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         .scaleEffect(0.8)
                       Text("Compiling...")
+                        .lineLimit(1)
                     } else {
                       Image(systemName: "play.fill")
                       Text("Compile & Render")
+                        .lineLimit(1)
                     }
                   }
                   .font(.system(size: 13, weight: .semibold))
                   .foregroundColor(.white)
-                  .padding(.horizontal, 14)
+                  .frame(maxWidth: .infinity)
                   .padding(.vertical, 10)
                   .background(Color.blue)
                   .cornerRadius(10)
@@ -244,7 +277,8 @@
                 .disabled(isCompiling)
               }
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(Color(UIColor.systemBackground))
           }
         }
@@ -282,6 +316,24 @@
         let entity = try await RealityKitHelper.loadEntity(fromUSDZ: data)
         if !traits.isEmpty {
           RealityKitHelper.applyXRTraits(traits, to: entity)
+        }
+        for anim in entity.availableAnimations {
+          _ = entity.playAnimation(anim.repeat())
+        }
+
+        runtimeSession?.stop()
+        if let live = XRLiveRealityKitSession(glbData: glbData, root: entity) {
+          live.installInputTargets()
+          live.headPoseProvider = {
+            XRPose(position: SIMD3<Float>(0, 1.2, 3.5))
+          }
+          live.onInteractivityEvent = { id, payload in
+            lastEventMessage = "Event '\(id)' \(payload)"
+          }
+          live.start()
+          runtimeSession = live
+        } else {
+          runtimeSession = nil
         }
 
         // Reset orientation & assign
@@ -321,12 +373,41 @@
     }
   }
 
-  /// UIViewRepresentable hosting a RealityKit scene with camera and directional light.
+  /// UIViewRepresentable hosting a RealityKit scene with camera, directional light, runtime stepping, and turntable auto-rotation.
   @available(iOS 15.0, *)
   struct ModelViewportRepresentable: UIViewRepresentable {
     let entity: Entity?
+    let runtimeSession: XRLiveRealityKitSession?
     let rotationY: Float
     let rotationX: Float
+    let isDragging: Bool
+    let onTapNode: ((String) -> Void)?
+
+    final class Coordinator: NSObject {
+      weak var arView: ARView?
+      var runtimeSession: XRLiveRealityKitSession?
+      var onTapNode: ((String) -> Void)?
+      var rotationY: Float = 0.4
+      var rotationX: Float = 0.2
+      var autoRotationAngle: Float = 0.0
+      var isDragging: Bool = false
+      var updateCancellable: Cancellable?
+
+      @MainActor
+      @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended, let view = arView else { return }
+        let location = recognizer.location(in: view)
+        if let hit = view.hitTest(location, query: .nearest, mask: .all).first {
+          _ = runtimeSession?.handleTap(on: hit.entity, hitPoint: hit.position)
+          let label = hit.entity.name.isEmpty ? "mesh" : hit.entity.name
+          onTapNode?(label)
+        }
+      }
+    }
+
+    func makeCoordinator() -> Coordinator {
+      Coordinator()
+    }
 
     func makeUIView(context: Context) -> ARView {
       let arView = ARView(frame: .zero, cameraMode: .nonAR, automaticallyConfigureSession: false)
@@ -353,10 +434,37 @@
       modelAnchor.name = "ModelRoot"
       arView.scene.addAnchor(modelAnchor)
 
+      let tap = UITapGestureRecognizer(
+        target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+      arView.addGestureRecognizer(tap)
+      context.coordinator.arView = arView
+
+      context.coordinator.updateCancellable = arView.scene.subscribe(
+        to: SceneEvents.Update.self
+      ) { [weak coordinator = context.coordinator] event in
+        guard let coordinator = coordinator else { return }
+        let dt = min(max(event.deltaTime, 0), 0.1)
+        if !coordinator.isDragging {
+          coordinator.autoRotationAngle += Float(dt) * 0.42
+        }
+        if let anchor = coordinator.arView?.scene.findEntity(named: "ModelRoot") {
+          anchor.orientation =
+            simd_quatf(angle: coordinator.rotationY + coordinator.autoRotationAngle, axis: [0, 1, 0])
+            * simd_quatf(angle: coordinator.rotationX, axis: [1, 0, 0])
+        }
+        coordinator.runtimeSession?.step(dt: dt)
+      }
+
       return arView
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
+      context.coordinator.runtimeSession = runtimeSession
+      context.coordinator.onTapNode = onTapNode
+      context.coordinator.rotationY = rotationY
+      context.coordinator.rotationX = rotationX
+      context.coordinator.isDragging = isDragging
+
       guard let modelAnchor = uiView.scene.findEntity(named: "ModelRoot") as? AnchorEntity else {
         return
       }
@@ -367,11 +475,12 @@
       if let currentEntity = entity, modelAnchor.children.first !== currentEntity {
         modelAnchor.children.removeAll()
         modelAnchor.addChild(currentEntity)
+        context.coordinator.autoRotationAngle = 0.0
       }
 
-      // Apply interactive rotation
       modelAnchor.orientation =
-        simd_quatf(angle: rotationY, axis: [0, 1, 0])
+        simd_quatf(
+          angle: rotationY + context.coordinator.autoRotationAngle, axis: [0, 1, 0])
         * simd_quatf(angle: rotationX, axis: [1, 0, 0])
     }
   }

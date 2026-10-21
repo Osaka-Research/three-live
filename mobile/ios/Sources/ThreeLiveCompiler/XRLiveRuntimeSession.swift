@@ -230,6 +230,20 @@ public final class XRLiveRuntimeSession {
     var following: Bool
   }
 
+  struct PhysicsBodyState {
+    var position: SIMD3<Float>
+    var velocity: SIMD3<Float>
+    var angularVelocity: SIMD3<Float>
+    var spawnPosition: SIMD3<Float>
+    var radius: Float
+    var sleepTimer: Float
+  }
+
+  struct StaticAabb {
+    let min: SIMD3<Float>
+    let max: SIMD3<Float>
+  }
+
   // MARK: Stored state
 
   /// Receives batched scene changes.
@@ -278,6 +292,10 @@ public final class XRLiveRuntimeSession {
 
   private var followStates: [Int: FollowState] = [:]
   private var orbitTimes: [Int: Double] = [:]
+  private var physicsStates: [Int: PhysicsBodyState] = [:]
+  private var staticColliders: [StaticAabb] = []
+  private var collidersInitialized = false
+  private var meshLocalBounds: [(min: SIMD3<Float>, max: SIMD3<Float>)?] = []
   private var grabbed = Set<Int>()
 
   // MARK: Initialization
@@ -380,14 +398,33 @@ public final class XRLiveRuntimeSession {
       materials.append(mat)
     }
 
+    let rawAccessors = Array((XRJSON.array(root["accessors"]) ?? []).prefix(Self.maxSceneElements))
     for raw in (XRJSON.array(root["meshes"]) ?? []).prefix(Self.maxSceneElements) {
       var list: [Int] = []
+      var bounds: (min: SIMD3<Float>, max: SIMD3<Float>)? = nil
       for p in (XRJSON.array(XRJSON.object(raw)?["primitives"]) ?? []).prefix(Self.maxSocketsPerNode) {
-        let mat = XRJSON.number(XRJSON.object(p)?["material"]).flatMap { Int(exactly: $0) }
+        let po = XRJSON.object(p)
+        let mat = XRJSON.number(po?["material"]).flatMap { Int(exactly: $0) }
         list.append(mat ?? -1)
+        if bounds == nil,
+          let attrs = XRJSON.object(po?["attributes"]),
+          let posIdx = XRJSON.number(attrs["POSITION"]).flatMap({ Int(exactly: $0) }),
+          posIdx >= 0, posIdx < rawAccessors.count,
+          let acc = XRJSON.object(rawAccessors[posIdx]),
+          let minArr = XRJSON.array(acc["min"]), minArr.count >= 3,
+          let maxArr = XRJSON.array(acc["max"]), maxArr.count >= 3
+        {
+          let mn = Self.doubles(minArr, defaults: [-0.08, -0.08, -0.08])
+          let mx = Self.doubles(maxArr, defaults: [0.08, 0.08, 0.08])
+          bounds = (
+            min: SIMD3<Float>(Float(mn[0]), Float(mn[1]), Float(mn[2])),
+            max: SIMD3<Float>(Float(mx[0]), Float(mx[1]), Float(mx[2]))
+          )
+        }
       }
       meshMaterials.append(list)
       meshNames.append(XRJSON.string(XRJSON.object(raw)?["name"]))
+      meshLocalBounds.append(bounds)
     }
 
     for raw in (XRJSON.array(root["animations"]) ?? []).prefix(Self.maxSceneElements) {
@@ -636,6 +673,7 @@ public final class XRLiveRuntimeSession {
   /// Dispatches a select (tap / pinch) on node `nodeIndex` to every matching
   /// `pointer/onSelect` trigger (a trigger matches its configured node or any descendant).
   public func dispatchSelect(nodeIndex: Int, hitPoint: SIMD3<Float>? = nil, meshName: String? = nil) {
+    impulsePhysicsOnSelect(nodeIndex)
     dispatchPointer(
       ops: ["pointer/onSelect", "event/onSelect", "scene/onSelect"], nodeIndex: nodeIndex,
       hitPoint: hitPoint, meshName: meshName)
@@ -1654,6 +1692,7 @@ public final class XRLiveRuntimeSession {
       guard let traits = nodes[i].traits else { continue }
       if grabbed.contains(i) {
         followStates[i] = nil
+        physicsStates[i] = nil
         continue
       }
       if let follow = traits.lazyFollow {
@@ -1663,6 +1702,232 @@ public final class XRLiveRuntimeSession {
       if let orbit = traits.orbit {
         stepOrbit(i, orbit, headPose: headPose, dt: stepDt)
       }
+      if let bb = traits.billboard, !bb.isEmpty, let head = headPose {
+        stepBillboard(i, mode: bb, headPose: head)
+      }
+    }
+    stepPhysics(dt: stepDt)
+  }
+
+  private func stepBillboard(_ i: Int, mode: String, headPose: XRPose) {
+    let world = XRBlocksMath.decompose(worldMatrix(of: i))
+    let rotation = XRBlocksMath.billboardTowards(
+      from: world.translation, to: headPose.position, mode: mode)
+    setWorldTRS(i, rotation: rotation, position: world.translation, scale: world.scale)
+  }
+
+  private func ensureStaticColliders() {
+    guard !collidersInitialized else { return }
+    collidersInitialized = true
+    staticColliders.removeAll()
+    for i in 0..<nodes.count {
+      let t = nodes[i].traits
+      let isDynamic = t?.physics?.caseInsensitiveCompare("dynamic") == .orderedSame
+      if isDynamic || t?.lazyFollow != nil || t?.orbit != nil { continue }
+      let isStaticCollider =
+        t?.physics?.caseInsensitiveCompare("static") == .orderedSame
+        || t?.anchor != nil
+        || (t == nil && nodes[i].mesh != nil)
+      guard isStaticCollider,
+        let meshIdx = nodes[i].mesh,
+        meshIdx >= 0, meshIdx < meshLocalBounds.count,
+        let bounds = meshLocalBounds[meshIdx]
+      else { continue }
+      let pos = nodes[i].translation
+      let scl = nodes[i].scale
+      let minP = SIMD3<Float>(
+        Float(pos.x) + bounds.min.x * Float(scl.x),
+        Float(pos.y) + bounds.min.y * Float(scl.y),
+        Float(pos.z) + bounds.min.z * Float(scl.z)
+      )
+      let maxP = SIMD3<Float>(
+        Float(pos.x) + bounds.max.x * Float(scl.x),
+        Float(pos.y) + bounds.max.y * Float(scl.y),
+        Float(pos.z) + bounds.max.z * Float(scl.z)
+      )
+      staticColliders.append(StaticAabb(min: simd_min(minP, maxP), max: simd_max(minP, maxP)))
+    }
+  }
+
+  private func estimateNodeRadius(_ i: Int) -> Float {
+    guard let meshIdx = nodes[i].mesh,
+      meshIdx >= 0, meshIdx < meshLocalBounds.count,
+      let b = meshLocalBounds[meshIdx]
+    else { return 0.08 }
+    let s = nodes[i].scale
+    let rx = 0.5 * abs(b.max.x - b.min.x) * max(0.1, abs(Float(s.x)))
+    let ry = 0.5 * abs(b.max.y - b.min.y) * max(0.1, abs(Float(s.y)))
+    let rz = 0.5 * abs(b.max.z - b.min.z) * max(0.1, abs(Float(s.z)))
+    let r = max(rx, max(ry, rz))
+    return (r.isFinite && r > 0.01) ? min(r, 1.0) : 0.08
+  }
+
+  private func impulsePhysicsOnSelect(_ hitNode: Int) {
+    var cur: Int? = hitNode
+    var depth = 0
+    while let c = cur, c >= 0, c < nodes.count, depth < 32 {
+      if nodes[c].traits?.physics?.caseInsensitiveCompare("dynamic") == .orderedSame {
+        if var st = physicsStates[c] {
+          let phase = Float(c * 137) * 0.7
+          st.velocity.x += cos(phase) * 0.9
+          st.velocity.y = max(st.velocity.y + 2.8, 3.2)
+          st.velocity.z += sin(phase) * 0.9
+          st.sleepTimer = 0
+          physicsStates[c] = st
+        }
+        return
+      }
+      cur = parentOf[c]
+      depth += 1
+    }
+  }
+
+  private func stepPhysics(dt: Float) {
+    guard dt > 0 else { return }
+    var dynamicIndices: [Int] = []
+    for i in 0..<nodes.count {
+      if grabbed.contains(i) { continue }
+      if nodes[i].traits?.physics?.caseInsensitiveCompare("dynamic") == .orderedSame {
+        dynamicIndices.append(i)
+      }
+    }
+    guard !dynamicIndices.isEmpty else { return }
+    ensureStaticColliders()
+
+    let gravity: Float = -9.81
+    let restitution: Float = 0.68
+    let damping = max(0.0, 1.0 - 0.35 * dt)
+
+    for idx in dynamicIndices {
+      var st =
+        physicsStates[idx]
+        ?? {
+          let n = nodes[idx]
+          let seed = Float(idx * 97 + 13)
+          let p0 = SIMD3<Float>(Float(n.translation.x), Float(n.translation.y), Float(n.translation.z))
+          return PhysicsBodyState(
+            position: p0,
+            velocity: SIMD3<Float>(cos(seed) * 0.45, 0, sin(seed * 1.3) * 0.45),
+            angularVelocity: SIMD3<Float>(sin(seed) * 2.2, cos(seed * 0.7) * 1.8, cos(seed) * 2.2),
+            spawnPosition: p0,
+            radius: estimateNodeRadius(idx),
+            sleepTimer: 0
+          )
+        }()
+
+      st.velocity.y += gravity * dt
+      st.velocity *= damping
+      st.position += st.velocity * dt
+
+      let r = st.radius
+      var surfaceY: Float = 0
+      for col in staticColliders {
+        let withinXZ =
+          st.position.x + r * 0.65 >= col.min.x
+          && st.position.x - r * 0.65 <= col.max.x
+          && st.position.z + r * 0.65 >= col.min.z
+          && st.position.z - r * 0.65 <= col.max.z
+        if withinXZ && col.max.y <= st.spawnPosition.y + 0.25 && col.max.y > surfaceY {
+          surfaceY = col.max.y
+        }
+      }
+
+      let floorY = surfaceY + r
+      if st.position.y < floorY {
+        st.position.y = floorY
+        if st.velocity.y < 0 {
+          st.velocity.y = -st.velocity.y * restitution
+          st.velocity.x *= 0.88
+          st.velocity.z *= 0.88
+          if abs(st.velocity.y) < 0.22 {
+            st.velocity.y = 0
+          }
+        }
+      }
+
+      let maxHoriz: Float = 0.85
+      if abs(st.position.x) > maxHoriz {
+        st.position.x = st.position.x > 0 ? maxHoriz : -maxHoriz
+        st.velocity.x = -st.velocity.x * restitution
+      }
+      let minZ: Float = -2.2
+      let maxZ: Float = 0.65
+      if st.position.z < minZ {
+        st.position.z = minZ
+        st.velocity.z = -st.velocity.z * restitution
+      } else if st.position.z > maxZ {
+        st.position.z = maxZ
+        st.velocity.z = -st.velocity.z * restitution
+      }
+
+      let speedSq = simd_length_squared(st.velocity)
+      if speedSq < 0.015 && abs(st.position.y - floorY) < 0.025 {
+        st.sleepTimer += dt
+        if st.sleepTimer > 1.8 {
+          let phase = Float(elapsed) * 2.3 + Float(idx) * 1.1
+          st.position = SIMD3<Float>(
+            st.spawnPosition.x + cos(phase) * 0.12,
+            max(st.spawnPosition.y, floorY + 0.55),
+            st.spawnPosition.z + sin(phase) * 0.12
+          )
+          st.velocity = SIMD3<Float>(cos(phase * 1.7) * 0.55, 1.35 + Float(idx % 4) * 0.25, sin(phase * 1.3) * 0.55)
+          st.sleepTimer = 0
+        }
+      } else {
+        st.sleepTimer = 0
+      }
+
+      physicsStates[idx] = st
+    }
+
+    // Pairwise sphere-to-sphere elastic collisions
+    if dynamicIndices.count > 1 {
+      for a in 0..<(dynamicIndices.count - 1) {
+        let ia = dynamicIndices[a]
+        guard var sa = physicsStates[ia] else { continue }
+        for b in (a + 1)..<dynamicIndices.count {
+          let ib = dynamicIndices[b]
+          guard var sb = physicsStates[ib] else { continue }
+          let delta = sb.position - sa.position
+          let minDist = sa.radius + sb.radius
+          let distSq = simd_length_squared(delta)
+          if distSq > 1e-8 && distSq < minDist * minDist {
+            let dist = sqrt(distSq)
+            let n = delta / dist
+            let overlap = 0.5 * (minDist - dist)
+            sa.position -= n * overlap
+            sb.position += n * overlap
+            let relV = simd_dot(sb.velocity - sa.velocity, n)
+            if relV < 0 {
+              let j = -(1 + restitution) * 0.5 * relV
+              sa.velocity -= n * j
+              sb.velocity += n * j
+            }
+            physicsStates[ib] = sb
+          }
+        }
+        physicsStates[ia] = sa
+      }
+    }
+
+    for idx in dynamicIndices {
+      guard let st = physicsStates[idx] else { continue }
+      nodes[idx].translation = SIMD3<Double>(
+        Double(st.position.x), Double(st.position.y), Double(st.position.z))
+      let horizSpeed = hypot(st.velocity.x, st.velocity.z)
+      if horizSpeed > 0.03 {
+        let angle = horizSpeed * dt / max(0.04, st.radius)
+        let axis = XRBlocksMath.normalize(
+          SIMD3<Float>(st.velocity.z, 0, -st.velocity.x), fallback: SIMD3<Float>(1, 0, 0))
+        let dq = simd_quatf(angle: angle, axis: axis)
+        let cur = simd_quatf(
+          ix: Float(nodes[idx].rotation.x), iy: Float(nodes[idx].rotation.y),
+          iz: Float(nodes[idx].rotation.z), r: Float(nodes[idx].rotation.w))
+        let next = simd_normalize(dq * cur)
+        nodes[idx].rotation = SIMD4<Double>(
+          Double(next.imag.x), Double(next.imag.y), Double(next.imag.z), Double(next.real))
+      }
+      dirtyTransforms.insert(idx)
     }
   }
 

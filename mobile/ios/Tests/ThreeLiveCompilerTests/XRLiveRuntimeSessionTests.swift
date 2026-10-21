@@ -1292,4 +1292,41 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(d0.heightMeters, esz[1], accuracy: 1e-4)
     XCTAssertEqual(d0.depthSource.rawValue, ed0["depthSource"] as? String)
   }
+
+  func testPhysicsDynamicAndBillboardStep() {
+    let json = #"""
+      {"nodes": [
+        {"name": "Table", "mesh": 0, "translation": [0, 0.4, 0]},
+        {"name": "Ball_1", "mesh": 1, "translation": [0, 1.2, 0], "extras": {"xr": {"physics": "dynamic", "grabbable": true}}},
+        {"name": "Sign", "translation": [0, 1.5, -2], "extras": {"xr": {"billboard": "capsule"}}}
+      ], "meshes": [
+        {"primitives": [{"attributes": {"POSITION": 0}}]},
+        {"primitives": [{"attributes": {"POSITION": 1}}]}
+      ], "accessors": [
+        {"min": [-1, -0.05, -1], "max": [1, 0.05, 1]},
+        {"min": [-0.08, -0.08, -0.08], "max": [0.08, 0.08, 0.08]}
+      ]}
+      """#
+    let (s, _) = session(json)
+    let y0 = translation(s, 1).y
+    let head = XRPose(position: SIMD3<Float>(2, 1.6, 0))
+    for _ in 0..<30 {
+      s.step(dt: 1.0 / 60.0, headPose: head)
+    }
+    let y1 = translation(s, 1).y
+    XCTAssertLessThan(y1, y0)
+    for _ in 0..<90 {
+      s.step(dt: 1.0 / 60.0, headPose: head)
+    }
+    let yRest = translation(s, 1).y
+    XCTAssertGreaterThanOrEqual(yRest, 0.50)
+    s.dispatchSelect(nodeIndex: 1)
+    for _ in 0..<10 {
+      s.step(dt: 1.0 / 60.0, headPose: head)
+    }
+    let yJump = translation(s, 1).y
+    XCTAssertGreaterThan(yJump, yRest)
+    let qSign = s.nodeTransform(at: 2)?.rotation.vector.y ?? 0
+    XCTAssertGreaterThan(qSign, 0.1)
+  }
 }

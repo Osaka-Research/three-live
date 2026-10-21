@@ -43,6 +43,9 @@ object SampleScenes {
             new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
           );
           core.name = "QuantumCore";
+          core.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.2, 1.2, 1.2], duration: 0.35 }
+          };
           scene.add(core);
 
           // 2. Inner Orbit Ring
@@ -64,17 +67,23 @@ object SampleScenes {
           ring2.rotation.z = 0.4;
           scene.add(ring2);
 
-          // 4. Sensor Arrays (Satellites)
+          // 4. Sensor Arrays (Orbiting Satellites)
           const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
           const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
           const sat1 = new THREE.Mesh(satGeo, satMat);
           sat1.name = "SensorArray_A";
-          sat1.position.set(1.4, 0.5, 0);
+          sat1.position.set(1.45, 0.35, 0);
+          sat1.userData.xr = {
+            orbit: { target: 'QuantumCore', radius: 1.45, speed: 1.35, height: 0.35, phase: 0, faceCenter: true }
+          };
           scene.add(sat1);
 
           const sat2 = new THREE.Mesh(satGeo, satMat);
           sat2.name = "SensorArray_B";
-          sat2.position.set(-1.4, -0.5, 0);
+          sat2.position.set(-1.45, -0.35, 0);
+          sat2.userData.xr = {
+            orbit: { target: 'QuantumCore', radius: 1.45, speed: -1.35, height: -0.35, phase: 3.14159, faceCenter: true }
+          };
           scene.add(sat2);
 
           // 5. Pedestal Base
@@ -100,6 +109,9 @@ object SampleScenes {
             new THREE.MeshStandardMaterial({ color: 0xf43f5e, metalness: 0.95, roughness: 0.12 })
           );
           mesh.name = "RubyTorusKnot";
+          mesh.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.22, 1.22, 1.22], duration: 0.35 }
+          };
           scene.add(mesh);
           """
             .trimIndent(),
@@ -116,6 +128,9 @@ object SampleScenes {
             new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.8, roughness: 0.15 })
           );
           mesh.name = "EmeraldGem";
+          mesh.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.2, 1.2, 1.2], duration: 0.35 }
+          };
           scene.add(mesh);
           """
             .trimIndent(),
@@ -136,6 +151,9 @@ object SampleScenes {
             );
             sphere.name = "Sphere_" + (i + 1);
             sphere.position.set(Math.cos(angle) * 1.3, Math.sin(angle) * 0.4, Math.sin(angle) * 1.3);
+            sphere.userData.xr = {
+              orbit: { target: [0, 0, 0], radius: 1.3, speed: 1.1, height: Math.sin(angle) * 0.4, phase: angle, faceCenter: false }
+            };
             scene.add(sphere);
           }
           """
@@ -227,6 +245,9 @@ object SampleScenes {
             traits: ['grab', 'scale'],
             anchor: 'table'
           };
+          artifact.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.3, 1.3, 1.3], duration: 0.35 }
+          };
           scene.add(artifact);
 
           // 2. Capsule Billboard Indicator Gem (TurnToFace Y-axis locked)
@@ -251,6 +272,7 @@ object SampleScenes {
           orb.position.set(0, 0.55, 0);
           orb.userData.xr = {
             physics: 'dynamic',
+            orbit: { target: [0, 0, 0], radius: 0.65, speed: 1.5, height: 0.35 },
             traits: ['grab', 'scale']
           };
           scene.add(orb);
@@ -279,8 +301,24 @@ object SampleScenes {
             pillar.name = 'Depth_Pillar_' + (idx + 1);
             pillar.position.set(d.pos[0], d.pos[1], d.pos[2]);
             pillar.userData.xr = { traits: ['grab', 'scale'] };
+            pillar.userData.interactivity = {
+              onSelect: { action: 'toggleTransform', target: 'scale', to: [1.25, 1.25, 1.25], duration: 0.3 }
+            };
             scene.add(pillar);
           });
+
+          // Orbiting Spatial AI Depth Probe
+          const probe = new THREE.Mesh(
+            new THREE.SphereGeometry(0.14, 24, 24),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.15, metalness: 0.85 })
+          );
+          probe.name = 'AI_Depth_Probe';
+          probe.position.set(0.95, 0.45, 0);
+          probe.userData.xr = {
+            traits: ['grab'],
+            orbit: { target: [0, 0.1, 0], radius: 0.95, speed: 1.35, height: 0.35 }
+          };
+          scene.add(probe);
           """
             .trimIndent(),
       ),

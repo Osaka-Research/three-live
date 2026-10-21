@@ -192,7 +192,8 @@
     /// Generates collision shapes and input targets for every bound node that a select
     /// trigger targets, so taps and gaze-pinches can hit them.
     public func installInputTargets() {
-      for (index, entity) in entitiesByNode where session.isSelectable(index) {
+      for (index, entity) in entitiesByNode
+      where session.isSelectable(index) || session.traits(at: index)?.physics == "dynamic" {
         if !entity.components.has(CollisionComponent.self) {
           entity.generateCollisionShapes(recursive: true)
         }

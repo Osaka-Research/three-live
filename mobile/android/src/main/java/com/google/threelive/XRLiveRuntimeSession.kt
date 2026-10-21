@@ -174,10 +174,21 @@ class XRLiveRuntimeSession(gltfJson: String) {
 
   // ---- Traits --------------------------------------------------------------------------------
 
+  private class PhysicsBody(
+    val nodeIndex: Int,
+    val radius: Double,
+    val velocity: DoubleArray = DoubleArray(3),
+  )
+
   private val traitByNode = HashMap<Int, XRLiveNodeTraits>()
   private val followers: IntArray
   private val followOptions: Array<XRLazyFollowOptions?>
   private val orbiters: IntArray
+  private val billboards: IntArray
+  private val dynamicBodies: Array<PhysicsBody>
+  private val staticColliders: Array<DoubleArray>
+  private val physicsFloorY: Double
+  private var physicsSettledTime = 0.0
   private val followStates: Array<FollowState?>
   private val orbitTime: DoubleArray
   private val grabbed: BooleanArray
@@ -278,6 +289,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
     traits = XRLiveSceneCoreHelper.parseNodeTraits(root)
     val fl = ArrayList<Int>()
     val ob = ArrayList<Int>()
+    val bb = ArrayList<Int>()
+    val dynNodes = ArrayList<Int>()
     followOptions = arrayOfNulls(n)
     for (t in traits) {
       if (t.nodeIndex !in 0 until n) continue
@@ -288,10 +301,114 @@ class XRLiveRuntimeSession(gltfJson: String) {
         fl.add(t.nodeIndex)
       } else if (t.orbit != null) {
         ob.add(t.nodeIndex)
+      } else if (t.physics == "dynamic") {
+        dynNodes.add(t.nodeIndex)
+      }
+      if (!t.billboard.isNullOrEmpty() && t.billboard != "false" && lazy == null) {
+        bb.add(t.nodeIndex)
       }
     }
     followers = fl.toIntArray()
     orbiters = ob.toIntArray()
+    billboards = bb.toIntArray()
+
+    // Parse mesh local bounds from POSITION accessors when dynamic physics is present.
+    if (dynNodes.isEmpty()) {
+      dynamicBodies = emptyArray()
+      staticColliders = emptyArray()
+      physicsFloorY = -0.85
+    } else {
+      val rawMeshes = MiniJson.asList(root["meshes"]) ?: emptyList()
+      val rawAccessors = MiniJson.asList(root["accessors"]) ?: emptyList()
+      val meshBounds = arrayOfNulls<DoubleArray>(rawMeshes.size)
+      for (mi in rawMeshes.indices) {
+        val mObj = MiniJson.asMap(rawMeshes[mi]) ?: continue
+        val prims = MiniJson.asList(mObj["primitives"]) ?: continue
+        var minX = Double.POSITIVE_INFINITY
+        var minY = Double.POSITIVE_INFINITY
+        var minZ = Double.POSITIVE_INFINITY
+        var maxX = Double.NEGATIVE_INFINITY
+        var maxY = Double.NEGATIVE_INFINITY
+        var maxZ = Double.NEGATIVE_INFINITY
+        for (p in prims) {
+          val attrs = MiniJson.asMap(MiniJson.asMap(p)?.get("attributes")) ?: continue
+          val posAccIdx = intIndex(attrs["POSITION"])
+          val acc = MiniJson.asMap(rawAccessors.getOrNull(posAccIdx)) ?: continue
+          val mn = MiniJson.asList(acc["min"])
+          val mx = MiniJson.asList(acc["max"])
+          if (mn != null && mx != null && mn.size >= 3 && mx.size >= 3) {
+            minX = Math.min(minX, numOr(mn[0], 0.0))
+            minY = Math.min(minY, numOr(mn[1], 0.0))
+            minZ = Math.min(minZ, numOr(mn[2], 0.0))
+            maxX = Math.max(maxX, numOr(mx[0], 0.0))
+            maxY = Math.max(maxY, numOr(mx[1], 0.0))
+            maxZ = Math.max(maxZ, numOr(mx[2], 0.0))
+          }
+        }
+        if (minX <= maxX && minY <= maxY && minZ <= maxZ) {
+          meshBounds[mi] = doubleArrayOf(minX, minY, minZ, maxX, maxY, maxZ)
+        }
+      }
+      val dynSet = dynNodes.toHashSet()
+      dynamicBodies =
+        Array(dynNodes.size) { idx ->
+          val ni = dynNodes[idx]
+          val mb = meshBounds.getOrNull(nodeMesh[ni])
+          val localR =
+            if (mb != null) {
+              Math.max(
+                (mb[3] - mb[0]) * 0.5,
+                Math.max((mb[4] - mb[1]) * 0.5, (mb[5] - mb[2]) * 0.5),
+              )
+            } else {
+              0.12
+            }
+          val maxS =
+            Math.max(
+              Math.abs(scale[ni * 3]),
+              Math.max(Math.abs(scale[ni * 3 + 1]), Math.abs(scale[ni * 3 + 2])),
+            )
+          val r = XRBlocksMath.clampNum(localR * maxS, 0.04, 1.5, 0.12)
+          PhysicsBody(ni, r)
+        }
+      val colliders = ArrayList<DoubleArray>()
+      var floorY = -0.85
+      for (ni in 0 until n) {
+        if (ni in dynSet || !visible[ni]) continue
+        val t = traitByNode[ni]
+        if (t?.orbit != null || t?.lazyFollow != null || !t?.billboard.isNullOrEmpty()) continue
+        val mb = meshBounds.getOrNull(nodeMesh[ni]) ?: continue
+        sceneMatrix(ni, mA)
+        val aabb =
+          doubleArrayOf(
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY,
+            Double.NEGATIVE_INFINITY,
+            Double.NEGATIVE_INFINITY,
+            Double.NEGATIVE_INFINITY,
+          )
+        for (c in 0 until 8) {
+          val lx = if (c and 1 == 0) mb[0] else mb[3]
+          val ly = if (c and 2 == 0) mb[1] else mb[4]
+          val lz = if (c and 4 == 0) mb[2] else mb[5]
+          XRBlocksMath.transformPoint(mA, lx, ly, lz, v3a)
+          for (k in 0 until 3) {
+            aabb[k] = Math.min(aabb[k], v3a[k])
+            aabb[3 + k] = Math.max(aabb[3 + k], v3a[k])
+          }
+        }
+        val spanX = aabb[3] - aabb[0]
+        val spanZ = aabb[5] - aabb[2]
+        if (spanX > 1.8 && spanZ > 1.8) {
+          floorY = Math.max(floorY, aabb[4])
+        } else {
+          colliders.add(aabb)
+        }
+      }
+      staticColliders = colliders.toTypedArray()
+      physicsFloorY = floorY
+    }
 
     // Behavior graph.
     val ext = MiniJson.asMap(MiniJson.asMap(root["extensions"])?.get("KHR_interactivity"))
@@ -372,6 +489,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     ensureStarted()
     guard {
       dispatchPointer(SELECT_OPS, nodeIndex, hitPoint)
+      impulsePhysicsOnSelect(nodeIndex)
       flush()
     }
   }
@@ -420,6 +538,13 @@ class XRLiveRuntimeSession(gltfJson: String) {
       for (i in orbiters) {
         if (grabbed[i]) continue
         stepOrbit(i, traitByNode[i]?.orbit ?: continue, headPose, dt)
+      }
+      for (i in billboards) {
+        if (grabbed[i]) continue
+        stepBillboard(i, traitByNode[i]?.billboard ?: continue, headPose, dt)
+      }
+      if (dynamicBodies.isNotEmpty()) {
+        stepPhysics(dt)
       }
       flush()
     }
@@ -1566,6 +1691,222 @@ class XRLiveRuntimeSession(gltfJson: String) {
       setWorldPose(i, pos, q4a)
     } else {
       setWorldPose(i, pos, null)
+    }
+  }
+
+  private fun stepBillboard(i: Int, mode: String, headPose: XRPose, dt: Double) {
+    worldMatrix(i, mA)
+    v3a[0] = mA[12]
+    v3a[1] = mA[13]
+    v3a[2] = mA[14]
+    v3b[0] = headPose.position[0].toDouble()
+    v3b[1] = headPose.position[1].toDouble()
+    v3b[2] = headPose.position[2].toDouble()
+    XRBlocksMath.extractQuaternion(mA, q4a)
+    XRFollowMath.billboardTowards(v3a, v3b, mode, q4b)
+    val alpha = Math.min(1.0, dt * 10.0)
+    XRBlocksMath.quatSlerp(q4c, q4a, q4b, alpha)
+    normalizeQuatInto(q4c)
+    setWorldPose(i, v3a, q4c)
+  }
+
+  private fun stepPhysics(dt: Double) {
+    val clampedDt = Math.max(0.001, Math.min(0.05, dt))
+    val restitution = 0.68
+    val friction = 0.25
+    val wallBound = 1.55
+    var maxSpeedSq = 0.0
+
+    for ((idx, body) in dynamicBodies.withIndex()) {
+      val i = body.nodeIndex
+      if (grabbed[i] || !isEffectivelyVisible(i)) {
+        body.velocity.fill(0.0)
+        continue
+      }
+      var px = translation[i * 3]
+      var py = translation[i * 3 + 1]
+      var pz = translation[i * 3 + 2]
+      val v = body.velocity
+      val r = body.radius
+
+      // 1. Semi-implicit Euler gravity integration
+      v[1] -= 9.81 * clampedDt
+      px += v[0] * clampedDt
+      py += v[1] * clampedDt
+      pz += v[2] * clampedDt
+
+      // 2. Collide against static scene mesh AABBs (e.g. Pedestal_Table, Workbench_Pedestal)
+      for (box in staticColliders) {
+        val cx = Math.max(box[0], Math.min(box[3], px))
+        val cy = Math.max(box[1], Math.min(box[4], py))
+        val cz = Math.max(box[2], Math.min(box[5], pz))
+        val dx = px - cx
+        val dy = py - cy
+        val dz = pz - cz
+        val dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        if (dist < r) {
+          var nx = 0.0
+          var ny = 1.0
+          var nz = 0.0
+          if (dist > 1e-5) {
+            nx = dx / dist
+            ny = dy / dist
+            nz = dz / dist
+            px = cx + nx * r
+            py = cy + ny * r
+            pz = cz + nz * r
+          } else {
+            py = box[4] + r
+          }
+          val vDotN = v[0] * nx + v[1] * ny + v[2] * nz
+          if (vDotN < 0.0) {
+            val j = -(1.0 + restitution) * vDotN
+            v[0] += j * nx
+            v[1] += j * ny
+            v[2] += j * nz
+            if (ny > 0.7) {
+              v[0] *= 1.0 - friction * clampedDt * 5.0
+              v[2] *= 1.0 - friction * clampedDt * 5.0
+              if (Math.abs(v[1]) < 0.08) v[1] = 0.0
+              if (box[4] > physicsFloorY + 0.12 && v[0] * v[0] + v[2] * v[2] < 0.02) {
+                val angle = idx * 2.39996
+                v[0] += Math.cos(angle) * 0.35
+                v[2] += Math.sin(angle) * 0.35
+              }
+            }
+          }
+        }
+      }
+
+      // 3. Floor plane & room wall bounce
+      if (py - r < physicsFloorY) {
+        py = physicsFloorY + r
+        if (v[1] < 0.0) {
+          v[1] = -v[1] * restitution
+          v[0] *= 1.0 - friction * clampedDt * 5.0
+          v[2] *= 1.0 - friction * clampedDt * 5.0
+          if (Math.abs(v[1]) < 0.08) v[1] = 0.0
+        }
+      }
+      if (px - r < -wallBound) {
+        px = -wallBound + r
+        if (v[0] < 0.0) v[0] = -v[0] * restitution
+      } else if (px + r > wallBound) {
+        px = wallBound - r
+        if (v[0] > 0.0) v[0] = -v[0] * restitution
+      }
+      if (pz - r < -wallBound) {
+        pz = -wallBound + r
+        if (v[2] < 0.0) v[2] = -v[2] * restitution
+      } else if (pz + r > wallBound) {
+        pz = wallBound - r
+        if (v[2] > 0.0) v[2] = -v[2] * restitution
+      }
+
+      translation[i * 3] = px
+      translation[i * 3 + 1] = py
+      translation[i * 3 + 2] = pz
+      markTransform(i)
+    }
+
+    // 4. Resolve sphere-to-sphere elastic collisions
+    for (aIdx in dynamicBodies.indices) {
+      val a = dynamicBodies[aIdx]
+      val ia = a.nodeIndex
+      if (grabbed[ia] || !isEffectivelyVisible(ia)) continue
+      for (bIdx in aIdx + 1 until dynamicBodies.size) {
+        val b = dynamicBodies[bIdx]
+        val ib = b.nodeIndex
+        if (grabbed[ib] || !isEffectivelyVisible(ib)) continue
+        val dx = translation[ib * 3] - translation[ia * 3]
+        val dy = translation[ib * 3 + 1] - translation[ia * 3 + 1]
+        val dz = translation[ib * 3 + 2] - translation[ia * 3 + 2]
+        val dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        val minDist = a.radius + b.radius
+        if (dist > 1e-5 && dist < minDist) {
+          val nx = dx / dist
+          val ny = dy / dist
+          val nz = dz / dist
+          val overlap = (minDist - dist) * 0.5
+          translation[ia * 3] -= nx * overlap
+          translation[ia * 3 + 1] -= ny * overlap
+          translation[ia * 3 + 2] -= nz * overlap
+          translation[ib * 3] += nx * overlap
+          translation[ib * 3 + 1] += ny * overlap
+          translation[ib * 3 + 2] += nz * overlap
+          val rvx = b.velocity[0] - a.velocity[0]
+          val rvy = b.velocity[1] - a.velocity[1]
+          val rvz = b.velocity[2] - a.velocity[2]
+          val velAlongNormal = rvx * nx + rvy * ny + rvz * nz
+          if (velAlongNormal < 0.0) {
+            val impulse = -(1.0 + restitution) * velAlongNormal * 0.5
+            a.velocity[0] -= impulse * nx
+            a.velocity[1] -= impulse * ny
+            a.velocity[2] -= impulse * nz
+            b.velocity[0] += impulse * nx
+            b.velocity[1] += impulse * ny
+            b.velocity[2] += impulse * nz
+          }
+          markTransform(ia)
+          markTransform(ib)
+        }
+      }
+      val spSq =
+        a.velocity[0] * a.velocity[0] + a.velocity[1] * a.velocity[1] + a.velocity[2] * a.velocity[2]
+      if (spSq > maxSpeedSq) maxSpeedSq = spSq
+    }
+
+    // 5. Continuous fountain re-launch once all dynamic spheres settle
+    if (maxSpeedSq < 0.025) {
+      physicsSettledTime += clampedDt
+      if (physicsSettledTime >= 1.8) {
+        physicsSettledTime = 0.0
+        fountainLaunchDynamicBodies()
+      }
+    } else {
+      physicsSettledTime = 0.0
+    }
+  }
+
+  private fun fountainLaunchDynamicBodies() {
+    for ((idx, body) in dynamicBodies.withIndex()) {
+      val i = body.nodeIndex
+      if (grabbed[i]) continue
+      val px = translation[i * 3]
+      val pz = translation[i * 3 + 2]
+      val angle = idx * 2.39996
+      body.velocity[0] = -px * 0.85 + Math.cos(angle) * 0.55
+      body.velocity[1] = 3.6 + (idx % 5) * 0.38
+      body.velocity[2] = -pz * 0.85 + Math.sin(angle) * 0.55
+    }
+  }
+
+  private fun impulsePhysicsOnSelect(nodeIndex: Int) {
+    if (dynamicBodies.isEmpty()) return
+    val hitBody = dynamicBodies.firstOrNull { it.nodeIndex == nodeIndex }
+    if (hitBody != null) {
+      val i = hitBody.nodeIndex
+      hitBody.velocity[0] += -translation[i * 3] * 0.6 + 0.35
+      hitBody.velocity[1] = Math.max(hitBody.velocity[1] + 3.8, 3.8)
+      hitBody.velocity[2] += -translation[i * 3 + 2] * 0.6 - 0.25
+      physicsSettledTime = 0.0
+    } else {
+      fountainLaunchDynamicBodies()
+      physicsSettledTime = 0.0
+    }
+  }
+
+  /** Composes the local+ancestor matrix of node [i] without [rootTransform] into [out]. */
+  private fun sceneMatrix(i: Int, out: DoubleArray) {
+    localMatrix(i, out)
+    var cur = parent[i]
+    var d = 0
+    while (cur >= 0 && d < 128) {
+      localMatrix(cur, mB)
+      XRBlocksMath.mat4Multiply(mB, out, mC)
+      mC.copyInto(out)
+      cur = parent[cur]
+      d++
     }
   }
 

@@ -460,6 +460,51 @@ object XRFollowMath {
   @JvmOverloads
   fun yawTowards(from: DoubleArray, to: DoubleArray, out: DoubleArray = DoubleArray(4)): DoubleArray =
     XRBlocksMath.quatFromYaw(Math.atan2(to[0] - from[0], to[2] - from[2]), out)
+
+  /**
+   * Writes the XR Blocks `TurnToFace` quaternion for `"capsule"`, `"cylindrical"`, or `"spherical"`
+   * billboarding from [from] toward [to] into [out] (port of `computeBillboardQuaternion` in
+   * `xr-live/src/xr-traits.ts`).
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun billboardTowards(
+    from: DoubleArray,
+    to: DoubleArray,
+    mode: String,
+    out: DoubleArray = DoubleArray(4),
+  ): DoubleArray {
+    val dx = to[0] - from[0]
+    val dy = to[1] - from[1]
+    val dz = to[2] - from[2]
+    val horizDist = Math.sqrt(dx * dx + dz * dz)
+    val totalDist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    if (totalDist < 1e-5) {
+      out[0] = 0.0
+      out[1] = 0.0
+      out[2] = 0.0
+      out[3] = 1.0
+      return out
+    }
+    val yaw = Math.atan2(dx, dz)
+    var pitch = -Math.atan2(dy, Math.max(horizDist, 1e-5))
+    if (mode == "cylindrical") {
+      pitch = 0.0
+    } else if (mode != "spherical") {
+      // Capsule mode clamps pitch to [-30 deg, +30 deg].
+      val maxPitch = 30.0 * Math.PI / 180.0
+      pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch))
+    }
+    val cx = Math.cos(pitch * 0.5)
+    val sx = Math.sin(pitch * 0.5)
+    val cy = Math.cos(yaw * 0.5)
+    val sy = Math.sin(yaw * 0.5)
+    out[0] = cy * sx
+    out[1] = sy * cx
+    out[2] = -sy * sx
+    out[3] = cy * cx
+    return out
+  }
 }
 
 /**

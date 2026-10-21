@@ -702,6 +702,39 @@ class XRLiveRuntimeSessionTest {
     assertEquals(-9f, s.nodeTransform(3)!!.translation[0], 1e-5f)
   }
 
+  @Test
+  fun physicsDynamicAndBillboardStep() {
+    val json =
+      """{"nodes":[
+        {"name":"Table","mesh":0,"translation":[0,0.4,0]},
+        {"name":"Ball_1","mesh":1,"translation":[0,1.2,0],"extras":{"xr":{"physics":"dynamic","grabbable":true}}},
+        {"name":"Sign","translation":[0,1.5,-2],"extras":{"xr":{"billboard":"capsule"}}}
+      ],"meshes":[
+        {"primitives":[{"attributes":{"POSITION":0}}]},
+        {"primitives":[{"attributes":{"POSITION":1}}]}
+      ],"accessors":[
+        {"min":[-1,-0.05,-1],"max":[1,0.05,1]},
+        {"min":[-0.08,-0.08,-0.08],"max":[0.08,0.08,0.08]}
+      ]}"""
+    val (s, _) = session(json)
+    val y0 = s.nodeTransform(1)!!.translation[1]
+    repeat(30) { s.step(1.0 / 60, XRPose(floatArrayOf(2f, 1.6f, 0f))) }
+    val y1 = s.nodeTransform(1)!!.translation[1]
+    assertTrue("expected ball to fall under gravity ($y1 < $y0)", y1 < y0)
+    // Let ball settle on top of Table (top Y = 0.45 + radius 0.08 = 0.53)
+    repeat(90) { s.step(1.0 / 60, XRPose(floatArrayOf(2f, 1.6f, 0f))) }
+    val yRest = s.nodeTransform(1)!!.translation[1]
+    assertTrue("expected ball to collide with table ($yRest >= 0.50)", yRest >= 0.50f)
+    // Tapping a dynamic physics node imparts an upward impulse
+    s.dispatchSelect(1)
+    repeat(10) { s.step(1.0 / 60, XRPose(floatArrayOf(2f, 1.6f, 0f))) }
+    val yJump = s.nodeTransform(1)!!.translation[1]
+    assertTrue("expected tapped ball to jump ($yJump > $yRest)", yJump > yRest)
+    // Sign billboards toward head at (2, 1.6, 0) from (0, 1.5, -2) -> positive Y rotation
+    val qSign = s.nodeTransform(2)!!.rotation
+    assertTrue("expected billboard rotation around Y (${qSign[1]})", qSign[1] > 0.1f)
+  }
+
   // =============================================================================================
   // Manipulation handles
   // =============================================================================================

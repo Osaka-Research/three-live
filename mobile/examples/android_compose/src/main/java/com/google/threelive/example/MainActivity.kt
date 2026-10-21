@@ -37,11 +37,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.google.threelive.GlbBuffer
 import com.google.threelive.ThreeCompiler
+import com.google.threelive.ThreeLiveCameraOptions
 import com.google.threelive.ThreeLiveRuntimeBinding
 import com.google.threelive.XRLiveNodeTraits
 import com.google.threelive.XRLiveSceneCoreHelper
@@ -96,7 +98,19 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   // assigning the renderer to composition state from that factory mutates state that
   // composition itself reads, which is an anti-pattern. Initializing here also means the
   // renderer is never observable in a half-constructed state.
-  val renderer = remember { ThreeLiveFilamentRenderer(context).also(onInitRenderer) }
+  val renderer = remember {
+    ThreeLiveFilamentRenderer(context)
+      .apply {
+        setCameraOptions(
+          ThreeLiveCameraOptions(
+            autoRotate = true,
+            autoRotateDelayMs = 800L,
+            rotationPerSecond = "24deg",
+          )
+        )
+      }
+      .also(onInitRenderer)
+  }
   // Runs the scene's KHR_interactivity graph and spatial traits on top of the renderer.
   var binding by remember { mutableStateOf<ThreeLiveRuntimeBinding?>(null) }
   var lastEvent by remember { mutableStateOf<String?>(null) }
@@ -220,42 +234,53 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           }
         }
 
-        // Overlay XR-Live Spatial Traits Pill (Top-Left) when XR traits are present
-        if (extractedXrTraits.isNotEmpty() && compileError == null) {
-          val grabCount = extractedXrTraits.count { it.grabbable }
-          val dynCount = extractedXrTraits.count { it.physics == "dynamic" }
-          val bbCount = extractedXrTraits.count { !it.billboard.isNullOrEmpty() }
-          Surface(
-            modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF581C87).copy(alpha = 0.92f),
+        // Stack status pills vertically at TopStart so they never overlap on narrow phones
+        Column(
+          modifier = Modifier.align(Alignment.TopStart).padding(10.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          if (
+            selectedMode == StudioMode.XR_LIVE &&
+              extractedXrTraits.isNotEmpty() &&
+              compileError == null
           ) {
-            Text(
-              text =
-                "🥽 XR-Live: ${extractedXrTraits.size} Nodes ($grabCount Grab • $dynCount Dynamic • $bbCount Billboard)",
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              style = MaterialTheme.typography.labelSmall,
-              fontWeight = FontWeight.SemiBold,
-              color = Color.White,
-            )
+            val grabCount = extractedXrTraits.count { it.grabbable }
+            val dynCount = extractedXrTraits.count { it.physics == "dynamic" }
+            val bbCount = extractedXrTraits.count { !it.billboard.isNullOrEmpty() }
+            val orbitCount = extractedXrTraits.count { it.orbit != null }
+            Surface(
+              shape = RoundedCornerShape(16.dp),
+              color = Color(0xFF581C87).copy(alpha = 0.92f),
+            ) {
+              Text(
+                text =
+                  "🥽 XR-Live: ${extractedXrTraits.size} Nodes ($grabCount Grab • $dynCount Physics • $bbCount Billboard • $orbitCount Orbit)",
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
           }
-        }
 
-        // Overlay Compilation Status Pill (Top-Right)
-        if (compileLatencyMs != null && compileError == null) {
-          Surface(
-            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
-          ) {
-            Text(
-              text =
-                "⚡ Compiled in ${String.format(Locale.US, "%.2f", compileLatencyMs)} ms • ${glbSizeBytes} B GLB",
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-              style = MaterialTheme.typography.labelSmall,
-              fontWeight = FontWeight.SemiBold,
-              color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
+          if (compileLatencyMs != null && compileError == null) {
+            Surface(
+              shape = RoundedCornerShape(16.dp),
+              color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+            ) {
+              Text(
+                text =
+                  "⚡ Compiled in ${String.format(Locale.US, "%.2f", compileLatencyMs)} ms • ${glbSizeBytes} B GLB",
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
           }
         }
       }
@@ -266,7 +291,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           Modifier.fillMaxWidth()
             .weight(0.58f)
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
       ) {
         // Mode Toggle Row: Three-Live | XR-Live
         Row(
@@ -292,8 +317,6 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
         // Preset Chips Row
         Row(
           modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -318,27 +341,41 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-        // Three.js Monospace Code Editor Text Area
-        Text(
-          text = "Three.js JavaScript Source Code (Paste or Edit):",
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        // Three.js Monospace Code Editor Header Row
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "Three.js Source (Tap/Edit):",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Text(
+            text = "Rust C-ABI + Filament",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+          )
+        }
         Spacer(modifier = Modifier.height(4.dp))
 
         OutlinedTextField(
           value = jsScriptText,
           onValueChange = { jsScriptText = it },
-          modifier = Modifier.fillMaxWidth().weight(1f),
+          modifier = Modifier.fillMaxWidth().weight(1f).heightIn(min = 120.dp),
           textStyle =
             androidx.compose.ui.text.TextStyle(
               fontFamily = FontFamily.Monospace,
               fontSize = 12.sp,
+              lineHeight = 16.sp,
               color = MaterialTheme.colorScheme.onSurface,
             ),
           shape = RoundedCornerShape(8.dp),
+          singleLine = false,
+          maxLines = Int.MAX_VALUE,
           placeholder = { Text("// Paste your Three.js script here...") },
         )
 
@@ -362,65 +399,58 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
-        // Action Bar: View in AR + Compile & Render Buttons
+        // Action Bar: Equal-width View in AR + Compile & Render Buttons
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          Text(
-            text = "Engine: Rust C-ABI + Filament / ARCore",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.outline,
-          )
-
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+          Button(
+            onClick = { triggerLaunchAR() },
+            enabled = !isCompiling && lastCompiledGlbBytes != null,
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            colors =
+              ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF16A34A),
+                contentColor = Color.White,
+              ),
           ) {
-            Button(
-              onClick = { triggerLaunchAR() },
-              enabled = !isCompiling && lastCompiledGlbBytes != null,
-              colors =
-                ButtonDefaults.buttonColors(
-                  containerColor = Color(0xFF16A34A),
-                  contentColor = Color.White,
-                ),
-            ) {
+            Icon(
+              Icons.Default.ViewInAr,
+              contentDescription = null,
+              modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("View in AR", maxLines = 1, overflow = TextOverflow.Ellipsis)
+          }
+
+          Button(
+            onClick = { triggerCompileAndRender() },
+            enabled = !isCompiling,
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            colors =
+              ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+          ) {
+            if (isCompiling) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary,
+              )
+              Spacer(modifier = Modifier.width(6.dp))
+              Text("Compiling...", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else {
               Icon(
-                Icons.Default.ViewInAr,
+                Icons.Default.PlayArrow,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
               )
-              Spacer(modifier = Modifier.width(4.dp))
-              Text("View in AR")
-            }
-
-            Button(
-              onClick = { triggerCompileAndRender() },
-              enabled = !isCompiling,
-              colors =
-                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            ) {
-              if (isCompiling) {
-                CircularProgressIndicator(
-                  modifier = Modifier.size(16.dp),
-                  strokeWidth = 2.dp,
-                  color = MaterialTheme.colorScheme.onPrimary,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Compiling...")
-              } else {
-                Icon(
-                  Icons.Default.PlayArrow,
-                  contentDescription = null,
-                  modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Compile & Render")
-              }
+              Spacer(modifier = Modifier.width(6.dp))
+              Text("Compile & Render", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
           }
         }

@@ -242,7 +242,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val h = box.halfExtent
     val radius = Math.sqrt((h[0] * h[0] + h[1] * h[1] + h[2] * h[2]).toDouble())
     orbit.setBounds(doubleArrayOf(c[0].toDouble(), c[1].toDouble(), c[2].toDouble()), radius)
-    playingAnimation = null
+    val animCount = loaded.instance?.animator?.animationCount ?: 0
+    playingAnimation = if (animCount > 0) -1 else null
     animationTime = 0.0
   }
 

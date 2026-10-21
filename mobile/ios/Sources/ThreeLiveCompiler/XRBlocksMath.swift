@@ -165,6 +165,33 @@ public enum XRBlocksMath {
     quatFromYaw(atan2(to.x - from.x, to.z - from.z))
   }
 
+  /// Computes a billboard rotation pointing +Z from `from` toward `to` according to `mode`
+  /// (`"capsule"` clamps pitch to ±30°, `"cylindrical"` locks pitch to 0, `"spherical"` tracks full
+  /// yaw + pitch).
+  public static func billboardTowards(
+    from: SIMD3<Float>, to: SIMD3<Float>, mode: String
+  ) -> simd_quatf {
+    let dx = to.x - from.x
+    let dy = to.y - from.y
+    let dz = to.z - from.z
+    let horizLen = hypot(dx, dz)
+    if horizLen < 1e-6 && abs(dy) < 1e-6 {
+      return identityQuat
+    }
+    let yaw = atan2(dx, dz)
+    if mode.caseInsensitiveCompare("cylindrical") == .orderedSame {
+      return quatFromYaw(yaw)
+    }
+    var pitch = -atan2(dy, max(1e-6, horizLen))
+    if mode.caseInsensitiveCompare("capsule") == .orderedSame {
+      let maxPitch = Float.pi / 6.0
+      pitch = min(maxPitch, max(-maxPitch, pitch))
+    }
+    let qYaw = quatFromYaw(yaw)
+    let qPitch = simd_quatf(ix: sin(pitch * 0.5), iy: 0, iz: 0, r: cos(pitch * 0.5))
+    return simd_normalize(qYaw * qPitch)
+  }
+
   /// Advances a critically damped spring toward `target` by `dt` seconds with angular
   /// frequency `omega`, using the exact closed-form solution (unconditionally stable).
   public static func stepCriticallyDampedSpring(

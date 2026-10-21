@@ -56,6 +56,9 @@
             new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
           );
           core.name = "QuantumCore";
+          core.userData.interactivity = {
+            onSelect: { action: "toggleTransform", scale: [1.18, 1.18, 1.18], duration: 0.35 }
+          };
           scene.add(core);
 
           // 2. Inner Orbit Ring
@@ -77,17 +80,23 @@
           ring2.rotation.z = 0.4;
           scene.add(ring2);
 
-          // 4. Sensor Arrays (Satellites)
+          // 4. Sensor Arrays (Satellites) — continuously orbit QuantumCore
           const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
           const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
           const sat1 = new THREE.Mesh(satGeo, satMat);
           sat1.name = "SensorArray_A";
-          sat1.position.set(1.4, 0.5, 0);
+          sat1.position.set(1.45, 0.35, 0);
+          sat1.userData.xr = {
+            orbit: { target: "QuantumCore", radius: 1.45, speed: 1.2, height: 0.35, phase: 0, faceCenter: true }
+          };
           scene.add(sat1);
 
           const sat2 = new THREE.Mesh(satGeo, satMat);
           sat2.name = "SensorArray_B";
-          sat2.position.set(-1.4, -0.5, 0);
+          sat2.position.set(-1.45, -0.35, 0);
+          sat2.userData.xr = {
+            orbit: { target: "QuantumCore", radius: 1.45, speed: -1.0, height: -0.35, phase: 3.14159, faceCenter: true }
+          };
           scene.add(sat2);
 
           // 5. Pedestal Base
@@ -111,6 +120,9 @@
             new THREE.MeshStandardMaterial({ color: 0xf43f5e, metalness: 0.95, roughness: 0.12 })
           );
           mesh.name = "RubyTorusKnot";
+          mesh.userData.interactivity = {
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.4 }
+          };
           scene.add(mesh);
           """,
         mode: .threeLive
@@ -125,6 +137,9 @@
             new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.8, roughness: 0.15 })
           );
           mesh.name = "EmeraldGem";
+          mesh.userData.interactivity = {
+            onSelect: { action: "toggleTransform", position: [0, 0.35, 0], duration: 0.4 }
+          };
           scene.add(mesh);
           """,
         mode: .threeLive
@@ -143,8 +158,66 @@
             );
             sphere.name = "Sphere_" + (i + 1);
             sphere.position.set(Math.cos(angle) * 1.3, Math.sin(angle) * 0.4, Math.sin(angle) * 1.3);
+            sphere.userData.xr = {
+              orbit: {
+                target: [0, 0, 0],
+                radius: 1.3,
+                speed: 0.85,
+                height: Math.sin(angle) * 0.35,
+                phase: angle,
+                faceCenter: true
+              }
+            };
+            sphere.userData.interactivity = {
+              onSelect: { action: "toggleTransform", scale: [1.35, 1.35, 1.35], duration: 0.3 }
+            };
             scene.add(sphere);
           }
+          """,
+        mode: .threeLive
+      ),
+      ScenePreset(
+        name: "Interactivity + Handles",
+        description:
+          "Tap the pedestal to cycle color; drag the cube's corner / yaw handles to resize and rotate; moon orbits",
+        script: """
+          const cube = new THREE.Mesh(
+            new THREE.BoxGeometry(0.7, 0.7, 0.7),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.5, roughness: 0.3 })
+          );
+          cube.name = "WorkCube";
+          cube.position.set(0, 0.1, 0);
+          cube.userData.xr = {
+            handles: { rotateAxis: "y", minScale: 0.4, maxScale: 2.5 }
+          };
+          cube.userData.interactivity = {
+            onSelect: { action: "toggleTransform", position: [0, 0.55, 0], duration: 0.35 }
+          };
+          scene.add(cube);
+
+          const moon = new THREE.Mesh(
+            new THREE.SphereGeometry(0.18, 24, 16),
+            new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.8, roughness: 0.2 })
+          );
+          moon.name = "Moon";
+          moon.userData.xr = {
+            orbit: { target: "WorkCube", radius: 1.1, speed: 1.2, height: 0.15, faceCenter: true }
+          };
+          scene.add(moon);
+
+          const base = new THREE.Mesh(
+            new THREE.CylinderGeometry(1.1, 1.2, 0.18, 32),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e, metalness: 0.3, roughness: 0.6 })
+          );
+          base.name = "Pedestal";
+          base.position.set(0, -0.7, 0);
+          base.userData.interactivity = {
+            onSelect: {
+              action: "cycleMaterialColor",
+              colors: [[0.13, 0.77, 0.37, 1], [0.96, 0.62, 0.04, 1], [0.94, 0.27, 0.27, 1]]
+            }
+          };
+          scene.add(base);
           """,
         mode: .threeLive
       ),
@@ -227,7 +300,11 @@
           artifact.position.set(-0.45, 0.1, 0);
           artifact.userData.xr = {
             traits: ['grab', 'scale'],
-            anchor: 'table'
+            anchor: 'table',
+            handles: { rotateAxis: 'y', minScale: 0.5, maxScale: 2.2 }
+          };
+          artifact.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', position: [-0.45, 0.38, 0], duration: 0.35 }
           };
           scene.add(artifact);
 
@@ -242,6 +319,9 @@
             traits: ['grab', 'billboard'],
             anchor: 'table'
           };
+          gem.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', scale: [1.3, 1.3, 1.3], duration: 0.3 }
+          };
           scene.add(gem);
 
           // 3. Floating Dynamic Moon Orbiter
@@ -252,7 +332,7 @@
           orb.name = 'Dynamic_Orbiter';
           orb.position.set(0, 0.55, 0);
           orb.userData.xr = {
-            physics: 'dynamic',
+            orbit: { target: [0, 0.2, 0], radius: 0.65, speed: 1.35, height: 0.35, faceCenter: true },
             traits: ['grab', 'scale']
           };
           scene.add(orb);
@@ -279,8 +359,23 @@
             pillar.name = 'Depth_Pillar_' + (idx + 1);
             pillar.position.set(d.pos[0], d.pos[1], d.pos[2]);
             pillar.userData.xr = { traits: ['grab', 'scale'] };
+            pillar.userData.interactivity = {
+              onSelect: { action: 'toggleTransform', position: [d.pos[0], d.pos[1] + 0.25, d.pos[2]], duration: 0.35 }
+            };
             scene.add(pillar);
           });
+
+          // Scanning Probe Orbiter
+          const probe = new THREE.Mesh(
+            new THREE.SphereGeometry(0.11, 20, 20),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.15, metalness: 0.85 })
+          );
+          probe.name = 'Depth_Scan_Probe';
+          probe.position.set(0, 0.55, 0);
+          probe.userData.xr = {
+            orbit: { target: [0, 0.45, 0], radius: 0.75, speed: 1.4, height: 0.1, faceCenter: true }
+          };
+          scene.add(probe);
           """,
         mode: .xrLive
       ),
