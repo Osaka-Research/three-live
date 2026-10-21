@@ -175,10 +175,25 @@ android:
 	bash scripts/build_android_aar.sh
 
 android-demo: android
-	@if [ -z "$${JAVA_HOME:-}" ] && [ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]; then \
-		export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"; \
-		export PATH="$$JAVA_HOME/bin:$$PATH"; \
+	@STUDIO_APP=""; \
+	if command -v mdfind >/dev/null 2>&1; then \
+		STUDIO_APP=$$(mdfind "kMDItemCFBundleIdentifier == 'com.google.android.studio'" 2>/dev/null | head -n 1 || true); \
 	fi; \
+	for jdk in \
+		"/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+		"$$HOME/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+		"$${STUDIO_APP:+$$STUDIO_APP/Contents/jbr/Contents/Home}" \
+		"$$(/usr/libexec/java_home -v 21 2>/dev/null || true)" \
+		"$$(/usr/libexec/java_home -v 17 2>/dev/null || true)" \
+		"/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
+		"/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home" \
+		"$$HOME/jdk21"; do \
+		if [ -n "$$jdk" ] && [ -x "$$jdk/bin/java" ]; then \
+			export JAVA_HOME="$$jdk"; \
+			export PATH="$$JAVA_HOME/bin:$$PATH"; \
+			break; \
+		fi; \
+	done; \
 	if [ -z "$${ANDROID_HOME:-}" ] && [ -d "$$HOME/Library/Android/sdk" ]; then \
 		export ANDROID_HOME="$$HOME/Library/Android/sdk"; \
 		export PATH="$$ANDROID_HOME/platform-tools:$$PATH"; \
@@ -193,8 +208,12 @@ android-demo: android
 		./gradlew :mobile:examples:android_compose:installDebug && \
 		adb shell am start -n com.google.threelive.example/.MainActivity; \
 	fi; \
-	if [ "$(UNAME_S)" = "Darwin" ] && [ -d "/Applications/Android Studio.app" ]; then \
-		open -a "Android Studio" .; \
+	if [ "$(UNAME_S)" = "Darwin" ]; then \
+		if [ -d "/Applications/Android Studio.app" ]; then \
+			open -a "/Applications/Android Studio.app" .; \
+		elif [ -n "$$STUDIO_APP" ] && [ -d "$$STUDIO_APP" ]; then \
+			open -a "$$STUDIO_APP" .; \
+		fi; \
 	fi
 
 all: web rust

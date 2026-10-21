@@ -40,44 +40,29 @@ if [ -z "${GRADLE_VERSION}" ]; then
     exit 1
 fi
 
-# On macOS, use Android Studio's bundled JBR if no working Java 17+ is configured.
-if [ -z "${JAVA_HOME:-}" ] && [ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]; then
-    if ! java -version >/dev/null 2>&1; then
-        export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-        export PATH="${JAVA_HOME}/bin:${PATH}"
-    fi
-fi
-
 echo "=== Three-Live: generating Gradle ${GRADLE_VERSION} wrapper jar ==="
 
 BACKUP_DIR="$(mktemp -d)"
 trap 'rm -rf "${BACKUP_DIR}"' EXIT
 
-GRADLE_BIN="$(command -v gradle || true)"
-if [ -z "${GRADLE_BIN}" ]; then
-    # Check if Gradle is already cached under ~/.gradle/wrapper/dists
-    CACHED_GRADLE="$(ls "${HOME}/.gradle/wrapper/dists/gradle-${GRADLE_VERSION}-bin"/*/gradle-"${GRADLE_VERSION}"/bin/gradle 2>/dev/null | head -n 1 || true)"
-    if [ -z "${CACHED_GRADLE}" ]; then
-        CACHED_GRADLE="$(ls "${HOME}/.gradle/wrapper/dists"/gradle-*-bin/*/gradle-*/bin/gradle 2>/dev/null | tail -n 1 || true)"
-    fi
-    if [ -n "${CACHED_GRADLE}" ] && [ -x "${CACHED_GRADLE}" ]; then
-        GRADLE_BIN="${CACHED_GRADLE}"
-    else
-        echo "--> Downloading Gradle ${GRADLE_VERSION} distribution to bootstrap wrapper..."
-        curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "${BACKUP_DIR}/gradle.zip"
-        unzip -qo "${BACKUP_DIR}/gradle.zip" -d "${BACKUP_DIR}"
-        GRADLE_BIN="${BACKUP_DIR}/gradle-${GRADLE_VERSION}/bin/gradle"
-    fi
+# Fast, JVM-free extraction: every Gradle distribution bundles the standalone `gradle-wrapper.jar`
+# inside `lib/plugins/gradle-wrapper-<version>.jar`. Extracting it directly via `unzip` avoids
+# invoking a system/Homebrew `gradle` binary (which may run against an incompatible Java version
+# such as JDK 25 before `./gradlew` is even bootstrapped).
+PLUGIN_JAR="$(ls "${HOME}/.gradle/wrapper/dists/gradle-${GRADLE_VERSION}"-*/*/gradle-"${GRADLE_VERSION}"/lib/plugins/gradle-wrapper-"${GRADLE_VERSION}".jar 2>/dev/null | head -n 1 || true)"
+if [ -z "${PLUGIN_JAR}" ]; then
+    PLUGIN_JAR="$(ls "${HOME}/.gradle/wrapper/dists"/gradle-*-*/*/gradle-*/lib/plugins/gradle-wrapper-*.jar 2>/dev/null | tail -n 1 || true)"
 fi
 
-# Run `gradle wrapper` in an isolated empty directory so Gradle does not evaluate the root
-# project's build.gradle.kts (which requires AGP's minimum Gradle version before the wrapper
-# itself exists), and so our checked-in gradlew / gradle-wrapper.properties are never touched.
-mkdir -p "${BACKUP_DIR}/empty"
-echo 'rootProject.name = "wrapper-bootstrap"' > "${BACKUP_DIR}/empty/settings.gradle.kts"
-"${GRADLE_BIN}" -p "${BACKUP_DIR}/empty" wrapper --gradle-version "${GRADLE_VERSION}" --distribution-type bin --quiet
+if [ -z "${PLUGIN_JAR}" ] || [ ! -f "${PLUGIN_JAR}" ]; then
+    echo "--> Downloading Gradle ${GRADLE_VERSION} distribution to extract gradle-wrapper.jar..."
+    curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "${BACKUP_DIR}/gradle.zip"
+    unzip -qo "${BACKUP_DIR}/gradle.zip" "gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-${GRADLE_VERSION}.jar" -d "${BACKUP_DIR}"
+    PLUGIN_JAR="${BACKUP_DIR}/gradle-${GRADLE_VERSION}/lib/plugins/gradle-wrapper-${GRADLE_VERSION}.jar"
+fi
 
-cp -p "${BACKUP_DIR}/empty/gradle/wrapper/gradle-wrapper.jar" "${WRAPPER_DIR}/gradle-wrapper.jar"
+mkdir -p "${WRAPPER_DIR}"
+unzip -p "${PLUGIN_JAR}" gradle-wrapper.jar > "${WRAPPER_DIR}/gradle-wrapper.jar"
 chmod +x "${ROOT_DIR}/gradlew"
 
 if [ ! -f "${WRAPPER_DIR}/gradle-wrapper.jar" ]; then

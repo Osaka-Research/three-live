@@ -23,10 +23,53 @@ JNILIBS_DIR="${ANDROID_DIR}/src/main/jniLibs"
 
 echo "=== Three-Live: Building Android AAR ==="
 
-# Auto-detect Android Studio's bundled JDK on macOS if JAVA_HOME is not set.
-if [ -z "${JAVA_HOME:-}" ] && [ -d "/Applications/Android Studio.app/Contents/jbr/Contents/Home" ]; then
-    export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-    export PATH="${JAVA_HOME}/bin:${PATH}"
+# Ensure JAVA_HOME points to a Gradle 8.7 / AGP 8.5 compatible JDK (17 through 21).
+# Newer Homebrew OpenJDK releases (e.g. JDK 25) cause Gradle 8.7's Groovy/Kotlin runtime
+# to fail with `What went wrong: 25.0.2`.
+java_major_version() {
+    local java_bin="$1"
+    if [ ! -x "${java_bin}" ] && ! command -v "${java_bin}" >/dev/null 2>&1; then
+        echo 0
+        return
+    fi
+    "${java_bin}" -version 2>&1 | awk -F '[\".-]' '/version/ {if ($2 == "1") print $3; else print $2; exit}'
+}
+
+ACTIVE_JAVA_BIN="java"
+if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+    ACTIVE_JAVA_BIN="${JAVA_HOME}/bin/java"
+fi
+ACTIVE_JAVA_MAJOR="$(java_major_version "${ACTIVE_JAVA_BIN}")"
+
+if [ "${ACTIVE_JAVA_MAJOR:-0}" -lt 17 ] || [ "${ACTIVE_JAVA_MAJOR:-0}" -gt 21 ]; then
+    STUDIO_APP=""
+    if command -v mdfind >/dev/null 2>&1; then
+        STUDIO_APP="$(mdfind "kMDItemCFBundleIdentifier == 'com.google.android.studio'" 2>/dev/null | head -n 1 || true)"
+    fi
+    CANDIDATE_JDKS=(
+        "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+        "${HOME}/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+        "/Applications/Android Studio Preview.app/Contents/jbr/Contents/Home"
+        "${STUDIO_APP:+${STUDIO_APP}/Contents/jbr/Contents/Home}"
+        "$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+        "$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+        "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+        "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+        "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+        "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+        "${HOME}/jdk21"
+    )
+    for jdk in "${CANDIDATE_JDKS[@]}"; do
+        if [ -n "${jdk}" ] && [ -x "${jdk}/bin/java" ]; then
+            cand_major="$(java_major_version "${jdk}/bin/java")"
+            if [ "${cand_major:-0}" -ge 17 ] && [ "${cand_major:-0}" -le 21 ]; then
+                export JAVA_HOME="${jdk}"
+                export PATH="${JAVA_HOME}/bin:${PATH}"
+                echo "--> Using compatible JDK ${cand_major} at: ${JAVA_HOME}"
+                break
+            fi
+        fi
+    done
 fi
 
 # Auto-detect standard Android SDK paths on macOS and Linux if ANDROID_HOME is not set.
