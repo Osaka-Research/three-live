@@ -51,8 +51,8 @@ if [ "${ACTIVE_JAVA_MAJOR:-0}" -lt 17 ] || [ "${ACTIVE_JAVA_MAJOR:-0}" -gt 21 ];
         "${HOME}/Applications/Android Studio.app/Contents/jbr/Contents/Home"
         "/Applications/Android Studio Preview.app/Contents/jbr/Contents/Home"
         "${STUDIO_APP:+${STUDIO_APP}/Contents/jbr/Contents/Home}"
-        "$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
-        "$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+        "$(/usr/libexec/java_home -v 21.0 2>/dev/null || true)"
+        "$(/usr/libexec/java_home -v 17.0 2>/dev/null || true)"
         "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
         "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
         "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
@@ -82,6 +82,9 @@ if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ]; then
 fi
 if [ -n "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ]; then
     export ANDROID_SDK_ROOT="${ANDROID_HOME}"
+fi
+if [ -n "${ANDROID_HOME:-}" ] && [ -d "${ANDROID_HOME}/platform-tools" ]; then
+    export PATH="${ANDROID_HOME}/platform-tools:${PATH}"
 fi
 
 # Auto-detect the latest installed Android NDK inside ANDROID_HOME/ndk if ANDROID_NDK_HOME is not set.
@@ -260,3 +263,27 @@ if [ -z "${AAR_PATH}" ]; then
 fi
 
 echo "=== Success! Android AAR built at: ${AAR_PATH} ==="
+
+if [ "${1:-}" = "--demo" ]; then
+    echo "--> Building Compose demo APK (:mobile:examples:android_compose:assembleDebug)..."
+    ./gradlew :mobile:examples:android_compose:assembleDebug
+    echo "=== Debug APK built at: mobile/examples/android_compose/build/outputs/apk/debug/ ==="
+
+    if command -v adb >/dev/null 2>&1 && [ "$(adb devices | awk 'NR>1 && $2=="device" {count++} END {print count+0}')" -gt 0 ]; then
+        echo "--> Running emulator/device detected! Installing and launching Three-Live Studio..."
+        ./gradlew :mobile:examples:android_compose:installDebug
+        adb shell am start -n com.google.threelive.example/.MainActivity
+    fi
+
+    if [ "${UNAME_S}" = "Darwin" ]; then
+        STUDIO_APP_OPEN=""
+        if [ -d "/Applications/Android Studio.app" ]; then
+            STUDIO_APP_OPEN="/Applications/Android Studio.app"
+        elif command -v mdfind >/dev/null 2>&1; then
+            STUDIO_APP_OPEN="$(mdfind "kMDItemCFBundleIdentifier == 'com.google.android.studio'" 2>/dev/null | head -n 1 || true)"
+        fi
+        if [ -n "${STUDIO_APP_OPEN}" ] && [ -d "${STUDIO_APP_OPEN}" ]; then
+            open -a "${STUDIO_APP_OPEN}" "${ROOT_DIR}"
+        fi
+    fi
+fi
