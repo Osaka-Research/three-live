@@ -116,8 +116,14 @@
       for i in 0..<session.nodeCount {
         guard let traits = session.traits(at: i) else { continue }
         if let h = traits.handles, let entity = live.entity(forNode: i) {
-          let bounds = entity.visualBounds(recursive: true, relativeTo: entity)
-          if !bounds.isEmpty {
+          let resolvedBounds: (min: SIMD3<Float>, max: SIMD3<Float>)?
+          if let glbBounds = session.localBounds(forNode: i) {
+            resolvedBounds = glbBounds
+          } else {
+            let vb = entity.visualBounds(recursive: true, relativeTo: entity)
+            resolvedBounds = vb.isEmpty ? nil : (min: vb.min, max: vb.max)
+          }
+          if let bounds = resolvedBounds {
             let material = UnlitMaterial(color: .white)
             var visuals: [ModelEntity] = []
             for _ in 0..<5 {

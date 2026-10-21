@@ -17,6 +17,9 @@
 package com.google.threelive
 
 import java.nio.ByteBuffer
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * The scene half of a three-live renderer: everything except creating the Android view, so the
@@ -164,8 +167,152 @@ interface ThreeLiveSceneRenderer {
    */
   fun updateSplatMeshIndices(meshId: Int, indices: IntArray) {}
 
+  /**
+   * Shows or hides the built-in 3D AR surface placement reticle and reference floor grid at
+   * height [groundY] (meters) for in-app AR surface placement previews when external ARCore
+   * Scene Viewer is unavailable.
+   */
+  fun setArSurfacePreviewEnabled(enabled: Boolean, groundY: Float = -0.95f) {}
+
   /** Releases every resource. The renderer is unusable afterwards; safe to call twice. */
   fun dispose()
+}
+
+/**
+ * Pure-Kotlin geometry builders for the in-app 3D AR surface placement reticle and reference floor
+ * grid.
+ */
+object ThreeLiveArSurfaceGeometry {
+
+  /** Default linear RGBA color for the reference floor grid. */
+  val DEFAULT_GRID_COLOR: FloatArray = floatArrayOf(0.18f, 0.34f, 0.46f, 1.0f)
+
+  /** Default linear RGBA color for the AR surface placement reticle ring and crosshairs. */
+  val DEFAULT_RETICLE_COLOR: FloatArray = floatArrayOf(0.13f, 0.85f, 0.68f, 1.0f)
+
+  /**
+   * Builds a flat ground-plane grid of thin quad lines on height [y] (meters) with
+   * `(positions, indices)`.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun buildFloorGridGeometry(
+    y: Float = -0.96f,
+    halfExtent: Float = 2.0f,
+    divisions: Int = 8,
+    lineHalfWidth: Float = 0.008f,
+  ): Pair<FloatArray, IntArray> {
+    val safeDivisions = divisions.coerceIn(1, 64)
+    val lineCount = (safeDivisions + 1) * 2
+    val positions = FloatArray(lineCount * 4 * 3)
+    val indices = IntArray(lineCount * 6)
+    var vOffset = 0
+    var iOffset = 0
+    val step = (halfExtent * 2f) / safeDivisions
+
+    fun addQuad(x0: Float, z0: Float, x1: Float, z1: Float) {
+      val baseVertex = vOffset / 3
+      positions[vOffset++] = x0
+      positions[vOffset++] = y
+      positions[vOffset++] = z0
+      positions[vOffset++] = x1
+      positions[vOffset++] = y
+      positions[vOffset++] = z0
+      positions[vOffset++] = x1
+      positions[vOffset++] = y
+      positions[vOffset++] = z1
+      positions[vOffset++] = x0
+      positions[vOffset++] = y
+      positions[vOffset++] = z1
+
+      indices[iOffset++] = baseVertex
+      indices[iOffset++] = baseVertex + 1
+      indices[iOffset++] = baseVertex + 2
+      indices[iOffset++] = baseVertex
+      indices[iOffset++] = baseVertex + 2
+      indices[iOffset++] = baseVertex + 3
+    }
+
+    for (i in 0..safeDivisions) {
+      val coord = -halfExtent + i * step
+      addQuad(coord - lineHalfWidth, -halfExtent, coord + lineHalfWidth, halfExtent)
+      addQuad(-halfExtent, coord - lineHalfWidth, halfExtent, coord + lineHalfWidth)
+    }
+    return positions to indices
+  }
+
+  /**
+   * Builds a circular AR surface placement reticle ring and center crosshairs on height [y]
+   * (meters) with `(positions, indices)`.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun buildReticleGeometry(
+    y: Float = -0.95f,
+    innerRadius: Float = 0.52f,
+    outerRadius: Float = 0.60f,
+    segments: Int = 48,
+  ): Pair<FloatArray, IntArray> {
+    val safeSegments = segments.coerceIn(8, 128)
+    val ringVertices = safeSegments * 2
+    val crossVertices = 8
+    val positions = FloatArray((ringVertices + crossVertices) * 3)
+    val indices = IntArray(safeSegments * 6 + 12)
+    var vOffset = 0
+    var iOffset = 0
+
+    for (s in 0 until safeSegments) {
+      val angle = (2.0 * PI * s) / safeSegments
+      val c = cos(angle).toFloat()
+      val sn = sin(angle).toFloat()
+      positions[vOffset++] = c * innerRadius
+      positions[vOffset++] = y
+      positions[vOffset++] = sn * innerRadius
+      positions[vOffset++] = c * outerRadius
+      positions[vOffset++] = y
+      positions[vOffset++] = sn * outerRadius
+
+      val next = (s + 1) % safeSegments
+      val i0 = s * 2
+      val i1 = s * 2 + 1
+      val i2 = next * 2 + 1
+      val i3 = next * 2
+      indices[iOffset++] = i0
+      indices[iOffset++] = i1
+      indices[iOffset++] = i2
+      indices[iOffset++] = i0
+      indices[iOffset++] = i2
+      indices[iOffset++] = i3
+    }
+
+    val crossHalfLen = 0.14f
+    val crossHalfWidth = 0.012f
+    fun addCrossBar(x0: Float, z0: Float, x1: Float, z1: Float) {
+      val base = vOffset / 3
+      positions[vOffset++] = x0
+      positions[vOffset++] = y
+      positions[vOffset++] = z0
+      positions[vOffset++] = x1
+      positions[vOffset++] = y
+      positions[vOffset++] = z0
+      positions[vOffset++] = x1
+      positions[vOffset++] = y
+      positions[vOffset++] = z1
+      positions[vOffset++] = x0
+      positions[vOffset++] = y
+      positions[vOffset++] = z1
+      indices[iOffset++] = base
+      indices[iOffset++] = base + 1
+      indices[iOffset++] = base + 2
+      indices[iOffset++] = base
+      indices[iOffset++] = base + 2
+      indices[iOffset++] = base + 3
+    }
+    addCrossBar(-crossHalfLen, -crossHalfWidth, crossHalfLen, crossHalfWidth)
+    addCrossBar(-crossHalfWidth, -crossHalfLen, crossHalfWidth, crossHalfLen)
+
+    return positions to indices
+  }
 }
 
 /**

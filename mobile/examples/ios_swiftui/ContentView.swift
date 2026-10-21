@@ -16,8 +16,8 @@
 
 #if os(iOS)
   import Combine
-  import SwiftUI
   import RealityKit
+  import SwiftUI
   import ThreeLiveCompiler
 
   @available(iOS 15.0, *)
@@ -36,10 +36,21 @@
 
     @State private var currentEntity: Entity? = nil
     @State private var runtimeSession: XRLiveRealityKitSession? = nil
+    @State private var runtimeFeatures: XRBlocksRealityKitFeatures? = nil
     @State private var rotationY: Float = 0.0
     @State private var rotationX: Float = 0.0
+    @State private var zoomScale: Float = 1.0
+    @State private var pinchBaseScale: Float = 1.0
     @State private var isDragging: Bool = false
     @State private var lastDragTranslation: CGSize = .zero
+
+    // Full-screen in-app AR Surface Placement Preview state (used on the iOS Simulator where
+    // ARWorldTrackingConfiguration camera passthrough is unavailable in QLPreviewController).
+    @State private var isArPreviewMode: Bool = false
+    @State private var arPreviewNote: String? = nil
+    @State private var arShowReticle: Bool = true
+    @State private var arAutoRotate: Bool = false
+    @State private var arScalePreset: Float = 1.0
 
     private var activePresets: [ScenePreset] {
       SampleScenes.presets(for: selectedMode)
@@ -51,7 +62,7 @@
       NavigationView {
         GeometryReader { geo in
           VStack(spacing: 0) {
-            // Top Section: 3D RealityKit Viewport (42% height)
+            // Top Section: 3D RealityKit Viewport (42% height in Studio mode, 100% in AR Preview mode)
             ZStack(alignment: .topLeading) {
               Color(red: 0.06, green: 0.08, blue: 0.12)
                 .edgesIgnoringSafeArea(.all)
@@ -59,10 +70,12 @@
               ModelViewportRepresentable(
                 entity: currentEntity,
                 runtimeSession: runtimeSession,
+                runtimeFeatures: runtimeFeatures,
                 rotationY: rotationY,
                 rotationX: rotationX,
+                zoomScale: zoomScale,
                 isDragging: isDragging,
-                autoRotate: selectedMode == .threeLive,
+                autoRotate: isArPreviewMode ? arAutoRotate : (selectedMode == .threeLive),
                 onTapNode: { nodeLabel in
                   lastEventMessage = "Tapped \(nodeLabel)"
                 }
@@ -74,7 +87,7 @@
                     let deltaX = Float(value.translation.width - lastDragTranslation.width)
                     let deltaY = Float(value.translation.height - lastDragTranslation.height)
                     rotationY += deltaX * 0.005
-                    rotationX += deltaY * 0.005
+                    rotationX = min(max(rotationX + deltaY * 0.005, -1.2), 1.2)
                     lastDragTranslation = value.translation
                   }
                   .onEnded { _ in
@@ -82,55 +95,101 @@
                     lastDragTranslation = .zero
                   }
               )
-
-              // Stacked Top-Left Status Pills (never collide on narrow screens)
-              VStack(alignment: .leading, spacing: 6) {
-                if selectedMode == .xrLive, !extractedXrTraits.isEmpty, errorMessage == nil {
-                  let grabCount = extractedXrTraits.values.filter { $0.grabbable == true }.count
-                  let dynCount = extractedXrTraits.values.filter { $0.physics == "dynamic" }.count
-                  let bbCount =
-                    extractedXrTraits.values.filter { ($0.billboard ?? "").isEmpty == false }
-                    .count
-                  let orbitCount = extractedXrTraits.values.filter { $0.orbit != nil }.count
-                  HStack(spacing: 6) {
-                    Image(systemName: "visionpro")
-                      .foregroundColor(.purple)
-                    Text(
-                      "XR-Live: \(extractedXrTraits.count) Nodes (\(grabCount) Grab • \(dynCount) Physics • \(bbCount) Billboard • \(orbitCount) Orbit)"
-                    )
-                    .font(.system(.caption2, design: .monospaced))
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
+              .simultaneousGesture(
+                MagnificationGesture()
+                  .onChanged { magnification in
+                    let next = pinchBaseScale * Float(magnification)
+                    zoomScale = min(max(next, 0.35), 2.75)
                   }
-                  .padding(.horizontal, 10)
-                  .padding(.vertical, 5)
-                  .background(.ultraThinMaterial)
-                  .cornerRadius(12)
-                }
-
-                if let ms = compileLatencyMs, let bytes = usdzSizeBytes, errorMessage == nil {
-                  HStack(spacing: 6) {
-                    Image(systemName: "bolt.fill")
-                      .foregroundColor(.yellow)
-                    Text(
-                      "Compiled in \(String(format: "%.2f", locale: .current, ms)) ms • \(bytes) B USDZ"
-                    )
-                    .font(.system(.caption2, design: .monospaced))
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
+                  .onEnded { _ in
+                    pinchBaseScale = zoomScale
                   }
-                  .padding(.horizontal, 10)
-                  .padding(.vertical, 5)
-                  .background(.ultraThinMaterial)
-                  .cornerRadius(12)
-                }
-              }
-              .padding(10)
+              )
 
-              if let eventMsg = lastEventMessage {
-                VStack {
+              if isArPreviewMode {
+                let activePresetName =
+                  selectedPresetIndex < activePresets.count
+                  ? activePresets[selectedPresetIndex].name
+                  : "Three-Live Scene"
+                VStack(alignment: .leading, spacing: 8) {
+                  // Top AR HUD Bar
+                  HStack(spacing: 8) {
+                    Image(systemName: "arkit")
+                      .foregroundColor(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                      Text("AR Surface Preview • \(activePresetName)")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                      if let note = arPreviewNote {
+                        Text(note)
+                          .font(.system(size: 10))
+                          .foregroundColor(Color.white.opacity(0.75))
+                          .lineLimit(2)
+                      }
+                    }
+                    Spacer()
+                    Button(action: {
+                      Task { await presentSystemQuickLookSheet() }
+                    }) {
+                      Text("Quick Look")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.85))
+                        .cornerRadius(8)
+                    }
+                    Button(action: {
+                      exitArPreview()
+                    }) {
+                      HStack(spacing: 4) {
+                        Image(systemName: "xmark")
+                        Text("Exit AR")
+                      }
+                      .font(.system(size: 11, weight: .semibold))
+                      .foregroundColor(.white)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 6)
+                      .background(Color.white.opacity(0.18))
+                      .cornerRadius(8)
+                    }
+                  }
+                  .padding(10)
+                  .background(Color.black.opacity(0.82))
+                  .cornerRadius(12)
+
+                  // Reticle & Auto-Rotate Toggles
+                  HStack(spacing: 8) {
+                    Button(action: {
+                      arShowReticle.toggle()
+                      runtimeSession?.setArSurfacePreviewEnabled(arShowReticle, groundY: -0.95)
+                    }) {
+                      Text("Surface Reticle & Grid")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(arShowReticle ? .black : .white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(arShowReticle ? Color.green : Color.black.opacity(0.75))
+                        .cornerRadius(8)
+                    }
+
+                    Button(action: {
+                      arAutoRotate.toggle()
+                    }) {
+                      Text("Auto-Rotate")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(arAutoRotate ? .black : .white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(arAutoRotate ? Color.cyan : Color.black.opacity(0.75))
+                        .cornerRadius(8)
+                    }
+                  }
+
                   Spacer()
-                  HStack {
+
+                  if let eventMsg = lastEventMessage {
                     Text(eventMsg)
                       .font(.system(.caption2, design: .monospaced))
                       .foregroundColor(.white)
@@ -138,159 +197,297 @@
                       .padding(.vertical, 5)
                       .background(Color.black.opacity(0.75))
                       .cornerRadius(12)
-                    Spacer()
                   }
-                  .padding(10)
-                }
-              }
-            }
-            .frame(height: geo.size.height * 0.42)
 
-            // Bottom Section: Editor & Controls
-            VStack(alignment: .leading, spacing: 6) {
-              // Mode Toggle: Three-Live | XR-Live
-              Picker("Mode", selection: $selectedMode) {
-                ForEach(StudioMode.allCases) { mode in
-                  Text(mode.rawValue).tag(mode)
-                }
-              }
-              .pickerStyle(.segmented)
-              .onChange(of: selectedMode) { newMode in
-                selectedPresetIndex = 0
-                let presets = SampleScenes.presets(for: newMode)
-                if let first = presets.first {
-                  jsScriptText = first.script
-                  Task { await compileAndRender() }
-                }
-              }
+                  // Bottom AR Placement Controls Bar
+                  VStack(alignment: .leading, spacing: 8) {
+                    Text("Drag: Orbit • Pinch: Scale • Tap: Interact with 3D Objects")
+                      .font(.system(size: 11))
+                      .foregroundColor(Color.white.opacity(0.8))
 
-              // Scrollable Preset Chips Row
-              ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                  Text("Presets:")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                  ForEach(0..<activePresets.count, id: \.self) { idx in
-                    Button(action: {
-                      selectedPresetIndex = idx
-                      jsScriptText = activePresets[idx].script
-                      Task { await compileAndRender() }
-                    }) {
-                      Text(activePresets[idx].name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                          selectedPresetIndex == idx
-                            ? Color.accentColor.opacity(0.22)
-                            : Color(UIColor.secondarySystemBackground)
-                        )
-                        .foregroundColor(selectedPresetIndex == idx ? .accentColor : .primary)
-                        .cornerRadius(8)
+                    HStack(spacing: 8) {
+                      Text("AR Scale:")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                      ForEach([(Float(0.75), "0.75×"), (Float(1.0), "1.0×"), (Float(1.5), "1.5×")], id: \.0) {
+                        (scaleVal, label) in
+                        Button(action: {
+                          arScalePreset = scaleVal
+                          zoomScale = scaleVal
+                          pinchBaseScale = scaleVal
+                        }) {
+                          Text(label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(arScalePreset == scaleVal ? .black : .white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                              arScalePreset == scaleVal ? Color.green : Color.white.opacity(0.15)
+                            )
+                            .cornerRadius(8)
+                        }
+                      }
+                      Spacer()
+                      Button(action: {
+                        arScalePreset = 1.0
+                        zoomScale = 1.0
+                        pinchBaseScale = 1.0
+                        rotationX = 0.32
+                        rotationY = 0.45
+                      }) {
+                        Text("Reset Pose")
+                          .font(.system(size: 11, weight: .semibold))
+                          .foregroundColor(.white)
+                          .padding(.horizontal, 10)
+                          .padding(.vertical, 5)
+                          .background(Color.white.opacity(0.18))
+                          .cornerRadius(8)
+                      }
                     }
                   }
+                  .padding(12)
+                  .background(Color.black.opacity(0.82))
+                  .cornerRadius(12)
                 }
-              }
-
-              // Three.js Code Editor Header Row
-              HStack {
-                Text("Three.js Source (Tap/Edit):")
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-                Spacer()
-                Text("Rust C-ABI + RealityKit")
-                  .font(.caption2)
-                  .foregroundColor(.secondary)
-              }
-
-              // Monospace Code Editor Text Area
-              ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 8)
-                  .fill(Color(UIColor.secondarySystemBackground))
-                  .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                      .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                  )
-
-                TextEditor(text: $jsScriptText)
-                  .font(.system(size: 12, weight: .regular, design: .monospaced))
-                  .padding(6)
-                  .background(Color.clear)
-              }
-              .frame(minHeight: 110, maxHeight: .infinity)
-
-              // Error Banner
-              if let err = errorMessage {
-                HStack(alignment: .top, spacing: 6) {
-                  Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
-                  Text(err)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.red)
-                }
-                .padding(8)
-                .background(Color.red.opacity(0.12))
-                .cornerRadius(6)
-              }
-
-              // Action Bar: Equal-width View in AR + Compile & Render Buttons
-              HStack(spacing: 8) {
-                Button(action: {
-                  Task { await launchARQuickLook() }
-                }) {
-                  HStack(spacing: 6) {
-                    Image(systemName: "arkit")
-                    Text("View in AR")
+                .padding(12)
+              } else {
+                // Stacked Top-Left Status Pills (never collide on narrow screens)
+                VStack(alignment: .leading, spacing: 6) {
+                  if selectedMode == .xrLive, !extractedXrTraits.isEmpty, errorMessage == nil {
+                    let grabCount = extractedXrTraits.values.filter { $0.grabbable == true }.count
+                    let dynCount = extractedXrTraits.values.filter { $0.physics == "dynamic" }.count
+                    let bbCount =
+                      extractedXrTraits.values.filter { ($0.billboard ?? "").isEmpty == false }
+                      .count
+                    let orbitCount = extractedXrTraits.values.filter { $0.orbit != nil }.count
+                    HStack(spacing: 6) {
+                      Image(systemName: "visionpro")
+                        .foregroundColor(.purple)
+                      Text(
+                        "XR-Live: \(extractedXrTraits.count) Nodes (\(grabCount) Grab • \(dynCount) Physics • \(bbCount) Billboard • \(orbitCount) Orbit)"
+                      )
+                      .font(.system(.caption2, design: .monospaced))
+                      .fontWeight(.semibold)
                       .lineLimit(1)
-                  }
-                  .font(.system(size: 13, weight: .semibold))
-                  .foregroundColor(.white)
-                  .frame(maxWidth: .infinity)
-                  .padding(.vertical, 10)
-                  .background(Color.green)
-                  .cornerRadius(10)
-                }
-                .disabled(isCompiling || usdzData == nil)
-
-                Button(action: {
-                  Task { await compileAndRender() }
-                }) {
-                  HStack(spacing: 6) {
-                    if isCompiling {
-                      ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(0.8)
-                      Text("Compiling...")
-                        .lineLimit(1)
-                    } else {
-                      Image(systemName: "play.fill")
-                      Text("Compile & Render")
-                        .lineLimit(1)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
                   }
-                  .font(.system(size: 13, weight: .semibold))
-                  .foregroundColor(.white)
-                  .frame(maxWidth: .infinity)
-                  .padding(.vertical, 10)
-                  .background(Color.blue)
-                  .cornerRadius(10)
+
+                  if let ms = compileLatencyMs, let bytes = usdzSizeBytes, errorMessage == nil {
+                    HStack(spacing: 6) {
+                      Image(systemName: "bolt.fill")
+                        .foregroundColor(.yellow)
+                      Text(
+                        "Compiled in \(String(format: "%.2f", locale: .current, ms)) ms • \(bytes) B USDZ"
+                      )
+                      .font(.system(.caption2, design: .monospaced))
+                      .fontWeight(.semibold)
+                      .lineLimit(1)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+                  }
                 }
-                .disabled(isCompiling)
+                .padding(10)
+
+                if let eventMsg = lastEventMessage {
+                  VStack {
+                    Spacer()
+                    HStack {
+                      Text(eventMsg)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.black.opacity(0.75))
+                        .cornerRadius(12)
+                      Spacer()
+                    }
+                    .padding(10)
+                  }
+                }
               }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(UIColor.systemBackground))
+            .frame(height: isArPreviewMode ? geo.size.height : geo.size.height * 0.42)
+
+            if !isArPreviewMode {
+              // Bottom Section: Editor & Controls
+              VStack(alignment: .leading, spacing: 6) {
+                // Mode Toggle: Three-Live | XR-Live
+                Picker("Mode", selection: $selectedMode) {
+                  ForEach(StudioMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                  }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: selectedMode) { newMode in
+                  selectedPresetIndex = 0
+                  let presets = SampleScenes.presets(for: newMode)
+                  if let first = presets.first {
+                    jsScriptText = first.script
+                    Task { await compileAndRender() }
+                  }
+                }
+
+                // Scrollable Preset Chips Row
+                ScrollView(.horizontal, showsIndicators: false) {
+                  HStack(spacing: 8) {
+                    Text("Presets:")
+                      .font(.caption)
+                      .fontWeight(.bold)
+                    ForEach(0..<activePresets.count, id: \.self) { idx in
+                      Button(action: {
+                        selectedPresetIndex = idx
+                        jsScriptText = activePresets[idx].script
+                        Task { await compileAndRender() }
+                      }) {
+                        Text(activePresets[idx].name)
+                          .font(.system(size: 12, weight: .semibold))
+                          .padding(.horizontal, 10)
+                          .padding(.vertical, 6)
+                          .background(
+                            selectedPresetIndex == idx
+                              ? Color.accentColor.opacity(0.22)
+                              : Color(UIColor.secondarySystemBackground)
+                          )
+                          .foregroundColor(selectedPresetIndex == idx ? .accentColor : .primary)
+                          .cornerRadius(8)
+                      }
+                    }
+                  }
+                }
+
+                // Three.js Code Editor Header Row
+                HStack {
+                  Text("Three.js Source (Tap/Edit):")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                  Spacer()
+                  Text("Rust C-ABI + RealityKit")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                }
+
+                // Monospace Code Editor Text Area
+                ZStack(alignment: .topLeading) {
+                  RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(UIColor.secondarySystemBackground))
+                    .overlay(
+                      RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    )
+
+                  TextEditor(text: $jsScriptText)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .padding(6)
+                    .background(Color.clear)
+                }
+                .frame(minHeight: 110, maxHeight: .infinity)
+
+                // Error Banner
+                if let err = errorMessage {
+                  HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                      .foregroundColor(.red)
+                    Text(err)
+                      .font(.system(size: 11, design: .monospaced))
+                      .foregroundColor(.red)
+                  }
+                  .padding(8)
+                  .background(Color.red.opacity(0.12))
+                  .cornerRadius(6)
+                }
+
+                // Action Bar: Equal-width View in AR + Compile & Render Buttons
+                HStack(spacing: 8) {
+                  Button(action: {
+                    Task { await launchARQuickLook() }
+                  }) {
+                    HStack(spacing: 6) {
+                      Image(systemName: "arkit")
+                      Text("View in AR")
+                        .lineLimit(1)
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.green)
+                    .cornerRadius(10)
+                  }
+                  .disabled(isCompiling || usdzData == nil)
+
+                  Button(action: {
+                    Task { await compileAndRender() }
+                  }) {
+                    HStack(spacing: 6) {
+                      if isCompiling {
+                        ProgressView()
+                          .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                          .scaleEffect(0.8)
+                        Text("Compiling...")
+                          .lineLimit(1)
+                      } else {
+                        Image(systemName: "play.fill")
+                        Text("Compile & Render")
+                          .lineLimit(1)
+                      }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .cornerRadius(10)
+                  }
+                  .disabled(isCompiling)
+                }
+              }
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .background(Color(UIColor.systemBackground))
+            }
           }
         }
         .navigationTitle("Three-Live & XR-Live Studio")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarHidden(isArPreviewMode)
       }
       .navigationViewStyle(.stack)
       .task {
         // Initial compilation on startup
         await compileAndRender()
       }
+    }
+
+    @MainActor
+    private func enterArPreview(note: String) {
+      arPreviewNote = note
+      arScalePreset = 1.0
+      arAutoRotate = false
+      arShowReticle = true
+      zoomScale = 1.0
+      pinchBaseScale = 1.0
+      rotationX = 0.32
+      rotationY = 0.45
+      isArPreviewMode = true
+      runtimeSession?.setArSurfacePreviewEnabled(true, groundY: -0.95)
+    }
+
+    @MainActor
+    private func exitArPreview() {
+      runtimeSession?.setArSurfacePreviewEnabled(false)
+      isArPreviewMode = false
+      arPreviewNote = nil
+      zoomScale = 1.0
+      pinchBaseScale = 1.0
+      rotationX = 0.2
+      rotationY = 0.4
     }
 
     @MainActor
@@ -319,6 +516,8 @@
           _ = entity.playAnimation(anim.repeat())
         }
 
+        runtimeFeatures?.dispose()
+        runtimeFeatures = nil
         runtimeSession?.stop()
         if let live = XRLiveRealityKitSession(glbData: glbData, root: entity) {
           live.installInputTargets()
@@ -329,7 +528,16 @@
             lastEventMessage = "Event '\(id)' \(payload)"
           }
           live.start()
+          if isArPreviewMode && arShowReticle {
+            live.setArSurfacePreviewEnabled(true, groundY: -0.95)
+          }
+          let features = XRBlocksRealityKitFeatures(live: live)
+          features.onHandlesChange = { mesh, scale, yawDeg in
+            lastEventMessage =
+              String(format: "Handles %@: scale %.2f×, yaw %.0f°", mesh, scale, yawDeg)
+          }
           runtimeSession = live
+          runtimeFeatures = features
         } else {
           if !traits.isEmpty {
             RealityKitHelper.applyXRTraits(traits, to: entity)
@@ -338,8 +546,10 @@
         }
 
         // Reset orientation & assign
-        rotationX = 0.2
-        rotationY = 0.4
+        rotationX = isArPreviewMode ? 0.32 : 0.2
+        rotationY = isArPreviewMode ? 0.45 : 0.4
+        zoomScale = isArPreviewMode ? arScalePreset : 1.0
+        pinchBaseScale = zoomScale
         currentEntity = entity
         errorMessage = nil
       } catch {
@@ -350,6 +560,22 @@
 
     @MainActor
     private func launchARQuickLook() async {
+      guard usdzData != nil else {
+        errorMessage = "Compile a scene before viewing it in AR."
+        return
+      }
+      if !QuickLookHelper.isARPlacementSupported {
+        enterArPreview(
+          note:
+            "ARKit camera passthrough is unavailable on iOS Simulator — running built-in AR Surface Preview"
+        )
+        return
+      }
+      await presentSystemQuickLookSheet()
+    }
+
+    @MainActor
+    private func presentSystemQuickLookSheet() async {
       guard let data = usdzData else {
         errorMessage = "Compile a scene before viewing it in AR."
         return
@@ -379,8 +605,10 @@
   struct ModelViewportRepresentable: UIViewRepresentable {
     let entity: Entity?
     let runtimeSession: XRLiveRealityKitSession?
+    let runtimeFeatures: XRBlocksRealityKitFeatures?
     let rotationY: Float
     let rotationX: Float
+    let zoomScale: Float
     let isDragging: Bool
     let autoRotate: Bool
     let onTapNode: ((String) -> Void)?
@@ -388,9 +616,11 @@
     final class Coordinator: NSObject {
       weak var arView: ARView?
       var runtimeSession: XRLiveRealityKitSession?
+      var runtimeFeatures: XRBlocksRealityKitFeatures?
       var onTapNode: ((String) -> Void)?
       var rotationY: Float = 0.4
       var rotationX: Float = 0.2
+      var zoomScale: Float = 1.0
       var autoRotationAngle: Float = 0.0
       var isDragging: Bool = false
       var autoRotate: Bool = true
@@ -454,8 +684,11 @@
           anchor.orientation =
             simd_quatf(angle: coordinator.rotationY + coordinator.autoRotationAngle, axis: [0, 1, 0])
             * simd_quatf(angle: coordinator.rotationX, axis: [1, 0, 0])
+          let s = min(max(coordinator.zoomScale, 0.35), 2.75)
+          anchor.scale = SIMD3<Float>(repeating: s)
         }
         coordinator.runtimeSession?.step(dt: dt)
+        coordinator.runtimeFeatures?.step(dt: dt)
       }
 
       return arView
@@ -463,9 +696,11 @@
 
     func updateUIView(_ uiView: ARView, context: Context) {
       context.coordinator.runtimeSession = runtimeSession
+      context.coordinator.runtimeFeatures = runtimeFeatures
       context.coordinator.onTapNode = onTapNode
       context.coordinator.rotationY = rotationY
       context.coordinator.rotationX = rotationX
+      context.coordinator.zoomScale = zoomScale
       context.coordinator.isDragging = isDragging
       context.coordinator.autoRotate = autoRotate
       if !autoRotate {
@@ -489,6 +724,8 @@
         simd_quatf(
           angle: rotationY + context.coordinator.autoRotationAngle, axis: [0, 1, 0])
         * simd_quatf(angle: rotationX, axis: [1, 0, 0])
+      let s = min(max(zoomScale, 0.35), 2.75)
+      modelAnchor.scale = SIMD3<Float>(repeating: s)
     }
   }
 #endif

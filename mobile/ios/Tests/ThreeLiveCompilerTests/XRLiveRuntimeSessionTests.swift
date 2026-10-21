@@ -1358,4 +1358,47 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(translation(s, 3).y, -0.71)
     XCTAssertLessThan(translation(s, 3).y, 0.5)
   }
+
+  func testArSurfaceGeometryAndSceneMatrixAndLocalBounds() {
+    let grid = XRArSurfaceGeometry.buildFloorGridGeometry(groundY: -0.95)
+    XCTAssertFalse(grid.positions.isEmpty)
+    XCTAssertEqual(grid.positions.count, grid.normals.count)
+    XCTAssertEqual(grid.indices.count % 3, 0)
+    let vCount = UInt32(grid.positions.count / 3)
+    for idx in grid.indices {
+      XCTAssertLessThan(idx, vCount)
+    }
+
+    let reticle = XRArSurfaceGeometry.buildReticleGeometry(groundY: -0.95)
+    XCTAssertFalse(reticle.positions.isEmpty)
+    XCTAssertEqual(reticle.positions.count, reticle.normals.count)
+    XCTAssertEqual(reticle.indices.count % 3, 0)
+    let rCount = UInt32(reticle.positions.count / 3)
+    for idx in reticle.indices {
+      XCTAssertLessThan(idx, rCount)
+    }
+
+    let json = #"""
+      {"nodes": [
+        {"name": "ParentGroup", "translation": [1.0, 2.0, 3.0], "children": [1]},
+        {"name": "ChildMesh", "mesh": 0, "translation": [0.5, 0.0, -1.0]}
+      ], "meshes": [
+        {"primitives": [{"attributes": {"POSITION": 0}}]}
+      ], "accessors": [
+        {"min": [-0.25, -0.5, -0.75], "max": [0.25, 0.5, 0.75]}
+      ]}
+      """#
+    let (s, _) = session(json)
+    XCTAssertFalse(s.hasMesh(at: 0))
+    XCTAssertTrue(s.hasMesh(at: 1))
+    let bounds = s.localBounds(forNode: 1)
+    XCTAssertNotNil(bounds)
+    XCTAssertEqual(bounds?.min.x ?? 0, -0.25, accuracy: 1e-5)
+    XCTAssertEqual(bounds?.max.z ?? 0, 0.75, accuracy: 1e-5)
+
+    let m = s.sceneMatrix(of: 1)
+    XCTAssertEqual(m.columns.3.x, 1.5, accuracy: 1e-5)
+    XCTAssertEqual(m.columns.3.y, 2.0, accuracy: 1e-5)
+    XCTAssertEqual(m.columns.3.z, 2.0, accuracy: 1e-5)
+  }
 }

@@ -20,6 +20,7 @@
   import Combine
   import Foundation
   import RealityKit
+  import simd
 
   #if canImport(UIKit)
     import UIKit
@@ -114,7 +115,9 @@
     public var onAnimationStop: (() -> Void)?
 
     private var nodeByEntity: [ObjectIdentifier: Int] = [:]
+    private var inverseBakedSceneByNode: [Int: simd_float4x4] = [:]
     private var referenceEntity: Entity?
+    private var arSurfacePreviewContainer: Entity?
     private let collector = XRLiveChangeCollector()
     private var gestureTracker = XRHandGestureTracker()
     private var updateSubscription: Combine.Cancellable?
@@ -138,10 +141,14 @@
 
     private func bindEntities() {
       var byName: [String: [Entity]] = [:]
+      var meshEntitiesInOrder: [Entity] = []
       func visit(_ entity: Entity, depth: Int) {
         guard depth < 256 else { return }
         if !entity.name.isEmpty {
           byName[entity.name, default: []].append(entity)
+        }
+        if entity !== root && entity.components.has(ModelComponent.self) {
+          meshEntitiesInOrder.append(entity)
         }
         for child in entity.children {
           visit(child, depth: depth + 1)
@@ -150,28 +157,75 @@
       visit(root, depth: 0)
 
       var claimed = Set<ObjectIdentifier>()
+      var meshOrder = 0
       for index in 0..<session.nodeCount {
-        guard let name = session.nodeName(at: index), !name.isEmpty else { continue }
-        var candidates = [name]
-        let prim = XRLiveGLB.usdPrimName(for: name, fallback: name)
-        if prim != name { candidates.append(prim) }
-        for candidate in candidates {
-          guard
-            let entity = byName[candidate]?.first(where: {
-              !claimed.contains(ObjectIdentifier($0))
-            })
-          else { continue }
-          let id = ObjectIdentifier(entity)
-          claimed.insert(id)
-          entitiesByNode[index] = entity
-          nodeByEntity[id] = index
-          if referenceEntity == nil && session.parentIndex(of: index) == nil {
-            // The parent of a glTF root node defines the session's scene space.
-            referenceEntity = entity.parent ?? root
+        let hasMesh = session.hasMesh(at: index)
+        let myMeshOrder = hasMesh ? meshOrder : -1
+        if hasMesh { meshOrder += 1 }
+
+        var candidates: [String] = []
+        if let name = session.nodeName(at: index), !name.isEmpty {
+          candidates.append(name)
+          let prim = XRLiveGLB.usdPrimName(for: name, fallback: name)
+          if prim != name { candidates.append(prim) }
+          if myMeshOrder >= 0 {
+            candidates.append("\(prim)_\(myMeshOrder)")
           }
-          break
+          candidates.append("\(prim)_p0")
+        }
+        if let mName = session.meshName(forNode: index), !mName.isEmpty {
+          if !candidates.contains(mName) { candidates.append(mName) }
+          let prim = XRLiveGLB.usdPrimName(for: mName, fallback: mName)
+          if !candidates.contains(prim) { candidates.append(prim) }
+        }
+        candidates.append("Node_\(index)")
+        if myMeshOrder >= 0 {
+          candidates.append("Mesh_\(myMeshOrder)")
+        }
+        candidates.append("Mesh_\(index)")
+
+        var matchedEntity: Entity?
+        for candidate in candidates {
+          if let entity = byName[candidate]?.first(where: {
+            !claimed.contains(ObjectIdentifier($0))
+          }) {
+            matchedEntity = entity
+            break
+          }
+        }
+        if matchedEntity == nil && hasMesh {
+          matchedEntity = meshEntitiesInOrder.first(where: {
+            !claimed.contains(ObjectIdentifier($0))
+          })
+        }
+        guard let entity = matchedEntity else { continue }
+        let id = ObjectIdentifier(entity)
+        claimed.insert(id)
+        entitiesByNode[index] = entity
+        nodeByEntity[id] = index
+        if Self.isInsideUsdMeshesScope(entity, stopAt: root) {
+          let w0 = session.sceneMatrix(of: index)
+          let det = simd_determinant(w0)
+          if det.isFinite && abs(det) > 1e-12 {
+            inverseBakedSceneByNode[index] = w0.inverse
+          }
+        }
+        if referenceEntity == nil && session.parentIndex(of: index) == nil {
+          // The parent of a glTF root node defines the session's scene space.
+          referenceEntity = entity.parent ?? root
         }
       }
+    }
+
+    private static func isInsideUsdMeshesScope(_ entity: Entity, stopAt root: Entity) -> Bool {
+      var cur = entity.parent
+      var depth = 0
+      while let p = cur, p !== root, depth < 64 {
+        if p.name == "Meshes" { return true }
+        cur = p.parent
+        depth += 1
+      }
+      return false
     }
 
     /// The entity bound to glTF node `index`, if any.
@@ -295,8 +349,42 @@
     /// `ManipulationHandles.Drag` update or a system gesture).
     public func setNodeTransform(_ index: Int, _ transform: XRNodeTransform) {
       guard session.setNodeTransform(index, transform) else { return }
-      entitiesByNode[index]?.transform = Transform(
-        scale: transform.scale, rotation: transform.rotation, translation: transform.translation)
+      applyEntityTransform(forNode: index, fallback: transform)
+      if !inverseBakedSceneByNode.isEmpty {
+        updateBakedDescendants(of: index)
+      }
+    }
+
+    /// Shows or hides the built-in 3D AR surface placement reticle and reference floor grid
+    /// at height `groundY` (meters) for in-app AR surface placement previews when camera-based
+    /// AR Quick Look is unavailable (e.g. on the iOS Simulator).
+    public func setArSurfacePreviewEnabled(_ enabled: Bool, groundY: Float = -0.95) {
+      arSurfacePreviewContainer?.removeFromParent()
+      arSurfacePreviewContainer = nil
+      guard enabled else { return }
+
+      let container = Entity()
+      container.name = "ThreeLiveArSurfacePreview"
+      let gridGeo = XRArSurfaceGeometry.buildFloorGridGeometry(
+        y: groundY - 0.01, halfExtent: 2.0, divisions: 8)
+      if let gridMesh = XRBlocksRealityKitFeatures.mesh(gridGeo) {
+        let gridEntity = ModelEntity(
+          mesh: gridMesh,
+          materials: [XRBlocksRealityKitFeatures.material(XRArSurfaceGeometry.defaultGridColor)])
+        gridEntity.name = "ThreeLiveArFloorGrid"
+        container.addChild(gridEntity)
+      }
+      let reticleGeo = XRArSurfaceGeometry.buildReticleGeometry(
+        y: groundY, innerRadius: 0.52, outerRadius: 0.60)
+      if let reticleMesh = XRBlocksRealityKitFeatures.mesh(reticleGeo) {
+        let reticleEntity = ModelEntity(
+          mesh: reticleMesh,
+          materials: [XRBlocksRealityKitFeatures.material(XRArSurfaceGeometry.defaultReticleColor)])
+        reticleEntity.name = "ThreeLiveArReticle"
+        container.addChild(reticleEntity)
+      }
+      root.addChild(container)
+      arSurfacePreviewContainer = container
     }
 
     // MARK: Applying changes
@@ -314,9 +402,19 @@
       collector.events.removeAll()
       collector.animations.removeAll()
 
+      var changedNodes = Set<Int>()
       for (index, t) in transforms {
-        entitiesByNode[index]?.transform = Transform(
-          scale: t.scale, rotation: t.rotation, translation: t.translation)
+        changedNodes.insert(index)
+        applyEntityTransform(forNode: index, fallback: t)
+      }
+      if !inverseBakedSceneByNode.isEmpty && !changedNodes.isEmpty {
+        for index in entitiesByNode.keys where !changedNodes.contains(index) {
+          if hasChangedAncestor(index, in: changedNodes) {
+            if let t = session.nodeTransform(at: index) {
+              applyEntityTransform(forNode: index, fallback: t)
+            }
+          }
+        }
       }
       for (index, visible) in visibility {
         entitiesByNode[index]?.isEnabled = visible
@@ -341,6 +439,39 @@
           } else {
             root.stopAllAnimations(recursive: true)
           }
+        }
+      }
+    }
+
+    private func applyEntityTransform(forNode index: Int, fallback t: XRNodeTransform) {
+      guard let entity = entitiesByNode[index] else { return }
+      if let invW0 = inverseBakedSceneByNode[index] {
+        let delta = session.sceneMatrix(of: index) * invW0
+        let trs = XRBlocksMath.decompose(delta)
+        entity.transform = Transform(
+          scale: trs.scale, rotation: trs.rotation, translation: trs.translation)
+      } else {
+        entity.transform = Transform(
+          scale: t.scale, rotation: t.rotation, translation: t.translation)
+      }
+    }
+
+    private func hasChangedAncestor(_ index: Int, in changedNodes: Set<Int>) -> Bool {
+      var cur = session.parentIndex(of: index)
+      var depth = 0
+      while let p = cur, depth < 128 {
+        if changedNodes.contains(p) { return true }
+        cur = session.parentIndex(of: p)
+        depth += 1
+      }
+      return false
+    }
+
+    private func updateBakedDescendants(of ancestor: Int) {
+      let changed: Set<Int> = [ancestor]
+      for index in entitiesByNode.keys where index != ancestor {
+        if hasChangedAncestor(index, in: changed), let t = session.nodeTransform(at: index) {
+          applyEntityTransform(forNode: index, fallback: t)
         }
       }
     }

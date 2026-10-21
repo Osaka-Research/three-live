@@ -111,6 +111,10 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   private val dynamicMeshes = HashMap<Int, DynamicMesh>()
   private var nextDynamicId = 1
+  private var arSurfacePreviewEnabled = false
+  private var arSurfaceGroundY = -0.95f
+  private var arGridMeshId = -1
+  private var arReticleMeshId = -1
   private var templateAsset: FilamentAsset? = null
   private var templateMaterial: MaterialInstance? = null
   private var splatTemplateAsset: FilamentAsset? = null
@@ -245,6 +249,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val animCount = loaded.instance?.animator?.animationCount ?: 0
     playingAnimation = if (animCount > 0) -1 else null
     animationTime = 0.0
+    if (arSurfacePreviewEnabled) {
+      attachArSurfacePreviewMeshes(arSurfaceGroundY)
+    }
   }
 
   override fun setCameraOptions(options: ThreeLiveCameraOptions) {
@@ -419,6 +426,56 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     }
     existingIb?.let { engine.destroyIndexBuffer(it) }
     mesh.indexBuffer = ib
+  }
+
+  override fun setArSurfacePreviewEnabled(enabled: Boolean, groundY: Float) {
+    if (disposed) return
+    arSurfacePreviewEnabled = enabled
+    arSurfaceGroundY = groundY
+    detachArSurfacePreviewMeshes()
+    if (enabled) {
+      attachArSurfacePreviewMeshes(groundY)
+    }
+  }
+
+  private fun detachArSurfacePreviewMeshes() {
+    if (arGridMeshId >= 0) {
+      removeDynamicMesh(arGridMeshId)
+      arGridMeshId = -1
+    }
+    if (arReticleMeshId >= 0) {
+      removeDynamicMesh(arReticleMeshId)
+      arReticleMeshId = -1
+    }
+  }
+
+  private fun attachArSurfacePreviewMeshes(groundY: Float) {
+    val (gridPos, gridIdx) =
+      com.google.threelive.ThreeLiveArSurfaceGeometry.buildFloorGridGeometry(
+        y = groundY - 0.01f,
+        halfExtent = 2.0f,
+        divisions = 8,
+      )
+    arGridMeshId =
+      addDynamicMesh(
+        positions = gridPos,
+        normals = null,
+        indices = gridIdx,
+        color = com.google.threelive.ThreeLiveArSurfaceGeometry.DEFAULT_GRID_COLOR,
+      )
+    val (retPos, retIdx) =
+      com.google.threelive.ThreeLiveArSurfaceGeometry.buildReticleGeometry(
+        y = groundY,
+        innerRadius = 0.52f,
+        outerRadius = 0.60f,
+      )
+    arReticleMeshId =
+      addDynamicMesh(
+        positions = retPos,
+        normals = null,
+        indices = retIdx,
+        color = com.google.threelive.ThreeLiveArSurfaceGeometry.DEFAULT_RETICLE_COLOR,
+      )
   }
 
   override fun dispose() {

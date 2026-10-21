@@ -443,6 +443,30 @@ class GlbBufferTest {
     }
   }
 
+  @Test
+  fun testThreeLiveArSurfaceGeometryBuildsValidIndices() {
+    val (gridPos, gridIdx) =
+      ThreeLiveArSurfaceGeometry.buildFloorGridGeometry(y = -0.96f, halfExtent = 2.0f, divisions = 8)
+    val gridVertCount = gridPos.size / 3
+    assertEquals(0, gridPos.size % 3)
+    assertEquals(0, gridIdx.size % 3)
+    assertTrue(gridVertCount > 0)
+    assertTrue(gridIdx.all { it in 0 until gridVertCount })
+
+    val (retPos, retIdx) =
+      ThreeLiveArSurfaceGeometry.buildReticleGeometry(
+        y = -0.95f,
+        innerRadius = 0.52f,
+        outerRadius = 0.60f,
+        segments = 48,
+      )
+    val retVertCount = retPos.size / 3
+    assertEquals(0, retPos.size % 3)
+    assertEquals(0, retIdx.size % 3)
+    assertTrue(retVertCount > 0)
+    assertTrue(retIdx.all { it in 0 until retVertCount })
+  }
+
   private companion object {
     /** Non-zero sentinel standing in for a real native address. */
     const val ADDRESS = 0x7F00_1234L

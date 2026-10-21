@@ -574,6 +574,20 @@ public final class XRLiveRuntimeSession {
     return meshNames[mesh]
   }
 
+  /// Whether node `index` references a glTF mesh.
+  public func hasMesh(at index: Int) -> Bool {
+    guard index >= 0, index < nodes.count else { return false }
+    return nodes[index].mesh != nil
+  }
+
+  /// The un-baked local-space AABB (`min`, `max`) of node `index`'s mesh from its glTF
+  /// `POSITION` accessor, if present.
+  public func localBounds(forNode index: Int) -> (min: SIMD3<Float>, max: SIMD3<Float>)? {
+    guard index >= 0, index < nodes.count, let mesh = nodes[index].mesh, mesh < meshLocalBounds.count
+    else { return nil }
+    return meshLocalBounds[mesh]
+  }
+
   /// The local transform of node `index`.
   public func nodeTransform(at index: Int) -> XRNodeTransform? {
     guard index >= 0, index < nodes.count else { return nil }
@@ -1651,9 +1665,9 @@ public final class XRLiveRuntimeSession {
     )
   }
 
-  /// World matrix of node `index` (`rootTransform × parents × local`).
-  public func worldMatrix(of index: Int) -> simd_float4x4 {
-    guard index >= 0, index < nodes.count else { return rootTransform }
+  /// Scene-space matrix of node `index` (`parents × local`, excluding `rootTransform`).
+  public func sceneMatrix(of index: Int) -> simd_float4x4 {
+    guard index >= 0, index < nodes.count else { return matrix_identity_float4x4 }
     var m = Self.transform(of: nodes[index]).matrix
     var cur = parentOf[index]
     var depth = 0
@@ -1662,7 +1676,13 @@ public final class XRLiveRuntimeSession {
       cur = parentOf[c]
       depth += 1
     }
-    return rootTransform * m
+    return m
+  }
+
+  /// World matrix of node `index` (`rootTransform × parents × local`).
+  public func worldMatrix(of index: Int) -> simd_float4x4 {
+    guard index >= 0, index < nodes.count else { return rootTransform }
+    return rootTransform * sceneMatrix(of: index)
   }
 
   private func parentWorld(of index: Int) -> simd_float4x4 {

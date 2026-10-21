@@ -55,9 +55,6 @@ import com.google.threelive.XRLiveNodeTraits
 import com.google.threelive.XRLiveSceneCoreHelper
 import com.google.threelive.filament.ThreeLiveFilamentRenderer
 import java.util.Locale
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.system.measureNanoTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -112,8 +109,6 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   var arShowReticle by remember { mutableStateOf(true) }
   var arAutoRotate by remember { mutableStateOf(false) }
   var arScalePreset by remember { mutableStateOf(1.0f) }
-  var arGridMeshId by remember { mutableStateOf(-1) }
-  var arReticleMeshId by remember { mutableStateOf(-1) }
   var externalArLaunchTimeMs by remember { mutableStateOf(0L) }
 
   // Owned by the composition rather than created inside the AndroidView factory below:
@@ -138,36 +133,8 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   var lastEvent by remember { mutableStateOf<String?>(null) }
   DisposableEffect(Unit) { onDispose { binding?.dispose() } }
 
-  fun removeArSurfaceMeshes() {
-    if (arGridMeshId >= 0) {
-      renderer.removeDynamicMesh(arGridMeshId)
-      arGridMeshId = -1
-    }
-    if (arReticleMeshId >= 0) {
-      renderer.removeDynamicMesh(arReticleMeshId)
-      arReticleMeshId = -1
-    }
-  }
-
   fun attachArSurfaceMeshes(showReticle: Boolean = arShowReticle) {
-    removeArSurfaceMeshes()
-    if (!showReticle) return
-    val (gridPos, gridIdx) = buildArFloorGridGeometry(y = -0.96f, halfExtent = 2.0f, divisions = 8)
-    arGridMeshId =
-      renderer.addDynamicMesh(
-        positions = gridPos,
-        normals = null,
-        indices = gridIdx,
-        color = floatArrayOf(0.18f, 0.34f, 0.46f, 1.0f),
-      )
-    val (retPos, retIdx) = buildArReticleGeometry(y = -0.95f, innerR = 0.52f, outerR = 0.60f)
-    arReticleMeshId =
-      renderer.addDynamicMesh(
-        positions = retPos,
-        normals = null,
-        indices = retIdx,
-        color = floatArrayOf(0.13f, 0.85f, 0.68f, 1.0f),
-      )
+    renderer.setArSurfacePreviewEnabled(enabled = showReticle, groundY = -0.95f)
   }
 
   fun applyArCamera(scaleMultiplier: Float = arScalePreset, autoRotate: Boolean = arAutoRotate) {
@@ -194,7 +161,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   }
 
   fun exitArPreview() {
-    removeArSurfaceMeshes()
+    renderer.setArSurfacePreviewEnabled(enabled = false)
     isArPreviewMode = false
     arPreviewNote = null
     renderer.setCameraOptions(
@@ -756,124 +723,4 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
       }
     }
   }
-}
-
-/**
- * Builds a flat ground-plane grid of thin quad lines on height [y] for the built-in AR Surface
- * Placement Preview.
- */
-private fun buildArFloorGridGeometry(
-  y: Float,
-  halfExtent: Float,
-  divisions: Int,
-  lineHalfWidth: Float = 0.008f,
-): Pair<FloatArray, IntArray> {
-  val lineCount = (divisions + 1) * 2
-  val positions = FloatArray(lineCount * 4 * 3)
-  val indices = IntArray(lineCount * 6)
-  var vOffset = 0
-  var iOffset = 0
-  val step = (halfExtent * 2f) / divisions
-
-  fun addQuad(x0: Float, z0: Float, x1: Float, z1: Float) {
-    val baseVertex = vOffset / 3
-    positions[vOffset++] = x0
-    positions[vOffset++] = y
-    positions[vOffset++] = z0
-    positions[vOffset++] = x1
-    positions[vOffset++] = y
-    positions[vOffset++] = z0
-    positions[vOffset++] = x1
-    positions[vOffset++] = y
-    positions[vOffset++] = z1
-    positions[vOffset++] = x0
-    positions[vOffset++] = y
-    positions[vOffset++] = z1
-
-    indices[iOffset++] = baseVertex
-    indices[iOffset++] = baseVertex + 1
-    indices[iOffset++] = baseVertex + 2
-    indices[iOffset++] = baseVertex
-    indices[iOffset++] = baseVertex + 2
-    indices[iOffset++] = baseVertex + 3
-  }
-
-  for (i in 0..divisions) {
-    val coord = -halfExtent + i * step
-    // Line parallel to Z axis
-    addQuad(coord - lineHalfWidth, -halfExtent, coord + lineHalfWidth, halfExtent)
-    // Line parallel to X axis
-    addQuad(-halfExtent, coord - lineHalfWidth, halfExtent, coord + lineHalfWidth)
-  }
-  return positions to indices
-}
-
-/**
- * Builds a circular AR surface placement reticle ring + center crosshairs on height [y].
- */
-private fun buildArReticleGeometry(
-  y: Float,
-  innerR: Float,
-  outerR: Float,
-  segments: Int = 48,
-): Pair<FloatArray, IntArray> {
-  val ringVertices = segments * 2
-  val crossVertices = 8
-  val positions = FloatArray((ringVertices + crossVertices) * 3)
-  val indices = IntArray(segments * 6 + 12)
-  var vOffset = 0
-  var iOffset = 0
-
-  for (s in 0 until segments) {
-    val angle = (2.0 * PI * s) / segments
-    val c = cos(angle).toFloat()
-    val sn = sin(angle).toFloat()
-    positions[vOffset++] = c * innerR
-    positions[vOffset++] = y
-    positions[vOffset++] = sn * innerR
-    positions[vOffset++] = c * outerR
-    positions[vOffset++] = y
-    positions[vOffset++] = sn * outerR
-
-    val next = (s + 1) % segments
-    val i0 = s * 2
-    val i1 = s * 2 + 1
-    val i2 = next * 2 + 1
-    val i3 = next * 2
-    indices[iOffset++] = i0
-    indices[iOffset++] = i1
-    indices[iOffset++] = i2
-    indices[iOffset++] = i0
-    indices[iOffset++] = i2
-    indices[iOffset++] = i3
-  }
-
-  // Center crosshairs
-  val crossHalfLen = 0.14f
-  val crossHalfWidth = 0.012f
-  fun addCrossBar(x0: Float, z0: Float, x1: Float, z1: Float) {
-    val base = vOffset / 3
-    positions[vOffset++] = x0
-    positions[vOffset++] = y
-    positions[vOffset++] = z0
-    positions[vOffset++] = x1
-    positions[vOffset++] = y
-    positions[vOffset++] = z0
-    positions[vOffset++] = x1
-    positions[vOffset++] = y
-    positions[vOffset++] = z1
-    positions[vOffset++] = x0
-    positions[vOffset++] = y
-    positions[vOffset++] = z1
-    indices[iOffset++] = base
-    indices[iOffset++] = base + 1
-    indices[iOffset++] = base + 2
-    indices[iOffset++] = base
-    indices[iOffset++] = base + 2
-    indices[iOffset++] = base + 3
-  }
-  addCrossBar(-crossHalfLen, -crossHalfWidth, crossHalfLen, crossHalfWidth)
-  addCrossBar(-crossHalfWidth, -crossHalfLen, crossHalfWidth, crossHalfLen)
-
-  return positions to indices
 }

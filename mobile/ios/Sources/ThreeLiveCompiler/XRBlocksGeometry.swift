@@ -495,3 +495,123 @@ public final class ParticleEmitter {
     return (normals, indices)
   }
 }
+
+// MARK: - AR Surface Placement Preview Geometry
+
+/// Pure-Swift geometry builders for the in-app 3D AR surface placement reticle and reference
+/// floor grid (`ThreeLiveArSurfaceGeometry` on Android).
+public enum XRArSurfaceGeometry {
+  /// Default linear RGBA color for the reference floor grid.
+  public static let defaultGridColor = SIMD4<Float>(0.18, 0.34, 0.46, 1.0)
+
+  /// Default linear RGBA color for the AR surface placement reticle ring and crosshairs.
+  public static let defaultReticleColor = SIMD4<Float>(0.13, 0.85, 0.68, 1.0)
+
+  /// Builds a flat ground-plane grid of thin quad lines on height `y` (meters).
+  public static func buildFloorGridGeometry(
+    y: Float = -0.96,
+    halfExtent: Float = 2.0,
+    divisions: Int = 8,
+    lineHalfWidth: Float = 0.008
+  ) -> XRGeneratedGeometry {
+    let safeDivisions = min(64, max(1, divisions))
+    let lineCount = (safeDivisions + 1) * 2
+    var positions = [Float]()
+    positions.reserveCapacity(lineCount * 4 * 3)
+    var normals = [Float]()
+    normals.reserveCapacity(lineCount * 4 * 3)
+    var indices = [UInt32]()
+    indices.reserveCapacity(lineCount * 6)
+    let step = (halfExtent * 2) / Float(safeDivisions)
+
+    func addQuad(_ x0: Float, _ z0: Float, _ x1: Float, _ z1: Float) {
+      let base = UInt32(positions.count / 3)
+      positions.append(contentsOf: [
+        x0, y, z0,
+        x1, y, z0,
+        x1, y, z1,
+        x0, y, z1,
+      ])
+      normals.append(contentsOf: [
+        0, 1, 0,
+        0, 1, 0,
+        0, 1, 0,
+        0, 1, 0,
+      ])
+      indices.append(contentsOf: [
+        base, base + 1, base + 2,
+        base, base + 2, base + 3,
+      ])
+    }
+
+    for i in 0...safeDivisions {
+      let coord = -halfExtent + Float(i) * step
+      addQuad(coord - lineHalfWidth, -halfExtent, coord + lineHalfWidth, halfExtent)
+      addQuad(-halfExtent, coord - lineHalfWidth, halfExtent, coord + lineHalfWidth)
+    }
+    return XRGeneratedGeometry(positions: positions, normals: normals, indices: indices)
+  }
+
+  /// Builds a circular AR surface placement reticle ring and center crosshairs on height `y` (meters).
+  public static func buildReticleGeometry(
+    y: Float = -0.95,
+    innerRadius: Float = 0.52,
+    outerRadius: Float = 0.60,
+    segments: Int = 48
+  ) -> XRGeneratedGeometry {
+    let safeSegments = min(128, max(8, segments))
+    let totalVertices = safeSegments * 2 + 8
+    var positions = [Float]()
+    positions.reserveCapacity(totalVertices * 3)
+    var normals = [Float]()
+    normals.reserveCapacity(totalVertices * 3)
+    var indices = [UInt32]()
+    indices.reserveCapacity(safeSegments * 6 + 12)
+
+    for s in 0..<safeSegments {
+      let angle = (2.0 * Float.pi * Float(s)) / Float(safeSegments)
+      let c = cos(angle)
+      let sn = sin(angle)
+      positions.append(contentsOf: [
+        c * innerRadius, y, sn * innerRadius,
+        c * outerRadius, y, sn * outerRadius,
+      ])
+      normals.append(contentsOf: [
+        0, 1, 0,
+        0, 1, 0,
+      ])
+      let next = (s + 1) % safeSegments
+      let i0 = UInt32(s * 2)
+      let i1 = UInt32(s * 2 + 1)
+      let i2 = UInt32(next * 2 + 1)
+      let i3 = UInt32(next * 2)
+      indices.append(contentsOf: [i0, i1, i2, i0, i2, i3])
+    }
+
+    let crossHalfLen: Float = 0.14
+    let crossHalfWidth: Float = 0.012
+    func addCrossBar(_ x0: Float, _ z0: Float, _ x1: Float, _ z1: Float) {
+      let base = UInt32(positions.count / 3)
+      positions.append(contentsOf: [
+        x0, y, z0,
+        x1, y, z0,
+        x1, y, z1,
+        x0, y, z1,
+      ])
+      normals.append(contentsOf: [
+        0, 1, 0,
+        0, 1, 0,
+        0, 1, 0,
+        0, 1, 0,
+      ])
+      indices.append(contentsOf: [
+        base, base + 1, base + 2,
+        base, base + 2, base + 3,
+      ])
+    }
+    addCrossBar(-crossHalfLen, -crossHalfWidth, crossHalfLen, crossHalfWidth)
+    addCrossBar(-crossHalfWidth, -crossHalfLen, crossHalfWidth, crossHalfLen)
+
+    return XRGeneratedGeometry(positions: positions, normals: normals, indices: indices)
+  }
+}

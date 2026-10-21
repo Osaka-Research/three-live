@@ -19,6 +19,9 @@
   import Foundation
   import QuickLook
   import UIKit
+  #if canImport(ARKit)
+    import ARKit
+  #endif
 
   /// Errors thrown while presenting AR Quick Look.
   public enum QuickLookHelperError: Error, LocalizedError {
@@ -67,6 +70,22 @@
 
     deinit {
       try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    /// Returns `true` when camera-based AR world-tracking placement is supported on this device,
+    /// or `false` on the iOS Simulator / unsupported hardware (so the caller can present an
+    /// in-app AR Surface Placement Preview via
+    /// `XRLiveRealityKitSession.setArSurfacePreviewEnabled(_:groundY:)`).
+    public nonisolated static var isARPlacementSupported: Bool {
+      #if targetEnvironment(simulator)
+        return false
+      #elseif os(iOS) && canImport(ARKit)
+        return ARWorldTrackingConfiguration.isSupported
+      #elseif os(visionOS)
+        return true
+      #else
+        return false
+      #endif
     }
 
     /// Presents Apple AR Quick Look directly from a procedural Three.js script.
