@@ -305,19 +305,6 @@ object SampleScenes {
             };
             scene.add(pillar);
           });
-
-          // Orbiting Spatial AI Depth Probe
-          const probe = new THREE.Mesh(
-            new THREE.SphereGeometry(0.14, 24, 24),
-            new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.15, metalness: 0.85 })
-          );
-          probe.name = 'AI_Depth_Probe';
-          probe.position.set(0.95, 0.45, 0);
-          probe.userData.xr = {
-            traits: ['grab'],
-            orbit: { target: [0, 0.1, 0], radius: 0.95, speed: 1.35, height: 0.35 }
-          };
-          scene.add(probe);
           """
             .trimIndent(),
       ),

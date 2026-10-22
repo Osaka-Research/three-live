@@ -364,18 +364,6 @@
             };
             scene.add(pillar);
           });
-
-          // Scanning Probe Orbiter
-          const probe = new THREE.Mesh(
-            new THREE.SphereGeometry(0.11, 20, 20),
-            new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.15, metalness: 0.85 })
-          );
-          probe.name = 'Depth_Scan_Probe';
-          probe.position.set(0, 0.55, 0);
-          probe.userData.xr = {
-            orbit: { target: [0, 0.45, 0], radius: 0.75, speed: 1.4, height: 0.1, faceCenter: true }
-          };
-          scene.add(probe);
           """,
         mode: .xrLive
       ),
