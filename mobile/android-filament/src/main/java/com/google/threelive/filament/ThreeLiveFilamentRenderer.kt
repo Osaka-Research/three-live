@@ -1270,6 +1270,17 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       return buf
     }
 
+    /**
+     * Computes the byte offsets for each of the 6 cubemap faces at mip [size] (`RGBA` `HALF` = 8
+     * bytes/texel).
+     */
+    internal fun studioCubemapFaceOffsets(size: Int): IntArray {
+      val s = size.coerceAtLeast(1)
+      val faceBytes = s * s * 8
+      return IntArray(6) { face -> face * faceBytes }
+    }
+
+    @Suppress("DEPRECATION")
     private fun createStudioReflectionCubemap(engine: Engine): Texture {
       val baseSize = STUDIO_CUBEMAP_SIZE
       val levels = STUDIO_CUBEMAP_LEVELS
@@ -1285,16 +1296,15 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
         val size = (baseSize shr level).coerceAtLeast(1)
         val roughness = if (levels > 1) level.toFloat() / (levels - 1).toFloat() else 0f
         val buf = buildStudioCubemapLevelBuffer(size, roughness)
+        // Use the cubemap faceOffsets overload (nSetImageCubemap): Filament's 3D region JNI
+        // wrapper (nSetImage3D) shifts `height >> level` a second time when computing the
+        // PixelBufferDescriptor byte size for `level > 0`, which triggers a `setImage:372`
+        // buffer-overflow precondition panic in FTexture::setImage.
         texture.setImage(
           engine,
           level,
-          0,
-          0,
-          0,
-          size,
-          size,
-          6,
           Texture.PixelBufferDescriptor(buf, Texture.Format.RGBA, Texture.Type.HALF),
+          studioCubemapFaceOffsets(size),
         )
       }
       return texture

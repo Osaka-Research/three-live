@@ -96,9 +96,17 @@ class ThreeLiveFilamentTest {
     assertEquals(0x3C00.toShort(), ThreeLiveFilamentRenderer.floatToHalf(1.0f))
     assertEquals(0x4000.toShort(), ThreeLiveFilamentRenderer.floatToHalf(2.0f))
 
-    // Studio cubemap buffer has 6 faces * size * size * 8 bytes.
-    val buf = ThreeLiveFilamentRenderer.buildStudioCubemapLevelBuffer(8, 0.15f)
-    assertEquals(6 * 8 * 8 * 8, buf.remaining())
+    // Studio cubemap buffer and contiguous face offsets across all 5 mip levels (32..2).
+    for (level in 0 until 5) {
+      val size = 32 shr level
+      val faceBytes = size * size * 8
+      val buf = ThreeLiveFilamentRenderer.buildStudioCubemapLevelBuffer(size, level / 4f)
+      assertEquals(6 * faceBytes, buf.remaining())
+      assertArrayEquals(
+        intArrayOf(0, faceBytes, 2 * faceBytes, 3 * faceBytes, 4 * faceBytes, 5 * faceBytes),
+        ThreeLiveFilamentRenderer.studioCubemapFaceOffsets(size),
+      )
+    }
 
     // GltfSceneIndex parses material baseColorFactor, metallicFactor, and roughnessFactor.
     val index =
