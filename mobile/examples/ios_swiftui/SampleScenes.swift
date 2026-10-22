@@ -225,7 +225,7 @@
 
     public static let xrLivePresets: [ScenePreset] = [
       ScenePreset(
-        name: "Ballpit Lab",
+        name: "Ballpit",
         description: "Room floor, tabletop anchor, and 14 dynamic grabbable ballpit spheres",
         script: """
           // Ballpit Lab: Room & Heightfield Physics
@@ -277,7 +277,7 @@
         mode: .xrLive
       ),
       ScenePreset(
-        name: "Spatial Workbench",
+        name: "Workbench",
         description:
           "6DoF grab, pinch-scale torus knot, capsule billboard gem, and dynamic orbiter",
         script: """
@@ -340,7 +340,7 @@
         mode: .xrLive
       ),
       ScenePreset(
-        name: "Gemini AI & Depth",
+        name: "Gemini AI",
         description: "Near, Mid, and Far depth reference pillars with 6DoF grab & scale traits",
         script: """
           // Gemini Spatial Perception & Depth Occlusion Scene

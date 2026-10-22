@@ -164,7 +164,7 @@ object SampleScenes {
   val XR_LIVE_PRESETS =
     listOf(
       ScenePreset(
-        name = "Ballpit Lab",
+        name = "Ballpit",
         description = "Room floor, tabletop anchor, and 14 dynamic grabbable ballpit spheres",
         mode = StudioMode.XR_LIVE,
         script =
@@ -218,7 +218,7 @@ object SampleScenes {
             .trimIndent(),
       ),
       ScenePreset(
-        name = "Spatial Workbench",
+        name = "Workbench",
         description =
           "6DoF grab, pinch-scale torus knot, capsule billboard gem, and dynamic orbiter",
         mode = StudioMode.XR_LIVE,
@@ -279,7 +279,7 @@ object SampleScenes {
             .trimIndent(),
       ),
       ScenePreset(
-        name = "Gemini AI & Depth",
+        name = "Gemini AI",
         description = "Near, Mid, and Far depth reference pillars with 6DoF grab & scale traits",
         mode = StudioMode.XR_LIVE,
         script =
