@@ -48,12 +48,17 @@ public enum GeminiLiveEndpoints {
   }
 
   /// Live endpoint for an ephemeral token minted by your backend (`access_token` query).
-  public static func ephemeralTokenURL(token: String, apiVersion: String = defaultAPIVersion) -> URL? {
-    guard !token.trimmingCharacters(in: .whitespaces).isEmpty, isValidVersion(apiVersion) else { return nil }
+  public static func ephemeralTokenURL(token: String, apiVersion: String = defaultAPIVersion)
+    -> URL?
+  {
+    guard !token.trimmingCharacters(in: .whitespaces).isEmpty, isValidVersion(apiVersion) else {
+      return nil
+    }
     var c = URLComponents()
     c.scheme = "wss"
     c.host = defaultHost
-    c.path = "/ws/google.ai.generativelanguage.\(apiVersion).GenerativeService.BidiGenerateContentConstrained"
+    c.path =
+      "/ws/google.ai.generativelanguage.\(apiVersion).GenerativeService.BidiGenerateContentConstrained"
     c.queryItems = [URLQueryItem(name: "access_token", value: token)]
     // URLComponents leaves "+" unescaped in queries; tokens are opaque, so escape it.
     c.percentEncodedQuery = c.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
@@ -68,7 +73,8 @@ public enum GeminiLiveEndpoints {
       var c = URLComponents()
       c.scheme = "wss"
       c.host = defaultHost
-      c.path = "/ws/google.ai.generativelanguage.\(apiVersion).GenerativeService.BidiGenerateContent"
+      c.path =
+        "/ws/google.ai.generativelanguage.\(apiVersion).GenerativeService.BidiGenerateContent"
       c.queryItems = [URLQueryItem(name: "key", value: apiKey)]
       return c.url
     #else
@@ -84,7 +90,8 @@ public enum GeminiLiveEndpoints {
 
 /// Default transport over `URLSessionWebSocketTask`. Server text and binary frames are parsed as
 /// JSON (the Live API sends JSON in binary frames).
-public final class URLSessionLiveTransport: NSObject, GeminiLiveTransport, URLSessionWebSocketDelegate,
+public final class URLSessionLiveTransport: NSObject, GeminiLiveTransport,
+  URLSessionWebSocketDelegate,
   @unchecked Sendable
 {
   public var onMessage: (([String: Any]) -> Void)?
@@ -155,7 +162,9 @@ public final class URLSessionLiveTransport: NSObject, GeminiLiveTransport, URLSe
         case .data(let d): data = d
         @unknown default: data = nil
         }
-        if let data = data, let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+        if let data = data,
+          let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
           self.onMessage?(obj)
         }
         self.receiveNext()
@@ -210,7 +219,8 @@ public final class TranscriptionManager: @unchecked Sendable {
   public func append(_ speaker: TranscriptSpeaker, _ fragment: String) -> TranscriptEvent {
     lock.lock()
     defer { lock.unlock() }
-    let next = String(((partial[speaker] ?? "") + fragment).suffix(XRGeminiLiveController.maxTextChars))
+    let next = String(
+      ((partial[speaker] ?? "") + fragment).suffix(XRGeminiLiveController.maxTextChars))
     partial[speaker] = next
     return TranscriptEvent(speaker: speaker, text: next, isFinal: false)
   }
@@ -221,7 +231,9 @@ public final class TranscriptionManager: @unchecked Sendable {
     defer { lock.unlock() }
     var out: [TranscriptEvent] = []
     for s in [TranscriptSpeaker.user, .model] {
-      if let t = partial[s], !t.isEmpty { out.append(TranscriptEvent(speaker: s, text: t, isFinal: true)) }
+      if let t = partial[s], !t.isEmpty {
+        out.append(TranscriptEvent(speaker: s, text: t, isFinal: true))
+      }
       partial[s] = ""
     }
     return out
@@ -242,7 +254,7 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   public static let maxTextChars = 4000
 
   /// Captures one JPEG frame and calls the completion once (with `nil` on failure).
-  public typealias FrameProvider = (@escaping (Data?) -> Void) -> Void
+  public typealias FrameProvider = (@escaping @Sendable (Data?) -> Void) -> Void
 
   public var onTranscript: ((TranscriptEvent) -> Void)?
   public var onInterrupted: (() -> Void)?
@@ -265,7 +277,10 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   private var captureInFlight = false
   private var turnHasOutputTranscription = false
 
-  public init(frameProvider: FrameProvider? = nil, audioSink: PcmAudioSink? = nil, callbackQueue: DispatchQueue = .main) {
+  public init(
+    frameProvider: FrameProvider? = nil, audioSink: PcmAudioSink? = nil,
+    callbackQueue: DispatchQueue = .main
+  ) {
     self.frameProvider = frameProvider
     self.audioSink = audioSink
     self.callbackQueue = callbackQueue
@@ -305,7 +320,9 @@ public final class XRGeminiLiveController: @unchecked Sendable {
       self.lock.unlock()
       if current { self.emit { $0.onDisconnected?() } }
     }
-    if let setup = detectObjects ? Self.withDetectionTool(setup) : setup { transport.send(["setup": setup]) }
+    if let setup = detectObjects ? Self.withDetectionTool(setup) : setup {
+      transport.send(["setup": setup])
+    }
     if streamFrames, frameProvider != nil {
       let interval = min(10, max(0.25, frameInterval.isFinite ? frameInterval : 1))
       let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
@@ -462,10 +479,14 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     guard var out = setup else { return nil }
     var tools = (out["tools"] as? [Any]) ?? []
     let declared = tools.contains { tool in
-      guard let decls = (tool as? [String: Any])?["functionDeclarations"] as? [Any] else { return false }
+      guard let decls = (tool as? [String: Any])?["functionDeclarations"] as? [Any] else {
+        return false
+      }
       return decls.contains { ($0 as? [String: Any])?["name"] as? String == reportObjectsTool }
     }
-    if !declared { tools.append(["functionDeclarations": [reportObjectsDeclaration]] as [String: Any]) }
+    if !declared {
+      tools.append(["functionDeclarations": [reportObjectsDeclaration]] as [String: Any])
+    }
     out["tools"] = tools
     return out
   }
@@ -480,7 +501,8 @@ public final class XRGeminiLiveController: @unchecked Sendable {
     guard let transport = t, let calls = toolCall["functionCalls"] as? [Any] else { return }
     var responses: [[String: Any]] = []
     for raw in calls.prefix(Self.maxToolCalls) {
-      guard let call = raw as? [String: Any], call["name"] as? String == Self.reportObjectsTool else { continue }
+      guard let call = raw as? [String: Any], call["name"] as? String == Self.reportObjectsTool
+      else { continue }
       let boxes = XRDetections.fromList((call["args"] as? [String: Any])?["objects"])
       if !boxes.isEmpty { emit { $0.onObjectsReported?(boxes) } }
       var response: [String: Any] = [
@@ -504,10 +526,13 @@ public final class XRGeminiLiveController: @unchecked Sendable {
   }
 
   /// Hold-to-ask prompt (port of `buildHoldToAskPrompt`).
-  public static func buildHoldToAskPrompt(meshName: String?, options: XRLiveHoldToAsk, transcript: String = "") -> String {
+  public static func buildHoldToAskPrompt(
+    meshName: String?, options: XRLiveHoldToAsk, transcript: String = ""
+  ) -> String {
     let name = String((meshName ?? "").prefix(256))
     let spoken = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-    let prompt = "The user is pointing at the 3D object \"\(name.isEmpty ? "object" : name)\". \(spoken.isEmpty ? options.prompt : spoken)"
+    let prompt =
+      "The user is pointing at the 3D object \"\(name.isEmpty ? "object" : name)\". \(spoken.isEmpty ? options.prompt : spoken)"
     return String(prompt.prefix(maxTextChars))
   }
 

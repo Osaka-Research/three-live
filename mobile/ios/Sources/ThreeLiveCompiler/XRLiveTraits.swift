@@ -187,8 +187,10 @@ public struct XRLiveLazyFollow: Codable, Sendable, Equatable {
     let m = (mode == "hand-left" || mode == "hand-right") ? mode : "head"
     let isHand = m != "head"
     self.mode = m
-    self.distance = Float(XRJSON.clampNum(distance.map { Double($0) }, 0.1, 10, isHand ? 0.15 : 1.0))
-    self.deadzoneDeg = Float(XRJSON.clampNum(deadzoneDeg.map { Double($0) }, 0, 90, isHand ? 0 : 15))
+    self.distance = Float(
+      XRJSON.clampNum(distance.map { Double($0) }, 0.1, 10, isHand ? 0.15 : 1.0))
+    self.deadzoneDeg = Float(
+      XRJSON.clampNum(deadzoneDeg.map { Double($0) }, 0, 90, isHand ? 0 : 15))
     self.stiffness = Float(XRJSON.clampNum(stiffness.map { Double($0) }, 0.5, 40, 6))
     self.height = Float(XRJSON.clampNum(height.map { Double($0) }, -2, 2, isHand ? 0.12 : -0.1))
     self.faceUser = faceUser
@@ -334,7 +336,9 @@ public struct XRLiveWorldUnderstanding: Codable, Sendable, Equatable {
   public var reticle: Bool
   public var objects: Bool
 
-  public init(planes: Bool = true, meshes: Bool = false, reticle: Bool = false, objects: Bool = false) {
+  public init(
+    planes: Bool = true, meshes: Bool = false, reticle: Bool = false, objects: Bool = false
+  ) {
     self.planes = planes
     self.meshes = meshes
     self.reticle = reticle
@@ -373,6 +377,8 @@ public struct XRLiveScaleRange: Codable, Sendable, Equatable {
 public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   /// `"1-hand"` or `"2-hand"`.
   public var grab: String?
+  /// Whether the node is grabbable (`grab != nil`).
+  public var grabbable: Bool { grab != nil }
   public var scale: XRLiveScaleRange?
   /// `"capsule"`, `"cylindrical"` or `"spherical"`.
   public var billboard: String?
@@ -604,7 +610,9 @@ public enum XRLiveTraitParser {
       return out.isEmpty ? nil : out
     }
     var r: [String: Any] = [:]
-    for key in ["grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "pointerEvents"] {
+    for key in [
+      "grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "pointerEvents",
+    ] {
       if let v = d[key] { r[key] = v }
     }
     if let s = gather("scale") { r["scale"] = s }

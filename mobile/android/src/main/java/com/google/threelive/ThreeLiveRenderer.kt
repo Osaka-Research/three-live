@@ -53,6 +53,25 @@ object ThreeLiveRenderers {
   }
 
   /** The registered factory, or `null` when the app installed no renderer. */
+  @JvmStatic fun current(): ThreeLiveRendererFactory? = factory
+
+  /**
+   * Installs the default Filament renderer (`com.google.threelive.filament.ThreeLiveFilament`) if
+   * no renderer is currently registered and the `com.google.threelive:filament` artifact is on the
+   * runtime classpath. Returns the registered factory, or `null` if none is available.
+   */
   @JvmStatic
-  fun current(): ThreeLiveRendererFactory? = factory
+  fun installDefault(): ThreeLiveRendererFactory? {
+    factory?.let {
+      return it
+    }
+    try {
+      Class.forName("com.google.threelive.filament.ThreeLiveFilament")
+        .getMethod("install")
+        .invoke(null)
+    } catch (_: ReflectiveOperationException) {
+      // Optional filament renderer artifact is not on the runtime classpath.
+    }
+    return factory
+  }
 }

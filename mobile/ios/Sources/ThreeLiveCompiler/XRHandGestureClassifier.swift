@@ -296,7 +296,7 @@ extension XRHandJointSource {
 /// Process-wide registry for the `XRHandJointSource` used when `xrHands != "none"`.
 public enum XRHandJointSources {
   private static let lock = NSLock()
-  private static var source: XRHandJointSource?
+  nonisolated(unsafe) private static var source: XRHandJointSource?
 
   /// Registers `value` (replacing any previous source); `nil` unregisters.
   public static func register(_ value: XRHandJointSource?) {

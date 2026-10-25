@@ -45,7 +45,7 @@ public enum ThreeCompilerError: Error, LocalizedError, Equatable {
 /// for iOS, visionOS, tvOS, and macOS.
 public enum ThreeCompiler {
 
-  /// Serial queue used to run the blocking native compiler.
+  /// Dedicated OS thread with an 8 MiB stack used to run the blocking native compiler.
   ///
   /// The native compiler is CPU-bound and blocks for the duration of a compile. It must
   /// therefore NOT run on Swift Concurrency's global concurrent executor (the cooperative
@@ -53,14 +53,89 @@ public enum ThreeCompiler {
   /// always making forward progress. Blocking those threads starves unrelated `async` work
   /// in the host application.
   ///
-  /// Note that `Task.detached` does *not* solve this: detached tasks also run on the
-  /// cooperative pool. A dedicated queue is required. Using a *serial* queue additionally
-  /// bounds concurrency to one in-flight compile, which is the correct policy for an
-  /// operation that saturates a core.
-  private static let compileQueue = DispatchQueue(
-    label: "com.google.threelive.compile",
-    qos: .userInitiated
-  )
+  /// In addition, Darwin's `DispatchQueue` and Swift Concurrency worker threads only
+  /// allocate a 512 KiB stack, which is too small for the Rust Boa JavaScript parser and
+  /// evaluator (especially in unoptimized debug/test builds), and `three_live_compiler`
+  /// caches the warmed `ThreeEngine` in thread-local storage (`THREAD_LOCAL_ENGINE`).
+  /// Pinning all compiles to a single persistent 8 MiB worker thread prevents stack-guard
+  /// faults and ensures the thread-local Boa VM is initialized only once.
+  private final class CompilerWorkerThread: @unchecked Sendable {
+    static let shared = CompilerWorkerThread()
+
+    private let condition = NSCondition()
+    private var queue: [@Sendable () -> Void] = []
+    private var workerThread: Thread?
+
+    private init() {
+      let thread = Thread { [weak self] in
+        self?.runLoop()
+      }
+      thread.name = "com.google.threelive.compile"
+      thread.qualityOfService = .userInitiated
+      thread.stackSize = 8 * 1024 * 1024
+      self.workerThread = thread
+      thread.start()
+    }
+
+    var isCurrentThread: Bool {
+      Thread.current === workerThread
+    }
+
+    func enqueue(_ job: @escaping @Sendable () -> Void) {
+      condition.lock()
+      queue.append(job)
+      condition.signal()
+      condition.unlock()
+    }
+
+    func performSync<T: Sendable>(_ work: @escaping @Sendable () throws -> T) throws -> T {
+      if isCurrentThread {
+        return try work()
+      }
+      let box = SyncResultBox<T>()
+      enqueue {
+        box.complete(with: Result(catching: work))
+      }
+      return try box.wait()
+    }
+
+    private func runLoop() {
+      while true {
+        let job: @Sendable () -> Void
+        condition.lock()
+        while queue.isEmpty {
+          condition.wait()
+        }
+        job = queue.removeFirst()
+        condition.unlock()
+        autoreleasepool {
+          job()
+        }
+      }
+    }
+  }
+
+  private final class SyncResultBox<T>: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var result: Result<T, Error>?
+
+    func complete(with value: Result<T, Error>) {
+      condition.lock()
+      result = value
+      condition.signal()
+      condition.unlock()
+    }
+
+    func wait() throws -> T {
+      condition.lock()
+      while result == nil {
+        condition.wait()
+      }
+      let r = result!
+      condition.unlock()
+      return try r.get()
+    }
+  }
 
   // MARK: - Asynchronous entry points
 
@@ -114,10 +189,12 @@ public enum ThreeCompiler {
   /// - Returns: A `Data` instance containing the binary `.glb` wire bytes.
   public static func compileSync(_ script: String) throws -> Data {
     let cScript = try nullTerminatedUTF8(script)
-    let result = cScript.withUnsafeBufferPointer { ptr in
-      three_live_compile(ptr.baseAddress)
+    return try CompilerWorkerThread.shared.performSync {
+      let result = cScript.withUnsafeBufferPointer { ptr in
+        three_live_compile(ptr.baseAddress)
+      }
+      return try takeOwnership(of: result, operation: "compile")
     }
-    return try takeOwnership(of: result, operation: "compile")
   }
 
   /// Convenience alias for `compileSync(_:)` matching `compileUSDZSync(_:)`.
@@ -131,10 +208,12 @@ public enum ThreeCompiler {
   /// - Returns: A `Data` instance containing the 64-byte aligned binary `.usdz` archive.
   public static func compileUSDZSync(_ script: String) throws -> Data {
     let cScript = try nullTerminatedUTF8(script)
-    let result = cScript.withUnsafeBufferPointer { ptr in
-      three_live_compile_usdz(ptr.baseAddress)
+    return try CompilerWorkerThread.shared.performSync {
+      let result = cScript.withUnsafeBufferPointer { ptr in
+        three_live_compile_usdz(ptr.baseAddress)
+      }
+      return try takeOwnership(of: result, operation: "compileUSDZ")
     }
-    return try takeOwnership(of: result, operation: "compileUSDZ")
   }
 
   /// Synchronous GLB to USDZ transcoding entry point. Safe to call from background threads.
@@ -149,23 +228,25 @@ public enum ThreeCompiler {
       throw ThreeCompilerError.compilationFailed("Null or empty GLB data provided")
     }
 
-    let result = glbData.withUnsafeBytes { rawBuffer -> ThreeLiveBuffer in
-      guard let baseAddr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-        return ThreeLiveBuffer(data: nil, len: 0, capacity: 0, error_msg: nil)
+    return try CompilerWorkerThread.shared.performSync {
+      let result = glbData.withUnsafeBytes { rawBuffer -> ThreeLiveBuffer in
+        guard let baseAddr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+          return ThreeLiveBuffer(data: nil, len: 0, capacity: 0, error_msg: nil)
+        }
+        return three_live_glb_to_usdz(baseAddr, rawBuffer.count)
       }
-      return three_live_glb_to_usdz(baseAddr, rawBuffer.count)
+      return try takeOwnership(of: result, operation: "glbToUSDZ")
     }
-    return try takeOwnership(of: result, operation: "glbToUSDZ")
   }
 
   // MARK: - Private helpers
 
-  /// Runs blocking native work on a dedicated queue rather than the cooperative thread pool.
-  private static func offloadFromCooperativePool<T>(
-    _ work: @escaping () throws -> T
+  /// Runs blocking native work on the dedicated 8 MiB compiler thread rather than the cooperative thread pool.
+  private static func offloadFromCooperativePool<T: Sendable>(
+    _ work: @escaping @Sendable () throws -> T
   ) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in
-      compileQueue.async {
+      CompilerWorkerThread.shared.enqueue {
         continuation.resume(with: Result(catching: work))
       }
     }

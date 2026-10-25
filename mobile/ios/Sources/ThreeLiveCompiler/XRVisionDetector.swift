@@ -30,7 +30,7 @@ public protocol XRObjectDetector: AnyObject, Sendable {
 /// coordinate conversion helpers shared with `XRVisionDetector`.
 public enum XRObjectDetectors {
   private static let lock = NSLock()
-  private static var detector: XRObjectDetector?
+  nonisolated(unsafe) private static var detector: XRObjectDetector?
 
   /// Registers `value` (replacing any previous detector); `nil` unregisters.
   public static func register(_ value: XRObjectDetector?) {

@@ -697,7 +697,8 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
 
     let normalized = try XCTUnwrap(WorldUnderstanding.normalizeBox([100, 200, 300, 400]))
     XCTAssertEqual(normalized.y, 0.2, accuracy: 1e-6, "Gemini 0..1000 boxes normalized")
-    XCTAssertEqual(WorldUnderstanding.normalizeBox([0.5, 0.1, 0.2, 0.3])?.x ?? 0, 0.2, accuracy: 1e-6)
+    XCTAssertEqual(
+      WorldUnderstanding.normalizeBox([0.5, 0.1, 0.2, 0.3])?.x ?? 0, 0.2, accuracy: 1e-6)
     XCTAssertNil(WorldUnderstanding.normalizeBox([.nan, 0, 1, 1]))
 
     let center = try XCTUnwrap(
@@ -1051,13 +1052,22 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertNil(SplatParser.resolveSplatURL("javascript:alert(1)"))
     XCTAssertNil(SplatParser.resolveSplatURL("data:application/octet-stream;base64,AA"))
     XCTAssertNil(SplatParser.resolveSplatURL("http://evil.com/x.splat"))
-    XCTAssertEqual(SplatParser.resolveSplatURL("http://localhost:8080/x.spz")?.absoluteString, "http://localhost:8080/x.spz")
     XCTAssertEqual(
-      SplatParser.resolveSplatURL("/scans/room.spz", baseURL: "https://site.test/app/")?.absoluteString,
+      SplatParser.resolveSplatURL("http://localhost:8080/x.spz")?.absoluteString,
+      "http://localhost:8080/x.spz")
+    XCTAssertEqual(
+      SplatParser.resolveSplatURL("/scans/room.spz", baseURL: "https://site.test/app/")?
+        .absoluteString,
       "https://site.test/scans/room.spz")
-    XCTAssertNil(SplatParser.resolveSplatURL("https://cdn.test/x.spz", baseURL: "https://site.test/", allowCrossOrigin: false))
-    XCTAssertNotNil(SplatParser.resolveSplatURL("https://site.test/x.spz", baseURL: "https://site.test/", allowCrossOrigin: false))
-    XCTAssertNil(SplatParser.resolveSplatURL("//evil.com/x.spz", baseURL: "https://site.test/", allowCrossOrigin: true))
+    XCTAssertNil(
+      SplatParser.resolveSplatURL(
+        "https://cdn.test/x.spz", baseURL: "https://site.test/", allowCrossOrigin: false))
+    XCTAssertNotNil(
+      SplatParser.resolveSplatURL(
+        "https://site.test/x.spz", baseURL: "https://site.test/", allowCrossOrigin: false))
+    XCTAssertNil(
+      SplatParser.resolveSplatURL(
+        "//evil.com/x.spz", baseURL: "https://site.test/", allowCrossOrigin: true))
 
     // Deterministic stride downsampling.
     var ten = SplatData(count: 10)
@@ -1077,11 +1087,17 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
 
     // Resort threshold and billboard quad builder.
     let id = matrix_identity_float4x4
-    XCTAssertTrue(SplatParser.shouldResort(lastCameraWorld: nil, cameraWorld: id, lastNodeWorld: nil, nodeWorld: id))
-    XCTAssertFalse(SplatParser.shouldResort(lastCameraWorld: id, cameraWorld: id, lastNodeWorld: id, nodeWorld: id))
+    XCTAssertTrue(
+      SplatParser.shouldResort(
+        lastCameraWorld: nil, cameraWorld: id, lastNodeWorld: nil, nodeWorld: id))
+    XCTAssertFalse(
+      SplatParser.shouldResort(
+        lastCameraWorld: id, cameraWorld: id, lastNodeWorld: id, nodeWorld: id))
     var moved = id
     moved.columns.3.x = 0.08
-    XCTAssertTrue(SplatParser.shouldResort(lastCameraWorld: id, cameraWorld: moved, lastNodeWorld: id, nodeWorld: id))
+    XCTAssertTrue(
+      SplatParser.shouldResort(
+        lastCameraWorld: id, cameraWorld: moved, lastNodeWorld: id, nodeWorld: id))
     let quads = SplatParser.buildSplatQuads(sampled, order: [0, 1], nodeWorld: id, cameraWorld: id)
     XCTAssertEqual(quads.positions.count, 8)
     XCTAssertEqual(quads.uvs.count, 8)
@@ -1108,13 +1124,35 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   }
 
   func testMatchesCrossPlatformGoldenSuite() throws {
-    let goldenDir = URL(fileURLWithPath: #filePath)
+    let spmGoldenDir = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .appendingPathComponent("testdata/golden")
+    var candidates: [URL] = [spmGoldenDir]
+    if let srcDir = ProcessInfo.processInfo.environment["TEST_SRCDIR"] {
+      let base = URL(fileURLWithPath: srcDir)
+      candidates.append(
+        base.appendingPathComponent(
+          "google3/experimental/users/binghamj/three_live/testdata/golden")
+      )
+      candidates.append(
+        base.appendingPathComponent("_main/experimental/users/binghamj/three_live/testdata/golden")
+      )
+      candidates.append(
+        base.appendingPathComponent("experimental/users/binghamj/three_live/testdata/golden")
+      )
+    }
+    if let resourceURL = Bundle(for: Self.self).resourceURL {
+      candidates.append(resourceURL.appendingPathComponent("testdata/golden"))
+      candidates.append(resourceURL)
+    }
+    let goldenDir =
+      candidates.first {
+        FileManager.default.fileExists(atPath: $0.appendingPathComponent("scene.glb.json").path)
+      } ?? spmGoldenDir
     let sceneData = try Data(contentsOf: goldenDir.appendingPathComponent("scene.glb.json"))
     let scriptData = try Data(contentsOf: goldenDir.appendingPathComponent("script.json"))
     let expectedData = try Data(contentsOf: goldenDir.appendingPathComponent("expected.json"))
@@ -1204,7 +1242,8 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         )
         s.setNodeTransform(
           nodeIdx,
-          XRNodeTransform(translation: tr.translation, rotation: updated.rotation, scale: updated.scale)
+          XRNodeTransform(
+            translation: tr.translation, rotation: updated.rotation, scale: updated.scale)
         )
       case "autoRotate":
         let deg = (step["angleDeg"] as? NSNumber)?.floatValue ?? 0
@@ -1242,7 +1281,8 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       let er = floats(en["rotation"])
       let es = floats(en["scale"])
       let ew = floats(en["worldPosition"])
-      assertNear(tr.translation, SIMD3<Float>(et[0], et[1], et[2]), accuracy: 1e-4, "node[\(i)] translation")
+      assertNear(
+        tr.translation, SIMD3<Float>(et[0], et[1], et[2]), accuracy: 1e-4, "node[\(i)] translation")
       let q = tr.rotation.vector
       let qSame =
         abs(q.x - er[0]) <= 1e-4 && abs(q.y - er[1]) <= 1e-4 && abs(q.z - er[2]) <= 1e-4
@@ -1270,8 +1310,10 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(mat0.baseColorFactor.y, ebc[1], accuracy: 1e-4)
     XCTAssertEqual(mat0.baseColorFactor.z, ebc[2], accuracy: 1e-4)
     XCTAssertEqual(mat0.baseColorFactor.w, ebc[3], accuracy: 1e-4)
-    XCTAssertEqual(mat0.metallicFactor, (em0["metallicFactor"] as? NSNumber)?.floatValue ?? 0, accuracy: 1e-4)
-    XCTAssertEqual(mat0.roughnessFactor, (em0["roughnessFactor"] as? NSNumber)?.floatValue ?? 0, accuracy: 1e-4)
+    XCTAssertEqual(
+      mat0.metallicFactor, (em0["metallicFactor"] as? NSNumber)?.floatValue ?? 0, accuracy: 1e-4)
+    XCTAssertEqual(
+      mat0.roughnessFactor, (em0["roughnessFactor"] as? NSNumber)?.floatValue ?? 0, accuracy: 1e-4)
 
     let expectedEvents = try XCTUnwrap(expected["events"] as? [[String: Any]])
     XCTAssertEqual(r.events.count, expectedEvents.count)
@@ -1360,7 +1402,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   }
 
   func testArSurfaceGeometryAndSceneMatrixAndLocalBounds() {
-    let grid = XRArSurfaceGeometry.buildFloorGridGeometry(groundY: -0.95)
+    let grid = XRArSurfaceGeometry.buildFloorGridGeometry(y: -0.95)
     XCTAssertFalse(grid.positions.isEmpty)
     XCTAssertEqual(grid.positions.count, grid.normals.count)
     XCTAssertEqual(grid.indices.count % 3, 0)
@@ -1369,7 +1411,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       XCTAssertLessThan(idx, vCount)
     }
 
-    let reticle = XRArSurfaceGeometry.buildReticleGeometry(groundY: -0.95)
+    let reticle = XRArSurfaceGeometry.buildReticleGeometry(y: -0.95)
     XCTAssertFalse(reticle.positions.isEmpty)
     XCTAssertEqual(reticle.positions.count, reticle.normals.count)
     XCTAssertEqual(reticle.indices.count % 3, 0)
