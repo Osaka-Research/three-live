@@ -73,9 +73,9 @@ import java.util.concurrent.Executors
  * [ThreeLiveRenderer] backed by Filament and gltfio.
  *
  * Renders the loaded GLB with an orbit camera matching the web viewer, maps glTF nodes to gltfio
- * entities for runtime transform / visibility / material changes, plays glTF animations, picks
- * with `View.pick`, and draws dynamic meshes for XR Blocks features. Every method must be called on
- * the main thread (Filament is not thread-safe).
+ * entities for runtime transform / visibility / material changes, plays glTF animations, picks with
+ * `View.pick`, and draws dynamic meshes for XR Blocks features. Every method must be called on the
+ * main thread (Filament is not thread-safe).
  */
 class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
@@ -145,7 +145,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   private var pendingCapture: Pair<Int, (CapturedFrame?) -> Unit>? = null
   private var captureInFlight = false
-  private val encoder = Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-capture").apply { isDaemon = true } }
+  private val encoder = Executors.newSingleThreadExecutor { r ->
+    Thread(r, "three-live-capture").apply { isDaemon = true }
+  }
   private val cameraWorld = FloatArray(16)
   private val projScratch = DoubleArray(16)
   private val eye = DoubleArray(3)
@@ -171,9 +173,7 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     filamentView.camera = camera
     filamentView.scene = scene
     colorGrading =
-      ColorGrading.Builder()
-        .toneMapper(ToneMapper.PBRNeutralToneMapper())
-        .build(engine)
+      ColorGrading.Builder().toneMapper(ToneMapper.PBRNeutralToneMapper()).build(engine)
     filamentView.colorGrading = colorGrading
     setClearColor(null)
 
@@ -215,7 +215,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   @SuppressLint("ClickableViewAccessibility")
   override fun createView(context: Context): View {
-    surfaceView?.let { return it }
+    surfaceView?.let {
+      return it
+    }
     val sv = SurfaceView(context)
     sv.holder.addCallback(
       object : SurfaceHolder.Callback {
@@ -286,21 +288,22 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     if (disposed) return
     // sRGB #0B1220 by default, Web's dark studio backdrop.
     val srgb = rgba?.takeIf { it.size >= 3 } ?: floatArrayOf(0.0431f, 0.0706f, 0.1255f, 1f)
+    val linearRgb = srgbToPbrNeutralClearLinear(srgb[0], srgb[1], srgb[2])
     renderer.clearOptions =
       Renderer.ClearOptions().apply {
         clear = true
-        // Linear, so the post-processed output matches the sRGB color.
+        // Pre-tonemapped linear HDR so Filament's PBRNeutralToneMapper + sRGB OETF outputs `srgb`.
         clearColor =
-          floatArrayOf(
-            srgbToLinear(srgb[0]),
-            srgbToLinear(srgb[1]),
-            srgbToLinear(srgb[2]),
-            srgb.getOrElse(3) { 1f },
-          )
+          floatArrayOf(linearRgb[0], linearRgb[1], linearRgb[2], srgb.getOrElse(3) { 1f })
       }
   }
 
-  override fun setNodeTransform(nodeIndex: Int, translation: FloatArray, rotation: FloatArray, scale: FloatArray) {
+  override fun setNodeTransform(
+    nodeIndex: Int,
+    translation: FloatArray,
+    rotation: FloatArray,
+    scale: FloatArray,
+  ) {
     val entity = nodeEntities.getOrElse(nodeIndex) { 0 }
     if (entity == 0) return
     val tm = engine.transformManager
@@ -380,7 +383,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     playingAnimation = null
   }
 
-  override fun addDynamicMesh(positions: FloatArray, normals: FloatArray?, indices: IntArray, color: FloatArray): Int {
+  override fun addDynamicMesh(
+    positions: FloatArray,
+    normals: FloatArray?,
+    indices: IntArray,
+    color: FloatArray,
+  ): Int {
     if (disposed) return -1
     val material = dynamicMaterial() ?: return -1
     val mi = MaterialInstance.duplicate(material, "three-live-dynamic")
@@ -398,7 +406,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     return id
   }
 
-  override fun updateDynamicMesh(meshId: Int, positions: FloatArray, normals: FloatArray?, indices: IntArray) {
+  override fun updateDynamicMesh(
+    meshId: Int,
+    positions: FloatArray,
+    normals: FloatArray?,
+    indices: IntArray,
+  ) {
     val mesh = dynamicMeshes[meshId] ?: return
     uploadGeometry(mesh, positions, indices, create = false)
   }
@@ -467,7 +480,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       existingIb.setBuffer(engine, ibuf)
       return
     }
-    val ib = IndexBuffer.Builder().indexCount(indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT).build(engine)
+    val ib =
+      IndexBuffer.Builder()
+        .indexCount(indexCount)
+        .bufferType(IndexBuffer.Builder.IndexType.UINT)
+        .build(engine)
     ib.setBuffer(engine, ibuf)
     val rm = engine.renderableManager
     val ri = rm.getInstance(mesh.entity)
@@ -628,16 +645,28 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     }
   }
 
-  /** Reads back the frame just rendered (inside beginFrame / endFrame) and encodes it off-thread. */
+  /**
+   * Reads back the frame just rendered (inside beginFrame / endFrame) and encodes it off-thread.
+   */
   private fun readFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
     val w = viewportWidth
     val h = viewportHeight
     val world = cameraWorld.copyOf()
-    val proj = camera.getProjectionMatrix(DoubleArray(16)).let { m -> FloatArray(16) { m[it].toFloat() } }
+    val proj =
+      camera.getProjectionMatrix(DoubleArray(16)).let { m -> FloatArray(16) { m[it].toFloat() } }
     val pixels = ByteBuffer.allocateDirect(w * h * 4)
     captureInFlight = true
     val descriptor =
-      Texture.PixelBufferDescriptor(pixels, Texture.Format.RGBA, Texture.Type.UBYTE, 1, 0, 0, w, mainHandler) {
+      Texture.PixelBufferDescriptor(
+        pixels,
+        Texture.Format.RGBA,
+        Texture.Type.UBYTE,
+        1,
+        0,
+        0,
+        w,
+        mainHandler,
+      ) {
         captureInFlight = false
         encoder.execute { callback(encodeJpeg(pixels, w, h, maxEdge, world, proj)) }
       }
@@ -668,7 +697,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     animator.applyAnimation(i, t.toFloat())
   }
 
-  // ---- Node mapping and picking ------------------------------------------------------------------
+  // ---- Node mapping and picking
+  // ------------------------------------------------------------------
 
   private fun mapNodes(loaded: FilamentAsset, index: GltfSceneIndex) {
     val tm = engine.transformManager
@@ -695,7 +725,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val instanceRoot = loaded.instance?.root ?: 0
     val instanceKids = if (instanceRoot != 0) childrenOf(instanceRoot) else IntArray(0)
     val rootKids = if (instanceKids.isNotEmpty()) instanceKids else childrenOf(loaded.root)
-    nodeEntities = index.matchEntities(rootKids, childrenOf, { nameByEntity[it] ?: loaded.getName(it) })
+    nodeEntities =
+      index.matchEntities(rootKids, childrenOf, { nameByEntity[it] ?: loaded.getName(it) })
     for (node in 0 until index.nodeCount) {
       if (nodeEntities[node] == 0) {
         val name = index.nodeNames[node]
@@ -708,7 +739,8 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     for ((node, e) in nodeEntities.withIndex()) if (e != 0) entityToNode[e] = node
 
     val rm = engine.renderableManager
-    val lists = Array(MAX_MATERIALS.coerceAtMost(materialCountOf(index))) { ArrayList<MaterialInstance>() }
+    val lists =
+      Array(MAX_MATERIALS.coerceAtMost(materialCountOf(index))) { ArrayList<MaterialInstance>() }
     for (node in 0 until index.nodeCount) {
       val ri = rm.getInstance(nodeEntities[node].takeIf { it != 0 } ?: continue)
       if (ri == 0) continue
@@ -746,7 +778,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     var e = entity
     var depth = 0
     while (e != 0 && depth < MAX_DEPTH) {
-      entityToNode[e]?.let { return it }
+      entityToNode[e]?.let {
+        return it
+      }
       val ti = tm.getInstance(e)
       if (ti == 0) return -1
       e = tm.getParent(ti)
@@ -766,7 +800,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     filamentView.pick(x, y, mainHandler) { result ->
       if (!disposed) {
         val node = nodeOfEntity(result.renderable)
-        onResult(if (node < 0) null else ThreeLivePick(node, hitPointOnBounds(xPx, yPx, result.renderable)))
+        onResult(
+          if (node < 0) null else ThreeLivePick(node, hitPointOnBounds(xPx, yPx, result.renderable))
+        )
       }
     }
   }
@@ -778,7 +814,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     ray(xPx, yPx, origin, dir)
     val box = worldBounds(entity) ?: return null
     val t = rayBoxEntry(origin, dir, box) ?: return null
-    return floatArrayOf((origin[0] + dir[0] * t).toFloat(), (origin[1] + dir[1] * t).toFloat(), (origin[2] + dir[2] * t).toFloat())
+    return floatArrayOf(
+      (origin[0] + dir[0] * t).toFloat(),
+      (origin[1] + dir[1] * t).toFloat(),
+      (origin[2] + dir[2] * t).toFloat(),
+    )
   }
 
   /** Synchronous approximate raycast against renderable world bounds (for pointer capture). */
@@ -796,7 +836,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     if (bestNode < 0) return null
     return ThreeLivePick(
       bestNode,
-      floatArrayOf((origin[0] + dir[0] * best).toFloat(), (origin[1] + dir[1] * best).toFloat(), (origin[2] + dir[2] * best).toFloat()),
+      floatArrayOf(
+        (origin[0] + dir[0] * best).toFloat(),
+        (origin[1] + dir[1] * best).toFloat(),
+        (origin[2] + dir[2] * best).toFloat(),
+      ),
     )
   }
 
@@ -812,7 +856,15 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val world = tm.getWorldTransform(ti, FloatArray(16))
     val c = box.center
     val h = box.halfExtent
-    val out = doubleArrayOf(Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE)
+    val out =
+      doubleArrayOf(
+        Double.MAX_VALUE,
+        Double.MAX_VALUE,
+        Double.MAX_VALUE,
+        -Double.MAX_VALUE,
+        -Double.MAX_VALUE,
+        -Double.MAX_VALUE,
+      )
     for (corner in 0 until 8) {
       val lx = c[0] + if (corner and 1 == 0) -h[0] else h[0]
       val ly = c[1] + if (corner and 2 == 0) -h[1] else h[1]
@@ -851,7 +903,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
    * a one-triangle template asset so every sampler and parameter is initialized by gltfio.
    */
   private fun dynamicMaterial(): MaterialInstance? {
-    templateMaterial?.let { return it }
+    templateMaterial?.let {
+      return it
+    }
     val template = assetLoader.createAsset(DynamicMeshTemplate.glb()) ?: return null
     resourceLoader.loadResources(template)
     template.releaseSourceData()
@@ -862,11 +916,14 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   /**
    * Unlit, alpha-blended material for Gaussian splats. Loads the compiled `materials/splat.filamat`
-   * GPU billboard material when packaged in assets, falling back to `DynamicMeshTemplate.splatGlb()`
+   * GPU billboard material when packaged in assets, falling back to
+   * `DynamicMeshTemplate.splatGlb()`
    * + a 64x64 radial Gaussian falloff `baseColorMap` texture otherwise.
    */
   private fun splatMaterial(): MaterialInstance? {
-    splatTemplateMaterial?.let { return it }
+    splatTemplateMaterial?.let {
+      return it
+    }
     if (hasFilamatAsset) {
       try {
         val bytes = appContext.assets.open(SPLAT_FILAMAT_ASSET).use { it.readBytes() }
@@ -904,7 +961,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     tex.setImage(
       engine,
       0,
-      Texture.PixelBufferDescriptor(SplatParser.gaussianFalloffRgba(texSize), Texture.Format.RGBA, Texture.Type.UBYTE),
+      Texture.PixelBufferDescriptor(
+        SplatParser.gaussianFalloffRgba(texSize),
+        Texture.Format.RGBA,
+        Texture.Type.UBYTE,
+      ),
     )
     if (mi.material.hasParameter("baseColorMap")) {
       val sampler =
@@ -940,7 +1001,13 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       VertexBuffer.Builder()
         .vertexCount(vertexCount)
         .bufferCount(3)
-        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+        .attribute(
+          VertexBuffer.VertexAttribute.POSITION,
+          0,
+          VertexBuffer.AttributeType.FLOAT3,
+          0,
+          12,
+        )
         .attribute(VertexBuffer.VertexAttribute.UV0, 1, VertexBuffer.AttributeType.FLOAT2, 0, 8)
         .attribute(VertexBuffer.VertexAttribute.COLOR, 2, VertexBuffer.AttributeType.UBYTE4, 0, 4)
         .normalized(VertexBuffer.VertexAttribute.COLOR)
@@ -950,7 +1017,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val cbuf = ByteBuffer.allocateDirect(vertexCount * 4).order(ByteOrder.nativeOrder())
     cbuf.put(colors, 0, vertexCount * 4).rewind()
     vb.setBufferAt(engine, 2, cbuf)
-    val ib = IndexBuffer.Builder().indexCount(indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT).build(engine)
+    val ib =
+      IndexBuffer.Builder()
+        .indexCount(indexCount)
+        .bufferType(IndexBuffer.Builder.IndexType.UINT)
+        .build(engine)
     val ibuf = ByteBuffer.allocateDirect(indexCount * 4).order(ByteOrder.nativeOrder())
     ibuf.asIntBuffer().put(indices, 0, indexCount)
     ib.setBuffer(engine, ibuf)
@@ -979,7 +1050,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     return true
   }
 
-  private fun uploadGeometry(mesh: DynamicMesh, positions: FloatArray, indices: IntArray, create: Boolean): Boolean {
+  private fun uploadGeometry(
+    mesh: DynamicMesh,
+    positions: FloatArray,
+    indices: IntArray,
+    create: Boolean,
+  ): Boolean {
     val vertexCount = positions.size / 3
     val indexCount = indices.size - indices.size % 3
     if (vertexCount == 0 || indexCount == 0 || vertexCount > MAX_DYNAMIC_VERTICES) return false
@@ -989,14 +1065,24 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       VertexBuffer.Builder()
         .vertexCount(vertexCount)
         .bufferCount(3)
-        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+        .attribute(
+          VertexBuffer.VertexAttribute.POSITION,
+          0,
+          VertexBuffer.AttributeType.FLOAT3,
+          0,
+          12,
+        )
         .attribute(VertexBuffer.VertexAttribute.UV0, 1, VertexBuffer.AttributeType.FLOAT2, 0, 8)
         .attribute(VertexBuffer.VertexAttribute.COLOR, 2, VertexBuffer.AttributeType.FLOAT4, 0, 16)
         .build(engine)
     vb.setBufferAt(engine, 0, floatBuffer(positions, vertexCount * 3))
     vb.setBufferAt(engine, 1, floatBuffer(FloatArray(vertexCount * 2), vertexCount * 2))
     vb.setBufferAt(engine, 2, floatBuffer(FloatArray(vertexCount * 4) { 1f }, vertexCount * 4))
-    val ib = IndexBuffer.Builder().indexCount(indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT).build(engine)
+    val ib =
+      IndexBuffer.Builder()
+        .indexCount(indexCount)
+        .bufferType(IndexBuffer.Builder.IndexType.UINT)
+        .build(engine)
     val ibuf = ByteBuffer.allocateDirect(indexCount * 4).order(ByteOrder.nativeOrder())
     ibuf.asIntBuffer().put(indices, 0, indexCount)
     ib.setBuffer(engine, ibuf)
@@ -1116,7 +1202,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
           if (captured) {
             listener?.onPointerMove(pointerAt(event.x, event.y))
           } else if (event.pointerCount == 1 && !scale.isInProgress) {
-            orbit.drag((event.x - lastX).toDouble(), (event.y - lastY).toDouble(), SystemClock.uptimeMillis())
+            orbit.drag(
+              (event.x - lastX).toDouble(),
+              (event.y - lastY).toDouble(),
+              SystemClock.uptimeMillis(),
+            )
           }
           lastX = event.x
           lastY = event.y
@@ -1152,12 +1242,7 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     // 2-band Spherical Harmonics matching three-view.ts's uAmbientColor + envDiffuse * 0.5
     // sky-to-ground hemisphere gradient in linear space (band 0 L00, band 1 L1-1/Y, L10/Z, L11/X).
     private val STUDIO_IRRADIANCE_SH =
-      floatArrayOf(
-        0.20f, 0.21f, 0.23f,
-        0.08f, 0.085f, 0.095f,
-        0.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 0.0f,
-      )
+      floatArrayOf(0.20f, 0.21f, 0.23f, 0.08f, 0.085f, 0.095f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f)
 
     private const val JPEG_QUALITY = 60
 
@@ -1170,6 +1255,118 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       } else {
         Math.pow(((v + 0.055) / 1.055), 2.4).toFloat()
       }
+    }
+
+    /** Converts a linear RGB channel in `[0, 1]` to sRGB (IEC 61966-2-1). */
+    internal fun linearToSrgb(c: Float): Float {
+      if (!c.isFinite()) return 0f
+      val v = c.coerceIn(0f, 1f)
+      return if (v <= 0.0031308f) {
+        v * 12.92f
+      } else {
+        (1.055 * Math.pow(v.toDouble(), 1.0 / 2.4) - 0.055).toFloat()
+      }
+    }
+
+    /**
+     * Evaluates the Khronos PBR Neutral tone mapper (`ToneMapper.PBRNeutralToneMapper`) in linear
+     * RGB space.
+     */
+    internal fun pbrNeutralToneMap(
+      r: Float,
+      g: Float,
+      b: Float,
+      out: FloatArray = FloatArray(3),
+    ): FloatArray {
+      val startCompression = 0.8f - 0.04f
+      val desaturation = 0.15f
+      val x = minOf(r, g, b)
+      val offset = if (x < 0.08f) x - 6.25f * x * x else 0.04f
+      var cR = r - offset
+      var cG = g - offset
+      var cB = b - offset
+      val peak = maxOf(cR, cG, cB)
+      if (peak < startCompression) {
+        out[0] = cR
+        out[1] = cG
+        out[2] = cB
+        return out
+      }
+      val d = 1f - startCompression
+      val newPeak = 1f - (d * d) / (peak + d - startCompression)
+      val scale = newPeak / peak
+      cR *= scale
+      cG *= scale
+      cB *= scale
+      val gMix = 1f - 1f / (desaturation * (peak - newPeak) + 1f)
+      val oneMinusG = 1f - gMix
+      out[0] = cR * oneMinusG + newPeak * gMix
+      out[1] = cG * oneMinusG + newPeak * gMix
+      out[2] = cB * oneMinusG + newPeak * gMix
+      return out
+    }
+
+    /**
+     * Converts a target display sRGB color in `[0, 1]` to the pre-tonemapped linear HDR clear color
+     * expected by `Renderer.ClearOptions.clearColor` when `ColorGrading` uses
+     * `ToneMapper.PBRNeutralToneMapper()`.
+     *
+     * Because Filament runs its full-frame color-grading pass (PBR Neutral tone mapping + linear to
+     * sRGB OETF) over the cleared background buffer, passing raw `srgbToLinear(c)` causes light
+     * backgrounds (such as `#f8fafc` where linear channels exceed `0.76`) to be compressed by the
+     * shoulder roll-off and darkened by ~5%. Inverting the PBR Neutral curve ensures the final
+     * post-tonemapped sRGB pixels match Web's CSS/WebGL background color.
+     */
+    internal fun srgbToPbrNeutralClearLinear(
+      rSrgb: Float,
+      gSrgb: Float,
+      bSrgb: Float,
+      out: FloatArray = FloatArray(3),
+    ): FloatArray {
+      var yR = srgbToLinear(rSrgb)
+      var yG = srgbToLinear(gSrgb)
+      var yB = srgbToLinear(bSrgb)
+
+      val startCompression = 0.8f - 0.04f
+      val d = 1f - startCompression
+      val desaturation = 0.15f
+
+      val rawPeak = maxOf(yR, yG, yB)
+      val cR: Float
+      val cG: Float
+      val cB: Float
+      if (rawPeak >= startCompression) {
+        val newPeak = rawPeak.coerceAtMost(0.9995f)
+        if (rawPeak > newPeak) {
+          val clampScale = newPeak / rawPeak
+          yR *= clampScale
+          yG *= clampScale
+          yB *= clampScale
+        }
+        val peak = startCompression - d + (d * d) / (1f - newPeak)
+        val g = 1f - 1f / (desaturation * (peak - newPeak) + 1f)
+        val invOneMinusG = 1f / (1f - g)
+        val scale = peak / newPeak
+        cR = (((yR - g * newPeak) * invOneMinusG) * scale).coerceAtLeast(0f)
+        cG = (((yG - g * newPeak) * invOneMinusG) * scale).coerceAtLeast(0f)
+        cB = (((yB - g * newPeak) * invOneMinusG) * scale).coerceAtLeast(0f)
+      } else {
+        cR = yR
+        cG = yG
+        cB = yB
+      }
+
+      val xPrime = minOf(cR, cG, cB).coerceAtLeast(0f)
+      val offset =
+        if (xPrime >= 0.04f) {
+          0.04f
+        } else {
+          0.4f * Math.sqrt(xPrime.toDouble()).toFloat() - xPrime
+        }
+      out[0] = cR + offset
+      out[1] = cG + offset
+      out[2] = cB + offset
+      return out
     }
 
     /**
@@ -1258,12 +1455,36 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
             val ry: Float
             val rz: Float
             when (face) {
-              0 -> { rx = 1f; ry = -v; rz = -u }  // +X
-              1 -> { rx = -1f; ry = -v; rz = u }  // -X
-              2 -> { rx = u; ry = 1f; rz = v }    // +Y
-              3 -> { rx = u; ry = -1f; rz = -v }  // -Y
-              4 -> { rx = u; ry = -v; rz = 1f }   // +Z
-              else -> { rx = -u; ry = -v; rz = -1f } // -Z
+              0 -> {
+                rx = 1f
+                ry = -v
+                rz = -u
+              } // +X
+              1 -> {
+                rx = -1f
+                ry = -v
+                rz = u
+              } // -X
+              2 -> {
+                rx = u
+                ry = 1f
+                rz = v
+              } // +Y
+              3 -> {
+                rx = u
+                ry = -1f
+                rz = -v
+              } // -Y
+              4 -> {
+                rx = u
+                ry = -v
+                rz = 1f
+              } // +Z
+              else -> {
+                rx = -u
+                ry = -v
+                rz = -1f
+              } // -Z
             }
             studioRadianceLinear(rx, ry, rz, roughness, rad)
             shorts.put(floatToHalf(rad[0]))
@@ -1393,7 +1614,12 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     }
 
     /** Column-major TRS matrix (translation, quaternion xyzw, scale). */
-    internal fun composeTrs(t: FloatArray, q: FloatArray, s: FloatArray, out: FloatArray): FloatArray {
+    internal fun composeTrs(
+      t: FloatArray,
+      q: FloatArray,
+      s: FloatArray,
+      out: FloatArray,
+    ): FloatArray {
       val x = q.getOrElse(0) { 0f }
       val y = q.getOrElse(1) { 0f }
       val z = q.getOrElse(2) { 0f }

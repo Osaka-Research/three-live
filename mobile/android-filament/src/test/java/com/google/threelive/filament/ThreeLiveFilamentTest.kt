@@ -50,11 +50,36 @@ class ThreeLiveFilamentTest {
   @Test
   fun rayBoxEntryHitsMissesAndStartsInside() {
     val box = doubleArrayOf(-1.0, -1.0, -1.0, 1.0, 1.0, 1.0)
-    val hit = ThreeLiveFilamentRenderer.rayBoxEntry(doubleArrayOf(0.0, 0.0, 5.0), doubleArrayOf(0.0, 0.0, -1.0), box)
+    val hit =
+      ThreeLiveFilamentRenderer.rayBoxEntry(
+        doubleArrayOf(0.0, 0.0, 5.0),
+        doubleArrayOf(0.0, 0.0, -1.0),
+        box,
+      )
     assertEquals(4.0, hit!!, 1e-9)
-    assertNull(ThreeLiveFilamentRenderer.rayBoxEntry(doubleArrayOf(0.0, 3.0, 5.0), doubleArrayOf(0.0, 0.0, -1.0), box))
-    assertNull(ThreeLiveFilamentRenderer.rayBoxEntry(doubleArrayOf(0.0, 0.0, 5.0), doubleArrayOf(0.0, 0.0, 1.0), box))
-    assertEquals(0.0, ThreeLiveFilamentRenderer.rayBoxEntry(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(1.0, 0.0, 0.0), box)!!, 1e-9)
+    assertNull(
+      ThreeLiveFilamentRenderer.rayBoxEntry(
+        doubleArrayOf(0.0, 3.0, 5.0),
+        doubleArrayOf(0.0, 0.0, -1.0),
+        box,
+      )
+    )
+    assertNull(
+      ThreeLiveFilamentRenderer.rayBoxEntry(
+        doubleArrayOf(0.0, 0.0, 5.0),
+        doubleArrayOf(0.0, 0.0, 1.0),
+        box,
+      )
+    )
+    assertEquals(
+      0.0,
+      ThreeLiveFilamentRenderer.rayBoxEntry(
+        doubleArrayOf(0.0, 0.0, 0.0),
+        doubleArrayOf(1.0, 0.0, 0.0),
+        box,
+      )!!,
+      1e-9,
+    )
   }
 
   @Test
@@ -65,7 +90,10 @@ class ThreeLiveFilamentTest {
       val index = GltfSceneIndex(json!!)
       assertEquals(1, index.nodeCount)
       assertArrayEquals(intArrayOf(0), index.materialsOfNode(0))
-      assertEquals(glb.capacity(), glb.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(8))
+      assertEquals(
+        glb.capacity(),
+        glb.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(8),
+      )
     }
   }
 
@@ -125,12 +153,52 @@ class ThreeLiveFilamentTest {
             }
           ]
         }
-        """.trimIndent()
+        """
+          .trimIndent()
       )
     assertEquals(1, index.materialBaseColors.size)
-    assertArrayEquals(floatArrayOf(0.95686f, 0.24706f, 0.36863f, 1.0f), index.materialBaseColors[0], 1e-4f)
+    assertArrayEquals(
+      floatArrayOf(0.95686f, 0.24706f, 0.36863f, 1.0f),
+      index.materialBaseColors[0],
+      1e-4f,
+    )
     assertArrayEquals(floatArrayOf(0.1f, 0.2f, 0.3f), index.materialEmissive[0], 1e-4f)
     assertEquals(0.95f, index.materialMetallic[0], 1e-4f)
     assertEquals(0.15f, index.materialRoughness[0], 1e-4f)
+  }
+
+  @Test
+  fun srgbToPbrNeutralClearLinearRoundTripsThroughPbrNeutralToneMapper() {
+    val palette =
+      listOf(
+        floatArrayOf(0f, 0f, 0f), // #000000 pure black
+        floatArrayOf(11f / 255f, 18f / 255f, 32f / 255f), // #0b1220 default dark studio backdrop
+        floatArrayOf(
+          248f / 255f,
+          250f / 255f,
+          252f / 255f,
+        ), // #f8fafc Lesson 7 vector canvas backdrop
+        floatArrayOf(1f, 1f, 1f), // #ffffff pure white
+        floatArrayOf(244f / 255f, 63f / 255f, 94f / 255f), // #f43f5e ruby
+        floatArrayOf(59f / 255f, 130f / 255f, 246f / 255f), // #3b82f6 blue
+        floatArrayOf(16f / 255f, 185f / 255f, 129f / 255f), // #10b981 emerald
+      )
+    for (targetSrgb in palette) {
+      val clearLinear =
+        ThreeLiveFilamentRenderer.srgbToPbrNeutralClearLinear(
+          targetSrgb[0],
+          targetSrgb[1],
+          targetSrgb[2],
+        )
+      val postTonemapLinear =
+        ThreeLiveFilamentRenderer.pbrNeutralToneMap(clearLinear[0], clearLinear[1], clearLinear[2])
+      val actualSrgb =
+        floatArrayOf(
+          ThreeLiveFilamentRenderer.linearToSrgb(postTonemapLinear[0]),
+          ThreeLiveFilamentRenderer.linearToSrgb(postTonemapLinear[1]),
+          ThreeLiveFilamentRenderer.linearToSrgb(postTonemapLinear[2]),
+        )
+      assertArrayEquals(targetSrgb, actualSrgb, 1e-3f)
+    }
   }
 }
