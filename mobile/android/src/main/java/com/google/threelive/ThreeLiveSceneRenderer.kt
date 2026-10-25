@@ -48,6 +48,13 @@ interface ThreeLiveSceneRenderer {
   /** Applies camera options (orbit, target, field of view, limits, auto-rotate, controls). */
   fun setCameraOptions(options: ThreeLiveCameraOptions)
 
+  /**
+   * Sets the color the viewport clears to behind the scene (sRGB components in 0..1), as the
+   * element's CSS `background-color` shows through a transparent web canvas. Null restores the
+   * renderer's default backdrop.
+   */
+  fun setClearColor(rgba: FloatArray?) {}
+
   /** Sets a node's local transform (translation xyz, rotation quaternion xyzw, scale xyz). */
   fun setNodeTransform(
     nodeIndex: Int,

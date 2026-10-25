@@ -175,18 +175,7 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
         .toneMapper(ToneMapper.PBRNeutralToneMapper())
         .build(engine)
     filamentView.colorGrading = colorGrading
-    renderer.clearOptions =
-      Renderer.ClearOptions().apply {
-        clear = true
-        // Linear equivalent of sRGB #0B1220 so post-processed output matches Web's dark studio backdrop.
-        clearColor =
-          floatArrayOf(
-            srgbToLinear(0.0431f),
-            srgbToLinear(0.0706f),
-            srgbToLinear(0.1255f),
-            1f,
-          )
-      }
+    setClearColor(null)
 
     // Key directional light matching Web's default key light from (+0.5, +1.0, +0.8).
     sunEntity = EntityManager.get().create()
@@ -291,6 +280,24 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   override fun setCameraOptions(options: ThreeLiveCameraOptions) {
     orbit.applyOptions(options)
     orbit.snap()
+  }
+
+  override fun setClearColor(rgba: FloatArray?) {
+    if (disposed) return
+    // sRGB #0B1220 by default, Web's dark studio backdrop.
+    val srgb = rgba?.takeIf { it.size >= 3 } ?: floatArrayOf(0.0431f, 0.0706f, 0.1255f, 1f)
+    renderer.clearOptions =
+      Renderer.ClearOptions().apply {
+        clear = true
+        // Linear, so the post-processed output matches the sRGB color.
+        clearColor =
+          floatArrayOf(
+            srgbToLinear(srgb[0]),
+            srgbToLinear(srgb[1]),
+            srgbToLinear(srgb[2]),
+            srgb.getOrElse(3) { 1f },
+          )
+      }
   }
 
   override fun setNodeTransform(nodeIndex: Int, translation: FloatArray, rotation: FloatArray, scale: FloatArray) {
