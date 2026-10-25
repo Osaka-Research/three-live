@@ -18,6 +18,8 @@ package com.google.threelive.example
 
 import android.content.Context
 import androidx.core.content.FileProvider
+import com.google.threelive.isArCoreInstalled
+import com.google.threelive.launchSceneViewer
 import java.io.File
 
 /**
