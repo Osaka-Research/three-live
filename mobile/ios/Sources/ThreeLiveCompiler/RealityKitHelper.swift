@@ -70,11 +70,14 @@
         try? FileManager.default.removeItem(at: tempURL)
       }
 
+      let entity: Entity
       if #available(iOS 18.0, macOS 15.0, visionOS 1.0, *) {
-        return try await Entity(contentsOf: tempURL)
+        entity = try await Entity(contentsOf: tempURL)
       } else {
-        return try await loadEntityWithoutBlocking(contentsOf: tempURL)
+        entity = try await loadEntityWithoutBlocking(contentsOf: tempURL)
       }
+      stripEmbeddedAnchoring(entity, depth: 0)
+      return entity
     }
 
     /// Loads a RealityKit `Entity` from binary GLB Data by transcoding directly to USDZ.
@@ -125,6 +128,20 @@
         return entity
       }
       throw RealityKitHelperError.entityLoadProducedNoResult
+    }
+
+    /// Removes USD-imported `AnchoringComponent` instances (`preliminary:anchoring:type` in `.usda`
+    /// is emitted for standalone system AR Quick Look; when hosting inside a studio or custom
+    /// `AnchorEntity` in `ARView` / `RealityView`, a nested `AnchoringComponent(.plane(...))`
+    /// causes RealityKit to mark `Root` and its children inactive (`isActive = false`) whenever
+    /// no matching ARKit plane is tracked).
+    @MainActor
+    private static func stripEmbeddedAnchoring(_ entity: Entity, depth: Int) {
+      guard depth < 256 else { return }
+      entity.components.remove(AnchoringComponent.self)
+      for child in entity.children {
+        stripEmbeddedAnchoring(child, depth: depth + 1)
+      }
     }
   }
 #endif

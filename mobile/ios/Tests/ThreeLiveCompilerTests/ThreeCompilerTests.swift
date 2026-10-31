@@ -15,6 +15,9 @@
  */
 
 import XCTest
+#if canImport(RealityKit) && !os(tvOS)
+  import RealityKit
+#endif
 
 @testable import ThreeLiveCompiler
 
@@ -314,6 +317,113 @@ final class ThreeCompilerTests: XCTestCase {
       let reencoded = try JSONEncoder().encode(decoded)
       let roundTripped = try JSONDecoder().decode(XRLiveEntityTraits.self, from: reencoded)
       XCTAssertEqual(decoded, roundTripped)
+    }
+
+    @MainActor
+    func testWorkbenchAndBallpitLoadInRealityKit() async throws {
+      let workbenchScript = """
+        const base = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.9, 1.0, 0.08, 36),
+          new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.5 })
+        );
+        base.name = 'Workbench_Pedestal';
+        base.position.set(0, -0.65, 0);
+        scene.add(base);
+
+        const artifact = new THREE.Mesh(
+          new THREE.TorusKnotGeometry(0.28, 0.085, 96, 20),
+          new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.15, metalness: 0.75 })
+        );
+        artifact.name = 'Torus_Knot_Artifact';
+        artifact.position.set(-0.45, 0.1, 0);
+        artifact.userData.xr = {
+          traits: ['grab', 'scale'],
+          anchor: 'table'
+        };
+        artifact.userData.interactivity = {
+          onSelect: { action: 'toggleTransform', scale: [1.3, 1.3, 1.3], duration: 0.35 }
+        };
+        scene.add(artifact);
+
+        const gem = new THREE.Mesh(
+          new THREE.CylinderGeometry(0, 0.24, 0.42, 6),
+          new THREE.MeshStandardMaterial({ color: 0xa855f7, roughness: 0.2, metalness: 0.4 })
+        );
+        gem.name = 'Billboard_Gem';
+        gem.position.set(0.45, 0.15, 0);
+        gem.userData.xr = {
+          traits: ['grab', 'billboard'],
+          anchor: 'table'
+        };
+        gem.userData.interactivity = {
+          onSelect: { action: 'toggleTransform', scale: [1.3, 1.3, 1.3], duration: 0.3 }
+        };
+        scene.add(gem);
+
+        const orb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.14, 24, 24),
+          new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.2, metalness: 0.3 })
+        );
+        orb.name = 'Dynamic_Orbiter';
+        orb.position.set(0, 0.55, 0);
+        orb.userData.xr = {
+          physics: 'dynamic',
+          traits: ['grab', 'scale']
+        };
+        scene.add(orb);
+        """
+      let usdz = try await ThreeCompiler.compileUSDZ(workbenchScript)
+      let glb = try await ThreeCompiler.compileGLB(workbenchScript)
+      let entity = try await RealityKitHelper.loadEntity(fromUSDZ: usdz)
+      let modelAnchor = AnchorEntity(world: [0, 0, 0])
+      modelAnchor.addChild(entity)
+      let live = try XCTUnwrap(XRLiveRealityKitSession(glbData: glb, root: entity))
+      live.installInputTargets()
+      live.headPoseProvider = { XRPose(position: SIMD3<Float>(0, 1.2, 3.5)) }
+      live.start()
+      for _ in 0..<10 {
+        live.step(dt: 1.0 / 60.0)
+      }
+
+      // Verify that USD-imported AnchoringComponent was stripped from Root and all descendants
+      // so RealityKit does not deactivate the hierarchy in .nonAR studio mode.
+      func assertNoAnchoring(_ e: Entity) {
+        XCTAssertFalse(
+          e.components.has(AnchoringComponent.self),
+          "Entity '\(e.name)' must not retain a nested USD AnchoringComponent"
+        )
+        XCTAssertTrue(e.isEnabled, "Entity '\(e.name)' must remain enabled")
+        for c in e.children {
+          assertNoAnchoring(c)
+        }
+      }
+      for child in modelAnchor.children {
+        assertNoAnchoring(child)
+      }
+
+      XCTAssertEqual(live.session.nodeCount, 4)
+      let expectedNames = [
+        "Workbench_Pedestal",
+        "Torus_Knot_Artifact",
+        "Billboard_Gem",
+        "Dynamic_Orbiter",
+      ]
+      for (index, expectedName) in expectedNames.enumerated() {
+        let bound = try XCTUnwrap(
+          live.entity(forNode: index),
+          "Expected entity bound to node \(index) (\(expectedName))"
+        )
+        XCTAssertEqual(bound.name, expectedName)
+        let vb = bound.visualBounds(recursive: true, relativeTo: modelAnchor)
+        XCTAssertGreaterThan(
+          vb.extents.x, 0.05,
+          "Mesh '\(expectedName)' must have non-empty visual bounds"
+        )
+        XCTAssertGreaterThan(
+          vb.extents.y, 0.05,
+          "Mesh '\(expectedName)' must have non-empty visual bounds"
+        )
+      }
     }
   #endif
 }

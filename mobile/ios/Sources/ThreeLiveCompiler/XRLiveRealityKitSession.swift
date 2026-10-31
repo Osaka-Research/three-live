@@ -144,9 +144,11 @@
       var meshEntitiesInOrder: [Entity] = []
       func visit(_ entity: Entity, depth: Int) {
         guard depth < 256 else { return }
-        // Strip USD-imported rigid-body components (`PhysicsBodyAPI` in `.usda` is emitted for
-        // standalone AR Quick Look; in a live session `XRLiveRuntimeSession.stepPhysics` owns
-        // rigid-body motion and must not contend with RealityKit's internal physics solver).
+        // Strip USD-imported rigid-body and anchoring components (`PhysicsBodyAPI` and
+        // `preliminary:anchoring:type` in `.usda` are emitted for standalone AR Quick Look;
+        // in a live session `XRLiveRuntimeSession.stepPhysics` owns rigid-body motion and the
+        // host `AnchorEntity` owns scene placement).
+        entity.components.remove(AnchoringComponent.self)
         entity.components.remove(PhysicsBodyComponent.self)
         entity.components.remove(PhysicsMotionComponent.self)
         if !entity.name.isEmpty {

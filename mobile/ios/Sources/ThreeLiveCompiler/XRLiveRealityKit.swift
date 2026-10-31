@@ -206,6 +206,7 @@
         }
       }
       func visit(_ entity: Entity) {
+        entity.components.remove(AnchoringComponent.self)
         if let traits = lookup[entity.name] {
           configureEntity(entity, with: traits)
         }
