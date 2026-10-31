@@ -334,8 +334,8 @@ fn test_security_script_size_limit() {
 
 #[test]
 fn test_security_vertex_quota_limit() {
-    // TorusKnot with 400 tubularSegments and 300 radialSegments creates (400+1)*(300+1) = 120,701 vertices
-    // exceeding SECURITY_3D_MAX_VERTICES (100,000).
+    // TorusKnot with 400 tubularSegments and 300 radialSegments creates (400+1)*(300+1) = 120,701
+    // vertices exceeding SECURITY_3D_MAX_VERTICES (100,000).
     let script = r#"
         const geo = new THREE.TorusKnotGeometry(10, 3, 400, 300);
         const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -397,7 +397,8 @@ fn test_panic_safety_and_engine_recovery() {
     let bad_res = transcode_three_to_glb(bad_script);
     assert!(bad_res.is_err());
 
-    // 2. Subsequent call with valid script must succeed cleanly (engine was discarded and recreated)
+    // 2. Subsequent call with valid script must succeed cleanly (engine was discarded and
+    //    recreated)
     let good_script = r#"
         const geo = new THREE.BoxGeometry(1, 1, 1);
         const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
@@ -656,7 +657,8 @@ fn test_out_of_bounds_index_and_nan_float_sanitization() {
         "Out-of-bounds vertex index should be rejected"
     );
 
-    // 2. NaN and Infinity floats in positions and material should be sanitized to valid JSON numbers
+    // 2. NaN and Infinity floats in positions and material should be sanitized to valid JSON
+    //    numbers
     let nan_script = r#"
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([NaN, Infinity, -Infinity, 1, 0, 0, 0, 1, 0]), 3));
@@ -1240,9 +1242,9 @@ fn test_unified_presets_compile_to_glb_and_usdz() {
             "Gemini AI & Depth",
             r#"
             const depths = [
-              { pos: [-0.55, -0.1, 0.55], color: 0x22c55e, h: 0.7 },
+              { pos: [-0.55, -0.125, 0.55], color: 0x22c55e, h: 0.7 },
               { pos: [0.0, 0.0, 0.0], color: 0x38bdf8, h: 0.95 },
-              { pos: [0.6, 0.1, -0.65], color: 0xa855f7, h: 1.2 }
+              { pos: [0.6, 0.125, -0.65], color: 0xa855f7, h: 1.2 }
             ];
 
             depths.forEach((d, idx) => {

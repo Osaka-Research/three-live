@@ -35,6 +35,8 @@
     @State private var lastEventMessage: String? = nil
 
     @State private var currentEntity: Entity? = nil
+    @State private var currentOrbitCenter: SIMD3<Float> = .zero
+    @State private var currentOrbitRadius: Float = 1.48
     @State private var runtimeSession: XRLiveRealityKitSession? = nil
     @State private var runtimeFeatures: XRBlocksRealityKitFeatures? = nil
     @State private var rotationY: Float = 0.4
@@ -66,6 +68,8 @@
 
               ModelViewportRepresentable(
                 entity: currentEntity,
+                orbitCenter: currentOrbitCenter,
+                orbitRadius: currentOrbitRadius,
                 runtimeSession: runtimeSession,
                 runtimeFeatures: runtimeFeatures,
                 rotationY: $rotationY,
@@ -480,8 +484,19 @@
         usdzData = data
         usdzSizeBytes = data.count
 
-        // Load entity into RealityKit and wire up runtime session (or static traits fallback)
+        // Load entity into RealityKit and compute unscaled scene bounds before attaching
+        // helper/feature overlays so the orbit camera frames and pivots around the scene's
+        // true bounding-box center (matching Web `three-view.ts` and Android `OrbitCameraState`).
         let entity = try await RealityKitHelper.loadEntity(fromUSDZ: data)
+        let vb = entity.visualBounds(recursive: true, relativeTo: entity)
+        if !vb.isEmpty {
+          let halfDiag = 0.5 * simd_length(vb.max - vb.min)
+          currentOrbitCenter = vb.center.x.isFinite ? vb.center : .zero
+          currentOrbitRadius = halfDiag.isFinite ? max(halfDiag, 0.5) : 1.48
+        } else {
+          currentOrbitCenter = .zero
+          currentOrbitRadius = 1.48
+        }
         for anim in entity.availableAnimations {
           _ = entity.playAnimation(anim.repeat())
         }
@@ -574,6 +589,8 @@
   @available(iOS 15.0, *)
   struct ModelViewportRepresentable: UIViewRepresentable {
     let entity: Entity?
+    let orbitCenter: SIMD3<Float>
+    let orbitRadius: Float
     let runtimeSession: XRLiveRealityKitSession?
     let runtimeFeatures: XRBlocksRealityKitFeatures?
     @Binding var rotationY: Float
@@ -590,6 +607,8 @@
       var onTapNode: ((String) -> Void)?
       var onOrbitChanged: ((Float, Float) -> Void)?
       var onZoomChanged: ((Float) -> Void)?
+      var orbitCenter: SIMD3<Float> = .zero
+      var orbitRadius: Float = 1.48
       var rotationY: Float = 0.4
       var rotationX: Float = 0.33
       var zoomScale: Float = 1.0
@@ -611,14 +630,16 @@
         let yaw = rotationY - autoRotationAngle
         let pitch = min(max(rotationX, -1.25), 1.25)
         let clampedZoom = min(max(zoomScale, 0.35), 2.75)
-        let radius: Float = 3.7 / clampedZoom
-        let cosPitch = cos(pitch)
-        let camPos = SIMD3<Float>(
-          radius * cosPitch * sin(yaw),
-          radius * sin(pitch),
-          radius * cosPitch * cos(yaw)
+        let radius: Float = max(0.4, (orbitRadius * 2.5) / clampedZoom)
+        let yawQuat = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
+        let pitchQuat = simd_quatf(angle: -pitch, axis: SIMD3<Float>(1, 0, 0))
+        let orientation = simd_normalize(yawQuat * pitchQuat)
+        let camOffset = orientation.act(SIMD3<Float>(0, 0, radius))
+        camera.transform = Transform(
+          scale: .one,
+          rotation: orientation,
+          translation: orbitCenter + camOffset
         )
-        camera.look(at: [0, 0, 0], from: camPos, relativeTo: nil)
         let worldMat = camera.transformMatrix(relativeTo: nil)
         currentCameraTransform = worldMat
         currentHeadPose = XRPose(matrix: worldMat)
@@ -653,12 +674,13 @@
             rotationY -= deltaX * 0.007
             rotationX = min(max(rotationX + deltaY * 0.007, -1.25), 1.25)
             updateCameraPose()
-            onOrbitChanged?(rotationX, rotationY)
           }
           lastPanLocation = location
         case .ended, .cancelled, .failed:
           if isDraggingHandle {
             runtimeFeatures?.pointerUp()
+          } else {
+            onOrbitChanged?(rotationX, rotationY)
           }
           isDraggingHandle = false
           isDragging = false
@@ -676,7 +698,8 @@
           let next = min(max(pinchBaseScale * Float(recognizer.scale), 0.35), 2.75)
           zoomScale = next
           updateCameraPose()
-          onZoomChanged?(next)
+        case .ended, .cancelled, .failed:
+          onZoomChanged?(zoomScale)
         default:
           break
         }
@@ -693,10 +716,11 @@
         UIColor(red: 0.043, green: 0.071, blue: 0.125, alpha: 1.0)
       )
 
-      // Add camera anchor
+      // Add camera anchor with 45° vertical FOV matching Web (`three-view.ts`) and Android
+      // (`OrbitCameraState.kt`) so vertical lines do not suffer wide-angle (60°) keystoning.
       let cameraAnchor = AnchorEntity(world: [0, 0, 0])
       let camera = PerspectiveCamera()
-      camera.look(at: [0, 0, 0], from: [0, 1.2, 3.5], relativeTo: nil)
+      camera.camera.fieldOfViewInDegrees = 45.0
       cameraAnchor.addChild(camera)
       arView.scene.addAnchor(cameraAnchor)
       context.coordinator.camera = camera
@@ -765,6 +789,8 @@
     func updateUIView(_ uiView: ARView, context: Context) {
       context.coordinator.runtimeSession = runtimeSession
       context.coordinator.runtimeFeatures = runtimeFeatures
+      context.coordinator.orbitCenter = orbitCenter
+      context.coordinator.orbitRadius = orbitRadius
       context.coordinator.onTapNode = onTapNode
       context.coordinator.onOrbitChanged = { newRotX, newRotY in
         rotationX = newRotX
