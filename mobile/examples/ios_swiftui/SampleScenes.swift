@@ -17,14 +17,14 @@
 #if os(iOS)
   import Foundation
 
-  public enum StudioMode: String, CaseIterable, Identifiable {
+  public enum StudioMode: String, CaseIterable, Identifiable, Sendable {
     case threeLive = "Three-Live"
     case xrLive = "XR-Live"
 
     public var id: String { rawValue }
   }
 
-  public struct ScenePreset: Identifiable {
+  public struct ScenePreset: Identifiable, Sendable {
     public let id = UUID()
     public let name: String
     public let description: String

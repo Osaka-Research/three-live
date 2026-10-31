@@ -37,12 +37,9 @@
     @State private var currentEntity: Entity? = nil
     @State private var runtimeSession: XRLiveRealityKitSession? = nil
     @State private var runtimeFeatures: XRBlocksRealityKitFeatures? = nil
-    @State private var rotationY: Float = 0.0
-    @State private var rotationX: Float = 0.0
+    @State private var rotationY: Float = 0.4
+    @State private var rotationX: Float = 0.33
     @State private var zoomScale: Float = 1.0
-    @State private var pinchBaseScale: Float = 1.0
-    @State private var isDragging: Bool = false
-    @State private var lastDragTranslation: CGSize = .zero
 
     // Full-screen in-app AR Surface Placement Preview state (used on the iOS Simulator where
     // ARWorldTrackingConfiguration camera passthrough is unavailable in QLPreviewController).
@@ -71,39 +68,13 @@
                 entity: currentEntity,
                 runtimeSession: runtimeSession,
                 runtimeFeatures: runtimeFeatures,
-                rotationY: rotationY,
-                rotationX: rotationX,
-                zoomScale: zoomScale,
-                isDragging: isDragging,
+                rotationY: $rotationY,
+                rotationX: $rotationX,
+                zoomScale: $zoomScale,
                 autoRotate: isArPreviewMode ? arAutoRotate : (selectedMode == .threeLive),
                 onTapNode: { nodeLabel in
                   lastEventMessage = "Tapped \(nodeLabel)"
                 }
-              )
-              .simultaneousGesture(
-                DragGesture(minimumDistance: 6)
-                  .onChanged { value in
-                    isDragging = true
-                    let deltaX = Float(value.translation.width - lastDragTranslation.width)
-                    let deltaY = Float(value.translation.height - lastDragTranslation.height)
-                    rotationY += deltaX * 0.005
-                    rotationX = min(max(rotationX + deltaY * 0.005, -1.2), 1.2)
-                    lastDragTranslation = value.translation
-                  }
-                  .onEnded { _ in
-                    isDragging = false
-                    lastDragTranslation = .zero
-                  }
-              )
-              .simultaneousGesture(
-                MagnificationGesture()
-                  .onChanged { magnification in
-                    let next = pinchBaseScale * Float(magnification)
-                    zoomScale = min(max(next, 0.35), 2.75)
-                  }
-                  .onEnded { _ in
-                    pinchBaseScale = zoomScale
-                  }
               )
 
               if isArPreviewMode {
@@ -209,12 +180,14 @@
                       Text("AR Scale:")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white)
-                      ForEach([(Float(0.75), "0.75×"), (Float(1.0), "1.0×"), (Float(1.5), "1.5×")], id: \.0) {
+                      ForEach(
+                        [(Float(0.75), "0.75×"), (Float(1.0), "1.0×"), (Float(1.5), "1.5×")],
+                        id: \.0
+                      ) {
                         (scaleVal, label) in
                         Button(action: {
                           arScalePreset = scaleVal
                           zoomScale = scaleVal
-                          pinchBaseScale = scaleVal
                         }) {
                           Text(label)
                             .font(.system(size: 11, weight: .semibold))
@@ -231,8 +204,7 @@
                       Button(action: {
                         arScalePreset = 1.0
                         zoomScale = 1.0
-                        pinchBaseScale = 1.0
-                        rotationX = 0.32
+                        rotationX = 0.38
                         rotationY = 0.45
                       }) {
                         Text("Reset Pose")
@@ -472,8 +444,7 @@
       arAutoRotate = false
       arShowReticle = true
       zoomScale = 1.0
-      pinchBaseScale = 1.0
-      rotationX = 0.32
+      rotationX = 0.38
       rotationY = 0.45
       isArPreviewMode = true
       runtimeSession?.setArSurfacePreviewEnabled(true, groundY: -0.95)
@@ -485,8 +456,7 @@
       isArPreviewMode = false
       arPreviewNote = nil
       zoomScale = 1.0
-      pinchBaseScale = 1.0
-      rotationX = 0.2
+      rotationX = 0.33
       rotationY = 0.4
     }
 
@@ -546,10 +516,9 @@
         }
 
         // Reset orientation & assign
-        rotationX = isArPreviewMode ? 0.32 : 0.2
-        rotationY = isArPreviewMode ? 0.45 : 0.4
+        rotationX = isArPreviewMode ? 0.38 : 0.33
+        rotationY = isArPreviewMode ? 0.45 : (selectedMode == .threeLive ? 0.0 : 0.55)
         zoomScale = isArPreviewMode ? arScalePreset : 1.0
-        pinchBaseScale = zoomScale
         currentEntity = entity
         errorMessage = nil
       } catch {
@@ -600,31 +569,58 @@
     }
   }
 
-  /// UIViewRepresentable hosting a RealityKit scene with camera, directional light, runtime stepping, and turntable auto-rotation.
+  /// UIViewRepresentable hosting a RealityKit scene with spherical orbit camera, studio lighting,
+  /// interactive manipulation-handle raycasting, runtime stepping, and turntable auto-rotation.
   @available(iOS 15.0, *)
   struct ModelViewportRepresentable: UIViewRepresentable {
     let entity: Entity?
     let runtimeSession: XRLiveRealityKitSession?
     let runtimeFeatures: XRBlocksRealityKitFeatures?
-    let rotationY: Float
-    let rotationX: Float
-    let zoomScale: Float
-    let isDragging: Bool
+    @Binding var rotationY: Float
+    @Binding var rotationX: Float
+    @Binding var zoomScale: Float
     let autoRotate: Bool
     let onTapNode: ((String) -> Void)?
 
     final class Coordinator: NSObject {
       weak var arView: ARView?
+      weak var camera: PerspectiveCamera?
       var runtimeSession: XRLiveRealityKitSession?
       var runtimeFeatures: XRBlocksRealityKitFeatures?
       var onTapNode: ((String) -> Void)?
+      var onOrbitChanged: ((Float, Float) -> Void)?
+      var onZoomChanged: ((Float) -> Void)?
       var rotationY: Float = 0.4
-      var rotationX: Float = 0.2
+      var rotationX: Float = 0.33
       var zoomScale: Float = 1.0
+      var pinchBaseScale: Float = 1.0
       var autoRotationAngle: Float = 0.0
       var isDragging: Bool = false
+      var isDraggingHandle: Bool = false
+      var lastPanLocation: CGPoint = .zero
       var autoRotate: Bool = true
+      var currentHeadPose = XRPose(position: SIMD3<Float>(0, 1.2, 3.5))
+      var currentCameraTransform: simd_float4x4 = matrix_identity_float4x4
       var updateCancellable: Cancellable?
+
+      @MainActor
+      func updateCameraPose() {
+        guard let camera = camera else { return }
+        let yaw = rotationY + autoRotationAngle
+        let pitch = min(max(rotationX, -1.25), 1.25)
+        let clampedZoom = min(max(zoomScale, 0.35), 2.75)
+        let radius: Float = 3.7 / clampedZoom
+        let cosPitch = cos(pitch)
+        let camPos = SIMD3<Float>(
+          radius * cosPitch * sin(yaw),
+          radius * sin(pitch),
+          radius * cosPitch * cos(yaw)
+        )
+        camera.look(at: [0, 0, 0], from: camPos, relativeTo: nil)
+        let worldMat = camera.transformMatrix(relativeTo: nil)
+        currentCameraTransform = worldMat
+        currentHeadPose = XRPose(matrix: worldMat)
+      }
 
       @MainActor
       @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
@@ -634,6 +630,53 @@
           _ = runtimeSession?.handleTap(on: hit.entity, hitPoint: hit.position)
           let label = hit.entity.name.isEmpty ? "mesh" : hit.entity.name
           onTapNode?(label)
+        }
+      }
+
+      @MainActor
+      @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        guard let view = arView else { return }
+        let location = recognizer.location(in: view)
+        switch recognizer.state {
+        case .began:
+          isDragging = true
+          lastPanLocation = location
+          isDraggingHandle = runtimeFeatures?.pointerDown(at: location, in: view) ?? false
+        case .changed:
+          if isDraggingHandle {
+            runtimeFeatures?.pointerMove(at: location, in: view)
+          } else {
+            let deltaX = Float(location.x - lastPanLocation.x)
+            let deltaY = Float(location.y - lastPanLocation.y)
+            rotationY -= deltaX * 0.007
+            rotationX = min(max(rotationX + deltaY * 0.007, -1.25), 1.25)
+            updateCameraPose()
+            onOrbitChanged?(rotationX, rotationY)
+          }
+          lastPanLocation = location
+        case .ended, .cancelled, .failed:
+          if isDraggingHandle {
+            runtimeFeatures?.pointerUp()
+          }
+          isDraggingHandle = false
+          isDragging = false
+        default:
+          break
+        }
+      }
+
+      @MainActor
+      @objc func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+          pinchBaseScale = zoomScale
+        case .changed:
+          let next = min(max(pinchBaseScale * Float(recognizer.scale), 0.35), 2.75)
+          zoomScale = next
+          updateCameraPose()
+          onZoomChanged?(next)
+        default:
+          break
         }
       }
     }
@@ -654,6 +697,7 @@
       camera.look(at: [0, 0, 0], from: [0, 1.2, 3.5], relativeTo: nil)
       cameraAnchor.addChild(camera)
       arView.scene.addAnchor(cameraAnchor)
+      context.coordinator.camera = camera
 
       // Studio lighting rig: key + cool fill match Web (three-view.ts) and Android Filament; a soft
       // under-fill approximates Web's ground ambient term.
@@ -677,14 +721,21 @@
       lightAnchor.addChild(rimLight)
       arView.scene.addAnchor(lightAnchor)
 
-      // Model root container
+      // Model root container (kept at world origin identity so orbit/physics/handle transforms
+      // operate in unrotated scene coordinates matching Web and Android).
       let modelAnchor = AnchorEntity(world: [0, 0, 0])
       modelAnchor.name = "ModelRoot"
       arView.scene.addAnchor(modelAnchor)
 
       let tap = UITapGestureRecognizer(
         target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+      let pan = UIPanGestureRecognizer(
+        target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+      let pinch = UIPinchGestureRecognizer(
+        target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
       arView.addGestureRecognizer(tap)
+      arView.addGestureRecognizer(pan)
+      arView.addGestureRecognizer(pinch)
       context.coordinator.arView = arView
 
       context.coordinator.updateCancellable = arView.scene.subscribe(
@@ -695,12 +746,12 @@
         if coordinator.autoRotate && !coordinator.isDragging {
           coordinator.autoRotationAngle += Float(dt) * 0.42
         }
-        if let anchor = coordinator.arView?.scene.findEntity(named: "ModelRoot") {
-          anchor.orientation =
-            simd_quatf(angle: coordinator.rotationY + coordinator.autoRotationAngle, axis: [0, 1, 0])
-            * simd_quatf(angle: coordinator.rotationX, axis: [1, 0, 0])
-          let s = min(max(coordinator.zoomScale, 0.35), 2.75)
-          anchor.scale = SIMD3<Float>(repeating: s)
+        coordinator.updateCameraPose()
+        coordinator.runtimeSession?.headPoseProvider = { [weak coordinator] in
+          coordinator?.currentHeadPose
+        }
+        coordinator.runtimeFeatures?.cameraTransformProvider = { [weak coordinator] in
+          coordinator?.currentCameraTransform
         }
         coordinator.runtimeSession?.step(dt: dt)
         coordinator.runtimeFeatures?.step(dt: dt)
@@ -713,10 +764,18 @@
       context.coordinator.runtimeSession = runtimeSession
       context.coordinator.runtimeFeatures = runtimeFeatures
       context.coordinator.onTapNode = onTapNode
-      context.coordinator.rotationY = rotationY
-      context.coordinator.rotationX = rotationX
-      context.coordinator.zoomScale = zoomScale
-      context.coordinator.isDragging = isDragging
+      context.coordinator.onOrbitChanged = { newRotX, newRotY in
+        rotationX = newRotX
+        rotationY = newRotY
+      }
+      context.coordinator.onZoomChanged = { newZoom in
+        zoomScale = newZoom
+      }
+      if !context.coordinator.isDragging {
+        context.coordinator.rotationY = rotationY
+        context.coordinator.rotationX = rotationX
+        context.coordinator.zoomScale = zoomScale
+      }
       context.coordinator.autoRotate = autoRotate
       if !autoRotate {
         context.coordinator.autoRotationAngle = 0.0
@@ -735,12 +794,7 @@
         context.coordinator.autoRotationAngle = 0.0
       }
 
-      modelAnchor.orientation =
-        simd_quatf(
-          angle: rotationY + context.coordinator.autoRotationAngle, axis: [0, 1, 0])
-        * simd_quatf(angle: rotationX, axis: [1, 0, 0])
-      let s = min(max(zoomScale, 0.35), 2.75)
-      modelAnchor.scale = SIMD3<Float>(repeating: s)
+      context.coordinator.updateCameraPose()
     }
   }
 #endif
