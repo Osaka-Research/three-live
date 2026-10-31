@@ -35,13 +35,11 @@
     @State private var lastEventMessage: String? = nil
 
     @State private var currentEntity: Entity? = nil
-    @State private var currentOrbitCenter: SIMD3<Float> = .zero
-    @State private var currentOrbitRadius: Float = 1.48
+    @State private var currentSceneBounds: (center: SIMD3<Double>, radius: Double) = (.zero, 1.48)
     @State private var runtimeSession: XRLiveRealityKitSession? = nil
     @State private var runtimeFeatures: XRBlocksRealityKitFeatures? = nil
-    @State private var rotationY: Float = 0.4
-    @State private var rotationX: Float = 0.33
-    @State private var zoomScale: Float = 1.0
+    @State private var cameraDistanceMode: String = "auto"
+    @State private var cameraResetToken: Int = 0
 
     // Full-screen in-app AR Surface Placement Preview state (used on the iOS Simulator where
     // ARWorldTrackingConfiguration camera passthrough is unavailable in QLPreviewController).
@@ -53,6 +51,21 @@
 
     private var activePresets: [ScenePreset] {
       SampleScenes.presets(for: selectedMode)
+    }
+
+    private var currentCameraOptions: XRCameraOptions {
+      let autoRot = isArPreviewMode ? arAutoRotate : (selectedMode == .threeLive)
+      let initialOrbit = selectedMode == .threeLive ? "23deg 20deg" : "-34deg 20deg"
+      return XRCameraOptions(
+        cameraOrbit: initialOrbit,
+        minCameraOrbit: "auto 5deg auto",
+        maxCameraOrbit: "auto 75deg auto",
+        fieldOfView: "45deg",
+        cameraControls: true,
+        autoRotate: autoRot,
+        autoRotateDelay: 1.5,
+        distanceMode: cameraDistanceMode
+      )
     }
 
     public init() {}
@@ -68,14 +81,12 @@
 
               ModelViewportRepresentable(
                 entity: currentEntity,
-                orbitCenter: currentOrbitCenter,
-                orbitRadius: currentOrbitRadius,
+                sceneBounds: currentSceneBounds,
+                cameraOptions: currentCameraOptions,
+                modelScale: isArPreviewMode ? arScalePreset : 1.0,
+                resetToken: cameraResetToken,
                 runtimeSession: runtimeSession,
                 runtimeFeatures: runtimeFeatures,
-                rotationY: $rotationY,
-                rotationX: $rotationX,
-                zoomScale: $zoomScale,
-                autoRotate: isArPreviewMode ? arAutoRotate : (selectedMode == .threeLive),
                 onTapNode: { nodeLabel in
                   lastEventMessage = "Tapped \(nodeLabel)"
                 }
@@ -191,7 +202,6 @@
                         (scaleVal, label) in
                         Button(action: {
                           arScalePreset = scaleVal
-                          zoomScale = scaleVal
                         }) {
                           Text(label)
                             .font(.system(size: 11, weight: .semibold))
@@ -207,9 +217,7 @@
                       Spacer()
                       Button(action: {
                         arScalePreset = 1.0
-                        zoomScale = 1.0
-                        rotationX = 0.38
-                        rotationY = 0.45
+                        cameraResetToken += 1
                       }) {
                         Text("Reset Pose")
                           .font(.system(size: 11, weight: .semibold))
@@ -338,15 +346,27 @@
                   }
                 }
 
-                // Three.js Code Editor Header Row
+                // Three.js Code Editor Header Row + Camera Distance Mode Toggle
                 HStack {
                   Text("Three.js Source (Tap/Edit):")
                     .font(.caption)
                     .foregroundColor(.secondary)
                   Spacer()
-                  Text("Rust C-ABI + RealityKit")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                  Button(action: {
+                    cameraDistanceMode = (cameraDistanceMode == "auto") ? "absolute" : "auto"
+                    cameraResetToken += 1
+                  }) {
+                    Text(
+                      cameraDistanceMode == "auto"
+                        ? "Camera: Auto (2.5×)" : "Camera: Fixed (3.0m)"
+                    )
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.15))
+                    .foregroundColor(.accentColor)
+                    .cornerRadius(6)
+                  }
                 }
 
                 // Monospace Code Editor Text Area
@@ -447,10 +467,8 @@
       arScalePreset = 1.0
       arAutoRotate = false
       arShowReticle = true
-      zoomScale = 1.0
-      rotationX = 0.38
-      rotationY = 0.45
       isArPreviewMode = true
+      cameraResetToken += 1
       runtimeSession?.setArSurfacePreviewEnabled(true, groundY: -0.95)
     }
 
@@ -459,9 +477,8 @@
       runtimeSession?.setArSurfacePreviewEnabled(false)
       isArPreviewMode = false
       arPreviewNote = nil
-      zoomScale = 1.0
-      rotationX = 0.33
-      rotationY = 0.4
+      arScalePreset = 1.0
+      cameraResetToken += 1
     }
 
     @MainActor
@@ -484,19 +501,7 @@
         usdzData = data
         usdzSizeBytes = data.count
 
-        // Load entity into RealityKit and compute unscaled scene bounds before attaching
-        // helper/feature overlays so the orbit camera frames and pivots around the scene's
-        // true bounding-box center (matching Web `three-view.ts` and Android `OrbitCameraState`).
         let entity = try await RealityKitHelper.loadEntity(fromUSDZ: data)
-        let vb = entity.visualBounds(recursive: true, relativeTo: entity)
-        if !vb.isEmpty {
-          let halfDiag = 0.5 * simd_length(vb.max - vb.min)
-          currentOrbitCenter = vb.center.x.isFinite ? vb.center : .zero
-          currentOrbitRadius = halfDiag.isFinite ? max(halfDiag, 0.5) : 1.48
-        } else {
-          currentOrbitCenter = .zero
-          currentOrbitRadius = 1.48
-        }
         for anim in entity.availableAnimations {
           _ = entity.playAnimation(anim.repeat())
         }
@@ -505,6 +510,8 @@
         runtimeFeatures = nil
         runtimeSession?.stop()
         if let live = XRLiveRealityKitSession(glbData: glbData, root: entity) {
+          currentSceneBounds = live.session.sceneBounds
+          live.installStudioLights()
           live.installInputTargets()
           live.headPoseProvider = {
             XRPose(position: SIMD3<Float>(0, 1.2, 3.5))
@@ -524,17 +531,25 @@
           runtimeSession = live
           runtimeFeatures = features
         } else {
+          let vb = entity.visualBounds(recursive: true, relativeTo: entity)
+          if !vb.isEmpty {
+            let halfDiag = Double(0.5 * simd_length(vb.max - vb.min))
+            let c = vb.center.x.isFinite ? vb.center : .zero
+            currentSceneBounds = (
+              center: SIMD3<Double>(Double(c.x), Double(c.y), Double(c.z)),
+              radius: halfDiag.isFinite ? max(halfDiag, 0.5) : 1.48
+            )
+          } else {
+            currentSceneBounds = (.zero, 1.48)
+          }
           if !traits.isEmpty {
             RealityKitHelper.applyXRTraits(traits, to: entity)
           }
           runtimeSession = nil
         }
 
-        // Reset orientation & assign
-        rotationX = isArPreviewMode ? 0.44 : 0.42
-        rotationY = isArPreviewMode ? 0.45 : (selectedMode == .threeLive ? 0.0 : -0.58)
-        zoomScale = isArPreviewMode ? arScalePreset : 1.0
         currentEntity = entity
+        cameraResetToken += 1
         errorMessage = nil
       } catch {
         errorMessage = error.localizedDescription
@@ -584,64 +599,61 @@
     }
   }
 
-  /// UIViewRepresentable hosting a RealityKit scene with spherical orbit camera, studio lighting,
-  /// interactive manipulation-handle raycasting, runtime stepping, and turntable auto-rotation.
+  /// UIViewRepresentable hosting a RealityKit scene driven by the shared cross-platform
+  /// `XROrbitCameraState` and `XRLiveRealityKitSession` studio lighting rig.
   @available(iOS 15.0, *)
   struct ModelViewportRepresentable: UIViewRepresentable {
     let entity: Entity?
-    let orbitCenter: SIMD3<Float>
-    let orbitRadius: Float
+    let sceneBounds: (center: SIMD3<Double>, radius: Double)
+    let cameraOptions: XRCameraOptions
+    let modelScale: Float
+    let resetToken: Int
     let runtimeSession: XRLiveRealityKitSession?
     let runtimeFeatures: XRBlocksRealityKitFeatures?
-    @Binding var rotationY: Float
-    @Binding var rotationX: Float
-    @Binding var zoomScale: Float
-    let autoRotate: Bool
     let onTapNode: ((String) -> Void)?
 
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
       weak var arView: ARView?
       weak var camera: PerspectiveCamera?
+      let pivot = Entity()
+      var orbit = XROrbitCameraState()
+      var lastCameraOptions: XRCameraOptions?
+      var lastResetToken: Int = -1
       var runtimeSession: XRLiveRealityKitSession?
       var runtimeFeatures: XRBlocksRealityKitFeatures?
       var onTapNode: ((String) -> Void)?
-      var onOrbitChanged: ((Float, Float) -> Void)?
-      var onZoomChanged: ((Float) -> Void)?
-      var orbitCenter: SIMD3<Float> = .zero
-      var orbitRadius: Float = 1.48
-      var rotationY: Float = 0.4
-      var rotationX: Float = 0.33
-      var zoomScale: Float = 1.0
-      var pinchBaseScale: Float = 1.0
-      var autoRotationAngle: Float = 0.0
       var isDragging: Bool = false
       var isDraggingHandle: Bool = false
       var lastPanLocation: CGPoint = .zero
-      var autoRotate: Bool = true
       var currentHeadPose = XRPose(position: SIMD3<Float>(0, 1.2, 3.5))
       var currentCameraTransform: simd_float4x4 = matrix_identity_float4x4
       var updateCancellable: Cancellable?
 
+      public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+      ) -> Bool {
+        gestureRecognizer is UIPinchGestureRecognizer || other is UIPinchGestureRecognizer
+      }
+
       @MainActor
-      func updateCameraPose() {
+      func applyCameraPose(modelScale: Float = 1.0) {
         guard let camera = camera else { return }
-        // Subtract autoRotationAngle from camera azimuth so orbiting the camera produces the
-        // same counter-clockwise model turntable direction (+Y) as Web and Android.
-        let yaw = rotationY - autoRotationAngle
-        // Keep pitch clamped above the ground plane ([0.14, 1.12] rad = +8° to +64°) so vertical
-        // swipes never push the camera underneath the floor and invert vertical convergence.
-        let pitch = min(max(rotationX, 0.14), 1.12)
-        let clampedZoom = min(max(zoomScale, 0.35), 2.75)
-        let radius: Float = max(0.8, (orbitRadius * 4.4) / clampedZoom)
-        let yawQuat = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
-        let pitchQuat = simd_quatf(angle: -pitch, axis: SIMD3<Float>(1, 0, 0))
-        let orientation = simd_normalize(yawQuat * pitchQuat)
-        let camOffset = orientation.act(SIMD3<Float>(0, 0, radius))
-        camera.transform = Transform(
-          scale: .one,
-          rotation: orientation,
-          translation: orbitCenter + camOffset
+        let eye = orbit.eye
+        let target = orbit.target
+        camera.look(
+          at: SIMD3<Float>(Float(target.x), Float(target.y), Float(target.z)),
+          from: SIMD3<Float>(Float(eye.x), Float(eye.y), Float(eye.z)),
+          relativeTo: nil
         )
+        camera.camera.fieldOfViewInDegrees = Float(orbit.fieldOfViewDeg)
+        var mat = orbit.turntableMatrix
+        if abs(modelScale - 1.0) > 1e-4 {
+          let scaleMat = simd_float4x4(
+            diagonal: SIMD4<Float>(modelScale, modelScale, modelScale, 1.0))
+          mat = simd_mul(mat, scaleMat)
+        }
+        pivot.setTransformMatrix(mat, relativeTo: nil)
         let worldMat = camera.transformMatrix(relativeTo: nil)
         currentCameraTransform = worldMat
         currentHeadPose = XRPose(matrix: worldMat)
@@ -650,6 +662,7 @@
       @MainActor
       @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended, let view = arView else { return }
+        orbit.touch(now: ProcessInfo.processInfo.systemUptime)
         let location = recognizer.location(in: view)
         if let hit = view.hitTest(location, query: .nearest, mask: .all).first {
           _ = runtimeSession?.handleTap(on: hit.entity, hitPoint: hit.position)
@@ -662,6 +675,7 @@
       @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
         guard let view = arView else { return }
         let location = recognizer.location(in: view)
+        let now = ProcessInfo.processInfo.systemUptime
         switch recognizer.state {
         case .began:
           isDragging = true
@@ -671,21 +685,18 @@
           if isDraggingHandle {
             runtimeFeatures?.pointerMove(at: location, in: view)
           } else {
-            let deltaX = Float(location.x - lastPanLocation.x)
-            let deltaY = Float(location.y - lastPanLocation.y)
-            rotationY -= deltaX * 0.007
-            rotationX = min(max(rotationX + deltaY * 0.007, 0.14), 1.12)
-            updateCameraPose()
+            let deltaX = Double(location.x - lastPanLocation.x)
+            let deltaY = Double(location.y - lastPanLocation.y)
+            orbit.drag(dx: deltaX, dy: deltaY, now: now)
           }
           lastPanLocation = location
         case .ended, .cancelled, .failed:
           if isDraggingHandle {
             runtimeFeatures?.pointerUp()
-          } else {
-            onOrbitChanged?(rotationX, rotationY)
           }
           isDraggingHandle = false
           isDragging = false
+          orbit.touch(now: now)
         default:
           break
         }
@@ -693,18 +704,9 @@
 
       @MainActor
       @objc func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
-        switch recognizer.state {
-        case .began:
-          pinchBaseScale = zoomScale
-        case .changed:
-          let next = min(max(pinchBaseScale * Float(recognizer.scale), 0.35), 2.75)
-          zoomScale = next
-          updateCameraPose()
-        case .ended, .cancelled, .failed:
-          onZoomChanged?(zoomScale)
-        default:
-          break
-        }
+        guard !isDraggingHandle, recognizer.state == .changed else { return }
+        orbit.pinch(scale: Double(recognizer.scale), now: ProcessInfo.processInfo.systemUptime)
+        recognizer.scale = 1.0
       }
     }
 
@@ -717,39 +719,18 @@
       arView.environment.background = .color(
         UIColor(red: 0.043, green: 0.071, blue: 0.125, alpha: 1.0)
       )
-      arView.environment.lighting.intensityExponent = -1.0
+      XRLiveRealityKitSession.configureStudioEnvironment(of: arView)
 
-      // Telephoto 26° vertical FOV (giving ~35° horizontal FOV in the 42%-height split pane)
-      // paired with a 4.4x orbit radius matches Web's telephoto framing (`fx ≈ 1097 px`) so
-      // columns stay nearly parallel instead of suffering wide-angle close-up distortion.
       let cameraAnchor = AnchorEntity(world: [0, 0, 0])
       let camera = PerspectiveCamera()
-      camera.camera.fieldOfViewInDegrees = 26.0
+      camera.camera.fieldOfViewInDegrees = 45.0
       cameraAnchor.addChild(camera)
       arView.scene.addAnchor(cameraAnchor)
       context.coordinator.camera = camera
 
-      // Calibrated studio lighting rig matching Web (`three-view.ts`): predominantly top-down
-      // key light illuminates top faces to their true sRGB colors without clipping to white,
-      // while a subtle front-left fill preserves dark shaded vertical side faces.
-      let lightAnchor = AnchorEntity(world: [0, 0, 0])
-      let keyLight = DirectionalLight()
-      keyLight.light.intensity = 1500
-      keyLight.light.color = UIColor(red: 1.0, green: 0.99, blue: 0.97, alpha: 1.0)
-      keyLight.look(at: [0, 0, 0], from: [1.8, 4.5, 2.2], relativeTo: nil)
-      lightAnchor.addChild(keyLight)
-
-      let fillLight = DirectionalLight()
-      fillLight.light.intensity = 220
-      fillLight.light.color = UIColor(red: 0.85, green: 0.92, blue: 1.0, alpha: 1.0)
-      fillLight.look(at: [0, 0, 0], from: [-2.5, 1.5, 2.0], relativeTo: nil)
-      lightAnchor.addChild(fillLight)
-      arView.scene.addAnchor(lightAnchor)
-
-      // Model root container (kept at world origin identity so orbit/physics/handle transforms
-      // operate in unrotated scene coordinates matching Web and Android).
       let modelAnchor = AnchorEntity(world: [0, 0, 0])
       modelAnchor.name = "ModelRoot"
+      modelAnchor.addChild(context.coordinator.pivot)
       arView.scene.addAnchor(modelAnchor)
 
       let tap = UITapGestureRecognizer(
@@ -758,6 +739,9 @@
         target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
       let pinch = UIPinchGestureRecognizer(
         target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+      pan.maximumNumberOfTouches = 1
+      pan.delegate = context.coordinator
+      pinch.delegate = context.coordinator
       arView.addGestureRecognizer(tap)
       arView.addGestureRecognizer(pan)
       arView.addGestureRecognizer(pinch)
@@ -768,10 +752,9 @@
       ) { [weak coordinator = context.coordinator] event in
         guard let coordinator = coordinator else { return }
         let dt = min(max(event.deltaTime, 0), 0.1)
-        if coordinator.autoRotate && !coordinator.isDragging {
-          coordinator.autoRotationAngle += Float(dt) * 0.42
-        }
-        coordinator.updateCameraPose()
+        let now = ProcessInfo.processInfo.systemUptime
+        _ = coordinator.orbit.step(dt: dt, now: now, pointerDown: coordinator.isDragging)
+        coordinator.applyCameraPose()
         coordinator.runtimeSession?.headPoseProvider = { [weak coordinator] in
           coordinator?.currentHeadPose
         }
@@ -786,42 +769,33 @@
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
-      context.coordinator.runtimeSession = runtimeSession
-      context.coordinator.runtimeFeatures = runtimeFeatures
-      context.coordinator.orbitCenter = orbitCenter
-      context.coordinator.orbitRadius = orbitRadius
-      context.coordinator.onTapNode = onTapNode
-      context.coordinator.onOrbitChanged = { newRotX, newRotY in
-        rotationX = newRotX
-        rotationY = newRotY
-      }
-      context.coordinator.onZoomChanged = { newZoom in
-        zoomScale = newZoom
-      }
-      if !context.coordinator.isDragging {
-        context.coordinator.rotationY = rotationY
-        context.coordinator.rotationX = rotationX
-        context.coordinator.zoomScale = zoomScale
-      }
-      context.coordinator.autoRotate = autoRotate
-      if !autoRotate {
-        context.coordinator.autoRotationAngle = 0.0
+      let coordinator = context.coordinator
+      coordinator.runtimeSession = runtimeSession
+      coordinator.runtimeFeatures = runtimeFeatures
+      coordinator.onTapNode = onTapNode
+
+      var shouldSnapBounds = false
+      if let currentEntity = entity, coordinator.pivot.children.first !== currentEntity {
+        coordinator.pivot.children.removeAll()
+        coordinator.pivot.addChild(currentEntity)
+        shouldSnapBounds = true
       }
 
-      guard let modelAnchor = uiView.scene.findEntity(named: "ModelRoot") as? AnchorEntity else {
-        return
+      if coordinator.lastResetToken != resetToken {
+        coordinator.lastResetToken = resetToken
+        shouldSnapBounds = true
       }
 
-      // Swap in the new model only when it is a different object. Each compile produces a
-      // brand new Entity, so identity comparison is exactly the right test here: it avoids
-      // tearing down and re-adding the same entity on every rotation-driven update.
-      if let currentEntity = entity, modelAnchor.children.first !== currentEntity {
-        modelAnchor.children.removeAll()
-        modelAnchor.addChild(currentEntity)
-        context.coordinator.autoRotationAngle = 0.0
+      if coordinator.lastCameraOptions != cameraOptions || shouldSnapBounds {
+        coordinator.lastCameraOptions = cameraOptions
+        coordinator.orbit.apply(cameraOptions)
       }
 
-      context.coordinator.updateCameraPose()
+      if shouldSnapBounds {
+        coordinator.orbit.setBounds(center: sceneBounds.center, radius: sceneBounds.radius)
+      }
+
+      coordinator.applyCameraPose(modelScale: modelScale)
     }
   }
 #endif

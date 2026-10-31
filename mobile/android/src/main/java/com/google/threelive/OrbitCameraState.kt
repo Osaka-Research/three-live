@@ -27,8 +27,8 @@ import kotlin.math.sin
 
 /**
  * Camera options using the same strings as the `<three-live>` attributes (`camera-orbit`,
- * `camera-target`, `min-camera-orbit`, `max-camera-orbit`, `field-of-view`,
- * `rotation-per-second`). `null` keeps the default.
+ * `camera-target`, `min-camera-orbit`, `max-camera-orbit`, `field-of-view`, `rotation-per-second`).
+ * `null` keeps the default.
  */
 data class ThreeLiveCameraOptions(
   val cameraOrbit: String? = null,
@@ -40,6 +40,7 @@ data class ThreeLiveCameraOptions(
   val autoRotate: Boolean = false,
   val autoRotateDelayMs: Long = 3000,
   val rotationPerSecond: String? = null,
+  val distanceMode: String? = null,
 )
 
 /** The `camera-change` detail: the same fields and rounding as the web viewer. */
@@ -60,8 +61,8 @@ data class ThreeLiveCameraChange(
 
 /**
  * Pure orbit-camera model matching the web `ThreeView` camera: azimuth θ and elevation φ around a
- * target, smoothed toward drag / pinch targets, with orbit limits, a turntable auto-rotate that spins
- * the model (not the camera), and change reporting at 1° / 0.02 zoom granularity.
+ * target, smoothed toward drag / pinch targets, with orbit limits, a turntable auto-rotate that
+ * spins the model (not the camera), and change reporting at 1° / 0.02 zoom granularity.
  *
  * Renderers own one instance, feed it input and [step] it every frame, then read [eye] / [target].
  */
@@ -76,6 +77,12 @@ class OrbitCameraState {
 
   /** Vertical field of view in degrees (10..90). */
   var fieldOfViewDeg: Double = 45.0
+    private set
+
+  /**
+   * Distance framing mode: `"auto"` / `"relative"` (`2.5 × boundsRadius`) or `"absolute"` (`3.0m`).
+   */
+  var distanceMode: String = "auto"
     private set
 
   /** Whether drag / pinch input moves the camera. */
@@ -130,14 +137,19 @@ class OrbitCameraState {
     autoRotateDelayMs = max(0L, options.autoRotateDelayMs)
     autoRotateSpeed = parseRotationPerSecond(options.rotationPerSecond)
     parseFieldOfView(options.fieldOfView)?.let { fieldOfViewDeg = it.coerceIn(10.0, 90.0) }
+    distanceMode =
+      options.distanceMode?.trim()?.lowercase()?.takeIf {
+        it == "absolute" || it == "relative" || it == "auto"
+      } ?: "auto"
     customTarget = parseCameraTarget(options.cameraTarget)
     applyOrbitLimits(options.minCameraOrbit, options.maxCameraOrbit)
     applyCameraOrbit(options.cameraOrbit)
   }
 
   /**
-   * Sets the scene bounds after a model loads and frames it like the web viewer: the initial
-   * orbit (if any) or `2.5 × radius`, snapping the smoothed state.
+   * Sets the scene bounds after a model loads and frames it like the web viewer: the initial orbit
+   * (if any), `3.0m` when `distanceMode == "absolute"`, or `2.5 × radius`, snapping the smoothed
+   * state.
    */
   fun setBounds(center: DoubleArray, radius: Double) {
     if (center.size >= 3 && center.all { it.isFinite() }) {
@@ -146,7 +158,8 @@ class OrbitCameraState {
     boundsRadius = if (radius.isFinite() && radius > 1e-6) radius else 1.0
     targetTheta = clampTheta(initialTheta ?: targetTheta)
     targetPhi = clampPhi(initialPhi ?: targetPhi)
-    targetDistance = clampDistance(initialDistance ?: (boundsRadius * 2.5))
+    val defaultDist = if (distanceMode == "absolute") DEFAULT_DISTANCE else boundsRadius * 2.5
+    targetDistance = clampDistance(initialDistance ?: defaultDist)
     snap()
   }
 
@@ -178,8 +191,8 @@ class OrbitCameraState {
   }
 
   /**
-   * Advances smoothing by [dtSeconds] (the web eases 12% per 60 Hz frame) and auto-rotate.
-   * Returns a change to report, or `null` when the reported values did not move.
+   * Advances smoothing by [dtSeconds] (the web eases 12% per 60 Hz frame) and auto-rotate. Returns
+   * a change to report, or `null` when the reported values did not move.
    */
   fun step(dtSeconds: Double, nowMs: Long, pointerDown: Boolean = false): ThreeLiveCameraChange? {
     val dt = if (dtSeconds.isFinite()) dtSeconds.coerceIn(0.0, 0.25) else 0.0
@@ -229,10 +242,16 @@ class OrbitCameraState {
   }
 
   /**
-   * World-space ray from the eye through normalized device coordinates ([ndcX], [ndcY] in -1..1,
-   * +Y up) for a viewport of the given [aspect] (width / height). Writes [origin] and unit [dir].
+   * World-space ray from the eye through normalized device coordinates ([ndcX], [ndcY] in -1..1, +Y
+   * up) for a viewport of the given [aspect] (width / height). Writes [origin] and unit [dir].
    */
-  fun viewportRay(ndcX: Double, ndcY: Double, aspect: Double, origin: DoubleArray, dir: DoubleArray) {
+  fun viewportRay(
+    ndcX: Double,
+    ndcY: Double,
+    aspect: Double,
+    origin: DoubleArray,
+    dir: DoubleArray,
+  ) {
     eye(origin)
     val t = target()
     var fx = t[0] - origin[0]
@@ -348,7 +367,8 @@ class OrbitCameraState {
 
     /** Parses `"2.5m"` or a bare number; invalid → `null`. */
     @JvmStatic
-    fun parseMeters(s: String): Double? = s.removeSuffix("m").toDoubleOrNull()?.takeIf { it.isFinite() }
+    fun parseMeters(s: String): Double? =
+      s.removeSuffix("m").toDoubleOrNull()?.takeIf { it.isFinite() }
 
     /** Parses a `min/max-camera-orbit` string into (θ°, φ°, meters), each nullable. */
     @JvmStatic
@@ -371,8 +391,7 @@ class OrbitCameraState {
     }
 
     /** Parses `field-of-view` (`"45deg"`, `"0.8rad"`, `"45"`). */
-    @JvmStatic
-    fun parseFieldOfView(s: String?): Double? = s?.trim()?.let { parseAngleDeg(it) }
+    @JvmStatic fun parseFieldOfView(s: String?): Double? = s?.trim()?.let { parseAngleDeg(it) }
 
     /** Parses `rotation-per-second` (`"30deg"`, `"0.5rad"`, `"10%"`); default π/6 rad/s. */
     @JvmStatic

@@ -406,12 +406,13 @@ public final class XRLiveRuntimeSession {
     for raw in (XRJSON.array(root["meshes"]) ?? []).prefix(Self.maxSceneElements) {
       var list: [Int] = []
       var bounds: (min: SIMD3<Float>, max: SIMD3<Float>)? = nil
-      for p in (XRJSON.array(XRJSON.object(raw)?["primitives"]) ?? []).prefix(Self.maxSocketsPerNode) {
+      for p in (XRJSON.array(XRJSON.object(raw)?["primitives"]) ?? []).prefix(
+        Self.maxSocketsPerNode)
+      {
         let po = XRJSON.object(p)
         let mat = XRJSON.number(po?["material"]).flatMap { Int(exactly: $0) }
         list.append(mat ?? -1)
-        if bounds == nil,
-          let attrs = XRJSON.object(po?["attributes"]),
+        if let attrs = XRJSON.object(po?["attributes"]),
           let posIdx = XRJSON.number(attrs["POSITION"]).flatMap({ Int(exactly: $0) }),
           posIdx >= 0, posIdx < rawAccessors.count,
           let acc = XRJSON.object(rawAccessors[posIdx]),
@@ -420,10 +421,13 @@ public final class XRLiveRuntimeSession {
         {
           let mn = Self.doubles(minArr, defaults: [-0.08, -0.08, -0.08])
           let mx = Self.doubles(maxArr, defaults: [0.08, 0.08, 0.08])
-          bounds = (
-            min: SIMD3<Float>(Float(mn[0]), Float(mn[1]), Float(mn[2])),
-            max: SIMD3<Float>(Float(mx[0]), Float(mx[1]), Float(mx[2]))
-          )
+          let pMin = SIMD3<Float>(Float(mn[0]), Float(mn[1]), Float(mn[2]))
+          let pMax = SIMD3<Float>(Float(mx[0]), Float(mx[1]), Float(mx[2]))
+          if let existing = bounds {
+            bounds = (min: simd_min(existing.min, pMin), max: simd_max(existing.max, pMax))
+          } else {
+            bounds = (min: pMin, max: pMax)
+          }
         }
       }
       meshMaterials.append(list)
@@ -584,9 +588,47 @@ public final class XRLiveRuntimeSession {
   /// The un-baked local-space AABB (`min`, `max`) of node `index`'s mesh from its glTF
   /// `POSITION` accessor, if present.
   public func localBounds(forNode index: Int) -> (min: SIMD3<Float>, max: SIMD3<Float>)? {
-    guard index >= 0, index < nodes.count, let mesh = nodes[index].mesh, mesh < meshLocalBounds.count
+    guard index >= 0, index < nodes.count, let mesh = nodes[index].mesh,
+      mesh < meshLocalBounds.count
     else { return nil }
     return meshLocalBounds[mesh]
+  }
+
+  /// World-space bounding sphere (`center`, `radius`) of all visible mesh nodes in the glTF
+  /// scene, computed with the exact same transformed AABB formula as Web (`three-view.ts`) and
+  /// Android (`ThreeLiveFilamentRenderer.kt`).
+  public var sceneBounds: (center: SIMD3<Double>, radius: Double) {
+    var bMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+    var bMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+    var found = false
+    for i in 0..<nodes.count {
+      guard isEffectivelyVisible(i), let local = localBounds(forNode: i) else { continue }
+      let m = sceneMatrix(of: i)
+      var wMin = SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+      var wMax = wMin
+      let lMin = [local.min.x, local.min.y, local.min.z]
+      let lMax = [local.max.x, local.max.y, local.max.z]
+      let cols = [m.columns.0, m.columns.1, m.columns.2]
+      for j in 0..<3 {
+        let col = SIMD3<Float>(cols[j].x, cols[j].y, cols[j].z)
+        let a = col * lMin[j]
+        let b = col * lMax[j]
+        wMin += simd_min(a, b)
+        wMax += simd_max(a, b)
+      }
+      bMin = simd_min(bMin, wMin)
+      bMax = simd_max(bMax, wMax)
+      found = true
+    }
+    guard found, bMin.x.isFinite, bMax.x.isFinite else {
+      return (center: .zero, radius: 1.0)
+    }
+    let c = (bMin + bMax) * 0.5
+    let radius = max(Double(simd_length(bMax - bMin) * 0.5), 0.5)
+    return (
+      center: SIMD3<Double>(Double(c.x), Double(c.y), Double(c.z)),
+      radius: radius
+    )
   }
 
   /// The local transform of node `index`.
@@ -690,7 +732,8 @@ public final class XRLiveRuntimeSession {
 
   /// Dispatches a select (tap / pinch) on node `nodeIndex` to every matching
   /// `pointer/onSelect` trigger (a trigger matches its configured node or any descendant).
-  public func dispatchSelect(nodeIndex: Int, hitPoint: SIMD3<Float>? = nil, meshName: String? = nil) {
+  public func dispatchSelect(nodeIndex: Int, hitPoint: SIMD3<Float>? = nil, meshName: String? = nil)
+  {
     impulsePhysicsOnSelect(nodeIndex)
     dispatchPointer(
       ops: ["pointer/onSelect", "event/onSelect", "scene/onSelect"], nodeIndex: nodeIndex,
@@ -859,7 +902,8 @@ public final class XRLiveRuntimeSession {
     guard pointer.hasPrefix("/"), pointer.utf8.count <= 1024 else { return nil }
     var segments: [String] = []
     for rawSub in pointer.dropFirst().split(
-      separator: Character("/"), omittingEmptySubsequences: false) {
+      separator: Character("/"), omittingEmptySubsequences: false)
+    {
       let raw = String(rawSub)
       let seg = raw.replacingOccurrences(of: "~1", with: "/")
         .replacingOccurrences(of: "~0", with: "~")
@@ -1106,7 +1150,9 @@ public final class XRLiveRuntimeSession {
     tweens.append(tween)
   }
 
-  private func readInput(_ nodeIdx: Int, _ sock: String, _ fallback: Value?, _ visited: inout Set<Int>)
+  private func readInput(
+    _ nodeIdx: Int, _ sock: String, _ fallback: Value?, _ visited: inout Set<Int>
+  )
     -> Value?
   {
     guard nodeIdx >= 0, nodeIdx < graph.count, let b = graph[nodeIdx].values[sock] else {
@@ -1225,7 +1271,8 @@ public final class XRLiveRuntimeSession {
     case "e": return .number(exp(1.0))
     case "random": return .number(Double.random(in: 0..<1))
     case "clamp":
-      let lo = Self.applyBin(inp("a", .number(0)), inp("b", inp("min", .number(0))), { Swift.max($0, $1) })
+      let lo = Self.applyBin(
+        inp("a", .number(0)), inp("b", inp("min", .number(0))), { Swift.max($0, $1) })
       return Self.applyBin(lo, inp("c", inp("max", .number(1))), { Swift.min($0, $1) })
     case "mix", "quatSlerp":
       let t = Self.num(inp("c", inp("t", .number(0.5))), 0.5)
@@ -1285,7 +1332,8 @@ public final class XRLiveRuntimeSession {
       return .bool(Self.jsBool(inp("a", .bool(false))) != Self.jsBool(inp("b", .bool(false))))
     case "not": return .bool(!Self.jsBool(inp("a", .bool(false))))
     case "select":
-      return Self.jsBool(inp("condition", .bool(false))) ? inp("a", .number(0)) : inp("b", .number(0))
+      return Self.jsBool(inp("condition", .bool(false)))
+        ? inp("a", .number(0)) : inp("b", .number(0))
     default:
       if m.hasPrefix("combine") {
         let digit = m.dropFirst(7).first.flatMap { Int(String($0)) } ?? 0
@@ -1594,7 +1642,8 @@ public final class XRLiveRuntimeSession {
     defer { eventDepth -= 1 }
     let targetId = resolveEventId(ev)
     let evString = Self.jsString(ev)
-    let indices = ((opIndex["event/receive"] ?? []) + (opIndex["customEvent/receive"] ?? [])).sorted()
+    let indices = ((opIndex["event/receive"] ?? []) + (opIndex["customEvent/receive"] ?? []))
+      .sorted()
     for i in indices {
       let cfgEv = graph[i].config["event"] ?? graph[i].config["id"]
       if resolveEventId(cfgEv) != targetId && Self.jsString(cfgEv) != evString { continue }
@@ -1658,7 +1707,8 @@ public final class XRLiveRuntimeSession {
 
   private static func transform(of n: NodeState) -> XRNodeTransform {
     XRNodeTransform(
-      translation: SIMD3<Float>(Float(n.translation.x), Float(n.translation.y), Float(n.translation.z)),
+      translation: SIMD3<Float>(
+        Float(n.translation.x), Float(n.translation.y), Float(n.translation.z)),
       rotation: simd_quatf(
         ix: Float(n.rotation.x), iy: Float(n.rotation.y), iz: Float(n.rotation.z),
         r: Float(n.rotation.w)),
@@ -1691,7 +1741,9 @@ public final class XRLiveRuntimeSession {
     return rootTransform
   }
 
-  private func setWorldTRS(_ index: Int, rotation: simd_quatf, position: SIMD3<Float>, scale: SIMD3<Float>) {
+  private func setWorldTRS(
+    _ index: Int, rotation: simd_quatf, position: SIMD3<Float>, scale: SIMD3<Float>
+  ) {
     let parent = parentWorld(of: index)
     let det = simd_determinant(parent)
     guard det.isFinite, abs(det) > 1e-12 else { return }

@@ -72,7 +72,10 @@ final class NativeEventsTests: XCTestCase {
 
   func testAutoRotateTurntableAndViewportRay() {
     var cam = XROrbitCameraState()
-    cam.apply(XRCameraOptions(cameraOrbit: "0deg 0deg 5m", fieldOfView: "90deg", autoRotate: true, autoRotateDelay: 1, rotationPerSecond: "90deg"))
+    cam.apply(
+      XRCameraOptions(
+        cameraOrbit: "0deg 0deg 5m", fieldOfView: "90deg", autoRotate: true, autoRotateDelay: 1,
+        rotationPerSecond: "90deg"))
     cam.setBounds(center: .zero, radius: 1)
     cam.touch(now: 0)
     _ = cam.step(dt: 0.25, now: 0.5)
@@ -84,25 +87,51 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertEqual(ray.direction.y, 0.5.squareRoot(), accuracy: 1e-9)
   }
 
+  func testDistanceModeAutoVsAbsolute() {
+    var rel = XROrbitCameraState()
+    rel.apply(XRCameraOptions(distanceMode: "auto"))
+    rel.setBounds(center: .zero, radius: 1.6)
+    XCTAssertEqual(rel.distance, 4.0, accuracy: 1e-9)
+
+    var absCam = XROrbitCameraState()
+    absCam.apply(XRCameraOptions(distanceMode: "absolute"))
+    absCam.setBounds(center: .zero, radius: 1.6)
+    XCTAssertEqual(absCam.distance, 3.0, accuracy: 1e-9)
+  }
+
   // MARK: Hand gestures (web makeTestHand vectors)
 
   private func hand(_ mode: String) -> XRHandJointMap {
     var m: XRHandJointMap = [
       "wrist": SIMD3<Float>(0, 0, 0), "thumb-metacarpal": SIMD3<Float>(0.02, 0.03, 0),
-      "index-finger-metacarpal": SIMD3<Float>(0, 0.06, 0), "middle-finger-metacarpal": SIMD3<Float>(0, 0.06, 0),
-      "ring-finger-metacarpal": SIMD3<Float>(0, 0.06, 0), "pinky-finger-metacarpal": SIMD3<Float>(0, 0.06, 0),
+      "index-finger-metacarpal": SIMD3<Float>(0, 0.06, 0),
+      "middle-finger-metacarpal": SIMD3<Float>(0, 0.06, 0),
+      "ring-finger-metacarpal": SIMD3<Float>(0, 0.06, 0),
+      "pinky-finger-metacarpal": SIMD3<Float>(0, 0.06, 0),
     ]
     let tips: [SIMD3<Float>]
     switch mode {
-    case "pinch": tips = [[0.02, 0.12, 0], [0.025, 0.12, 0], [0, 0.16, 0], [-0.02, 0.15, 0], [-0.04, 0.14, 0]]
-    case "point": tips = [[0.01, 0.02, 0], [0, 0.18, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0]]
-    case "fist": tips = [[0.01, 0.01, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0]]
+    case "pinch":
+      tips = [
+        [0.02, 0.12, 0], [0.025, 0.12, 0], [0, 0.16, 0], [-0.02, 0.15, 0], [-0.04, 0.14, 0],
+      ]
+    case "point":
+      tips = [[0.01, 0.02, 0], [0, 0.18, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0]]
+    case "fist":
+      tips = [[0.01, 0.01, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0]]
     case "thumbs-up":
       m["thumb-metacarpal"] = SIMD3<Float>(0, 0.05, 0)
       tips = [[0, 0.16, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0], [0, 0.02, 0]]
-    default: tips = [[0.04, 0.09, 0], [0.01, 0.18, 0], [0, 0.19, 0], [-0.01, 0.18, 0], [-0.02, 0.16, 0]]
+    default:
+      tips = [
+        [0.04, 0.09, 0], [0.01, 0.18, 0], [0, 0.19, 0], [-0.01, 0.18, 0], [-0.02, 0.16, 0],
+      ]
     }
-    for (name, tip) in zip(["thumb-tip", "index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"], tips) {
+    for (name, tip) in zip(
+      [
+        "thumb-tip", "index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip",
+      ], tips)
+    {
       m[name] = tip
     }
     return m
@@ -166,12 +195,14 @@ final class NativeEventsTests: XCTestCase {
     var proj = matrix_identity_float4x4
     proj.columns.2 = SIMD4<Float>(0, 0, -1, -1)
     proj.columns.3 = SIMD4<Float>(0, 0, -0.2, 0)
-    let boxes = Array(repeating: XRDetections.Box(box: [0.4, 0.4, 0.6, 0.6], label: "cup"), count: 40)
+    let boxes = Array(
+      repeating: XRDetections.Box(box: [0.4, 0.4, 0.6, 0.6], label: "cup"), count: 40)
     let out = XRDetections.detect(boxes, cameraWorld: matrix_identity_float4x4, projection: proj)
     XCTAssertEqual(out.count, WorldUnderstanding.maxDetections)
     XCTAssertEqual(out[0].position.z, -WorldUnderstanding.fallbackDepthMeters, accuracy: 1e-5)
     let withDepth = XRDetections.detect(
-      Array(boxes.prefix(1)), cameraWorld: matrix_identity_float4x4, projection: proj, depthSampler: { _, _ in 1 })
+      Array(boxes.prefix(1)), cameraWorld: matrix_identity_float4x4, projection: proj,
+      depthSampler: { _, _ in 1 })
     XCTAssertEqual(withDepth[0].position.z, -1, accuracy: 1e-5)
   }
 
@@ -194,26 +225,32 @@ final class NativeEventsTests: XCTestCase {
     XCTAssertEqual(XRDetections.parse(json: many).count, WorldUnderstanding.maxDetections)
     let huge = "[" + String(repeating: " ", count: XRDetections.maxDetectionsJSONChars) + "]"
     XCTAssertTrue(XRDetections.parse(json: huge).isEmpty)
-    let long = XRDetections.parse(json: #"[{"label":""# + String(repeating: "a", count: 300) + #"","box":[0,0,1,1]}]"#)
+    let long = XRDetections.parse(
+      json: #"[{"label":""# + String(repeating: "a", count: 300) + #"","box":[0,0,1,1]}]"#)
     XCTAssertEqual(long.first?.label.count, 256)
   }
 
   private final class FakeDetector: XRObjectDetector, @unchecked Sendable {
     var boxes: [XRDetections.Box] = [XRDetections.Box(box: [0.4, 0.4, 0.6, 0.6], label: "cat")]
-    func detect(frame: XRCapturedFrame, completion: @escaping @Sendable ([XRDetections.Box]) -> Void) {
+    func detect(
+      frame: XRCapturedFrame, completion: @escaping @Sendable ([XRDetections.Box]) -> Void
+    ) {
       completion(boxes)
     }
   }
 
   func testVisionBoundingBoxConversionAndDetectionLoop() throws {
     let topLeft = try XCTUnwrap(
-      XRObjectDetectors.visionBoundingBoxToTopLeft(x: 0.25, y: 0.2, width: 0.5, height: 0.3, label: "dog"))
+      XRObjectDetectors.visionBoundingBoxToTopLeft(
+        x: 0.25, y: 0.2, width: 0.5, height: 0.3, label: "dog"))
     XCTAssertEqual(topLeft.label, "dog")
     XCTAssertEqual(topLeft.box[0], 0.5, accuracy: 1e-6)
     XCTAssertEqual(topLeft.box[1], 0.25, accuracy: 1e-6)
     XCTAssertEqual(topLeft.box[2], 0.8, accuracy: 1e-6)
     XCTAssertEqual(topLeft.box[3], 0.75, accuracy: 1e-6)
-    XCTAssertNil(XRObjectDetectors.visionBoundingBoxToTopLeft(x: 0.5, y: 0.5, width: 0, height: 0.2, label: "x"))
+    XCTAssertNil(
+      XRObjectDetectors.visionBoundingBoxToTopLeft(
+        x: 0.5, y: 0.5, width: 0, height: 0.2, label: "x"))
 
     let detector = FakeDetector()
     XRObjectDetectors.register(detector)
@@ -227,7 +264,10 @@ final class NativeEventsTests: XCTestCase {
     var results: [[WorldUnderstanding.Detection3D]] = []
     let loop = XRObjectDetectionLoop(
       captureFrame: { done in
-        done(XRCapturedFrame(jpeg: Data([1]), width: 64, height: 64, cameraWorld: world, projection: proj, timestamp: 1))
+        done(
+          XRCapturedFrame(
+            jpeg: Data([1]), width: 64, height: 64, cameraWorld: world, projection: proj,
+            timestamp: 1))
       },
       detector: detector
     ) { results.append($0) }
@@ -235,7 +275,9 @@ final class NativeEventsTests: XCTestCase {
     drainMain()
     XCTAssertEqual(results.count, 1)
     XCTAssertEqual(results.first?.first?.label, "cat")
-    XCTAssertEqual(results.first?.first?.position.z ?? 0, 4 - WorldUnderstanding.fallbackDepthMeters, accuracy: 1e-4)
+    XCTAssertEqual(
+      results.first?.first?.position.z ?? 0, 4 - WorldUnderstanding.fallbackDepthMeters,
+      accuracy: 1e-4)
 
     loop.paused = true
     XCTAssertFalse(loop.tick())
@@ -314,7 +356,9 @@ final class NativeEventsTests: XCTestCase {
 
   func testReportObjectsToolMergesIntoSetupAndAnswersCalls() throws {
     let merged = try XCTUnwrap(
-      XRGeminiLiveController.withDetectionTool(["model": "m", "tools": [["googleSearch": [String: Any]()]]]))
+      XRGeminiLiveController.withDetectionTool([
+        "model": "m", "tools": [["googleSearch": [String: Any]()]],
+      ]))
     XCTAssertEqual((merged["tools"] as? [Any])?.count, 2)
     XCTAssertEqual((XRGeminiLiveController.withDetectionTool(merged)?["tools"] as? [Any])?.count, 2)
     XCTAssertNil(XRGeminiLiveController.withDetectionTool(nil))
@@ -334,7 +378,8 @@ final class NativeEventsTests: XCTestCase {
         {"id":"c3","name":"report_objects","args":{"objects":[{"label":"x","box_2d":[1,"y",3,4]},7,{"box_2d":[1]}]}},
         {"id":"c4","name":"report_objects","args":null}]}}
       """#
-    let message = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    let message = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
     c.handleServerMessage(message)
     drainMain()
     XCTAssertEqual(reported.count, 1)
@@ -343,10 +388,13 @@ final class NativeEventsTests: XCTestCase {
     let responses = try XCTUnwrap(
       (t.sent.first?["toolResponse"] as? [String: Any])?["functionResponses"] as? [[String: Any]])
     XCTAssertEqual(responses.compactMap { $0["id"] as? String }, ["c1", "c3", "c4"])
-    XCTAssertEqual(responses.compactMap { ($0["response"] as? [String: Any])?["located"] as? Int }, [1, 0, 0])
+    XCTAssertEqual(
+      responses.compactMap { ($0["response"] as? [String: Any])?["located"] as? Int }, [1, 0, 0])
 
     t.sent.removeAll()
-    let many: [Any] = (0..<20).map { ["id": "\($0)", "name": "report_objects", "args": ["objects": [Any]()]] as [String: Any] }
+    let many: [Any] = (0..<20).map {
+      ["id": "\($0)", "name": "report_objects", "args": ["objects": [Any]()]] as [String: Any]
+    }
     c.handleServerMessage(["toolCall": ["functionCalls": many] as [String: Any]])
     let capped = (t.sent.first?["toolResponse"] as? [String: Any])?["functionResponses"] as? [Any]
     XCTAssertEqual(capped?.count, XRGeminiLiveController.maxToolCalls)
@@ -388,14 +436,21 @@ final class NativeEventsTests: XCTestCase {
     c.handleServerMessage(["serverContent": ["inputTranscription": ["text": "this"]]])
     c.handleServerMessage(["serverContent": ["outputTranscription": ["text": "A lamp"]]])
     c.handleServerMessage([
-      "serverContent": ["modelTurn": ["parts": [["text": "IGNORED"], ["inlineData": ["mimeType": "audio/pcm;rate=16000", "data": pcm]]]]]
+      "serverContent": [
+        "modelTurn": [
+          "parts": [
+            ["text": "IGNORED"], ["inlineData": ["mimeType": "audio/pcm;rate=16000", "data": pcm]],
+          ]
+        ]
+      ]
     ])
     c.handleServerMessage(["serverContent": ["turnComplete": true]])
     let flushesBefore = sink.flushes
     c.handleServerMessage(["serverContent": ["interrupted": true]])
     drainMain()
     XCTAssertEqual(events[1], TranscriptEvent(speaker: .user, text: "what is this", isFinal: false))
-    XCTAssertTrue(events.contains(TranscriptEvent(speaker: .user, text: "what is this", isFinal: true)))
+    XCTAssertTrue(
+      events.contains(TranscriptEvent(speaker: .user, text: "what is this", isFinal: true)))
     XCTAssertTrue(events.contains(TranscriptEvent(speaker: .model, text: "A lamp", isFinal: true)))
     XCTAssertFalse(events.contains { $0.text.contains("IGNORED") })
     XCTAssertEqual(sink.rates, [16000])
@@ -413,11 +468,13 @@ final class NativeEventsTests: XCTestCase {
     c.sendAudioChunk(Data([0, 0]), sampleRate: 1)
     XCTAssertTrue(c.sendFrame())
     XCTAssertEqual((t.sent[0]["setup"] as? [String: Any])?["model"] as? String, "models/x")
-    let turns = try XCTUnwrap((t.sent[1]["clientContent"] as? [String: Any])?["turns"] as? [[String: Any]])
+    let turns = try XCTUnwrap(
+      (t.sent[1]["clientContent"] as? [String: Any])?["turns"] as? [[String: Any]])
     let text = try XCTUnwrap((turns[0]["parts"] as? [[String: Any]])?[0]["text"] as? String)
     XCTAssertEqual(text.count, 4000)
     func mime(_ m: [String: Any]) -> String? {
-      ((m["realtimeInput"] as? [String: Any])?["mediaChunks"] as? [[String: Any]])?[0]["mimeType"] as? String
+      ((m["realtimeInput"] as? [String: Any])?["mediaChunks"] as? [[String: Any]])?[0]["mimeType"]
+        as? String
     }
     XCTAssertEqual(mime(t.sent[2]), "audio/pcm;rate=8000")
     XCTAssertEqual(mime(t.sent[3]), "image/jpeg")
@@ -433,11 +490,13 @@ final class NativeEventsTests: XCTestCase {
       XRGeminiLiveController.buildHoldToAskPrompt(meshName: "Lamp", options: opts),
       "The user is pointing at the 3D object \"Lamp\". What is this?")
     XCTAssertEqual(
-      XRGeminiLiveController.buildHoldToAskPrompt(meshName: "", options: opts, transcript: "  how old is it "),
+      XRGeminiLiveController.buildHoldToAskPrompt(
+        meshName: "", options: opts, transcript: "  how old is it "),
       "The user is pointing at the 3D object \"object\". how old is it")
     XCTAssertEqual(
       XRGeminiLiveController.buildHoldToAskPrompt(
-        meshName: String(repeating: "m", count: 300), options: opts, transcript: String(repeating: "y", count: 5000)
+        meshName: String(repeating: "m", count: 300), options: opts,
+        transcript: String(repeating: "y", count: 5000)
       ).count, 4000)
   }
 }

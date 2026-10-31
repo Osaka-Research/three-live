@@ -31,11 +31,14 @@ public struct XRCameraOptions: Sendable, Equatable {
   public var autoRotate: Bool
   public var autoRotateDelay: TimeInterval
   public var rotationPerSecond: String?
+  /// `"auto"` / `"relative"` (`2.5 × boundsRadius`) or `"absolute"` (`3.0m`).
+  public var distanceMode: String?
 
   public init(
     cameraOrbit: String? = nil, cameraTarget: String? = nil, minCameraOrbit: String? = nil,
     maxCameraOrbit: String? = nil, fieldOfView: String? = nil, cameraControls: Bool = true,
-    autoRotate: Bool = false, autoRotateDelay: TimeInterval = 3, rotationPerSecond: String? = nil
+    autoRotate: Bool = false, autoRotateDelay: TimeInterval = 3, rotationPerSecond: String? = nil,
+    distanceMode: String? = nil
   ) {
     self.cameraOrbit = cameraOrbit
     self.cameraTarget = cameraTarget
@@ -46,6 +49,7 @@ public struct XRCameraOptions: Sendable, Equatable {
     self.autoRotate = autoRotate
     self.autoRotateDelay = autoRotateDelay
     self.rotationPerSecond = rotationPerSecond
+    self.distanceMode = distanceMode
   }
 }
 
@@ -70,6 +74,8 @@ public struct XROrbitCameraState: Sendable {
   public private(set) var boundsRadius: Double = 1
   /// Vertical field of view in degrees (10…90).
   public private(set) var fieldOfViewDeg: Double = 45
+  /// Distance framing mode: `"auto"` / `"relative"` (`2.5 × boundsRadius`) or `"absolute"` (`3.0m`).
+  public private(set) var distanceMode: String = "auto"
   public var interactive = true
   public private(set) var theta: Double = 0.6
   public private(set) var phi: Double = 0.35
@@ -107,18 +113,27 @@ public struct XROrbitCameraState: Sendable {
     autoRotateDelay = max(0, o.autoRotateDelay)
     autoRotateSpeed = Self.parseRotationPerSecond(o.rotationPerSecond)
     if let f = Self.parseFieldOfView(o.fieldOfView) { fieldOfViewDeg = min(90, max(10, f)) }
+    if let mode = o.distanceMode?.trimmingCharacters(in: .whitespaces).lowercased(),
+      mode == "absolute" || mode == "relative" || mode == "auto"
+    {
+      distanceMode = mode
+    } else {
+      distanceMode = "auto"
+    }
     customTarget = Self.parseCameraTarget(o.cameraTarget)
     applyLimits(o.minCameraOrbit, o.maxCameraOrbit)
     applyOrbit(o.cameraOrbit)
   }
 
-  /// Frames the scene after a load (initial orbit, else 2.5 × radius) and snaps the easing.
+  /// Frames the scene after a load (initial orbit, else `3.0m` when `distanceMode == "absolute"`,
+  /// else `2.5 × radius`) and snaps the easing.
   public mutating func setBounds(center: SIMD3<Double>, radius: Double) {
     if center.x.isFinite && center.y.isFinite && center.z.isFinite { boundsCenter = center }
     boundsRadius = (radius.isFinite && radius > 1e-6) ? radius : 1
     targetTheta = clampTheta(initialTheta ?? targetTheta)
     targetPhi = clampPhi(initialPhi ?? targetPhi)
-    targetDistance = clampDistance(initialDistance ?? boundsRadius * 2.5)
+    let defaultDist = (distanceMode == "absolute") ? 3.0 : (boundsRadius * 2.5)
+    targetDistance = clampDistance(initialDistance ?? defaultDist)
     snap()
   }
 
@@ -166,14 +181,20 @@ public struct XROrbitCameraState: Sendable {
   /// The current change if θ / φ moved ≥ 1° or zoom ≥ 0.02 since the last report.
   public mutating func pollChange() -> XRCameraChange? {
     let deg = theta * 180 / .pi
-    let thetaDeg = Int(((deg.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)).rounded()) % 360
+    let thetaDeg =
+      Int(
+        ((deg.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360))
+          .rounded()) % 360
     let phiDeg = Int((phi * 180 / .pi).rounded())
     let zoom = ((boundsRadius * 2.5 / distance) * 100).rounded() / 100
-    if let (t, p, z) = lastReported, abs(thetaDeg - t) < 1, abs(phiDeg - p) < 1, abs(zoom - z) < 0.02 {
+    if let (t, p, z) = lastReported, abs(thetaDeg - t) < 1, abs(phiDeg - p) < 1,
+      abs(zoom - z) < 0.02
+    {
       return nil
     }
     lastReported = (thetaDeg, phiDeg, zoom)
-    return XRCameraChange(theta: thetaDeg, phi: phiDeg, zoom: zoom, distance: (distance * 100).rounded() / 100)
+    return XRCameraChange(
+      theta: thetaDeg, phi: phiDeg, zoom: zoom, distance: (distance * 100).rounded() / 100)
   }
 
   /// The orbit target (`camera-target`, else the bounds center).
@@ -190,16 +211,19 @@ public struct XROrbitCameraState: Sendable {
     let s = sin(turntable)
     let cx = boundsCenter.x
     let cz = boundsCenter.z
-    return simd_float4x4(columns: (
-      SIMD4<Float>(Float(c), 0, Float(-s), 0),
-      SIMD4<Float>(0, 1, 0, 0),
-      SIMD4<Float>(Float(s), 0, Float(c), 0),
-      SIMD4<Float>(Float(cx - (c * cx + s * cz)), 0, Float(cz - (-s * cx + c * cz)), 1)
-    ))
+    return simd_float4x4(
+      columns: (
+        SIMD4<Float>(Float(c), 0, Float(-s), 0),
+        SIMD4<Float>(0, 1, 0, 0),
+        SIMD4<Float>(Float(s), 0, Float(c), 0),
+        SIMD4<Float>(Float(cx - (c * cx + s * cz)), 0, Float(cz - (-s * cx + c * cz)), 1)
+      ))
   }
 
   /// World ray through normalized device coordinates (`ndc` in −1…1, +Y up) for `aspect`.
-  public func viewportRay(ndc: SIMD2<Double>, aspect: Double) -> (origin: SIMD3<Double>, direction: SIMD3<Double>) {
+  public func viewportRay(ndc: SIMD2<Double>, aspect: Double) -> (
+    origin: SIMD3<Double>, direction: SIMD3<Double>
+  ) {
     let o = eye
     var f = target - o
     f = simd_length(f) > 1e-12 ? simd_normalize(f) : SIMD3<Double>(0, 0, -1)
@@ -282,7 +306,8 @@ public struct XROrbitCameraState: Sendable {
   public static func parseCameraTarget(_ s: String?) -> SIMD3<Double>? {
     guard let s = s else { return nil }
     let p = split(s)
-    guard p.count >= 3, let x = parseMeters(p[0]), let y = parseMeters(p[1]), let z = parseMeters(p[2])
+    guard p.count >= 3, let x = parseMeters(p[0]), let y = parseMeters(p[1]),
+      let z = parseMeters(p[2])
     else { return nil }
     return SIMD3<Double>(x, y, z)
   }

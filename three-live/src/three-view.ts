@@ -94,6 +94,7 @@ export interface ViewOptions {
   autoplay?: boolean;
   animationName?: string;
   fieldOfView?: number;
+  distanceMode?: 'auto' | 'relative' | 'absolute';
   cameraTarget?: [number, number, number];
   minCameraOrbit?: {theta?: number; phi?: number; distance?: number};
   maxCameraOrbit?: {theta?: number; phi?: number; distance?: number};
@@ -976,8 +977,16 @@ function buildGpuScene(
       totalHostVertices += primVertCount;
       if (posAcc?.min && posAcc?.max) {
         for (let c = 0; c < 3; c++) {
-          if (posAcc.min[c] < min[c]) min[c] = posAcc.min[c];
-          if (posAcc.max[c] > max[c]) max[c] = posAcc.max[c];
+          let wMin = trans[12 + c];
+          let wMax = trans[12 + c];
+          for (let j = 0; j < 3; j++) {
+            const a = trans[j * 4 + c] * posAcc.min[j];
+            const b = trans[j * 4 + c] * posAcc.max[j];
+            wMin += a < b ? a : b;
+            wMax += a > b ? a : b;
+          }
+          if (wMin < min[c]) min[c] = wMin;
+          if (wMax > max[c]) max[c] = wMax;
         }
       }
       const posData = bindBufferAttribute(
@@ -1226,6 +1235,7 @@ export class ThreeView {
   private initialPhi = 0.35;
   private initialDistance: number | null = null;
   private customDistance = false;
+  private distanceMode: 'auto' | 'relative' | 'absolute' = 'auto';
   private initialCustomTarget: [number, number, number] | null = null;
 
   // Active camera state
@@ -1384,6 +1394,9 @@ export class ThreeView {
     }
     if (this.opts.fieldOfView !== undefined) {
       this.fov = (this.opts.fieldOfView * Math.PI) / 180;
+    }
+    if (this.opts.distanceMode !== undefined) {
+      this.distanceMode = this.opts.distanceMode;
     }
     if (this.opts.cameraTarget !== undefined) {
       this.setTarget(
@@ -1550,7 +1563,8 @@ export class ThreeView {
     }
 
     if (!this.customDistance) {
-      this.initialDistance = bounds.radius * 2.5;
+      this.initialDistance =
+        this.distanceMode === 'absolute' ? 3.0 : bounds.radius * 2.5;
       this.targetDistance = this.initialDistance;
       this.currDistance = this.initialDistance;
     }
@@ -1971,6 +1985,29 @@ export class ThreeView {
     return (this.fov * 180) / Math.PI;
   }
 
+  public setDistanceMode(mode: 'auto' | 'relative' | 'absolute'): void {
+    this.distanceMode = mode;
+    if (!this.customDistance) {
+      const d = this.clampDistance(
+        this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5,
+      );
+      this.initialDistance = d;
+      this.targetDistance = d;
+      this.currDistance = d;
+      if (
+        this.gl &&
+        (this.meshes.length > 0 || this.backdropMeshes.length > 0)
+      ) {
+        this.update(0);
+        this.render();
+      }
+    }
+  }
+
+  public getDistanceMode(): 'auto' | 'relative' | 'absolute' {
+    return this.distanceMode;
+  }
+
   public setOrbitLimits(limits: OrbitLimits): void {
     if (limits.minTheta !== undefined) {
       this.minTheta = (limits.minTheta * Math.PI) / 180;
@@ -2086,6 +2123,14 @@ export class ThreeView {
       this.customDistance = true;
       this.targetDistance = d;
       this.currDistance = d;
+    } else {
+      this.customDistance = false;
+      const d = this.clampDistance(
+        this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5,
+      );
+      this.initialDistance = d;
+      this.targetDistance = d;
+      this.currDistance = d;
     }
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
@@ -2185,8 +2230,7 @@ export class ThreeView {
         this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
 
       const eyeToPoint = [wx - eyeX, wy - eyeY, wz - eyeZ];
-      const dot =
-        nx * eyeToPoint[0] + ny * eyeToPoint[1] + nz * eyeToPoint[2];
+      const dot = nx * eyeToPoint[0] + ny * eyeToPoint[1] + nz * eyeToPoint[2];
       if (dot > 0.05) {
         visible = false;
       }
@@ -2968,9 +3012,7 @@ export class ThreeView {
     let hasTransmissive = false;
     const numBackdrop = this.backdropMeshes.length;
     const renderList =
-      numBackdrop > 0
-        ? [...this.backdropMeshes, ...this.meshes]
-        : this.meshes;
+      numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
     const drawPass = (transmissivePass: boolean) => {
       for (let i = 0; i < renderList.length; i++) {
         const mesh = renderList[i];

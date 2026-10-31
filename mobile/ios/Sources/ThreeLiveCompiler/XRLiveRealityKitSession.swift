@@ -300,6 +300,41 @@
       }
     }
 
+    /// Installs the calibrated studio lighting rig matching Web (`three-view.ts`) and Android
+    /// (`ThreeLiveFilamentRenderer.kt`): a predominantly top-down key light plus a cool
+    /// front-left fill light so top faces render at their true sRGB color while vertical faces
+    /// retain subtle studio shading.
+    public func installStudioLights(exposure: Float = 1.0) {
+      #if !os(visionOS)
+        root.findEntity(named: "ThreeLiveStudioLights")?.removeFromParent()
+        let scale = max(0.0, exposure.isFinite ? exposure : 1.0)
+        let container = Entity()
+        container.name = "ThreeLiveStudioLights"
+
+        let keyLight = DirectionalLight()
+        keyLight.light.intensity = 1500 * scale
+        keyLight.light.color = XRPlatformColor(red: 1.0, green: 0.99, blue: 0.97, alpha: 1.0)
+        keyLight.look(at: [0, 0, 0], from: [1.8, 4.5, 2.2], relativeTo: container)
+        container.addChild(keyLight)
+
+        let fillLight = DirectionalLight()
+        fillLight.light.intensity = 220 * scale
+        fillLight.light.color = XRPlatformColor(red: 0.85, green: 0.92, blue: 1.0, alpha: 1.0)
+        fillLight.look(at: [0, 0, 0], from: [-2.5, 1.5, 2.0], relativeTo: container)
+        container.addChild(fillLight)
+
+        root.addChild(container)
+      #endif
+    }
+
+    #if os(iOS) || os(macOS)
+      /// Configures `arView`'s studio environment IBL intensity so PBR materials match Web and
+      /// Android without clipping top faces to white.
+      public static func configureStudioEnvironment(of arView: ARView) {
+        arView.environment.lighting.intensityExponent = -1.0
+      }
+    #endif
+
     // MARK: Lifecycle
 
     /// Fires `event/onStart` and, once `root` is in a scene, steps every frame from
