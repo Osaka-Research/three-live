@@ -37,8 +37,15 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-if [[ -z "${DEVELOPER_DIR:-}" ]] && [[ "$(xcode-select -p 2>/dev/null || true)" == *"CommandLineTools"* ]] && [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
-    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+if [[ -z "${DEVELOPER_DIR:-}" ]] && [[ "$(xcode-select -p 2>/dev/null || true)" == *"CommandLineTools"* ]]; then
+    if [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+        export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+    else
+        DETECTED_XCODE_DEV="$(ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | sort -V | tail -n 1 || true)"
+        if [[ -n "${DETECTED_XCODE_DEV}" ]] && [[ -d "${DETECTED_XCODE_DEV}" ]]; then
+            export DEVELOPER_DIR="${DETECTED_XCODE_DEV}"
+        fi
+    fi
 fi
 
 if ! command -v xcodebuild &> /dev/null; then
