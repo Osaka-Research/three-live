@@ -181,6 +181,13 @@ ios-sim: engine-asset
 	if [ -z "$$XCODEGEN_BIN" ] && [ -x "$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen" ]; then \
 		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
 	fi; \
+	if [ -z "$$XCODEGEN_BIN" ]; then \
+		echo "--> Downloading standalone xcodegen binary to .build/xcodegen (no Homebrew required)..."; \
+		mkdir -p "$(CURDIR)/.build/xcodegen"; \
+		curl -fsSL https://github.com/yonaskolb/XcodeGen/releases/latest/download/xcodegen.zip -o "$(CURDIR)/.build/xcodegen/xcodegen.zip" && \
+		unzip -qo "$(CURDIR)/.build/xcodegen/xcodegen.zip" -d "$(CURDIR)/.build/xcodegen" && \
+		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
+	fi; \
 	cd mobile/examples/ios_swiftui && "$$XCODEGEN_BIN" generate
 	@echo "--> Building ThreeLiveDemo for iOS Simulator (without /usr/bin/codesign)..."
 	cd mobile/examples/ios_swiftui && xcodebuild \
