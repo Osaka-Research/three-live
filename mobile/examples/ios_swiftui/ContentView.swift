@@ -55,11 +55,9 @@
 
     private var currentCameraOptions: XRCameraOptions {
       let autoRot = isArPreviewMode ? arAutoRotate : (selectedMode == .threeLive)
-      let initialOrbit = selectedMode == .threeLive ? "23deg 20deg" : "-34deg 20deg"
+      let initialOrbit = selectedMode == .threeLive ? "23deg 20deg" : "34deg 20deg"
       return XRCameraOptions(
         cameraOrbit: initialOrbit,
-        minCameraOrbit: "auto 5deg auto",
-        maxCameraOrbit: "auto 75deg auto",
         fieldOfView: "45deg",
         cameraControls: true,
         autoRotate: autoRot,
@@ -784,6 +782,10 @@
       if coordinator.lastResetToken != resetToken {
         coordinator.lastResetToken = resetToken
         shouldSnapBounds = true
+      }
+
+      if shouldSnapBounds {
+        coordinator.orbit = XROrbitCameraState()
       }
 
       if coordinator.lastCameraOptions != cameraOptions || shouldSnapBounds {
