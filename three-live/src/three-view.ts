@@ -355,6 +355,7 @@ in vec3 vNormal,vWorldPos;
 in vec2 vUV;
 uniform vec4 uBaseColor;
 uniform float uMetallic,uRoughness,uEmissive,uEnvIntensity;
+uniform vec2 uClearcoat;
 uniform vec3 uCameraPos,uAmbientColor;
 uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap,uXrDepthTex;
 uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap,uXrDepthEnabled,uXrDepthFormat;
@@ -378,12 +379,12 @@ return F0+(max(vec3(1.0-r),F0)-F0)*pow(clamp(1.0-n,0.0,1.0),5.0);
 
 vec3 getStudioRadiance(vec3 R,float r){
 vec3 kd=normalize(vec3(0.0,1.0,0.35));
-float ki=pow(max(dot(R,kd),0.0),mix(48.0,1.5,r))*mix(1.8,0.5,r);
+float ki=pow(max(dot(R,kd),0.0),mix(96.0,1.5,r))*mix(2.4,0.5,r);
 vec3 fd=normalize(vec3(-0.85,0.45,-0.35));
-float fi=pow(max(dot(R,fd),0.0),mix(24.0,1.2,r))*mix(1.0,0.35,r);
-float ri=pow(clamp(1.0-abs(R.y),0.0,1.0),3.0)*0.25;
+float fi=pow(max(dot(R,fd),0.0),mix(36.0,1.2,r))*mix(1.3,0.35,r);
+float ri=pow(clamp(1.0-abs(R.y),0.0,1.0),3.5)*mix(0.55,0.22,r);
 vec3 ag=mix(vec3(0.06,0.06,0.08),vec3(0.48,0.50,0.55),R.y*0.5+0.5);
-return ag+vec3(1.0,0.98,0.94)*ki+vec3(0.85,0.92,1.0)*fi+vec3(0.6)*ri;
+return ag+vec3(1.0,0.98,0.94)*ki+vec3(0.85,0.92,1.0)*fi+vec3(0.65,0.72,0.85)*ri;
 }
 
 vec3 perturbNormal(vec3 N,vec3 V,vec2 uv,sampler2D normalMap,float scale){
@@ -459,13 +460,17 @@ if(uHasOcclusionTexture==1){
 occ=mix(1.0,texture(uOcclusionTexture,vUV).r,uOcclusionStrength);
 }
 
+float gloss=1.0-roughness;
+float specExp=mix(16.0,256.0,gloss*gloss);
+float specWeight=mix(0.22*gloss,1.0,metallic);
 vec3 directLight=vec3(0.0);
 for(int i=0;i<2;i++){
 if(i>=uNumDirLights)break;
 vec3 L=normalize(uDirLightDir[i]);
 float NdotL=max(dot(N,L),0.0);
 vec3 H=normalize(L+V);
-float spec=pow(max(dot(N,H),0.0),mix(16.0,128.0,1.0-roughness))*metallic;
+float NoH=max(dot(N,H),0.0);
+float spec=pow(NoH,specExp)*specWeight+uClearcoat.x*pow(NoH,mix(64.0,512.0,1.0-uClearcoat.y))*0.35;
 directLight+=(base.rgb*NdotL*0.75+vec3(spec))*uDirLightColor[i];
 }
 for(int i=0;i<2;i++){
@@ -476,7 +481,8 @@ vec3 L=toLight/max(dist,0.0001);
 float atten=1.0/(1.0+0.09*dist+0.032*dist*dist);
 float NdotL=max(dot(N,L),0.0);
 vec3 H=normalize(L+V);
-float spec=pow(max(dot(N,H),0.0),mix(16.0,128.0,1.0-roughness))*metallic;
+float NoH=max(dot(N,H),0.0);
+float spec=pow(NoH,specExp)*specWeight+uClearcoat.x*pow(NoH,mix(64.0,512.0,1.0-uClearcoat.y))*0.35;
 directLight+=(base.rgb*NdotL*0.75+vec3(spec))*uPointLightColor[i]*atten;
 }
 
@@ -499,6 +505,10 @@ envDiffuse=mix(vec3(0.10,0.10,0.12),vec3(0.52,0.54,0.58),N.y*0.5+0.5);
 vec3 kD=(vec3(1.0)-F)*(1.0-metallic);
 vec3 diffuseIBL=kD*base.rgb*(uAmbientColor+envDiffuse*0.5)*occ;
 vec3 color=directLight+(diffuseIBL+specularIBL)*uEnvIntensity+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
+if(uClearcoat.x>0.0){
+vec3 ccF=F_SchlickRoughness(vec3(0.04),uClearcoat.y,NoV)*uClearcoat.x;
+color=color*(vec3(1.0)-ccF)+getStudioRadiance(R,uClearcoat.y)*ccF*uEnvIntensity;
+}
 color=applyToneMapping(color,uToneMapping);
 float outAlpha=base.a;
 if(uXrDepthEnabled==1){
@@ -582,6 +592,7 @@ const RENDER_UNIFORMS = [
   'uBaseColor',
   'uMetallic',
   'uRoughness',
+  'uClearcoat',
   'uEmissive',
   'uCameraPos',
   'uBaseColorTexture',
@@ -620,6 +631,8 @@ interface PrimitiveGpu {
   baseColor: [number, number, number, number];
   metallic: number;
   roughness: number;
+  clearcoat: number;
+  clearcoatRoughness: number;
   positions: Float32Array;
   indices: Uint16Array | Uint32Array | null;
   texture: WebGLTexture | null;
@@ -1090,6 +1103,12 @@ function buildGpuScene(
         pbr?.baseColorFactor || [0.8, 0.8, 0.8, 1.0];
       const metallic = pbr?.metallicFactor ?? 0.1;
       const roughness = pbr?.roughnessFactor ?? 0.5;
+      const ccExt = mat?.extensions?.KHR_materials_clearcoat;
+      const clearcoat = ccExt ? (ccExt.clearcoatFactor ?? 1.0) : 0.0;
+      const clearcoatRoughness = Math.max(
+        0.04,
+        ccExt?.clearcoatRoughnessFactor ?? 0.04,
+      );
       const texture =
         pbr?.baseColorTexture !== undefined &&
         gpuTextures[pbr.baseColorTexture.index]
@@ -1124,6 +1143,8 @@ function buildGpuScene(
         baseColor,
         metallic,
         roughness,
+        clearcoat,
+        clearcoatRoughness,
         positions: posData,
         indices: idxDataRaw,
         texture,
@@ -3123,6 +3144,13 @@ export class ThreeView {
           gl.uniform4fv(u.uBaseColor, prim.baseColor);
           gl.uniform1f(u.uMetallic, prim.metallic);
           gl.uniform1f(u.uRoughness, prim.roughness);
+          if (u.uClearcoat) {
+            gl.uniform2f(
+              u.uClearcoat,
+              prim.clearcoat ?? 0,
+              prim.clearcoatRoughness ?? 0.04,
+            );
+          }
 
           if (prim.texture) {
             gl.activeTexture(gl.TEXTURE0);

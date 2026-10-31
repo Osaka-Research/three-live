@@ -1412,20 +1412,20 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       // Key lobe: normalize(0.0, 1.0, 0.35)
       val kLen = Math.sqrt(1.0 + 0.35 * 0.35).toFloat()
       val kDot = maxOf(0f, dy * (1f / kLen) + dz * (0.35f / kLen))
-      val kExp = 48f + (1.5f - 48f) * r
-      val kAmp = 1.8f + (0.5f - 1.8f) * r
+      val kExp = 96f + (1.5f - 96f) * r
+      val kAmp = 2.4f + (0.5f - 2.4f) * r
       val ki = Math.pow(kDot.toDouble(), kExp.toDouble()).toFloat() * kAmp
 
       // Fill lobe: normalize(-0.85, 0.45, -0.35)
       val fLen = Math.sqrt(0.85 * 0.85 + 0.45 * 0.45 + 0.35 * 0.35).toFloat()
       val fDot = maxOf(0f, dx * (-0.85f / fLen) + dy * (0.45f / fLen) + dz * (-0.35f / fLen))
-      val fExp = 24f + (1.2f - 24f) * r
-      val fAmp = 1.0f + (0.35f - 1.0f) * r
+      val fExp = 36f + (1.2f - 36f) * r
+      val fAmp = 1.3f + (0.35f - 1.3f) * r
       val fi = Math.pow(fDot.toDouble(), fExp.toDouble()).toFloat() * fAmp
 
       // Horizon rim
       val rimBase = (1f - Math.abs(dy)).coerceIn(0f, 1f)
-      val ri = rimBase * rimBase * rimBase * 0.25f
+      val ri = Math.pow(rimBase.toDouble(), 3.5).toFloat() * (0.55f + (0.22f - 0.55f) * r)
 
       // Sky-ground gradient in linear RGB
       val t = (dy * 0.5f + 0.5f).coerceIn(0f, 1f)
@@ -1433,9 +1433,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       val agG = 0.005f + (0.215f - 0.005f) * t
       val agB = 0.007f + (0.26f - 0.007f) * t
 
-      out[0] = agR + 1.0f * ki + 0.70f * fi + 0.32f * ri
-      out[1] = agG + 0.96f * ki + 0.83f * fi + 0.32f * ri
-      out[2] = agB + 0.88f * ki + 1.0f * fi + 0.32f * ri
+      out[0] = agR + 1.0f * ki + 0.70f * fi + 0.40f * ri
+      out[1] = agG + 0.96f * ki + 0.83f * fi + 0.48f * ri
+      out[2] = agB + 0.88f * ki + 1.0f * fi + 0.68f * ri
       return out
     }
 

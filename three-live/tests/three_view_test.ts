@@ -1048,14 +1048,39 @@ async function runThreeViewTests() {
   );
 
   // Verify shadow quads rotate across tabletop when turntableRotation is applied
-  const initialOrbShadowCenterZ = (shadowQuads[1][2] + shadowQuads[1][12]) * 0.5;
+  const initialOrbShadowCenterZ =
+    (shadowQuads[1][2] + shadowQuads[1][12]) * 0.5;
   shadowQuads.length = 0;
   shadowView.resetTurntableRotation(Math.PI / 2);
   contactShadowPlugin.onAfterRender!(shadowGl, shadowView, mat4Create());
-  const rotatedOrbShadowCenterZ = (shadowQuads[1][2] + shadowQuads[1][12]) * 0.5;
+  const rotatedOrbShadowCenterZ =
+    (shadowQuads[1][2] + shadowQuads[1][12]) * 0.5;
   assert(
     Math.abs(rotatedOrbShadowCenterZ - initialOrbShadowCenterZ) > 0.1,
     `Per-object shadows follow turntable rotation across tabletop (z shifted from ${initialOrbShadowCenterZ.toFixed(2)} to ${rotatedOrbShadowCenterZ.toFixed(2)})`,
+  );
+
+  // Verify built-in KHR_materials_clearcoat parsing on ThreeView primitives
+  const clearcoatScene = new THREE.Scene();
+  const clearcoatSphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 8, 8),
+    new THREE.MeshPhysicalMaterial({
+      color: 0x38bdf8,
+      metalness: 0.1,
+      roughness: 0.15,
+      clearcoat: 0.9,
+      clearcoatRoughness: 0.08,
+    }),
+  );
+  clearcoatSphere.name = 'ClearcoatOrb';
+  clearcoatScene.add(clearcoatSphere);
+  await shadowView.loadModel(clearcoatScene.toGLB().buffer);
+  const ccPrim = (shadowView as any).meshes[0]?.primitives[0];
+  assert(
+    ccPrim &&
+      Math.abs(ccPrim.clearcoat - 0.9) < 1e-4 &&
+      Math.abs(ccPrim.clearcoatRoughness - 0.08) < 1e-4,
+    'ThreeView parses KHR_materials_clearcoat factor and roughness into PrimitiveGpu',
   );
 
   // P1-1 (WEB-09): glTF images[].uri scheme allowlist

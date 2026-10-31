@@ -134,10 +134,15 @@ export const materialsPlugin: ThreeLivePlugin = {
     if (exts.KHR_materials_unlit) {
       return {
         vs: defaultVS,
-        fs: defaultFS.replace(
-          'fragColor=vec4(color,base.a);',
-          'fragColor=vec4(base.rgb,base.a);',
-        ),
+        fs: defaultFS
+          .replace(
+            'fragColor=vec4(color,outAlpha);',
+            'fragColor=vec4(base.rgb,outAlpha);',
+          )
+          .replace(
+            'fragColor=vec4(color,base.a);',
+            'fragColor=vec4(base.rgb,base.a);',
+          ),
       };
     }
 
@@ -219,8 +224,8 @@ diffuseIBL=mix(diffuseIBL,tr*volumeAtten*base.rgb,${transFactor});`,
       );
     }
 
-    // 4. Clearcoat
-    if (cc) {
+    // 4. Clearcoat (injected only if defaultFS does not already have built-in uClearcoat)
+    if (cc && !defaultFS.includes('uClearcoat')) {
       const factor = safeGlslFloat(cc.clearcoatFactor, 1.0, 0, 1);
       const rough = safeGlslFloat(cc.clearcoatRoughnessFactor, 0.0, 0, 1);
       modifiedFS = modifiedFS.replace(
@@ -234,10 +239,18 @@ diffuseIBL=mix(diffuseIBL,tr*volumeAtten*base.rgb,${transFactor});`,
       const col = Array.isArray(sh.sheenColorFactor)
         ? sh.sheenColorFactor
         : [1, 1, 1];
-      modifiedFS = modifiedFS.replace(
-        'fragColor=vec4(color,base.a);',
-        `color+=vec3(${safeGlslFloat(col[0], 1.0, 0, 1)},${safeGlslFloat(col[1], 1.0, 0, 1)},${safeGlslFloat(col[2], 1.0, 0, 1)})*pow(1.-NoV,4.)*.5;fragColor=vec4(color,base.a);`,
-      );
+      const sheenExpr = `color+=vec3(${safeGlslFloat(col[0], 1.0, 0, 1)},${safeGlslFloat(col[1], 1.0, 0, 1)},${safeGlslFloat(col[2], 1.0, 0, 1)})*pow(1.-NoV,4.)*.5;`;
+      if (modifiedFS.includes('color=applyToneMapping(color,uToneMapping);')) {
+        modifiedFS = modifiedFS.replace(
+          'color=applyToneMapping(color,uToneMapping);',
+          `${sheenExpr}color=applyToneMapping(color,uToneMapping);`,
+        );
+      } else {
+        modifiedFS = modifiedFS.replace(
+          'fragColor=vec4(color,base.a);',
+          `${sheenExpr}fragColor=vec4(color,base.a);`,
+        );
+      }
     }
 
     return {vs: defaultVS, fs: modifiedFS};
