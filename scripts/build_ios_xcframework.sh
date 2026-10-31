@@ -37,8 +37,22 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
+if [[ -z "${DEVELOPER_DIR:-}" ]] && [[ "$(xcode-select -p 2>/dev/null || true)" == *"CommandLineTools"* ]] && [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+fi
+
 if ! command -v xcodebuild &> /dev/null; then
-    echo "Error: xcodebuild is required to package XCFramework (macOS only)." >&2
+    echo "Error: xcodebuild is required to package XCFramework (macOS with Xcode.app only)." >&2
+    echo "If Xcode.app is installed, run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+    exit 1
+fi
+
+if ! xcrun --sdk iphoneos --show-sdk-path &>/dev/null; then
+    echo "Error: iOS SDK (iphoneos) not found." >&2
+    echo "1. Point xcode-select to Xcode.app:" >&2
+    echo "     sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+    echo "2. If the iOS platform is not installed in Xcode yet, run:" >&2
+    echo "     xcodebuild -downloadPlatform iOS" >&2
     exit 1
 fi
 
@@ -49,12 +63,15 @@ has_sdk() {
     echo "${AVAILABLE_SDKS}" | grep -q -- "-sdk $1"
 }
 
-# build_target <rust-target>
+# build_target <rust-target> <xcode-sdk>
 build_target() {
     local target="$1"
-    echo "  - ${target}"
+    local sdk="$2"
+    local sdk_path
+    sdk_path="$(xcrun --sdk "${sdk}" --show-sdk-path)"
+    echo "  - ${target} (SDK: ${sdk_path})"
     rustup target add "${target}"
-    cargo build --release --target "${target}"
+    SDKROOT="${sdk_path}" cargo build --release --no-default-features --lib --target "${target}"
 }
 
 cd "${COMPILER_DIR}"
@@ -62,18 +79,18 @@ cd "${COMPILER_DIR}"
 echo "--> Compiling Rust static libraries..."
 
 # Core platforms. These are always required.
-build_target aarch64-apple-ios
-build_target aarch64-apple-ios-sim
-build_target x86_64-apple-ios
-build_target aarch64-apple-darwin
-build_target x86_64-apple-darwin
+build_target aarch64-apple-ios iphoneos
+build_target aarch64-apple-ios-sim iphonesimulator
+build_target x86_64-apple-ios iphonesimulator
+build_target aarch64-apple-darwin macosx
+build_target x86_64-apple-darwin macosx
 
 # Optional platforms, gated on both Xcode SDK and rustup prebuilt std availability.
 BUILD_VISIONOS=0
 if has_sdk xros && rustup target add aarch64-apple-visionos aarch64-apple-visionos-sim 2>/dev/null; then
     BUILD_VISIONOS=1
-    build_target aarch64-apple-visionos
-    build_target aarch64-apple-visionos-sim
+    build_target aarch64-apple-visionos xros
+    build_target aarch64-apple-visionos-sim xrsimulator
 elif [[ "${REQUIRE_ALL}" == "1" ]]; then
     echo "Error: visionOS SDK/target not installed, but THREE_LIVE_REQUIRE_ALL_PLATFORMS=1." >&2
     exit 1
@@ -84,8 +101,8 @@ fi
 BUILD_TVOS=0
 if has_sdk appletvos && rustup target add aarch64-apple-tvos aarch64-apple-tvos-sim 2>/dev/null; then
     BUILD_TVOS=1
-    build_target aarch64-apple-tvos
-    build_target aarch64-apple-tvos-sim
+    build_target aarch64-apple-tvos appletvos
+    build_target aarch64-apple-tvos-sim appletvsimulator
 elif [[ "${REQUIRE_ALL}" == "1" ]]; then
     echo "Error: tvOS SDK/target not installed, but THREE_LIVE_REQUIRE_ALL_PLATFORMS=1." >&2
     exit 1
