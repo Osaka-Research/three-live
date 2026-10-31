@@ -144,6 +144,11 @@
       var meshEntitiesInOrder: [Entity] = []
       func visit(_ entity: Entity, depth: Int) {
         guard depth < 256 else { return }
+        // Strip USD-imported rigid-body components (`PhysicsBodyAPI` in `.usda` is emitted for
+        // standalone AR Quick Look; in a live session `XRLiveRuntimeSession.stepPhysics` owns
+        // rigid-body motion and must not contend with RealityKit's internal physics solver).
+        entity.components.remove(PhysicsBodyComponent.self)
+        entity.components.remove(PhysicsMotionComponent.self)
         if !entity.name.isEmpty {
           byName[entity.name, default: []].append(entity)
         }
@@ -203,10 +208,12 @@
         claimed.insert(id)
         entitiesByNode[index] = entity
         nodeByEntity[id] = index
-        if Self.isInsideUsdMeshesScope(entity, stopAt: root) {
-          let w0 = session.sceneMatrix(of: index)
-          let det = simd_determinant(w0)
-          if det.isFinite && abs(det) > 1e-12 {
+        let w0 = session.sceneMatrix(of: index)
+        let det = simd_determinant(w0)
+        if det.isFinite && abs(det) > 1e-12 {
+          if Self.isInsideUsdMeshesScope(entity, stopAt: root)
+            || Self.isApproximatelyIdentity(entity.transform.matrix)
+          {
             inverseBakedSceneByNode[index] = w0.inverse
           }
         }
@@ -231,14 +238,26 @@
     }
 
     private static func isInsideUsdMeshesScope(_ entity: Entity, stopAt root: Entity) -> Bool {
-      var cur = entity.parent
+      var cur: Entity? = entity.parent
       var depth = 0
-      while let p = cur, p !== root, depth < 64 {
+      while let p = cur, depth < 64 {
         if p.name == "Meshes" { return true }
+        if p === root { break }
         cur = p.parent
         depth += 1
       }
       return false
+    }
+
+    private static func isApproximatelyIdentity(_ m: simd_float4x4) -> Bool {
+      let id = matrix_identity_float4x4
+      for col in 0..<4 {
+        let d = simd_abs(m[col] - id[col])
+        if d.x > 1e-4 || d.y > 1e-4 || d.z > 1e-4 || d.w > 1e-4 {
+          return false
+        }
+      }
+      return true
     }
 
     /// The entity bound to glTF node `index`, if any.

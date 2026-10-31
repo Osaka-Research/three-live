@@ -20,7 +20,8 @@
  */
 
 import {mat3NormalFromMat4, resolveNodeWorldMatrices} from '../math';
-import type {ThreeLivePlugin} from '../plugin';
+import {getRegisteredPlugins, type ThreeLivePlugin} from '../plugin';
+import {parseOrbit} from '../xr-trait-schema';
 import {quatSlerp} from './keyframes';
 
 /** Maximum number of nodes permitted in a single behavior graph. */
@@ -1171,6 +1172,60 @@ export class InteractivityVM {
 }
 
 const viewerVMs = new WeakMap<object, InteractivityVM>();
+const viewerOrbitElapsed = new WeakMap<object, number>();
+
+// tslint:disable-next-line:no-any
+function stepViewerOrbits(viewer: any, dt: number): void {
+  if (!viewer || typeof viewer !== 'object' || !Number.isFinite(dt) || dt <= 0) return;
+  if (getRegisteredPlugins().some((p) => p.name === 'xr-live-head-follow')) return;
+  const gltf = viewer.gltf;
+  const gNodes = gltf?.nodes;
+  if (!Array.isArray(gNodes) || gNodes.length === 0) return;
+  const step = Math.min(dt, 0.1);
+  const t = (viewerOrbitElapsed.get(viewer) || 0) + step;
+  let moved = false;
+  for (let i = 0; i < gNodes.length; i++) {
+    const gn = gNodes[i];
+    const orbit = parseOrbit(gn?.extras?.xr?.orbit);
+    if (!orbit) continue;
+    let cx = 0,
+      cy = 0,
+      cz = 0;
+    if (Array.isArray(orbit.target)) {
+      cx = orbit.target[0];
+      cy = orbit.target[1];
+      cz = orbit.target[2];
+    } else if (typeof orbit.target === 'string' && orbit.target !== 'head') {
+      const targetNode = gNodes.find((n: any) => n?.name === orbit.target);
+      if (Array.isArray(targetNode?.translation)) {
+        cx = num(targetNode.translation[0]);
+        cy = num(targetNode.translation[1]);
+        cz = num(targetNode.translation[2]);
+      }
+    }
+    const theta = orbit.phase + orbit.speed * t;
+    const px = cx + Math.cos(theta) * orbit.radius;
+    const py = cy + orbit.height;
+    const pz = cz + Math.sin(theta) * orbit.radius;
+    gn.translation = [px, py, pz];
+    if (orbit.faceCenter) {
+      const yaw = Math.atan2(cx - px, cz - pz);
+      gn.rotation = [0, Math.sin(yaw * 0.5), 0, Math.cos(yaw * 0.5)];
+    }
+    moved = true;
+  }
+  if (moved) {
+    viewerOrbitElapsed.set(viewer, t);
+    const wm = resolveNodeWorldMatrices(gltf);
+    viewer.worldMatrices = wm;
+    for (const mesh of viewer.meshes || []) {
+      if (mesh.nodeIndex >= 0 && mesh.nodeIndex < wm.length) {
+        mesh.transform.set(wm[mesh.nodeIndex]);
+        mat3NormalFromMat4(mesh.normalMatrix, mesh.transform);
+      }
+    }
+  }
+}
 
 /**
  * Returns the active `InteractivityVM` bound to `viewer` (or a `<three-live>` /
@@ -1218,6 +1273,7 @@ export const interactivityPlugin: ThreeLivePlugin & {
     if (!viewer || typeof viewer !== 'object') return;
     viewerVMs.get(viewer)?.dispose();
     viewerVMs.delete(viewer);
+    viewerOrbitElapsed.delete(viewer);
     const ext = gltf?.extensions?.KHR_interactivity;
     const graph = Array.isArray(ext?.graphs) ? ext.graphs[ext.graph ?? 0] : ext;
     if (!graph || !Array.isArray(graph.nodes)) return;
@@ -1234,11 +1290,13 @@ export const interactivityPlugin: ThreeLivePlugin & {
   // tslint:disable-next-line:no-any
   onUpdate(viewer: any, dt: number): void {
     viewerVMs.get(viewer)?.tick(dt);
+    stepViewerOrbits(viewer, dt);
   },
 
   // tslint:disable-next-line:no-any
   onDestroy(_gl: WebGL2RenderingContext, viewer: any): void {
     viewerVMs.get(viewer)?.dispose();
     viewerVMs.delete(viewer);
+    viewerOrbitElapsed.delete(viewer);
   },
 };

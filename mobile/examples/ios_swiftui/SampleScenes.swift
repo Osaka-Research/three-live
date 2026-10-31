@@ -57,7 +57,7 @@
           );
           core.name = "QuantumCore";
           core.userData.interactivity = {
-            onSelect: { action: "toggleTransform", scale: [1.18, 1.18, 1.18], duration: 0.35 }
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
           };
           scene.add(core);
 
@@ -80,7 +80,7 @@
           ring2.rotation.z = 0.4;
           scene.add(ring2);
 
-          // 4. Sensor Arrays (Satellites) — continuously orbit QuantumCore
+          // 4. Sensor Arrays (Satellites) — counter-orbit QuantumCore
           const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
           const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
           const sat1 = new THREE.Mesh(satGeo, satMat);
@@ -121,7 +121,7 @@
           );
           mesh.name = "RubyTorusKnot";
           mesh.userData.interactivity = {
-            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.4 }
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
           };
           scene.add(mesh);
           """,
@@ -138,7 +138,7 @@
           );
           mesh.name = "EmeraldGem";
           mesh.userData.interactivity = {
-            onSelect: { action: "toggleTransform", position: [0, 0.35, 0], duration: 0.4 }
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
           };
           scene.add(mesh);
           """,
@@ -162,14 +162,14 @@
               orbit: {
                 target: [0, 0, 0],
                 radius: 1.3,
-                speed: 0.85,
-                height: Math.sin(angle) * 0.35,
+                speed: 0.9,
+                height: Math.sin(angle) * 0.4,
                 phase: angle,
                 faceCenter: true
               }
             };
             sphere.userData.interactivity = {
-              onSelect: { action: "toggleTransform", scale: [1.35, 1.35, 1.35], duration: 0.3 }
+              onSelect: { action: "toggleTransform", scale: [1.3, 1.3, 1.3], duration: 0.3 }
             };
             scene.add(sphere);
           }
@@ -200,6 +200,7 @@
             new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.8, roughness: 0.2 })
           );
           moon.name = "Moon";
+          moon.position.set(1.1, 0.25, 0);
           moon.userData.xr = {
             orbit: { target: "WorkCube", radius: 1.1, speed: 1.2, height: 0.15, faceCenter: true }
           };
@@ -300,11 +301,10 @@
           artifact.position.set(-0.45, 0.1, 0);
           artifact.userData.xr = {
             traits: ['grab', 'scale'],
-            anchor: 'table',
-            handles: { rotateAxis: 'y', minScale: 0.5, maxScale: 2.2 }
+            anchor: 'table'
           };
           artifact.userData.interactivity = {
-            onSelect: { action: 'toggleTransform', position: [-0.45, 0.38, 0], duration: 0.35 }
+            onSelect: { action: 'toggleTransform', scale: [1.3, 1.3, 1.3], duration: 0.35 }
           };
           scene.add(artifact);
 
@@ -360,7 +360,7 @@
             pillar.position.set(d.pos[0], d.pos[1], d.pos[2]);
             pillar.userData.xr = { traits: ['grab', 'scale'] };
             pillar.userData.interactivity = {
-              onSelect: { action: 'toggleTransform', position: [d.pos[0], d.pos[1] + 0.25, d.pos[2]], duration: 0.35 }
+              onSelect: { action: 'toggleTransform', scale: [1.25, 1.25, 1.25], duration: 0.3 }
             };
             scene.add(pillar);
           });

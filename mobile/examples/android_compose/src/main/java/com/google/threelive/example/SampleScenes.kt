@@ -44,7 +44,7 @@ object SampleScenes {
           );
           core.name = "QuantumCore";
           core.userData.interactivity = {
-            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.2, 1.2, 1.2], duration: 0.35 }
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
           };
           scene.add(core);
 
@@ -67,14 +67,14 @@ object SampleScenes {
           ring2.rotation.z = 0.4;
           scene.add(ring2);
 
-          // 4. Sensor Arrays (Orbiting Satellites)
+          // 4. Sensor Arrays (Satellites) — counter-orbit QuantumCore
           const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
           const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
           const sat1 = new THREE.Mesh(satGeo, satMat);
           sat1.name = "SensorArray_A";
           sat1.position.set(1.45, 0.35, 0);
           sat1.userData.xr = {
-            orbit: { target: 'QuantumCore', radius: 1.45, speed: 1.35, height: 0.35, phase: 0, faceCenter: true }
+            orbit: { target: "QuantumCore", radius: 1.45, speed: 1.2, height: 0.35, phase: 0, faceCenter: true }
           };
           scene.add(sat1);
 
@@ -82,7 +82,7 @@ object SampleScenes {
           sat2.name = "SensorArray_B";
           sat2.position.set(-1.45, -0.35, 0);
           sat2.userData.xr = {
-            orbit: { target: 'QuantumCore', radius: 1.45, speed: -1.35, height: -0.35, phase: 3.14159, faceCenter: true }
+            orbit: { target: "QuantumCore", radius: 1.45, speed: -1.0, height: -0.35, phase: 3.14159, faceCenter: true }
           };
           scene.add(sat2);
 
@@ -110,7 +110,7 @@ object SampleScenes {
           );
           mesh.name = "RubyTorusKnot";
           mesh.userData.interactivity = {
-            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.22, 1.22, 1.22], duration: 0.35 }
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
           };
           scene.add(mesh);
           """
@@ -129,7 +129,7 @@ object SampleScenes {
           );
           mesh.name = "EmeraldGem";
           mesh.userData.interactivity = {
-            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.2, 1.2, 1.2], duration: 0.35 }
+            onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
           };
           scene.add(mesh);
           """
@@ -152,10 +152,68 @@ object SampleScenes {
             sphere.name = "Sphere_" + (i + 1);
             sphere.position.set(Math.cos(angle) * 1.3, Math.sin(angle) * 0.4, Math.sin(angle) * 1.3);
             sphere.userData.xr = {
-              orbit: { target: [0, 0, 0], radius: 1.3, speed: 1.1, height: Math.sin(angle) * 0.4, phase: angle, faceCenter: false }
+              orbit: {
+                target: [0, 0, 0],
+                radius: 1.3,
+                speed: 0.9,
+                height: Math.sin(angle) * 0.4,
+                phase: angle,
+                faceCenter: true
+              }
+            };
+            sphere.userData.interactivity = {
+              onSelect: { action: "toggleTransform", scale: [1.3, 1.3, 1.3], duration: 0.3 }
             };
             scene.add(sphere);
           }
+          """
+            .trimIndent(),
+      ),
+      ScenePreset(
+        name = "Interactivity + Handles",
+        description =
+          "Tap the pedestal to cycle color; drag the cube's corner / yaw handles to resize and rotate; moon orbits",
+        mode = StudioMode.THREE_LIVE,
+        script =
+          """
+          const cube = new THREE.Mesh(
+            new THREE.BoxGeometry(0.7, 0.7, 0.7),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.5, roughness: 0.3 })
+          );
+          cube.name = "WorkCube";
+          cube.position.set(0, 0.1, 0);
+          cube.userData.xr = {
+            handles: { rotateAxis: "y", minScale: 0.4, maxScale: 2.5 }
+          };
+          cube.userData.interactivity = {
+            onSelect: { action: "toggleTransform", position: [0, 0.55, 0], duration: 0.35 }
+          };
+          scene.add(cube);
+
+          const moon = new THREE.Mesh(
+            new THREE.SphereGeometry(0.18, 24, 16),
+            new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.8, roughness: 0.2 })
+          );
+          moon.name = "Moon";
+          moon.position.set(1.1, 0.25, 0);
+          moon.userData.xr = {
+            orbit: { target: "WorkCube", radius: 1.1, speed: 1.2, height: 0.15, faceCenter: true }
+          };
+          scene.add(moon);
+
+          const base = new THREE.Mesh(
+            new THREE.CylinderGeometry(1.1, 1.2, 0.18, 32),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e, metalness: 0.3, roughness: 0.6 })
+          );
+          base.name = "Pedestal";
+          base.position.set(0, -0.7, 0);
+          base.userData.interactivity = {
+            onSelect: {
+              action: "cycleMaterialColor",
+              colors: [[0.13, 0.77, 0.37, 1], [0.96, 0.62, 0.04, 1], [0.94, 0.27, 0.27, 1]]
+            }
+          };
+          scene.add(base);
           """
             .trimIndent(),
       ),
@@ -246,7 +304,7 @@ object SampleScenes {
             anchor: 'table'
           };
           artifact.userData.interactivity = {
-            onSelect: { action: 'toggleTransform', target: 'scale', to: [1.3, 1.3, 1.3], duration: 0.35 }
+            onSelect: { action: 'toggleTransform', scale: [1.3, 1.3, 1.3], duration: 0.35 }
           };
           scene.add(artifact);
 
@@ -260,6 +318,9 @@ object SampleScenes {
           gem.userData.xr = {
             traits: ['grab', 'billboard'],
             anchor: 'table'
+          };
+          gem.userData.interactivity = {
+            onSelect: { action: 'toggleTransform', scale: [1.3, 1.3, 1.3], duration: 0.3 }
           };
           scene.add(gem);
 
