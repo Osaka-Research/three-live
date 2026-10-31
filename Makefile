@@ -19,7 +19,7 @@ UNAME_S := $(shell uname -s)
 PORT ?= 8888
 ENGINE_ASSET := compiler/assets/three-author-engine.min.js
 
-.PHONY: help doctor ensure-esbuild all web web-demo engine-asset rust test test-web test-rust ios ios-demo android android-demo clean
+.PHONY: help doctor ensure-esbuild all web web-demo engine-asset rust test test-web test-rust ios ios-demo ios-sim android android-demo clean
 
 help:
 	@echo "================================================================================"
@@ -151,7 +151,11 @@ ios-demo: engine-asset
 		echo "Error: 'make ios-demo' requires macOS with Xcode installed (current OS: $(UNAME_S))." >&2; \
 		exit 1; \
 	fi
-	bash scripts/build_ios_xcframework.sh
+	if [ ! -d mobile/ios/ThreeLiveCompiler.xcframework ] || [ "$${THREE_LIVE_REBUILD_XCFRAMEWORK:-0}" = "1" ]; then \
+		bash scripts/build_ios_xcframework.sh; \
+	else \
+		echo "--> Reusing existing mobile/ios/ThreeLiveCompiler.xcframework (run 'make ios' to rebuild Rust slices)"; \
+	fi
 	@XCODEGEN_BIN=$$(command -v xcodegen || true); \
 	if [ -z "$$XCODEGEN_BIN" ] && [ -x "$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen" ]; then \
 		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
@@ -164,6 +168,48 @@ ios-demo: engine-asset
 		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
 	fi; \
 	cd mobile/examples/ios_swiftui && "$$XCODEGEN_BIN" generate && open ThreeLiveDemo.xcodeproj
+
+ios-sim: engine-asset
+	@if [ "$(UNAME_S)" != "Darwin" ]; then \
+		echo "Error: 'make ios-sim' requires macOS with Xcode installed (current OS: $(UNAME_S))." >&2; \
+		exit 1; \
+	fi
+	@if [ ! -d mobile/ios/ThreeLiveCompiler.xcframework ]; then \
+		bash scripts/build_ios_xcframework.sh; \
+	fi
+	@XCODEGEN_BIN=$$(command -v xcodegen || true); \
+	if [ -z "$$XCODEGEN_BIN" ] && [ -x "$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen" ]; then \
+		XCODEGEN_BIN="$(CURDIR)/.build/xcodegen/xcodegen/bin/xcodegen"; \
+	fi; \
+	cd mobile/examples/ios_swiftui && "$$XCODEGEN_BIN" generate
+	@echo "--> Building ThreeLiveDemo for iOS Simulator (without /usr/bin/codesign)..."
+	cd mobile/examples/ios_swiftui && xcodebuild \
+		-project ThreeLiveDemo.xcodeproj \
+		-scheme ThreeLiveDemo \
+		-sdk iphonesimulator \
+		-configuration Debug \
+		-derivedDataPath .build/sim \
+		CODE_SIGNING_ALLOWED=NO \
+		CODE_SIGNING_REQUIRED=NO \
+		CODE_SIGN_IDENTITY="" \
+		build
+	@echo "--> Booting iOS Simulator & launching ThreeLiveDemo..."
+	@SIM_UDID=$$(xcrun simctl list devices available | grep -E "iPhone.*\(Booted\)" | head -n 1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/'); \
+	if [ -z "$$SIM_UDID" ]; then \
+		SIM_UDID=$$(xcrun simctl list devices available | grep -E "iPhone (1[567]|SE|Air|Pro)" | head -n 1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/'); \
+		if [ -z "$$SIM_UDID" ]; then \
+			SIM_UDID=$$(xcrun simctl list devices available | grep "iPhone" | head -n 1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/'); \
+		fi; \
+		if [ -z "$$SIM_UDID" ]; then \
+			echo "Error: No available iPhone simulator found. Run: xcodebuild -downloadPlatform iOS" >&2; \
+			exit 1; \
+		fi; \
+		xcrun simctl boot "$$SIM_UDID" 2>/dev/null || true; \
+	fi; \
+	open -a Simulator; \
+	APP_PATH="mobile/examples/ios_swiftui/.build/sim/Build/Products/Debug-iphonesimulator/ThreeLiveDemo.app"; \
+	xcrun simctl install "$$SIM_UDID" "$$APP_PATH" && \
+	xcrun simctl launch "$$SIM_UDID" com.google.threelive.demo
 
 android:
 	@if [ "$(UNAME_S)" != "Darwin" ] || [ "$${THREE_LIVE_BUILD_RUST_FROM_SOURCE:-0}" = "1" ]; then \
