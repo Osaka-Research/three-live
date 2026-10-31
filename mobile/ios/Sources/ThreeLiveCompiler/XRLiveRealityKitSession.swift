@@ -231,7 +231,8 @@
       for (nodeIndex, entity) in entitiesByNode {
         let primitives = session.materialIndices(forNode: nodeIndex)
         var seen = Set<Int>()
-        for materialIndex in primitives where materialIndex >= 0 && seen.insert(materialIndex).inserted {
+        for materialIndex in primitives
+        where materialIndex >= 0 && seen.insert(materialIndex).inserted {
           guard let state = session.material(at: materialIndex) else { continue }
           recolor(
             entity, state: state, primitives: primitives, materialIndex: materialIndex, depth: 0)
@@ -527,7 +528,8 @@
       for (nodeIndex, entity) in entitiesByNode {
         let primitives = session.materialIndices(forNode: nodeIndex)
         guard primitives.contains(materialIndex) else { continue }
-        recolor(entity, state: state, primitives: primitives, materialIndex: materialIndex, depth: 0)
+        recolor(
+          entity, state: state, primitives: primitives, materialIndex: materialIndex, depth: 0)
       }
     }
 
@@ -553,7 +555,7 @@
       }
     }
 
-    private static let studioMetallicScale: Float = 0.38
+    private static let studioMetallicScale: Float = 0.68
 
     /// Compiled scenes carry Three.js hex colors as sRGB `hex / 255` factors, which
     /// `XRPlatformColor(red:green:blue:alpha:)` (`UIColor` / `NSColor`) expects directly and
@@ -577,9 +579,11 @@
     private static func recolored(_ material: Material, _ state: XRMaterialState) -> Material {
       let base = platformColor(state.baseColorFactor)
       let calMetallic = effectiveMetallic(state.metallicFactor)
-      let calRoughness = max(0.04, min(1, state.roughnessFactor.isFinite ? state.roughnessFactor : 0.5))
+      let calRoughness = max(
+        0.04, min(1, state.roughnessFactor.isFinite ? state.roughnessFactor : 0.5))
       if var pbr = material as? PhysicallyBasedMaterial {
-        pbr.baseColor = PhysicallyBasedMaterial.BaseColor(tint: base, texture: pbr.baseColor.texture)
+        pbr.baseColor = PhysicallyBasedMaterial.BaseColor(
+          tint: base, texture: pbr.baseColor.texture)
         pbr.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: calMetallic)
         pbr.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: calRoughness)
         let e = state.emissiveFactor

@@ -531,8 +531,8 @@
         }
 
         // Reset orientation & assign
-        rotationX = isArPreviewMode ? 0.38 : 0.33
-        rotationY = isArPreviewMode ? 0.45 : (selectedMode == .threeLive ? 0.0 : 0.55)
+        rotationX = isArPreviewMode ? 0.44 : 0.42
+        rotationY = isArPreviewMode ? 0.45 : (selectedMode == .threeLive ? 0.0 : -0.58)
         zoomScale = isArPreviewMode ? arScalePreset : 1.0
         currentEntity = entity
         errorMessage = nil
@@ -628,9 +628,11 @@
         // Subtract autoRotationAngle from camera azimuth so orbiting the camera produces the
         // same counter-clockwise model turntable direction (+Y) as Web and Android.
         let yaw = rotationY - autoRotationAngle
-        let pitch = min(max(rotationX, -1.25), 1.25)
+        // Keep pitch clamped above the ground plane ([0.14, 1.12] rad = +8° to +64°) so vertical
+        // swipes never push the camera underneath the floor and invert vertical convergence.
+        let pitch = min(max(rotationX, 0.14), 1.12)
         let clampedZoom = min(max(zoomScale, 0.35), 2.75)
-        let radius: Float = max(0.4, (orbitRadius * 2.5) / clampedZoom)
+        let radius: Float = max(0.8, (orbitRadius * 4.4) / clampedZoom)
         let yawQuat = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
         let pitchQuat = simd_quatf(angle: -pitch, axis: SIMD3<Float>(1, 0, 0))
         let orientation = simd_normalize(yawQuat * pitchQuat)
@@ -672,7 +674,7 @@
             let deltaX = Float(location.x - lastPanLocation.x)
             let deltaY = Float(location.y - lastPanLocation.y)
             rotationY -= deltaX * 0.007
-            rotationX = min(max(rotationX + deltaY * 0.007, -1.25), 1.25)
+            rotationX = min(max(rotationX + deltaY * 0.007, 0.14), 1.12)
             updateCameraPose()
           }
           lastPanLocation = location
@@ -715,36 +717,33 @@
       arView.environment.background = .color(
         UIColor(red: 0.043, green: 0.071, blue: 0.125, alpha: 1.0)
       )
+      arView.environment.lighting.intensityExponent = -1.0
 
-      // Add camera anchor with 45° vertical FOV matching Web (`three-view.ts`) and Android
-      // (`OrbitCameraState.kt`) so vertical lines do not suffer wide-angle (60°) keystoning.
+      // Telephoto 26° vertical FOV (giving ~35° horizontal FOV in the 42%-height split pane)
+      // paired with a 4.4x orbit radius matches Web's telephoto framing (`fx ≈ 1097 px`) so
+      // columns stay nearly parallel instead of suffering wide-angle close-up distortion.
       let cameraAnchor = AnchorEntity(world: [0, 0, 0])
       let camera = PerspectiveCamera()
-      camera.camera.fieldOfViewInDegrees = 45.0
+      camera.camera.fieldOfViewInDegrees = 26.0
       cameraAnchor.addChild(camera)
       arView.scene.addAnchor(cameraAnchor)
       context.coordinator.camera = camera
 
-      // Studio lighting rig: key + cool fill match Web (three-view.ts) and Android Filament; a soft
-      // under-fill approximates Web's ground ambient term.
+      // Calibrated studio lighting rig matching Web (`three-view.ts`): predominantly top-down
+      // key light illuminates top faces to their true sRGB colors without clipping to white,
+      // while a subtle front-left fill preserves dark shaded vertical side faces.
       let lightAnchor = AnchorEntity(world: [0, 0, 0])
       let keyLight = DirectionalLight()
-      keyLight.light.intensity = 7500
+      keyLight.light.intensity = 1500
       keyLight.light.color = UIColor(red: 1.0, green: 0.99, blue: 0.97, alpha: 1.0)
-      keyLight.look(at: [0, 0, 0], from: [2.0, 4.0, 3.2], relativeTo: nil)
+      keyLight.look(at: [0, 0, 0], from: [1.8, 4.5, 2.2], relativeTo: nil)
       lightAnchor.addChild(keyLight)
 
       let fillLight = DirectionalLight()
-      fillLight.light.intensity = 3500
+      fillLight.light.intensity = 220
       fillLight.light.color = UIColor(red: 0.85, green: 0.92, blue: 1.0, alpha: 1.0)
-      fillLight.look(at: [0, 0, 0], from: [-3.4, 1.8, -1.4], relativeTo: nil)
+      fillLight.look(at: [0, 0, 0], from: [-2.5, 1.5, 2.0], relativeTo: nil)
       lightAnchor.addChild(fillLight)
-
-      let rimLight = DirectionalLight()
-      rimLight.light.intensity = 2000
-      rimLight.light.color = UIColor(red: 0.65, green: 0.70, blue: 0.80, alpha: 1.0)
-      rimLight.look(at: [0, 0, 0], from: [0.0, -3.0, -2.0], relativeTo: nil)
-      lightAnchor.addChild(rimLight)
       arView.scene.addAnchor(lightAnchor)
 
       // Model root container (kept at world origin identity so orbit/physics/handle transforms

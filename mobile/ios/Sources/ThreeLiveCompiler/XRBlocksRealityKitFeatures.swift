@@ -67,6 +67,14 @@
       let index: Int
     }
 
+    private struct ContactShadowNode {
+      let node: Int
+      let name: String
+      let localCenter: SIMD3<Float>
+      let localHalfExtents: SIMD3<Float>
+      let entity: ModelEntity
+    }
+
     private final class SplatCloud {
       let node: Int
       let url: URL
@@ -93,6 +101,7 @@
     private var emitters: [Emitter] = []
     private var strokes: [Stroke] = []
     private var splats: [SplatCloud] = []
+    private var contactShadows: [ContactShadowNode] = []
     private var gaussianTexture: TextureResource?
     private var customSplatMaterial: RealityKit.Material?
     private var customSplatMaterialChecked = false
@@ -110,10 +119,41 @@
       self.live = live
       container.name = "XRBlocksFeatures"
       live.root.addChild(container)
-      let useGpuBillboard = Self.probeGpuBillboardMaterial(into: &customSplatMaterial, checked: &customSplatMaterialChecked)
-      let effectiveMaxSplats = maxSplats ?? (useGpuBillboard ? SplatParser.defaultMaxGpuSplats : SplatParser.defaultMaxCpuSplats)
+      let useGpuBillboard = Self.probeGpuBillboardMaterial(
+        into: &customSplatMaterial, checked: &customSplatMaterialChecked)
+      let effectiveMaxSplats =
+        maxSplats
+        ?? (useGpuBillboard ? SplatParser.defaultMaxGpuSplats : SplatParser.defaultMaxCpuSplats)
       let session = live.session
+      let shadowMesh = Self.makeContactShadowMesh()
+      let shadowMaterial = Self.makeContactShadowMaterial()
       for i in 0..<session.nodeCount {
+        if session.hasMesh(at: i), let shadowMesh = shadowMesh, let shadowMaterial = shadowMaterial
+        {
+          let resolvedBounds: (min: SIMD3<Float>, max: SIMD3<Float>)?
+          if let glbBounds = session.localBounds(forNode: i) {
+            resolvedBounds = glbBounds
+          } else if let entity = live.entity(forNode: i) {
+            let vb = entity.visualBounds(recursive: true, relativeTo: entity)
+            resolvedBounds = vb.isEmpty ? nil : (min: vb.min, max: vb.max)
+          } else {
+            resolvedBounds = nil
+          }
+          if let bounds = resolvedBounds {
+            let center = (bounds.min + bounds.max) * 0.5
+            let half = (bounds.max - bounds.min) * 0.5
+            if half.x > 1e-4 || half.y > 1e-4 || half.z > 1e-4 {
+              let shadowEntity = ModelEntity(mesh: shadowMesh, materials: [shadowMaterial])
+              shadowEntity.name = "ThreeLiveContactShadow_\(i)"
+              container.addChild(shadowEntity)
+              let name = session.nodeName(at: i) ?? session.meshName(forNode: i) ?? ""
+              contactShadows.append(
+                ContactShadowNode(
+                  node: i, name: name, localCenter: center, localHalfExtents: half,
+                  entity: shadowEntity))
+            }
+          }
+        }
         guard let traits = session.traits(at: i) else { continue }
         if let h = traits.handles, let entity = live.entity(forNode: i) {
           let resolvedBounds: (min: SIMD3<Float>, max: SIMD3<Float>)?
@@ -131,13 +171,16 @@
               container.addChild(m)
               visuals.append(m)
             }
-            handles.append(HandleNode(node: i, options: h, localMin: bounds.min, localMax: bounds.max, visuals: visuals))
+            handles.append(
+              HandleNode(
+                node: i, options: h, localMin: bounds.min, localMax: bounds.max, visuals: visuals))
           }
         }
         if let p = traits.particles, emitters.count < ParticleEmitter.maxEmitters {
           let emitter = ParticleEmitter(options: p, seed: UInt32(i + 1))
           let world = session.worldMatrix(of: i)
-          emitter.reset(center: SIMD3<Float>(world.columns.3.x, world.columns.3.y, world.columns.3.z))
+          emitter.reset(
+            center: SIMD3<Float>(world.columns.3.x, world.columns.3.y, world.columns.3.z))
           let entity = ModelEntity()
           container.addChild(entity)
           emitters.append(Emitter(node: i, emitter: emitter, entity: entity))
@@ -150,12 +193,15 @@
           container.addChild(entity)
           let cloud = SplatCloud(node: i, url: resolved, entity: entity)
           cloud.loadTask = Task { @MainActor [weak cloud] in
-            let result = await Task.detached(priority: .utility) { () -> (SplatData, SplatParser.QuadGeometry?)? in
-              guard let loaded = try? await SplatParser.loadURL(
-                resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
+            let result = await Task.detached(priority: .utility) {
+              () -> (SplatData, SplatParser.QuadGeometry?)? in
+              guard
+                let loaded = try? await SplatParser.loadURL(
+                  resolved.absoluteString, baseURL: baseURL, allowCrossOrigin: allowRemoteSplats)
               else { return nil }
               let sampled = SplatParser.downsample(loaded, maxSplats: effectiveMaxSplats)
-              let staticGpu = useGpuBillboard ? SplatParser.buildStaticGpuSplatVertices(sampled) : nil
+              let staticGpu =
+                useGpuBillboard ? SplatParser.buildStaticGpuSplatVertices(sampled) : nil
               return (sampled, staticGpu)
             }.value
             guard let (sampled, staticGpu) = result else { return }
@@ -165,6 +211,8 @@
           splats.append(cloud)
         }
       }
+      for h in handles { place(h) }
+      stepContactShadows()
     }
 
     /// Number of nodes with handles.
@@ -191,6 +239,7 @@
       emitters.removeAll()
       strokes.removeAll()
       splats.removeAll()
+      contactShadows.removeAll()
     }
 
     // MARK: Pointer input (world-space rays)
@@ -198,12 +247,15 @@
     /// A pointer went down. Returns `true` when a handle or a paint stroke captured it; the host
     /// should then route moves here instead of orbiting the camera.
     @discardableResult
-    public func pointerDown(origin: SIMD3<Float>, direction: SIMD3<Float>, hitEntity: Entity?) -> Bool {
+    public func pointerDown(origin: SIMD3<Float>, direction: SIMD3<Float>, hitEntity: Entity?)
+      -> Bool
+    {
       let session = live.session
       for h in handles {
         guard let layout = handleLayout(for: h), let t = session.nodeTransform(at: h.node),
           let dir = ManipulationHandles.normalizeRay(direction),
-          let hit = ManipulationHandles.pick(layout: layout, rayOrigin: origin, rayDirection: dir, options: h.options),
+          let hit = ManipulationHandles.pick(
+            layout: layout, rayOrigin: origin, rayDirection: dir, options: h.options),
           let d = ManipulationHandles.Drag(
             layout: layout, hit: hit, rayOrigin: origin, rayDirection: dir, startScale: t.scale,
             startRotation: t.rotation, options: h.options)
@@ -218,7 +270,8 @@
         strokes.removeFirst().entity.removeFromParent()
       }
       let entity = ModelEntity()
-      entity.components.set(ModelComponent(mesh: .generateBox(size: 0.001), materials: [Self.material(color)]))
+      entity.components.set(
+        ModelComponent(mesh: .generateBox(size: 0.001), materials: [Self.material(color)]))
       container.addChild(entity)
       var stroke = Stroke(builder: TubeStrokeBuilder(), entity: entity, index: strokeCount)
       strokeCount += 1
@@ -235,13 +288,17 @@
           let next = active.drag.update(rayOrigin: origin, rayDirection: direction)
         else { return }
         live.setNodeTransform(
-          active.node, XRNodeTransform(translation: t.translation, rotation: next.rotation, scale: next.scale))
+          active.node,
+          XRNodeTransform(translation: t.translation, rotation: next.rotation, scale: next.scale))
         return
       }
-      guard let i = painting, i < strokes.count, let dir = ManipulationHandles.normalizeRay(direction),
+      guard let i = painting, i < strokes.count,
+        let dir = ManipulationHandles.normalizeRay(direction),
         strokes[i].builder.points.count < TubeStrokeBuilder.maxStrokePoints
       else { return }
-      if strokes[i].builder.addPoint(origin + dir * Self.screenPaintDepth), strokes[i].builder.points.count % 3 == 0 {
+      if strokes[i].builder.addPoint(origin + dir * Self.screenPaintDepth),
+        strokes[i].builder.points.count % 3 == 0
+      {
         rebuild(i)
       }
     }
@@ -268,7 +325,8 @@
       @discardableResult
       public func pointerDown(at point: CGPoint, in arView: ARView) -> Bool {
         guard let ray = arView.ray(through: point) else { return false }
-        return pointerDown(origin: ray.origin, direction: ray.direction, hitEntity: arView.entity(at: point))
+        return pointerDown(
+          origin: ray.origin, direction: ray.direction, hitEntity: arView.entity(at: point))
       }
 
       public func pointerMove(at point: CGPoint, in arView: ARView) {
@@ -279,9 +337,10 @@
 
     // MARK: Per frame
 
-    /// Repositions handles and steps particles.
+    /// Repositions handles, contact shadows, and steps particles.
     public func step(dt: TimeInterval) {
       for h in handles { place(h) }
+      stepContactShadows()
       let camera: simd_float4x4
       if let provided = cameraTransformProvider?() {
         camera = provided
@@ -294,8 +353,115 @@
       for sc in splats { stepSplat(sc, dt: dt, camera: camera) }
     }
 
+    private func stepContactShadows() {
+      guard !contactShadows.isEmpty else { return }
+      let session = live.session
+      struct WorldBox {
+        let index: Int
+        let wx: Float
+        let wz: Float
+        let whx: Float
+        let why: Float
+        let whz: Float
+        let minY: Float
+        let maxY: Float
+        let isSupport: Bool
+      }
+      var boxes: [WorldBox] = []
+      boxes.reserveCapacity(contactShadows.count)
+      var sceneMinY: Float = .greatestFiniteMagnitude
+      for (idx, cs) in contactShadows.enumerated() {
+        guard session.isEffectivelyVisible(cs.node) else {
+          cs.entity.isEnabled = false
+          continue
+        }
+        let m = session.sceneMatrix(of: cs.node)
+        let c = cs.localCenter
+        let h = cs.localHalfExtents
+        let wx = m.columns.0.x * c.x + m.columns.1.x * c.y + m.columns.2.x * c.z + m.columns.3.x
+        let wy = m.columns.0.y * c.x + m.columns.1.y * c.y + m.columns.2.y * c.z + m.columns.3.y
+        let wz = m.columns.0.z * c.x + m.columns.1.z * c.y + m.columns.2.z * c.z + m.columns.3.z
+        let whx = abs(m.columns.0.x) * h.x + abs(m.columns.1.x) * h.y + abs(m.columns.2.x) * h.z
+        let why = abs(m.columns.0.y) * h.x + abs(m.columns.1.y) * h.y + abs(m.columns.2.y) * h.z
+        let whz = abs(m.columns.0.z) * h.x + abs(m.columns.1.z) * h.y + abs(m.columns.2.z) * h.z
+        let minY = wy - why
+        let maxY = wy + why
+        if minY.isFinite {
+          sceneMinY = min(sceneMinY, minY)
+        }
+        let lower = cs.name.lowercased()
+        let isSupport =
+          lower.contains("floor") || lower.contains("table") || lower.contains("pedestal")
+          || lower.contains("ground") || lower.contains("base") || lower.contains("plane")
+          || (why < 0.14 && min(whx, whz) > 0.45)
+        boxes.append(
+          WorldBox(
+            index: idx, wx: wx, wz: wz, whx: whx, why: why, whz: whz, minY: minY, maxY: maxY,
+            isSupport: isSupport))
+      }
+      guard sceneMinY.isFinite else { return }
+      let supports = boxes.filter { $0.isSupport }
+      let casters = boxes.filter { !$0.isSupport }
+      let activeCasters = casters.isEmpty ? boxes : casters
+      if !casters.isEmpty {
+        for s in supports {
+          contactShadows[s.index].entity.isEnabled = false
+        }
+      }
+      let defaultMinY = (floorY ?? sceneMinY) + 0.002
+      var placedClusters:
+        [(index: Int, wx: Float, wz: Float, sx: Float, sz: Float, surfaceY: Float)] = []
+      for b in activeCasters {
+        var surfaceY: Float = -.greatestFiniteMagnitude
+        for s in supports where s.index != b.index {
+          if b.minY >= s.maxY - 0.08 && abs(b.wx - s.wx) <= s.whx && abs(b.wz - s.wz) <= s.whz
+            && s.maxY + 0.002 > surfaceY
+          {
+            surfaceY = s.maxY + 0.002
+          }
+        }
+        if !surfaceY.isFinite || surfaceY == -.greatestFiniteMagnitude {
+          surfaceY = defaultMinY
+        }
+        let height = max(0, b.minY - surfaceY)
+        if height > 2.2 {
+          contactShadows[b.index].entity.isEnabled = false
+          continue
+        }
+        let spread: Float = 1.0 + min(0.75, height * 0.85)
+        let sx = max(0.045, b.whx * 1.45 * spread)
+        let sz = max(0.045, b.whz * 1.45 * spread)
+        if let matchIdx = placedClusters.firstIndex(where: {
+          hypot(b.wx - $0.wx, b.wz - $0.wz) < 0.08 && abs(surfaceY - $0.surfaceY) < 0.05
+        }) {
+          contactShadows[b.index].entity.isEnabled = false
+          let prev = placedClusters[matchIdx]
+          let mergedSx = max(prev.sx, sx * 0.85)
+          let mergedSz = max(prev.sz, sz * 0.85)
+          placedClusters[matchIdx].sx = mergedSx
+          placedClusters[matchIdx].sz = mergedSz
+          let primary = contactShadows[prev.index]
+          primary.entity.transform = Transform(
+            scale: SIMD3<Float>(mergedSx, 1.0, mergedSz),
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            translation: SIMD3<Float>(
+              prev.wx, prev.surfaceY + Float(primary.node) * 0.0002, prev.wz))
+        } else {
+          let cs = contactShadows[b.index]
+          cs.entity.isEnabled = true
+          cs.entity.transform = Transform(
+            scale: SIMD3<Float>(sx, 1.0, sz),
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            translation: SIMD3<Float>(b.wx, surfaceY + Float(cs.node) * 0.0002, b.wz))
+          placedClusters.append(
+            (index: b.index, wx: b.wx, wz: b.wz, sx: sx, sz: sz, surfaceY: surfaceY))
+        }
+      }
+    }
+
     private func handleLayout(for h: HandleNode) -> ManipulationHandles.Layout? {
-      ManipulationHandles.computeLayout(localMin: h.localMin, localMax: h.localMax, world: live.session.worldMatrix(of: h.node))
+      ManipulationHandles.computeLayout(
+        localMin: h.localMin, localMax: h.localMax, world: live.session.worldMatrix(of: h.node))
     }
 
     private func place(_ h: HandleNode) {
@@ -311,7 +477,9 @@
       bar.isEnabled = visible && h.options.rotateAxis != "none"
       let len = simd_length(layout.pedestalEnd - layout.pedestalStart)
       bar.setTransformMatrix(
-        Self.box(center: layout.pedestalCenter, size: SIMD3<Float>(len, size * 0.5, size * 0.5), yaw: layout.yaw),
+        Self.box(
+          center: layout.pedestalCenter, size: SIMD3<Float>(len, size * 0.5, size * 0.5),
+          yaw: layout.yaw),
         relativeTo: nil)
     }
 
@@ -322,10 +490,12 @@
 
     private func stepEmitter(_ e: Emitter, dt: TimeInterval, camera: simd_float4x4) {
       let w = live.session.worldMatrix(of: e.node)
-      e.emitter.step(dt: dt, center: SIMD3<Float>(w.columns.3.x, w.columns.3.y, w.columns.3.z), floorY: floorY)
+      e.emitter.step(
+        dt: dt, center: SIMD3<Float>(w.columns.3.x, w.columns.3.y, w.columns.3.z), floorY: floorY)
       e.entity.isEnabled = live.session.isEffectivelyVisible(e.node)
       let style = ParticleEmitter.style(for: e.emitter.options.preset)
-      let geo = Self.particleQuads(e.emitter.positions, count: e.emitter.count, camera: camera, size: max(style.size.x, 0.004))
+      let geo = Self.particleQuads(
+        e.emitter.positions, count: e.emitter.count, camera: camera, size: max(style.size.x, 0.004))
       guard let mesh = Self.mesh(geo) else { return }
       if e.entity.model == nil {
         e.entity.model = ModelComponent(mesh: mesh, materials: [Self.material(style.color)])
@@ -431,7 +601,8 @@
             if geo.colors.count >= geo.positions.count * 4 {
               llm.withUnsafeMutableBytes(bufferIndex: 2) { raw in
                 geo.colors.withUnsafeBytes { src in
-                  raw.copyMemory(from: UnsafeRawBufferPointer(rebasing: src.prefix(geo.positions.count * 4)))
+                  raw.copyMemory(
+                    from: UnsafeRawBufferPointer(rebasing: src.prefix(geo.positions.count * 4)))
                 }
               }
             }
@@ -488,7 +659,8 @@
         let attrs: [LowLevelMesh.Attribute] = [
           LowLevelMesh.Attribute(semantic: .position, format: .float3, layoutIndex: 0, offset: 0),
           LowLevelMesh.Attribute(semantic: .uv0, format: .float2, layoutIndex: 1, offset: 0),
-          LowLevelMesh.Attribute(semantic: .color, format: .uchar4Normalized, layoutIndex: 2, offset: 0),
+          LowLevelMesh.Attribute(
+            semantic: .color, format: .uchar4Normalized, layoutIndex: 2, offset: 0),
         ]
         let layouts: [LowLevelMesh.Layout] = [
           LowLevelMesh.Layout(
@@ -577,22 +749,85 @@
       return try? MeshResource.generate(from: [descriptor])
     }
 
+    private static func makeContactShadowMesh() -> MeshResource? {
+      var descriptor = MeshDescriptor(name: "xr-contact-shadow")
+      descriptor.positions = MeshBuffers.Positions([
+        SIMD3<Float>(-1, 0, -1),
+        SIMD3<Float>(1, 0, -1),
+        SIMD3<Float>(1, 0, 1),
+        SIMD3<Float>(-1, 0, 1),
+      ])
+      descriptor.normals = MeshBuffers.Normals([
+        SIMD3<Float>(0, 1, 0),
+        SIMD3<Float>(0, 1, 0),
+        SIMD3<Float>(0, 1, 0),
+        SIMD3<Float>(0, 1, 0),
+      ])
+      descriptor.textureCoordinates = MeshBuffers.TextureCoordinates([
+        SIMD2<Float>(0, 0),
+        SIMD2<Float>(1, 0),
+        SIMD2<Float>(1, 1),
+        SIMD2<Float>(0, 1),
+      ])
+      descriptor.primitives = .triangles([0, 2, 1, 0, 3, 2, 0, 1, 2, 0, 2, 3])
+      return try? MeshResource.generate(from: [descriptor])
+    }
+
+    private static func makeContactShadowMaterial(size: Int = 64) -> UnlitMaterial? {
+      let n = max(8, min(size, 256))
+      var rgba = [UInt8](repeating: 0, count: n * n * 4)
+      let half = Double(n - 1) * 0.5
+      for y in 0..<n {
+        let dy = (Double(y) - half) / half
+        for x in 0..<n {
+          let dx = (Double(x) - half) / half
+          let d = min(1.0, sqrt(dx * dx + dy * dy))
+          let t = max(0.0, min(1.0, (1.0 - d) / 0.45))
+          let smooth = t * t * (3.0 - 2.0 * t)
+          let falloff = pow(1.0 - d * d, 2.0) * smooth
+          let v = UInt8(max(0, min(255, Int((255.0 * falloff).rounded()))))
+          let idx = (y * n + x) * 4
+          rgba[idx] = v
+          rgba[idx + 1] = v
+          rgba[idx + 2] = v
+          rgba[idx + 3] = v
+        }
+      }
+      let colorSpace = CGColorSpaceCreateDeviceRGB()
+      let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+      guard let provider = CGDataProvider(data: Data(rgba) as CFData),
+        let cgImage = CGImage(
+          width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4,
+          space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
+          shouldInterpolate: true, intent: .defaultIntent)
+      else { return nil }
+      guard #available(iOS 15.0, macOS 12.0, visionOS 1.0, *),
+        let tex = try? TextureResource.generate(from: cgImage, options: .init(semantic: .raw))
+      else { return nil }
+      var mat = UnlitMaterial(color: .black)
+      mat.color = .init(tint: .black)
+      mat.blending = .transparent(opacity: .init(scale: 0.68, texture: .init(tex)))
+      return mat
+    }
+
     // MARK: Geometry helpers
 
     static func material(_ c: SIMD4<Float>) -> UnlitMaterial {
       UnlitMaterial(
-        color: XRPlatformColor(red: CGFloat(c.x), green: CGFloat(c.y), blue: CGFloat(c.z), alpha: CGFloat(c.w)))
+        color: XRPlatformColor(
+          red: CGFloat(c.x), green: CGFloat(c.y), blue: CGFloat(c.z), alpha: CGFloat(c.w)))
     }
 
     static func box(center: SIMD3<Float>, size: SIMD3<Float>, yaw: Float) -> simd_float4x4 {
       let c = cos(yaw)
       let s = sin(yaw)
-      return simd_float4x4(columns: (
-        SIMD4<Float>(c * size.x, 0, -s * size.x, 0),
-        SIMD4<Float>(0, size.y, 0, 0),
-        SIMD4<Float>(s * size.z, 0, c * size.z, 0),
-        SIMD4<Float>(center.x, center.y, center.z, 1)
-      ))
+      return simd_float4x4(
+        columns: (
+          SIMD4<Float>(c * size.x, 0, -s * size.x, 0),
+          SIMD4<Float>(0, size.y, 0, 0),
+          SIMD4<Float>(s * size.z, 0, c * size.z, 0),
+          SIMD4<Float>(center.x, center.y, center.z, 1)
+        ))
     }
 
     static func mesh(_ g: XRGeneratedGeometry) -> MeshResource? {
@@ -600,7 +835,8 @@
       var positions: [SIMD3<Float>] = []
       positions.reserveCapacity(g.vertexCount)
       for i in 0..<g.vertexCount {
-        positions.append(SIMD3<Float>(g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]))
+        positions.append(
+          SIMD3<Float>(g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]))
       }
       var descriptor = MeshDescriptor(name: "xr-blocks")
       descriptor.positions = MeshBuffers.Positions(positions)
@@ -617,7 +853,9 @@
     }
 
     /// Camera-facing quads (two triangles each) for `count` particles.
-    public static func particleQuads(_ positions: [Float], count: Int, camera: simd_float4x4, size: Float)
+    public static func particleQuads(
+      _ positions: [Float], count: Int, camera: simd_float4x4, size: Float
+    )
       -> XRGeneratedGeometry
     {
       let h = size / 2
