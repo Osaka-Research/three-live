@@ -606,7 +606,9 @@
       @MainActor
       func updateCameraPose() {
         guard let camera = camera else { return }
-        let yaw = rotationY + autoRotationAngle
+        // Subtract autoRotationAngle from camera azimuth so orbiting the camera produces the
+        // same counter-clockwise model turntable direction (+Y) as Web and Android.
+        let yaw = rotationY - autoRotationAngle
         let pitch = min(max(rotationX, -1.25), 1.25)
         let clampedZoom = min(max(zoomScale, 0.35), 2.75)
         let radius: Float = 3.7 / clampedZoom
