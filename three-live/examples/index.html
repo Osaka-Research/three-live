@@ -761,7 +761,10 @@ scene.add(sat2);`
     return roomGLBPromise;
   }
 
+  let presetSwitchToken = 0;
+
   async function selectPreset(presetId) {
+    const token = ++presetSwitchToken;
     const presetButtons = {
       artifact: document.getElementById("btn-artifact"),
       torus: document.getElementById("btn-torus"),
@@ -784,39 +787,54 @@ scene.add(sat2);`
     if (code) {
       codeEditor.value = code;
       try {
-        const roomPromise = presetId === "spheres" ? ensureRoomGLB() : null;
+        // Immediately blank the 3D viewport before compiling or changing camera
+        // so the previous scene never jumps or resizes during the transition.
+        el.style.opacity = "0";
+        if (el.viewer) {
+          el.viewer.disposeMeshGpuResources?.();
+          el.viewer.meshes = [];
+          el.viewer.setBackdropGLB(null);
+        }
+
+        const roomPromise = presetId === "spheres" ? ensureRoomGLB() : Promise.resolve(null);
+        if (presetId === "spheres" && !cachedRoomGLB) {
+          arStatus.textContent = "Loading XR Blocks Living Room...";
+        } else if (arStatus) {
+          arStatus.textContent = "";
+        }
+
+        currentGLBBuffer = await el.executeScript(code);
+        const roomBuf = await roomPromise;
+        if (token !== presetSwitchToken) return;
+
         if (el.viewer) {
           if (presetId === "spheres") {
             el.viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
             el.viewer.setTarget(0.0, 0.24, 0.10);
             el.viewer.setInitialCamera(-150, 18, 1.65);
+            if (roomBuf) {
+              el.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
+              arStatus.textContent = "XR Blocks Living Room loaded!";
+            }
           } else {
             el.viewer.setBackdropGLB(null);
             el.viewer.setOrbitLimits({ minPhi: -85, maxPhi: 85, minDistance: 0.4, maxDistance: 25.0 });
             el.viewer.customTarget = null;
             el.viewer.customDistance = false;
             el.viewer.setInitialCamera(34, 20);
+            if (el.viewer.meshes && el.viewer.meshes.length > 0) {
+              const dist = el.viewer.bounds.radius * 2.5;
+              el.viewer.targetDistance = dist;
+              el.viewer.currDistance = dist;
+              el.viewer.customDistance = false;
+            }
           }
+          el.viewer.update(0);
+          el.viewer.render();
         }
-        currentGLBBuffer = await el.executeScript(code);
-        if (presetId === "spheres") {
-          if (el.viewer) {
-            el.viewer.setOrbitLimits({ minPhi: 5, maxPhi: 65, minDistance: 0.45, maxDistance: 2.6 });
-            el.viewer.setTarget(0.0, 0.24, 0.10);
-            el.viewer.setInitialCamera(-150, 18, 1.65);
-          }
-          if (!cachedRoomGLB) {
-            arStatus.textContent = "Loading XR Blocks Living Room...";
-          }
-          const roomBuf = await roomPromise;
-          if (roomBuf && el.viewer) {
-            el.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
-            arStatus.textContent = "XR Blocks Living Room loaded!";
-          }
-        } else if (el.viewer) {
-          arStatus.textContent = "";
-        }
+        el.style.opacity = "1";
       } catch (err) {
+        el.style.opacity = "1";
         if (arStatus) arStatus.textContent = err.message;
       }
     }

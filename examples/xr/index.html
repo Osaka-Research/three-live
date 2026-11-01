@@ -1321,7 +1321,10 @@ return scene;`
       setToast('XR Blocks Living Room: ' + (xrRoomEnabled ? 'ON' : 'OFF'));
     }
 
+    let switchToken = 0;
+
     async function switchMode(mode) {
+      const token = ++switchToken;
       currentMode = mode;
       document.body.dataset.mode = mode;
       ['ballpit', 'workbench', 'perception'].forEach((m) => {
@@ -1339,12 +1342,33 @@ return scene;`
       editorEl.value = PRESET_SCRIPTS[mode];
       setToast('Switched to ' + titles[mode]);
       xrRoomEnabled = (mode === 'workbench');
-      if (xrRoomEnabled) {
-        ensureRoomGLB();
+      const btn = document.getElementById('btn-room-toggle');
+      if (btn) {
+        btn.textContent = '🏠 XR Room: ' + (xrRoomEnabled ? 'ON' : 'OFF');
+        btn.classList.toggle('primary', xrRoomEnabled);
+      }
+
+      // Immediately blank the 3D viewport before compiling or changing camera
+      // so the previous scene never jumps or resizes during the transition.
+      xrEl.style.opacity = '0';
+      if (xrEl.viewer) {
+        xrEl.viewer.disposeMeshGpuResources?.();
+        xrEl.viewer.meshes = [];
+        xrEl.viewer.setBackdropGLB(null);
+      }
+
+      const roomPromise = xrRoomEnabled ? ensureRoomGLB() : Promise.resolve(null);
+      await applyEditorScript();
+      const roomBuf = await roomPromise;
+      if (token !== switchToken) return;
+
+      if (xrRoomEnabled && roomBuf && xrEl.viewer) {
+        xrEl.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
       }
       applyXRRoomCameraAndVisibility(xrRoomEnabled);
-      await applyEditorScript();
-      await syncXRBlocksRoom(xrRoomEnabled);
+      xrEl.viewer?.update?.(0);
+      xrEl.viewer?.render?.();
+      xrEl.style.opacity = '1';
 
       if (mode === 'perception') {
         setTimeout(() => runCaptureFrame(), 250);
