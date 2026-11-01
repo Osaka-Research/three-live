@@ -137,12 +137,17 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
     renderer.setArSurfacePreviewEnabled(enabled = showReticle, groundY = -0.95f)
   }
 
-  fun applyArCamera(scaleMultiplier: Float = arScalePreset, autoRotate: Boolean = arAutoRotate) {
-    val fovDeg = (45.0f / scaleMultiplier).coerceIn(22.0f, 68.0f)
+  fun applyArCamera(
+    scaleMultiplier: Float = arScalePreset,
+    autoRotate: Boolean = arAutoRotate,
+    resetOrbit: Boolean = false,
+  ) {
+    renderer.modelScale = scaleMultiplier
+    val initialOrbit = if (selectedMode == StudioMode.THREE_LIVE) "23deg 20deg" else "34deg 20deg"
     renderer.setCameraOptions(
       ThreeLiveCameraOptions(
-        cameraOrbit = "28deg 24deg",
-        fieldOfView = "${fovDeg.toInt()}deg",
+        cameraOrbit = if (resetOrbit) initialOrbit else null,
+        fieldOfView = "45deg",
         autoRotate = autoRotate,
         autoRotateDelayMs = 600L,
         rotationPerSecond = "20deg",
@@ -157,11 +162,12 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
     arShowReticle = true
     isArPreviewMode = true
     attachArSurfaceMeshes(showReticle = true)
-    applyArCamera(scaleMultiplier = 1.0f, autoRotate = false)
+    applyArCamera(scaleMultiplier = 1.0f, autoRotate = false, resetOrbit = true)
   }
 
   fun exitArPreview() {
     renderer.setArSurfacePreviewEnabled(enabled = false)
+    renderer.modelScale = 1.0f
     isArPreviewMode = false
     arPreviewNote = null
     renderer.setCameraOptions(
@@ -172,10 +178,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
           rotationPerSecond = "24deg",
         )
       } else {
-        ThreeLiveCameraOptions(
-          cameraOrbit = "34deg 20deg",
-          autoRotate = false,
-        )
+        ThreeLiveCameraOptions(cameraOrbit = "34deg 20deg", autoRotate = false)
       }
     )
   }
@@ -234,10 +237,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                   rotationPerSecond = "24deg",
                 )
               } else {
-                ThreeLiveCameraOptions(
-                  cameraOrbit = "34deg 20deg",
-                  autoRotate = false,
-                )
+                ThreeLiveCameraOptions(cameraOrbit = "34deg 20deg", autoRotate = false)
               }
             )
             renderer.load(it.byteBuffer.duplicate())
@@ -335,7 +335,10 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
             .weight(if (isArPreviewMode) 1f else 0.42f)
             .background(Color(0xFF0B1220))
       ) {
-        AndroidView(modifier = Modifier.fillMaxSize(), factory = { ctx -> renderer.createView(ctx) })
+        AndroidView(
+          modifier = Modifier.fillMaxSize(),
+          factory = { ctx -> renderer.createView(ctx) },
+        )
         LaunchedEffect(Unit) { triggerCompileAndRender() }
 
         lastEvent?.let { message ->
@@ -474,7 +477,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                     selected = (arScalePreset == scale),
                     onClick = {
                       arScalePreset = scale
-                      applyArCamera(scaleMultiplier = scale, autoRotate = arAutoRotate)
+                      renderer.modelScale = scale
                     },
                     label = { Text(label, fontSize = 11.sp) },
                   )
@@ -483,7 +486,11 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                 OutlinedButton(
                   onClick = {
                     arScalePreset = 1.0f
-                    applyArCamera(scaleMultiplier = 1.0f, autoRotate = arAutoRotate)
+                    applyArCamera(
+                      scaleMultiplier = 1.0f,
+                      autoRotate = arAutoRotate,
+                      resetOrbit = true,
+                    )
                   },
                   contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 ) {

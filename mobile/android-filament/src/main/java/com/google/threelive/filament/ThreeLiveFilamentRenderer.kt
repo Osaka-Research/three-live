@@ -84,6 +84,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   /** The orbit camera model (exposed for hosts that drive the camera themselves). */
   val orbit: OrbitCameraState = OrbitCameraState()
 
+  /** Uniform scale multiplier applied to the loaded glTF model root (e.g. for AR scale presets). */
+  var modelScale: Float = 1.0f
+
   private val appContext = context.applicationContext
   private val engine: Engine
   private val renderer: Renderer
@@ -359,6 +362,18 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   override fun sceneRootMatrix(out: FloatArray): Boolean {
     if (asset == null || out.size < 16) return false
     orbit.turntableMatrix(out)
+    val s = modelScale
+    if (s.isFinite() && s > 0f && kotlin.math.abs(s - 1f) > 1e-4f) {
+      out[0] *= s
+      out[1] *= s
+      out[2] *= s
+      out[4] *= s
+      out[5] *= s
+      out[6] *= s
+      out[8] *= s
+      out[9] *= s
+      out[10] *= s
+    }
     return true
   }
 
@@ -611,7 +626,22 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     asset?.let { a ->
       val tm = engine.transformManager
       val ri = tm.getInstance(a.root)
-      if (ri != 0) tm.setTransform(ri, orbit.turntableMatrix(rootMatrix))
+      if (ri != 0) {
+        orbit.turntableMatrix(rootMatrix)
+        val s = modelScale
+        if (s.isFinite() && s > 0f && kotlin.math.abs(s - 1f) > 1e-4f) {
+          rootMatrix[0] *= s
+          rootMatrix[1] *= s
+          rootMatrix[2] *= s
+          rootMatrix[4] *= s
+          rootMatrix[5] *= s
+          rootMatrix[6] *= s
+          rootMatrix[8] *= s
+          rootMatrix[9] *= s
+          rootMatrix[10] *= s
+        }
+        tm.setTransform(ri, rootMatrix)
+      }
     }
     orbit.eye(eye)
     orbit.target(target)

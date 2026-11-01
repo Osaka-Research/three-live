@@ -615,6 +615,7 @@
       weak var camera: PerspectiveCamera?
       let pivot = Entity()
       var orbit = XROrbitCameraState()
+      var modelScale: Float = 1.0
       var lastCameraOptions: XRCameraOptions?
       var lastResetToken: Int = -1
       var runtimeSession: XRLiveRealityKitSession?
@@ -635,7 +636,7 @@
       }
 
       @MainActor
-      func applyCameraPose(modelScale: Float = 1.0) {
+      func applyCameraPose() {
         guard let camera = camera else { return }
         let eye = orbit.eye
         let target = orbit.target
@@ -646,12 +647,16 @@
         )
         camera.camera.fieldOfViewInDegrees = Float(orbit.fieldOfViewDeg)
         var mat = orbit.turntableMatrix
-        if abs(modelScale - 1.0) > 1e-4 {
+        let s = (modelScale.isFinite && modelScale > 0) ? modelScale : 1.0
+        if abs(s - 1.0) > 1e-4 {
           let scaleMat = simd_float4x4(
-            diagonal: SIMD4<Float>(modelScale, modelScale, modelScale, 1.0))
+            diagonal: SIMD4<Float>(s, s, s, 1.0))
           mat = simd_mul(mat, scaleMat)
         }
         pivot.setTransformMatrix(mat, relativeTo: nil)
+        if let arSurface = pivot.findEntity(named: "ThreeLiveArSurfacePreview") {
+          arSurface.scale = SIMD3<Float>(repeating: 1.0 / s)
+        }
         let worldMat = camera.transformMatrix(relativeTo: nil)
         currentCameraTransform = worldMat
         currentHeadPose = XRPose(matrix: worldMat)
@@ -789,15 +794,22 @@
       }
 
       if coordinator.lastCameraOptions != cameraOptions || shouldSnapBounds {
+        var opts = cameraOptions
+        if !shouldSnapBounds,
+          coordinator.lastCameraOptions?.cameraOrbit == cameraOptions.cameraOrbit
+        {
+          opts.cameraOrbit = nil
+        }
         coordinator.lastCameraOptions = cameraOptions
-        coordinator.orbit.apply(cameraOptions)
+        coordinator.orbit.apply(opts)
       }
 
       if shouldSnapBounds {
         coordinator.orbit.setBounds(center: sceneBounds.center, radius: sceneBounds.radius)
       }
 
-      coordinator.applyCameraPose(modelScale: modelScale)
+      coordinator.modelScale = modelScale
+      coordinator.applyCameraPose()
     }
   }
 #endif
