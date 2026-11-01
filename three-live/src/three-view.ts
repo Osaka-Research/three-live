@@ -1631,6 +1631,26 @@ export class ThreeView {
   }
 
   /**
+   * Immediately clears all foreground scene meshes, animations, and lights so the
+   * viewport renders blank while a new scene is being fetched or compiled.
+   */
+  public clearScene(): void {
+    this.disposeMeshGpuResources();
+    this.lights = [];
+    this.animations = [];
+    this.currentClip = null;
+    this.isPlayingAnimation = false;
+    this.worldMatrices = [];
+    this.gltf = null;
+    this.initialNodeTransforms = [];
+    this.turntableRotation = 0;
+    this.updateTurntableMatrix();
+    if (this.gl) {
+      this.render();
+    }
+  }
+
+  /**
    * Canonical polymorphic entry point normalizing GLBData or binary buffer.
    */
   public loadModel(data: GLBData | ArrayBuffer | ArrayBufferView): void {

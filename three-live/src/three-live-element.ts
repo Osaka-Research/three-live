@@ -924,6 +924,8 @@ export class ThreeLiveElement extends BaseElement {
     try {
       let resolvedModel: GLBData | ArrayBuffer | ArrayBufferView;
       if (typeof model === 'string') {
+        this.isModelLoaded = false;
+        this.viewer?.clearScene?.();
         const response = await fetch(model);
         if (!response.ok) {
           throw new Error(
@@ -1577,6 +1579,8 @@ export class ThreeLiveElement extends BaseElement {
       this.scriptHandle.terminate();
       this.scriptHandle = null;
     }
+    this.isModelLoaded = false;
+    this.viewer?.clearScene?.();
 
     return new Promise<ArrayBuffer | GLBData | void>((resolve, reject) => {
       let settled = false;

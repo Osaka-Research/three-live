@@ -45,6 +45,12 @@ interface ThreeLiveSceneRenderer {
    */
   fun load(glb: ByteBuffer)
 
+  /**
+   * Immediately clears the loaded scene and dynamic meshes so the viewport renders blank while a
+   * new scene is being compiled or downloaded.
+   */
+  fun clear() {}
+
   /** Applies camera options (orbit, target, field of view, limits, auto-rotate, controls). */
   fun setCameraOptions(options: ThreeLiveCameraOptions)
 
