@@ -24,9 +24,11 @@
   public struct ContentView: View {
 
     @State private var selectedMode: StudioMode = .threeLive
+    @State private var renderedMode: StudioMode = .threeLive
     @State private var selectedPresetIndex = 0
     @State private var jsScriptText = SampleScenes.threeLivePresets[0].script
     @State private var isCompiling = false
+    @State private var compileGeneration: Int = 0
     @State private var compileLatencyMs: Double? = nil
     @State private var usdzSizeBytes: Int? = nil
     @State private var usdzData: Data? = nil
@@ -54,8 +56,8 @@
     }
 
     private var currentCameraOptions: XRCameraOptions {
-      let autoRot = isArPreviewMode ? arAutoRotate : (selectedMode == .threeLive)
-      let initialOrbit = selectedMode == .threeLive ? "23deg 20deg" : "34deg 20deg"
+      let autoRot = isArPreviewMode ? arAutoRotate : (renderedMode == .threeLive)
+      let initialOrbit = renderedMode == .threeLive ? "23deg 20deg" : "34deg 20deg"
       return XRCameraOptions(
         cameraOrbit: initialOrbit,
         fieldOfView: "45deg",
@@ -481,34 +483,44 @@
 
     @MainActor
     private func compileAndRender() async {
+      compileGeneration += 1
+      let generation = compileGeneration
+      let targetMode = selectedMode
+      let scriptToCompile = jsScriptText
+
       isCompiling = true
       errorMessage = nil
+
+      // Immediately blank the 3D viewport before compiling so the previous scene
+      // never jumps or resizes when switching presets or modes.
+      runtimeFeatures?.dispose()
+      runtimeFeatures = nil
+      runtimeSession?.stop()
+      runtimeSession = nil
+      currentEntity = nil
 
       let startTime = DispatchTime.now()
       do {
         // Compile procedural script to native USDZ Data & extract XR-Live spatial traits from GLB
-        let data = try await ThreeCompiler.compileUSDZ(jsScriptText)
+        let data = try await ThreeCompiler.compileUSDZ(scriptToCompile)
         let endTime = DispatchTime.now()
         let nanos = endTime.uptimeNanoseconds - startTime.uptimeNanoseconds
-        compileLatencyMs = Double(nanos) / 1_000_000.0
 
-        let glbData = try await ThreeCompiler.compileGLB(jsScriptText)
+        let glbData = try await ThreeCompiler.compileGLB(scriptToCompile)
         let traits = RealityKitHelper.extractXRTraits(fromGLB: glbData)
-        extractedXrTraits = traits
-
-        usdzData = data
-        usdzSizeBytes = data.count
-
         let entity = try await RealityKitHelper.loadEntity(fromUSDZ: data)
+        guard generation == compileGeneration else { return }
+
         for anim in entity.availableAnimations {
           _ = entity.playAnimation(anim.repeat())
         }
 
-        runtimeFeatures?.dispose()
-        runtimeFeatures = nil
-        runtimeSession?.stop()
+        var newBounds: (center: SIMD3<Double>, radius: Double) = (.zero, 1.48)
+        var newSession: XRLiveRealityKitSession? = nil
+        var newFeatures: XRBlocksRealityKitFeatures? = nil
+
         if let live = XRLiveRealityKitSession(glbData: glbData, root: entity) {
-          currentSceneBounds = live.session.sceneBounds
+          newBounds = live.session.sceneBounds
           live.installStudioLights()
           live.installInputTargets()
           live.headPoseProvider = {
@@ -526,33 +538,41 @@
             lastEventMessage =
               String(format: "Handles %@: scale %.2f×, yaw %.0f°", mesh, scale, yawDeg)
           }
-          runtimeSession = live
-          runtimeFeatures = features
+          newSession = live
+          newFeatures = features
         } else {
           let vb = entity.visualBounds(recursive: true, relativeTo: entity)
           if !vb.isEmpty {
             let halfDiag = Double(0.5 * simd_length(vb.max - vb.min))
             let c = vb.center.x.isFinite ? vb.center : .zero
-            currentSceneBounds = (
+            newBounds = (
               center: SIMD3<Double>(Double(c.x), Double(c.y), Double(c.z)),
               radius: halfDiag.isFinite ? max(halfDiag, 0.5) : 1.48
             )
-          } else {
-            currentSceneBounds = (.zero, 1.48)
           }
           if !traits.isEmpty {
             RealityKitHelper.applyXRTraits(traits, to: entity)
           }
-          runtimeSession = nil
         }
 
+        compileLatencyMs = Double(nanos) / 1_000_000.0
+        extractedXrTraits = traits
+        usdzData = data
+        usdzSizeBytes = data.count
+        renderedMode = targetMode
+        currentSceneBounds = newBounds
+        runtimeSession = newSession
+        runtimeFeatures = newFeatures
         currentEntity = entity
         cameraResetToken += 1
         errorMessage = nil
       } catch {
+        guard generation == compileGeneration else { return }
         errorMessage = error.localizedDescription
       }
-      isCompiling = false
+      if generation == compileGeneration {
+        isCompiling = false
+      }
     }
 
     @MainActor
@@ -778,10 +798,17 @@
       coordinator.onTapNode = onTapNode
 
       var shouldSnapBounds = false
-      if let currentEntity = entity, coordinator.pivot.children.first !== currentEntity {
-        coordinator.pivot.children.removeAll()
-        coordinator.pivot.addChild(currentEntity)
-        shouldSnapBounds = true
+      if let currentEntity = entity {
+        if coordinator.pivot.children.first !== currentEntity {
+          coordinator.pivot.children.removeAll()
+          coordinator.pivot.addChild(currentEntity)
+          shouldSnapBounds = true
+        }
+      } else {
+        if !coordinator.pivot.children.isEmpty {
+          coordinator.pivot.children.removeAll()
+        }
+        return
       }
 
       if coordinator.lastResetToken != resetToken {

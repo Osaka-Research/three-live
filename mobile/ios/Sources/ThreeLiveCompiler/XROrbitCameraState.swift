@@ -110,6 +110,9 @@ public struct XROrbitCameraState: Sendable {
   public mutating func apply(_ o: XRCameraOptions) {
     interactive = o.cameraControls
     autoRotate = o.autoRotate
+    if !o.autoRotate {
+      turntable = 0
+    }
     autoRotateDelay = max(0, o.autoRotateDelay)
     autoRotateSpeed = Self.parseRotationPerSecond(o.rotationPerSecond)
     if let f = Self.parseFieldOfView(o.fieldOfView) { fieldOfViewDeg = min(90, max(10, f)) }
@@ -130,6 +133,7 @@ public struct XROrbitCameraState: Sendable {
   public mutating func setBounds(center: SIMD3<Double>, radius: Double) {
     if center.x.isFinite && center.y.isFinite && center.z.isFinite { boundsCenter = center }
     boundsRadius = (radius.isFinite && radius > 1e-6) ? radius : 1
+    turntable = 0
     targetTheta = clampTheta(initialTheta ?? targetTheta)
     targetPhi = clampPhi(initialPhi ?? targetPhi)
     let defaultDist = (distanceMode == "absolute") ? 3.0 : (boundsRadius * 2.5)

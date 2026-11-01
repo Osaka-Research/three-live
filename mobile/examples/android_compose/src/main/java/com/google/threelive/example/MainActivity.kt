@@ -95,6 +95,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   var jsScriptText by remember { mutableStateOf(SampleScenes.THREE_LIVE_PRESETS[0].script) }
 
   var isCompiling by remember { mutableStateOf(false) }
+  var compileGeneration by remember { mutableStateOf(0) }
   var compileLatencyMs by remember { mutableStateOf<Double?>(null) }
   var glbSizeBytes by remember { mutableStateOf<Int?>(null) }
   var lastCompiledGlbBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -173,6 +174,7 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
     renderer.setCameraOptions(
       if (selectedMode == StudioMode.THREE_LIVE) {
         ThreeLiveCameraOptions(
+          cameraOrbit = "23deg 20deg",
           autoRotate = true,
           autoRotateDelayMs = 800L,
           rotationPerSecond = "24deg",
@@ -206,8 +208,18 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
   }
 
   fun triggerCompileAndRender() {
+    val generation = ++compileGeneration
+    val targetMode = selectedMode
+    val scriptToCompile = jsScriptText
+
     isCompiling = true
     compileError = null
+
+    // Immediately blank the 3D viewport before compiling so the previous scene
+    // never jumps or remains visible while the new scene compiles.
+    binding?.dispose()
+    binding = null
+    renderer.clear()
 
     coroutineScope.launch {
       var glbBuffer: GlbBuffer? = null
@@ -216,13 +228,16 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
         val compiled: GlbBuffer
         val elapsedNanos = measureNanoTime {
           // Call ThreeCompiler asynchronously with zero-copy DirectByteBuffer
-          compiled = ThreeCompiler.compile(jsScriptText)
+          compiled = ThreeCompiler.compile(scriptToCompile)
         }
         glbBuffer = compiled
         val glbCopy = compiled.toByteArray()
         val size = glbCopy.size
         val xrTraits = XRLiveSceneCoreHelper.extractNodeTraits(compiled.byteBuffer.duplicate())
         withContext(Dispatchers.Main) {
+          if (generation != compileGeneration) {
+            return@withContext
+          }
           // The renderer and binding finish reading the buffer synchronously, so it is
           // freed right after (on both the success and failure paths).
           transferredOwnership = true
@@ -230,8 +245,9 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
             binding?.dispose()
             binding = null
             renderer.setCameraOptions(
-              if (selectedMode == StudioMode.THREE_LIVE) {
+              if (targetMode == StudioMode.THREE_LIVE) {
                 ThreeLiveCameraOptions(
+                  cameraOrbit = "23deg 20deg",
                   autoRotate = true,
                   autoRotateDelayMs = 800L,
                   rotationPerSecond = "24deg",
@@ -264,19 +280,23 @@ fun CompilerStudioScreen(onInitRenderer: (ThreeLiveFilamentRenderer) -> Unit) {
                   }
               }
           }
+          lastCompiledGlbBytes = glbCopy
+          extractedXrTraits = xrTraits
+          compileLatencyMs = elapsedNanos / 1_000_000.0
+          glbSizeBytes = size
         }
-        lastCompiledGlbBytes = glbCopy
-        extractedXrTraits = xrTraits
-        compileLatencyMs = elapsedNanos / 1_000_000.0
-        glbSizeBytes = size
       } catch (e: Exception) {
         if (e is CancellationException) throw e
-        compileError = e.localizedMessage ?: e.message ?: "Unknown compilation error"
+        if (generation == compileGeneration) {
+          compileError = e.localizedMessage ?: e.message ?: "Unknown compilation error"
+        }
       } finally {
         if (!transferredOwnership) {
           glbBuffer?.close()
         }
-        isCompiling = false
+        if (generation == compileGeneration) {
+          isCompiling = false
+        }
       }
     }
   }

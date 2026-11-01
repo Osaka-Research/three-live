@@ -156,6 +156,7 @@ class OrbitCameraState {
       boundsCenter = doubleArrayOf(center[0], center[1], center[2])
     }
     boundsRadius = if (radius.isFinite() && radius > 1e-6) radius else 1.0
+    turntableRad = 0.0
     targetTheta = clampTheta(initialTheta ?: targetTheta)
     targetPhi = clampPhi(initialPhi ?: targetPhi)
     val defaultDist = if (distanceMode == "absolute") DEFAULT_DISTANCE else boundsRadius * 2.5

@@ -254,6 +254,13 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     return sv
   }
 
+  /** Immediately clears the loaded scene and dynamic meshes so the viewport renders blank. */
+  fun clear() {
+    if (disposed) return
+    destroyAsset()
+    clearDynamicMeshes()
+  }
+
   override fun load(glb: ByteBuffer) {
     if (disposed) return
     destroyAsset()
