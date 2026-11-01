@@ -301,6 +301,64 @@ pub fn generate_cylinder(
         indices.push(d);
     }
 
+    if radius_top > 0.0 {
+        let center_idx = (positions.len() / 3) as u32;
+        positions.extend_from_slice(&[0.0, half_height, 0.0]);
+        normals.extend_from_slice(&[0.0, 1.0, 0.0]);
+        uvs.extend_from_slice(&[0.5, 0.5]);
+
+        let rim_start = (positions.len() / 3) as u32;
+        for x in 0..=radial_segments {
+            let u = x as f32 / radial_segments as f32;
+            let theta = u * std::f32::consts::TAU;
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+
+            positions.extend_from_slice(&[
+                radius_top * sin_theta,
+                half_height,
+                radius_top * cos_theta,
+            ]);
+            normals.extend_from_slice(&[0.0, 1.0, 0.0]);
+            uvs.extend_from_slice(&[cos_theta * 0.5 + 0.5, sin_theta * 0.5 + 0.5]);
+        }
+
+        for x in 0..radial_segments as u32 {
+            indices.push(center_idx);
+            indices.push(rim_start + x);
+            indices.push(rim_start + x + 1);
+        }
+    }
+
+    if radius_bottom > 0.0 {
+        let center_idx = (positions.len() / 3) as u32;
+        positions.extend_from_slice(&[0.0, -half_height, 0.0]);
+        normals.extend_from_slice(&[0.0, -1.0, 0.0]);
+        uvs.extend_from_slice(&[0.5, 0.5]);
+
+        let rim_start = (positions.len() / 3) as u32;
+        for x in 0..=radial_segments {
+            let u = x as f32 / radial_segments as f32;
+            let theta = u * std::f32::consts::TAU;
+            let sin_theta = theta.sin();
+            let cos_theta = theta.cos();
+
+            positions.extend_from_slice(&[
+                radius_bottom * sin_theta,
+                -half_height,
+                radius_bottom * cos_theta,
+            ]);
+            normals.extend_from_slice(&[0.0, -1.0, 0.0]);
+            uvs.extend_from_slice(&[cos_theta * 0.5 + 0.5, 1.0 - (sin_theta * 0.5 + 0.5)]);
+        }
+
+        for x in 0..radial_segments as u32 {
+            indices.push(center_idx);
+            indices.push(rim_start + x + 1);
+            indices.push(rim_start + x);
+        }
+    }
+
     NativeGeometry { positions, normals, uvs, indices }
 }
 
@@ -313,17 +371,17 @@ pub fn generate_box(width: f32, height: f32, depth: f32) -> NativeGeometry {
     #[rustfmt::skip]
     let positions = vec![
         // Front (Z+)
-        -w2,  h2,  d2,   w2,  h2,  d2,   w2, -h2,  d2,  -w2, -h2,  d2,
+        -w2, -h2,  d2,   w2, -h2,  d2,   w2,  h2,  d2,  -w2,  h2,  d2,
         // Back (Z-)
-         w2,  h2, -d2,  -w2,  h2, -d2,  -w2, -h2, -d2,   w2, -h2, -d2,
+         w2, -h2, -d2,  -w2, -h2, -d2,  -w2,  h2, -d2,   w2,  h2, -d2,
         // Top (Y+)
-        -w2,  h2, -d2,   w2,  h2, -d2,   w2,  h2,  d2,  -w2,  h2,  d2,
+        -w2,  h2,  d2,   w2,  h2,  d2,   w2,  h2, -d2,  -w2,  h2, -d2,
         // Bottom (Y-)
-        -w2, -h2,  d2,   w2, -h2,  d2,   w2, -h2, -d2,  -w2, -h2, -d2,
+        -w2, -h2, -d2,   w2, -h2, -d2,   w2, -h2,  d2,  -w2, -h2,  d2,
         // Right (X+)
-         w2,  h2,  d2,   w2,  h2, -d2,   w2, -h2, -d2,   w2, -h2,  d2,
+         w2, -h2,  d2,   w2, -h2, -d2,   w2,  h2, -d2,   w2,  h2,  d2,
         // Left (X-)
-        -w2,  h2, -d2,  -w2,  h2,  d2,  -w2, -h2,  d2,  -w2, -h2, -d2,
+        -w2, -h2, -d2,  -w2, -h2,  d2,  -w2,  h2,  d2,  -w2,  h2, -d2,
     ];
 
     #[rustfmt::skip]

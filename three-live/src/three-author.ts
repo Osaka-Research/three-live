@@ -28,6 +28,10 @@
  */
 
 import {compileInteractivityGraph} from './interactivity-compiler';
+import {
+  CLIENT_SCRIPTS_DISABLED_ERROR,
+  CLIENT_SCRIPTS_DISABLED_TOAST,
+} from './messages';
 import {getSharedRegistry} from './plugin';
 import {
   generateUSDZ,
@@ -43,10 +47,6 @@ import {
   mat4LookAt,
   mat4Multiply,
 } from './three-view';
-import {
-  CLIENT_SCRIPTS_DISABLED_ERROR,
-  CLIENT_SCRIPTS_DISABLED_TOAST,
-} from './messages';
 import {
   buildHubsExtension,
   buildXRSceneCoreExtension,
@@ -1173,6 +1173,48 @@ export class CylinderGeometry extends BufferGeometry {
       const c = x + radialSegments + 2;
       const d = x + 1;
       indices.push(a, b, d, b, c, d);
+    }
+
+    if (radiusTop > 0) {
+      const centerIdx = positions.length / 3;
+      positions.push(0, halfHeight, 0);
+      normals.push(0, 1, 0);
+      uvs.push(0.5, 0.5);
+      const rimStart = positions.length / 3;
+      for (let x = 0; x <= radialSegments; x++) {
+        const theta = (x / radialSegments) * Math.PI * 2;
+        const sinTheta = Math.sin(theta),
+          cosTheta = Math.cos(theta);
+        positions.push(radiusTop * sinTheta, halfHeight, radiusTop * cosTheta);
+        normals.push(0, 1, 0);
+        uvs.push(cosTheta * 0.5 + 0.5, sinTheta * 0.5 + 0.5);
+      }
+      for (let x = 0; x < radialSegments; x++) {
+        indices.push(centerIdx, rimStart + x, rimStart + x + 1);
+      }
+    }
+
+    if (radiusBottom > 0) {
+      const centerIdx = positions.length / 3;
+      positions.push(0, -halfHeight, 0);
+      normals.push(0, -1, 0);
+      uvs.push(0.5, 0.5);
+      const rimStart = positions.length / 3;
+      for (let x = 0; x <= radialSegments; x++) {
+        const theta = (x / radialSegments) * Math.PI * 2;
+        const sinTheta = Math.sin(theta),
+          cosTheta = Math.cos(theta);
+        positions.push(
+          radiusBottom * sinTheta,
+          -halfHeight,
+          radiusBottom * cosTheta,
+        );
+        normals.push(0, -1, 0);
+        uvs.push(cosTheta * 0.5 + 0.5, 1 - (sinTheta * 0.5 + 0.5));
+      }
+      for (let x = 0; x < radialSegments; x++) {
+        indices.push(centerIdx, rimStart + x + 1, rimStart + x);
+      }
     }
 
     this.setAttribute(
@@ -2543,7 +2585,10 @@ function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
         if (ALLOWED_SCRIPT_URL) {
           sceneScriptUrlToLoad = bootPolicy.createScriptURL(ALLOWED_SCRIPT_URL);
         }
-        if (ALLOW_CLIENT_SCRIPTS && typeof bootPolicy.createScript === 'function') {
+        if (
+          ALLOW_CLIENT_SCRIPTS &&
+          typeof bootPolicy.createScript === 'function'
+        ) {
           createClientScript = bootPolicy.createScript.bind(bootPolicy);
         }
       } catch (trustedTypesError) {
@@ -2553,10 +2598,12 @@ function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
     nativeImportScripts(scriptUrlToLoad);
   } catch (err) {
     fail(
-      'Sandbox failed to load the Three-Live engine from "' + ENGINE_SRC +
+      'Sandbox failed to load the Three-Live engine from "' +
+        ENGINE_SRC +
         '". It must be a same-origin (or CORS-enabled) IIFE bundle such as ' +
         // tslint:disable-next-line:no-any
-        'three-live.min.js. Underlying error: ' + ((err && (err as any).message) || err),
+        'three-live.min.js. Underlying error: ' +
+        ((err && (err as any).message) || err),
     );
     return;
   }
@@ -2564,7 +2611,9 @@ function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
   const THREE = scope.THREE;
   if (!THREE || typeof THREE.Scene !== 'function') {
     fail(
-      'Sandbox loaded "' + ENGINE_SRC + '" but it did not install a THREE ' +
+      'Sandbox loaded "' +
+        ENGINE_SRC +
+        '" but it did not install a THREE ' +
         'namespace. Point sandboxEngineSrc at an IIFE build (three-live.min.js), ' +
         'not an ES module build.',
     );
@@ -2651,7 +2700,8 @@ function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
     if (!msg || SCENE_MESSAGE_TYPES.indexOf(msg.type) === -1) {
       throw new Error(
         'Sandboxed scripts may only post Three-Live scene messages (' +
-          SCENE_MESSAGE_TYPES.join(', ') + ').',
+          SCENE_MESSAGE_TYPES.join(', ') +
+          ').',
       );
     }
     emit(msg, transfer);
@@ -3736,7 +3786,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     const seen = new Set<object>();
     const copy = (v: unknown, depth: number): unknown => {
       if (--budget < 0 || depth > 32) return undefined;
-      if (v === null || typeof v === 'string' || typeof v === 'boolean') return v;
+      if (v === null || typeof v === 'string' || typeof v === 'boolean')
+        return v;
       if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
       if (typeof v !== 'object' || seen.has(v as object)) return undefined;
       seen.add(v as object);
@@ -3747,7 +3798,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       } else {
         out = {};
         for (const k of Object.keys(v as object)) {
-          if (k === '__proto__' || k === 'prototype' || k === 'constructor') continue;
+          if (k === '__proto__' || k === 'prototype' || k === 'constructor')
+            continue;
           const c = copy((v as Record<string, unknown>)[k], depth + 1);
           if (c !== undefined) out[k] = c;
         }
@@ -3912,7 +3964,11 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
      */
     const worldOf = (idx: number): Matrix4 => {
       const chain: number[] = [];
-      for (let i = idx; i >= 0 && chain.length <= rawNodes.length; i = rawNodes[i].parent) {
+      for (
+        let i = idx;
+        i >= 0 && chain.length <= rawNodes.length;
+        i = rawNodes[i].parent
+      ) {
         chain.push(i);
       }
       const world = sceneWorld.clone();
@@ -3920,7 +3976,11 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         const n = rawNodes[chain[c]];
         world.multiply(
           new Matrix4().compose(
-            {x: n.translation[0], y: n.translation[1], z: n.translation[2]} as Vector3,
+            {
+              x: n.translation[0],
+              y: n.translation[1],
+              z: n.translation[2],
+            } as Vector3,
             {
               x: n.rotation[0],
               y: n.rotation[1],
@@ -3965,7 +4025,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         rawMeshes.push({
           name: node.name || `Mesh_${rawMeshes.length}`,
           raw_positions: posAttr.array,
-          raw_normals: geo.attributes.normal ? geo.attributes.normal.array : null,
+          raw_normals: geo.attributes.normal
+            ? geo.attributes.normal.array
+            : null,
           raw_uvs: geo.attributes.uv ? geo.attributes.uv.array : null,
           raw_indices: geo.index ? geo.index.array : null,
           vertex_count: posAttr.count,
@@ -4015,11 +4077,13 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     // exporter, over node stubs that mirror `sceneToCanvas3D`'s nodes (same
     // order, names, mesh indices and non-default TRS), so every node index in
     // the graph matches the web export.
-    const isDefault = (v: number[], d: number[]) => v.every((c, i) => c === d[i]);
+    const isDefault = (v: number[], d: number[]) =>
+      v.every((c, i) => c === d[i]);
     const sceneInteractivity = toSafeJson({
       interactivity: activeScene.userData?.interactivity,
       gltfExtensions: {
-        KHR_interactivity: activeScene.userData?.gltfExtensions?.KHR_interactivity,
+        KHR_interactivity:
+          activeScene.userData?.gltfExtensions?.KHR_interactivity,
       },
     });
     const hasSceneGraph = Boolean(
@@ -4037,9 +4101,13 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           ...(isDefault(n.translation, [0, 0, 0])
             ? {}
             : {translation: n.translation}),
-          ...(isDefault(n.rotation, [0, 0, 0, 1]) ? {} : {rotation: n.rotation}),
+          ...(isDefault(n.rotation, [0, 0, 0, 1])
+            ? {}
+            : {rotation: n.rotation}),
           ...(isDefault(n.scale, [1, 1, 1]) ? {} : {scale: n.scale}),
-          extras: nodeInteractivity[i] ? {interactivity: nodeInteractivity[i]} : undefined,
+          extras: nodeInteractivity[i]
+            ? {interactivity: nodeInteractivity[i]}
+            : undefined,
         })),
         rawMeshes.map((m) => ({
           primitives: [{material: m.material_index ?? 0}],

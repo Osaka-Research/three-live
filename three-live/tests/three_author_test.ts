@@ -16,6 +16,7 @@ import THREE, {
   AmbientLight,
   BoxGeometry,
   Color,
+  CylinderGeometry,
   DirectionalLight,
   Group,
   Mesh,
@@ -62,6 +63,16 @@ function runThreeAuthorTests() {
   const box = new BoxGeometry(2, 2, 2);
   assert(box.attributes.position.count === 24, 'BoxGeometry vertex count');
   assert(box.index!.count === 36, 'BoxGeometry index count');
+
+  const cyl = new CylinderGeometry(1, 1, 2, 16);
+  assert(
+    cyl.attributes.position.count === (16 + 1) * 4 + 2,
+    'CylinderGeometry capped vertex count',
+  );
+  assert(
+    cyl.index!.count === 16 * 6 + 16 * 3 * 2,
+    'CylinderGeometry capped index count',
+  );
 
   const sphere = new SphereGeometry(1, 16, 16);
   assert(sphere.attributes.position.count > 0, 'SphereGeometry vertices');

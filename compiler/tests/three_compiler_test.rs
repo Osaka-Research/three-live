@@ -304,7 +304,7 @@ fn test_cylinder_geometry_native_acceleration() {
 
     let scene = validate_three_script(script).expect("Cylinder validation failed");
     assert_eq!(scene.meshes.len(), 1);
-    assert_eq!(scene.meshes[0].positions.len(), (32 + 1) * 2);
+    assert_eq!(scene.meshes[0].positions.len(), (32 + 1) * 4 + 2);
     assert_eq!(scene.meshes[0].positions.len(), scene.meshes[0].normals.len());
     assert_eq!(scene.meshes[0].positions.len(), scene.meshes[0].uvs.len());
 
@@ -312,6 +312,42 @@ fn test_cylinder_geometry_native_acceleration() {
     assert!(!glb.is_empty());
     let magic = u32::from_le_bytes([glb[0], glb[1], glb[2], glb[3]]);
     assert_eq!(magic, 0x46546C67);
+}
+
+#[test]
+fn test_box_and_cylinder_outward_ccw_winding() {
+    let script = r#"
+        scene.add(new THREE.Mesh(new THREE.BoxGeometry(2, 4, 6), new THREE.MeshStandardMaterial()));
+        scene.add(new THREE.Mesh(new THREE.CylinderGeometry(1, 2, 4, 16), new THREE.MeshStandardMaterial()));
+    "#;
+
+    let scene = validate_three_script(script).expect("Box/Cylinder validation failed");
+    assert_eq!(scene.meshes.len(), 2);
+
+    for (mesh_idx, mesh) in scene.meshes.iter().enumerate() {
+        for tri in mesh.indices.chunks_exact(3) {
+            let p0 = mesh.positions[tri[0] as usize];
+            let p1 = mesh.positions[tri[1] as usize];
+            let p2 = mesh.positions[tri[2] as usize];
+            let n0 = mesh.normals[tri[0] as usize];
+
+            let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+            let cross = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let dot = cross[0] * n0[0] + cross[1] * n0[1] + cross[2] * n0[2];
+            assert!(
+                dot > 0.0,
+                "Mesh {} triangle {:?} has inward/clockwise winding (dot = {})",
+                mesh_idx,
+                tri,
+                dot
+            );
+        }
+    }
 }
 
 #[test]
