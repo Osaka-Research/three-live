@@ -76,6 +76,29 @@ limitations under the License.
     }
     h2 { margin: 0 0 8px; font-size: 18px; }
     p { margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+    @media (max-width: 640px) {
+      body {
+        padding: 16px;
+        align-items: flex-start;
+      }
+      .hub {
+        padding: 20px;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      p.sub {
+        margin-bottom: 16px;
+        font-size: 13px;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      a.card {
+        padding: 16px;
+      }
+    }
   </style>
 </head>
 <body>

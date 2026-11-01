@@ -309,6 +309,79 @@ limitations under the License.
       color: var(--accent-emerald);
       min-height: 16px;
     }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 12px 10px;
+      }
+      .container {
+        gap: 12px;
+      }
+      header {
+        gap: 10px;
+        padding-bottom: 10px;
+      }
+      .logo-badge {
+        width: 34px;
+        height: 34px;
+        font-size: 16px;
+        border-radius: 8px;
+      }
+      h1 {
+        font-size: 18px;
+        gap: 6px;
+      }
+      .tagline {
+        font-size: 13px;
+      }
+      .subtitle {
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .pills {
+        gap: 6px;
+      }
+      .pill {
+        font-size: 11px;
+        padding: 3px 8px;
+      }
+      .main-grid {
+        gap: 12px;
+      }
+      three-live {
+        height: clamp(270px, 43dvh, 360px);
+      }
+      .viewer-toolbar {
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        justify-content: space-between;
+      }
+      .tool-badge {
+        padding: 4px 8px;
+        font-size: 11px;
+      }
+      .sidebar {
+        gap: 12px;
+      }
+      .card {
+        padding: 12px;
+        gap: 10px;
+      }
+      .preset-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .preset-grid button {
+        justify-content: center;
+        padding: 8px 10px;
+        font-size: 12.5px;
+      }
+      .preset-grid button:last-child {
+        grid-column: 1 / -1;
+      }
+    }
   </style>
 </head>
 <body>
@@ -358,7 +431,7 @@ limitations under the License.
       <!-- Preset Scenes -->
       <div class="card">
         <div class="card-title">Preset Scenes</div>
-        <div class="btn-row">
+        <div class="btn-row preset-grid">
           <button id="btn-artifact" class="primary">Quantum Core</button>
           <button id="btn-torus">Torus Knot</button>
           <button id="btn-crystal">Emerald Crystal</button>
@@ -869,6 +942,12 @@ scene.add(sat2);`
   });
 
   // Initial Load
+  window.addEventListener("resize", () => {
+    el.viewer?.resize?.();
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => el.viewer?.resize?.()).observe(el);
+  }
   window.addEventListener("DOMContentLoaded", () => {
     selectPreset("artifact");
     syncSpinButton();

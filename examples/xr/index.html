@@ -648,6 +648,149 @@ limitations under the License.
       font-size: 10.5px;
       color: #f8fafc;
     }
+
+    /* Responsive Tablet & Mobile Breakpoints */
+    @media (max-width: 960px) {
+      body {
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+
+      body.xr-immersive-active {
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+      }
+
+      .workspace {
+        grid-template-columns: 1fr;
+        flex: none;
+      }
+
+      .viewport-pane {
+        order: -1;
+        width: 100%;
+        height: clamp(360px, 52dvh, 480px);
+        border-bottom: 1px solid var(--border);
+      }
+
+      body.xr-immersive-active .viewport-pane {
+        height: 100vh;
+        height: 100dvh;
+        border-bottom: none;
+      }
+
+      .sidebar {
+        width: 100%;
+        border-right: none;
+        overflow-y: visible;
+        padding: 12px;
+        gap: 12px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      header {
+        padding: 8px 12px;
+        gap: 8px;
+      }
+
+      .brand {
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .brand h1 {
+        font-size: 14.5px;
+      }
+
+      .size-pill-detail {
+        display: none;
+      }
+
+      .header-links .action-btn {
+        padding: 5px 8px;
+        font-size: 11px;
+      }
+
+      .viewport-pane {
+        height: clamp(320px, 48dvh, 420px);
+      }
+
+      .hud-top {
+        top: 8px;
+        left: 8px;
+        right: 8px;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .hud-card {
+        padding: 5px 8px;
+        gap: 8px;
+        font-size: 10.5px;
+        border-radius: 8px;
+      }
+
+      .stat-secondary,
+      .stat-label-gesture {
+        display: none;
+      }
+
+      .stat-value {
+        font-size: 11px;
+      }
+
+      .spatial-ui-card {
+        display: none;
+        right: 8px;
+        bottom: 42px;
+        width: 195px;
+        padding: 8px 10px;
+        border-radius: 10px;
+      }
+
+      body[data-mode="workbench"] .spatial-ui-card {
+        display: block;
+      }
+
+      .spatial-ui-desc {
+        display: none;
+      }
+
+      .hud-bottom {
+        bottom: 8px;
+        left: 8px;
+        right: 8px;
+      }
+
+      #kbd-hint-bar {
+        display: none;
+      }
+
+      #status-toast {
+        width: 100%;
+        padding: 4px 10px;
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .xr-virtual-hands {
+        left: 8px;
+        right: 8px;
+        bottom: 44px;
+      }
+
+      .xr-hand-pod {
+        padding: 6px 8px;
+        font-size: 10px;
+      }
+    }
   </style>
   <script src="./xr-live.min.js"></script>
   <script src="./xr-live-extras.min.js"></script>
@@ -662,7 +805,7 @@ limitations under the License.
         <span class="tag-pill">&lt;xr-live&gt;</span>
         Spatial Computing Playground
       </h1>
-      <span class="size-pill"><span data-bundle-size="xr-live.min.js">60.0 KB gz</span> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span>
+      <span class="size-pill"><span data-bundle-size="xr-live.min.js">60.0 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
@@ -834,18 +977,18 @@ limitations under the License.
             <span class="stat-label">Dynamic Bodies</span>
             <span class="stat-value" id="hud-bodies">0</span>
           </div>
-          <div class="stat-item">
+          <div class="stat-item stat-secondary">
             <span class="stat-label">Collisions</span>
             <span class="stat-value" id="hud-collisions">0</span>
           </div>
-          <div class="stat-item">
+          <div class="stat-item stat-secondary">
             <span class="stat-label">Head Pose (m)</span>
             <span class="stat-value" id="hud-pose">0.0, 1.6, 2.2</span>
           </div>
         </div>
 
         <div class="hud-card">
-          <span class="stat-label">Hand Gesture:</span>
+          <span class="stat-label stat-label-gesture">Hand Gesture:</span>
           <span class="gesture-badge" id="hud-gesture">open-palm</span>
           <button class="action-btn" id="btn-room-toggle" style="padding: 5px 9px; font-size: 11px;" onclick="toggleXRBlocksRoom()">🏠 XR Room: OFF</button>
           <button class="action-btn" id="btn-stereo" style="display:none; padding: 5px 9px; font-size: 11px;" onclick="toggleStereoSBS()">Stereo SBS: OFF</button>
@@ -878,7 +1021,7 @@ limitations under the License.
         <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px; color: #f8fafc;">
           Spatial UI Card
         </div>
-        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 8px; line-height: 1.35;">
+        <div class="spatial-ui-desc" style="font-size: 11px; color: #94a3b8; margin-bottom: 8px; line-height: 1.35;">
           Live HTML DOM projected into 3D space with UV raycast forwarding &amp; TurnToFace billboarding.
         </div>
         <div class="btn-row">
@@ -1180,6 +1323,7 @@ return scene;`
 
     async function switchMode(mode) {
       currentMode = mode;
+      document.body.dataset.mode = mode;
       ['ballpit', 'workbench', 'perception'].forEach((m) => {
         document.getElementById('tab-' + m).classList.toggle('active', m === mode);
         document.getElementById('panel-' + m).classList.toggle('active', m === mode);
@@ -1827,6 +1971,16 @@ return scene;`
     window.addEventListener('keyup', (e) => {
       keysHeld.delete(e.code);
     });
+
+    window.addEventListener('resize', () => {
+      xrEl.viewer?.resize?.();
+    });
+    if (typeof ResizeObserver !== 'undefined') {
+      const vp = document.querySelector('.viewport-pane');
+      if (vp) {
+        new ResizeObserver(() => xrEl.viewer?.resize?.()).observe(vp);
+      }
+    }
 
     // Boot initial Ballpit scene
     renderDepthGrid([]);

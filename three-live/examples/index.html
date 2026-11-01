@@ -309,6 +309,79 @@ limitations under the License.
       color: var(--accent-emerald);
       min-height: 16px;
     }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 12px 10px;
+      }
+      .container {
+        gap: 12px;
+      }
+      header {
+        gap: 10px;
+        padding-bottom: 10px;
+      }
+      .logo-badge {
+        width: 34px;
+        height: 34px;
+        font-size: 16px;
+        border-radius: 8px;
+      }
+      h1 {
+        font-size: 18px;
+        gap: 6px;
+      }
+      .tagline {
+        font-size: 13px;
+      }
+      .subtitle {
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .pills {
+        gap: 6px;
+      }
+      .pill {
+        font-size: 11px;
+        padding: 3px 8px;
+      }
+      .main-grid {
+        gap: 12px;
+      }
+      three-live {
+        height: clamp(270px, 43dvh, 360px);
+      }
+      .viewer-toolbar {
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        justify-content: space-between;
+      }
+      .tool-badge {
+        padding: 4px 8px;
+        font-size: 11px;
+      }
+      .sidebar {
+        gap: 12px;
+      }
+      .card {
+        padding: 12px;
+        gap: 10px;
+      }
+      .preset-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .preset-grid button {
+        justify-content: center;
+        padding: 8px 10px;
+        font-size: 12.5px;
+      }
+      .preset-grid button:last-child {
+        grid-column: 1 / -1;
+      }
+    }
   </style>
 </head>
 <body>
@@ -358,10 +431,11 @@ limitations under the License.
       <!-- Preset Scenes -->
       <div class="card">
         <div class="card-title">Preset Scenes</div>
-        <div class="btn-row">
-          <button id="btn-artifact" class="primary">Artifact</button>
+        <div class="btn-row preset-grid">
+          <button id="btn-artifact" class="primary">Quantum Core</button>
           <button id="btn-torus">Torus Knot</button>
-          <button id="btn-crystal">Crystal Gem</button>
+          <button id="btn-crystal">Emerald Crystal</button>
+          <button id="btn-orbital">Orbital Spheres</button>
           <button id="btn-spheres">🏠 XR Living Room</button>
         </div>
       </div>
@@ -437,6 +511,9 @@ const core = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
 );
 core.name = "QuantumCore";
+core.userData.interactivity = {
+  onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
+};
 scene.add(core);
 
 // 2. Inner Orbit Ring
@@ -458,17 +535,23 @@ ring2.rotation.y = 0.9;
 ring2.rotation.z = 0.4;
 scene.add(ring2);
 
-// 4. Sensor Arrays (Satellites)
+// 4. Sensor Arrays (Satellites) — counter-orbit QuantumCore
 const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
 const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
 const sat1 = new THREE.Mesh(satGeo, satMat);
 sat1.name = "SensorArray_A";
-sat1.position.set(1.4, 0.5, 0);
+sat1.position.set(1.45, 0.35, 0);
+sat1.userData.xr = {
+  orbit: { target: "QuantumCore", radius: 1.45, speed: 1.2, height: 0.35, phase: 0, faceCenter: true }
+};
 scene.add(sat1);
 
 const sat2 = new THREE.Mesh(satGeo, satMat);
 sat2.name = "SensorArray_B";
-sat2.position.set(-1.4, -0.5, 0);
+sat2.position.set(-1.45, -0.35, 0);
+sat2.userData.xr = {
+  orbit: { target: "QuantumCore", radius: 1.45, speed: -1.0, height: -0.35, phase: 3.14159, faceCenter: true }
+};
 scene.add(sat2);
 
 // 5. Pedestal Base
@@ -507,6 +590,9 @@ const core = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
 );
 core.name = "QuantumCore";
+core.userData.interactivity = {
+  onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
+};
 scene.add(core);
 
 // 2. Inner Orbit Ring
@@ -528,17 +614,23 @@ ring2.rotation.y = 0.9;
 ring2.rotation.z = 0.4;
 scene.add(ring2);
 
-// 4. Sensor Arrays (Satellites)
+// 4. Sensor Arrays (Satellites) — counter-orbit QuantumCore
 const satGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
 const satMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 });
 const sat1 = new THREE.Mesh(satGeo, satMat);
 sat1.name = "SensorArray_A";
-sat1.position.set(1.4, 0.5, 0);
+sat1.position.set(1.45, 0.35, 0);
+sat1.userData.xr = {
+  orbit: { target: "QuantumCore", radius: 1.45, speed: 1.2, height: 0.35, phase: 0, faceCenter: true }
+};
 scene.add(sat1);
 
 const sat2 = new THREE.Mesh(satGeo, satMat);
 sat2.name = "SensorArray_B";
-sat2.position.set(-1.4, -0.5, 0);
+sat2.position.set(-1.45, -0.35, 0);
+sat2.userData.xr = {
+  orbit: { target: "QuantumCore", radius: 1.45, speed: -1.0, height: -0.35, phase: 3.14159, faceCenter: true }
+};
 scene.add(sat2);
 
 // 5. Pedestal Base
@@ -556,6 +648,9 @@ const mesh = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0xf43f5e, metalness: 0.95, roughness: 0.12 })
 );
 mesh.name = "RubyTorusKnot";
+mesh.userData.interactivity = {
+  onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
+};
 scene.add(mesh);`,
 
     crystal: `// Emerald Crystal Gem
@@ -564,7 +659,36 @@ const mesh = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x06b6d4, metalness: 0.8, roughness: 0.15 })
 );
 mesh.name = "EmeraldGem";
+mesh.userData.interactivity = {
+  onSelect: { action: "toggleTransform", scale: [1.2, 1.2, 1.2], duration: 0.35 }
+};
 scene.add(mesh);`,
+
+    orbital: `// Five Orbital Spheres
+const colors = [0xef4444, 0xf59e0b, 0x10b981, 0x3b82f6, 0x8b5cf6];
+for (let i = 0; i < 5; i++) {
+  const angle = (i / 5) * Math.PI * 2;
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.45, 24, 16),
+    new THREE.MeshStandardMaterial({ color: colors[i], metalness: 0.9, roughness: 0.2 })
+  );
+  sphere.name = "Sphere_" + (i + 1);
+  sphere.position.set(Math.cos(angle) * 1.3, Math.sin(angle) * 0.4, Math.sin(angle) * 1.3);
+  sphere.userData.xr = {
+    orbit: {
+      target: [0, 0, 0],
+      radius: 1.3,
+      speed: 0.9,
+      height: Math.sin(angle) * 0.4,
+      phase: angle,
+      faceCenter: true
+    }
+  };
+  sphere.userData.interactivity = {
+    onSelect: { action: "toggleTransform", scale: [1.3, 1.3, 1.3], duration: 0.3 }
+  };
+  scene.add(sphere);
+}`,
 
     spheres: `// Tabletop Quantum Artifact in XR Blocks Living Room
 const core = new THREE.Mesh(
@@ -642,6 +766,7 @@ scene.add(sat2);`
       artifact: document.getElementById("btn-artifact"),
       torus: document.getElementById("btn-torus"),
       crystal: document.getElementById("btn-crystal"),
+      orbital: document.getElementById("btn-orbital"),
       spheres: document.getElementById("btn-spheres"),
     };
 
@@ -739,6 +864,7 @@ scene.add(sat2);`
   document.getElementById("btn-artifact").addEventListener("click", () => selectPreset("artifact"));
   document.getElementById("btn-torus").addEventListener("click", () => selectPreset("torus"));
   document.getElementById("btn-crystal").addEventListener("click", () => selectPreset("crystal"));
+  document.getElementById("btn-orbital").addEventListener("click", () => selectPreset("orbital"));
   document.getElementById("btn-spheres").addEventListener("click", () => selectPreset("spheres"));
 
   document.getElementById("btn-reset").addEventListener("click", () => el.resetCamera());
@@ -816,6 +942,12 @@ scene.add(sat2);`
   });
 
   // Initial Load
+  window.addEventListener("resize", () => {
+    el.viewer?.resize?.();
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => el.viewer?.resize?.()).observe(el);
+  }
   window.addEventListener("DOMContentLoaded", () => {
     selectPreset("artifact");
     syncSpinButton();
