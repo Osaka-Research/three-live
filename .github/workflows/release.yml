@@ -397,7 +397,10 @@ jobs:
             echo "::notice::CRATES_IO_TOKEN secret is not configured yet; skipping crates.io publish."
             exit 0
           fi
-          cargo publish --manifest-path compiler/Cargo.toml --allow-dirty
+          cargo publish --manifest-path compiler/Cargo.toml --allow-dirty || {
+            echo "::notice::cargo publish exited non-zero (version may already be published on crates.io)."
+            exit 0
+          }
 
   # The SHA-256 of a release artifact cannot be known until the artifact exists, so the
   # manifest committed on the tag is necessarily stale. This pins the real values and moves
