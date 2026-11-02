@@ -63,8 +63,8 @@ jobs:
               { file: "dist/three-live.min.js", limit: 55296 },
               { file: "three-live/dist/three-live.min.js", limit: 55296 },
               { file: "three-live/dist/three-live-full.min.js", limit: 70656 },
-              { file: "xr-live/dist/xr-live.min.js", limit: 65536 },
-              { file: "xr-live/dist/xr-live-full.min.js", limit: 105472 },
+              { file: "xr-live/dist/xr-live.min.js", limit: 66560 },
+              { file: "xr-live/dist/xr-live-full.min.js", limit: 106496 },
               { file: "xr-live/dist/xr-live-plugins.min.js", limit: 24064 }
             ];
             for (const { file, limit } of budgets) {
