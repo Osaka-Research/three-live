@@ -98,6 +98,35 @@ export interface XRMeshTraits {
   splatUrl?: string;
   /** Id of a `<div slot="spatial">` card anchored to this node. */
   spatialSlot?: string;
+  /** Live 3D bounding dimension callouts (`spatial-measure`). */
+  dimensions?:
+    | boolean
+    | {
+        enabled?: boolean;
+        unit?: 'm' | 'cm' | 'mm' | 'in' | 'ft-in' | 'auto';
+        axes?: Array<'x' | 'y' | 'z'>;
+        color?: string;
+        showOnSelect?: boolean;
+      };
+  /** Magnetic socket, grid, surface, and angle snapping (`magnetic-snap`). */
+  snapTo?:
+    | boolean
+    | {
+        grid?: [number, number, number] | number | null;
+        angleDeg?: number;
+        surface?: 'none' | 'floor' | 'wall' | 'ceiling' | 'any';
+        socketTag?: string;
+        radius?: number;
+      };
+  /** Target magnetic socket descriptor (`magnetic-snap`). */
+  snapSocket?:
+    | string
+    | {
+        tag: string;
+        radius?: number;
+        alignRotation?: boolean;
+        highlightColor?: string;
+      };
   [key: string]: any;
 }
 

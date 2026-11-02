@@ -242,6 +242,122 @@ class XRSpatialFeaturesTest {
     gpuFeatures.dispose()
   }
 
+  @Test
+  fun spatialMeasureFormatsDimensionsBuildsCalloutsAndRunsTapeMeasure() {
+    assertEquals("64.0 cm", SpatialMeasure.formatDimension(0.64, "auto"))
+    assertEquals("1.25 m", SpatialMeasure.formatDimension(1.25, "auto"))
+    assertEquals("123 mm", SpatialMeasure.formatDimension(0.1234, "mm"))
+    assertEquals("10.0 in", SpatialMeasure.formatDimension(0.254, "in"))
+    assertEquals("2' 0.0\"", SpatialMeasure.formatDimension(0.0254 * 24.0, "ft-in"))
+    assertEquals("0.0 cm", SpatialMeasure.formatDimension(Double.NaN, "cm"))
+
+    val r = FakeRenderer()
+    val glb =
+      glbOf(
+        """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],
+          "nodes":[{"name":"Chair","mesh":0,"extras":{"xr":{"dimensions":{"unit":"cm","axes":["x","y"],"showOnSelect":true}}}}],
+          "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+          "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-0.3,0,-0.3],"max":[0.3,0.9,0.3]}]}"""
+      )
+    val b = ThreeLiveRuntimeBinding(r, glb)
+    val f = XRSpatialFeatures(b, r)
+    assertEquals(1, f.dimensionCount)
+    r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    assertTrue("showOnSelect hides dynamic meshes until selected", r.meshes.isEmpty())
+    f.selectedNodeIndex = 0
+    r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    // 1 batched bar mesh + 2 axis labels (x, y).
+    assertEquals(3, r.meshes.size)
+
+    var completed: String? = null
+    f.tapeMeasureEnabled = true
+    f.measureUnit = "cm"
+    f.listener =
+      object : XRSpatialFeatures.Listener {
+        override fun onMeasureComplete(
+          start: DoubleArray,
+          end: DoubleArray,
+          distanceMeters: Double,
+          formatted: String,
+        ) {
+          completed = formatted
+        }
+      }
+    f.beginTape(doubleArrayOf(0.0, 0.0, 0.0))
+    f.updateTape(doubleArrayOf(0.5, 0.0, 0.0))
+    f.endTape()
+    assertEquals("50.0 cm", completed)
+    f.clearMeasurements()
+    assertEquals(3, r.meshes.size)
+    f.dispose()
+    assertTrue(r.meshes.isEmpty())
+  }
+
+  @Test
+  fun magneticSnapQuantizesGridAnglesAndHysteresisSockets() {
+    val gp = MagneticSnap.quantizeGridPosition(doubleArrayOf(0.13, -0.08, 0.26), listOf(0.1, 0.05, 0.25))
+    assertArrayEquals(doubleArrayOf(0.1, -0.1, 0.25), gp, 1e-6)
+
+    val q38 = XRSpatialMath.quatFromYaw(Math.toRadians(38.0))
+    val q45 = MagneticSnap.quantizeQuaternionAngle(q38, 45.0)
+    val e = MagneticSnap.eulerYXZFromQuat(q45)
+    assertEquals(45.0, Math.toDegrees(e[1]), 0.05)
+
+    val r = FakeRenderer()
+    val glb =
+      glbOf(
+        """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0,1]}],
+          "nodes":[
+            {"name":"Peg","mesh":0,"translation":[0,0.5,-1],"extras":{"xr":{"grab":"1-hand","snapTo":{"socketTag":"dock","radius":0.2}}}},
+            {"name":"Dock","translation":[1,0.5,-1],"extras":{"xr":{"snapSocket":{"tag":"dock","radius":0.2,"highlightColor":"#22c55e"}}}}
+          ],
+          "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+          "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-0.1,-0.1,-0.1],"max":[0.1,0.1,0.1]}]}"""
+      )
+    val b = ThreeLiveRuntimeBinding(r, glb)
+    val f = XRSpatialFeatures(b, r)
+    assertEquals(1, f.snapSocketCount)
+    val events = ArrayList<String>()
+    f.listener =
+      object : XRSpatialFeatures.Listener {
+        override fun onSnap(
+          nodeIndex: Int,
+          socketNodeIndex: Int?,
+          position: DoubleArray,
+          quaternion: DoubleArray,
+          mode: String,
+        ) {
+          events.add("snap:$nodeIndex:$socketNodeIndex:$mode")
+        }
+
+        override fun onUnsnap(nodeIndex: Int, socketNodeIndex: Int?) {
+          events.add("unsnap:$nodeIndex:$socketNodeIndex")
+        }
+      }
+
+    // 1.5x preview zone (distance 0.26 <= 0.30, > 0.20): preview ring created, no snap yet.
+    val preview = f.applyMagneticSnap(0, doubleArrayOf(1.26, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    assertEquals(null, preview.matchedSocketId)
+    assertEquals("socket#1", preview.previewSocketId)
+    assertEquals(1, r.meshes.size)
+
+    // Within 0.20 capture radius -> snaps to Dock (node 1).
+    val snapped = f.applyMagneticSnap(0, doubleArrayOf(1.15, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    assertEquals("socket", snapped.mode)
+    assertEquals("socket#1", snapped.matchedSocketId)
+    assertArrayEquals(floatArrayOf(1f, 0.5f, -1f), b.session.nodeTransform(0)!!.translation, 1e-5f)
+
+    // 1.25x hysteresis (distance 0.24 <= 0.25) -> stays snapped without duplicate event.
+    val held = f.applyMagneticSnap(0, doubleArrayOf(1.24, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    assertEquals("socket#1", held.matchedSocketId)
+
+    // Beyond 1.25x hysteresis (distance 0.28 > 0.25) -> breaks away and emits unsnap.
+    val broken = f.applyMagneticSnap(0, doubleArrayOf(1.28, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    assertEquals(null, broken.matchedSocketId)
+    assertEquals(listOf("snap:0:1:socket", "unsnap:0:1"), events)
+    f.dispose()
+  }
+
   private class Mesh(var positions: FloatArray, var indices: IntArray)
 
   private class FakeRenderer : ThreeLiveSceneRenderer {

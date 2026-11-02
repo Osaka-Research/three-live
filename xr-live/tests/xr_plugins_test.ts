@@ -74,11 +74,29 @@ import {
 import * as xrLiveFull from '../src/full';
 import {xrSpatialPlugins} from '../src/plugins/index';
 import {
+  buildSnapRingGeometry,
+  eulerYXZFromQuat,
+  evaluateMagneticSnap,
+  quantizeGridPosition,
+  quantizeQuaternionAngle,
+  XRMagneticSnapController,
+} from '../src/plugins/magnetic-snap';
+import {
   computeHandleLayout,
   parseHandles,
   pickHandle,
   XRManipulationHandlesController,
 } from '../src/plugins/manipulation-handles';
+import {
+  buildDashedSegments,
+  buildDimensionCallouts,
+  buildSegmentBarsGeometry,
+  buildVectorLabelGeometry,
+  computeWorldBounds,
+  formatSpatialDimension,
+  MAX_TAPE_SEGMENTS,
+  XRSpatialMeasureController,
+} from '../src/plugins/spatial-measure';
 import {
   catmullRom,
   paintPointFor,
@@ -150,7 +168,7 @@ function meshAt(name: string, pos: [number, number, number], xr: Record<string, 
 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
-  assert(xrSpatialPlugins.length === 7, 'exports seven plugins');
+  assert(xrSpatialPlugins.length === 9, 'exports nine plugins');
   assert(
     xrLiveFull.xrSpatialPlugins === xrSpatialPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
     'xr-live-full includes the spatial plugins',
@@ -164,6 +182,8 @@ function testRegistration(): void {
     'xr-live-spatial-paint',
     'xr-live-depth-particles',
     'xr-live-splat-loader',
+    'xr-live-spatial-measure',
+    'xr-live-magnetic-snap',
   ]) {
     assert(names.includes(n), `registers ${n}`);
   }
@@ -724,6 +744,228 @@ function testSchema(): void {
   const gNode = glb.gltf.nodes.find((x: any) => x.extras?.xr);
   assert(gNode?.extras.xr.follow.lazy === true && gNode.extensions.ANDROID_xr_scenecore.follow.distance === 2, 'web exporter emits canonical traits');
   assert(glb.gltf.extensionsUsed?.includes('ANDROID_xr_scenecore'), 'node extensions declared in extensionsUsed');
+
+  // Phase 1 schema: dimensions, snapTo, snapSocket
+  const p1 = normalizeXRTraits({
+    dimensions: {unit: 'cm', axes: ['z', 'x'], color: '#0EF', showOnSelect: true},
+    snapTo: {grid: 0.05, angleDeg: 15, surface: 'floor', socketTag: 'dock', radius: 9},
+    snapSocket: {tag: 'dock', radius: 0.001, alignRotation: false, highlightColor: 'not-hex'},
+  })!;
+  assert(
+    p1.dimensions?.unit === 'cm' &&
+      JSON.stringify(p1.dimensions.axes) === '["x","z"]' &&
+      p1.dimensions.color === '#0ef' &&
+      p1.dimensions.showOnSelect === true,
+    'dimensions normalized & axes sorted canonically',
+  );
+  assert(
+    JSON.stringify(p1.snapTo?.grid) === '[0.05,0.05,0.05]' &&
+      p1.snapTo?.angleDeg === 15 &&
+      p1.snapTo?.surface === 'floor' &&
+      p1.snapTo?.radius === 2,
+    'snapTo scalar grid expanded and radius clamped to [0.01, 2.0]',
+  );
+  assert(
+    p1.snapSocket?.tag === 'dock' &&
+      p1.snapSocket?.radius === 0.01 &&
+      p1.snapSocket?.alignRotation === false &&
+      p1.snapSocket?.highlightColor === '#22c55e',
+    'snapSocket radius clamped and invalid hex falls back to #22c55e',
+  );
+  const p1Usd = buildUsdXRLines(
+    {dimensions: {unit: 'in', axes: ['x', 'y']}, snapTo: {grid: [0.1, 0.2, 0.3]}, snapSocket: 'slot-a'},
+    (v) => String(v),
+  );
+  assert(
+    p1Usd.includes('bool dimensionsEnabled = true') &&
+      p1Usd.includes('string dimensionsAxes = "xy"') &&
+      p1Usd.includes('double3 snapToGrid = (0.1, 0.2, 0.3)') &&
+      p1Usd.includes('string snapSocketTag = "slot-a"'),
+    'USD flattening emits dimensions, snapTo, and snapSocket entries',
+  );
+}
+
+function testSpatialMeasure(): void {
+  console.log('\n📏 spatial-measure');
+  assert(formatSpatialDimension(0.64, 'auto') === '64.0 cm', 'auto formats < 1m as cm');
+  assert(formatSpatialDimension(1.25, 'auto') === '1.25 m', 'auto formats >= 1m as m');
+  assert(formatSpatialDimension(0.1234, 'mm') === '123 mm', 'mm formatting');
+  assert(formatSpatialDimension(0.0254 * 10, 'in') === '10.0 in', 'inch formatting');
+  assert(formatSpatialDimension(0.0254 * 24, 'ft-in') === '2\' 0.0"', 'ft-in 12-inch carry');
+  assert(formatSpatialDimension(NaN, 'cm') === '0.0 cm', 'non-finite distance sanitized');
+
+  const mScale = mat4Create();
+  mat4FromRotationTranslationScale(mScale, [0, 0, 0, 1], [1, 2, -3], [2, 3, 4]);
+  const wb = computeWorldBounds([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5], mScale);
+  assert(
+    near(wb.size[0], 2) && near(wb.size[1], 3) && near(wb.size[2], 4) && near(wb.min[0], 0),
+    'computeWorldBounds transforms scaled AABB',
+  );
+
+  const callouts = buildDimensionCallouts([0, 0, 0], [1, 2, 0.5], ['x', 'z']);
+  assert(
+    callouts.length === 2 &&
+      callouts[0].axis === 'x' &&
+      near(callouts[0].lengthMeters, 1) &&
+      callouts[1].axis === 'z' &&
+      near(callouts[1].lengthMeters, 0.5),
+    'buildDimensionCallouts emits requested axes with lengths',
+  );
+  const bars = buildSegmentBarsGeometry([[callouts[0].start, callouts[0].end]]);
+  assert(bars.positions.length === 72 && bars.indices.length === 36, 'segment bar geometry counts');
+  const labelGeo = buildVectorLabelGeometry('64.0 cm');
+  assert(labelGeo.positions.length > 0 && labelGeo.indices.length % 12 === 0, 'double-sided vector label geometry');
+  assert(buildDashedSegments([0, 0, 0], [0.2, 0, 0], 0.03, 0.02).length >= 4, 'dashed segment builder');
+
+  const chair = meshAt('chair', [0, 0.5, -1], {dimensions: {unit: 'cm', showOnSelect: true}});
+  const viewer = {meshes: [chair] as unknown[]};
+  const host: Record<string, any> = {
+    hasAttribute: () => false,
+    getAttribute: (k: string) => (k === 'selected-mesh' ? host._sel : null),
+    _sel: null as string | null,
+  };
+  const ctrl = new XRSpatialMeasureController();
+  ctrl.update(viewer, host);
+  assert(viewer.meshes.length === 1, 'showOnSelect hides callouts while unselected');
+  host._sel = 'chair';
+  ctrl.update(viewer, host);
+  assert(viewer.meshes.length === 5, 'showOnSelect attaches 1 bar mesh + 3 axis labels when selected');
+  host._sel = null;
+  ctrl.update(viewer, host);
+  assert(viewer.meshes.length === 1, 'deselecting detaches callout meshes');
+
+  ctrl.beginTape(viewer, [0, 0, 0], 'right', 'cm');
+  ctrl.updateTape(viewer, [0.5, 0, 0], 'right', 'cm');
+  const done = ctrl.endTape(viewer, 'right', 'cm', 1000)!;
+  assert(
+    done !== null && near(done.distanceMeters, 0.5) && done.formatted === '50.0 cm' && ctrl.tapeSegments.length === 1,
+    'interactive tape measure completes with formatted distance',
+  );
+  // Double-tap in place (< 320ms apart) clears retained tape segments.
+  ctrl.beginTape(viewer, [0, 0, 0], 'right');
+  assert(ctrl.endTape(viewer, 'right', 'auto', 2000) === null, 'first tap ignored as negligible segment');
+  ctrl.beginTape(viewer, [0, 0, 0], 'right');
+  ctrl.endTape(viewer, 'right', 'auto', 2150);
+  assert(ctrl.tapeSegments.length === 0, 'double-tap clears retained tape segments');
+
+  for (let i = 0; i < MAX_TAPE_SEGMENTS + 4; i++) {
+    ctrl.beginTape(viewer, [0, 0, 0], 'screen');
+    ctrl.updateTape(viewer, [0.2 + i * 0.01, 0, 0], 'screen');
+    ctrl.endTape(viewer, 'screen', 'm', 5000 + i * 500);
+  }
+  assert(ctrl.tapeSegments.length === MAX_TAPE_SEGMENTS, 'tape segments capped at MAX_TAPE_SEGMENTS');
+  ctrl.dispose(viewer);
+  assert(viewer.meshes.length === 1, 'dispose cleans up all dynamic measure meshes');
+}
+
+function testMagneticSnap(): void {
+  console.log('\n🧲 magnetic-snap');
+  const gp = quantizeGridPosition([0.13, -0.08, 0.26], [0.1, 0.05, 0.25]);
+  assert(near(gp[0], 0.1) && near(gp[1], -0.1) && near(gp[2], 0.25), 'Cartesian grid rounding');
+
+  const q38 = quatFromYaw((38 * Math.PI) / 180);
+  const q45 = quantizeQuaternionAngle(q38, 45);
+  const [, yawRad] = eulerYXZFromQuat(q45);
+  assert(near((yawRad * 180) / Math.PI, 45, 0.05), '45° yaw quantization');
+
+  const socket = {
+    id: 'dock#0',
+    tag: 'power',
+    position: [1, 0.5, -1] as [number, number, number],
+    quaternion: quatFromYaw(Math.PI / 2),
+    radius: 0.2,
+    alignRotation: true,
+    highlightColor: '#22c55e',
+  };
+  const cfg = {grid: [0.1, 0.1, 0.1] as [number, number, number], angleDeg: 15, surface: 'none' as const, socketTag: 'power', radius: 0.2};
+  const previewOnly = evaluateMagneticSnap({
+    position: [1.26, 0.5, -1],
+    quaternion: [0, 0, 0, 1],
+    config: cfg,
+    sockets: [socket],
+  });
+  assert(
+    previewOnly.matchedSocketId === null && previewOnly.previewSocketId === 'dock#0',
+    '1.5x radius activates preview ring before capture',
+  );
+  const snapped = evaluateMagneticSnap({
+    position: [1.15, 0.5, -1],
+    quaternion: [0, 0, 0, 1],
+    config: cfg,
+    sockets: [socket],
+  });
+  assert(
+    snapped.mode === 'socket' && snapped.matchedSocketId === 'dock#0' && near(snapped.position[0], 1),
+    'captures socket within snapRadius and aligns pose',
+  );
+  const held = evaluateMagneticSnap({
+    position: [1.24, 0.5, -1],
+    quaternion: [0, 0, 0, 1],
+    config: cfg,
+    sockets: [socket],
+    currentSocketId: 'dock#0',
+  });
+  assert(held.matchedSocketId === 'dock#0', '1.25x hysteresis retains socket past snapRadius');
+  const broken = evaluateMagneticSnap({
+    position: [1.27, 0.5, -1],
+    quaternion: [0, 0, 0, 1],
+    config: cfg,
+    sockets: [socket],
+    currentSocketId: 'dock#0',
+  });
+  assert(broken.matchedSocketId === null, 'exceeding 1.25x hysteresis breaks away cleanly');
+
+  const ring = buildSnapRingGeometry(0.12, 0.008);
+  assert(ring.positions.length > 0 && ring.indices.length > 0, 'snap torus ring geometry generated');
+
+  // Controller integration with XRTraitSystem grab + DOM events
+  const peg = meshAt('peg', [0, 0.5, -1], {
+    grab: '1-hand',
+    snapTo: {socketTag: 'slot', radius: 0.2},
+  });
+  const slot = meshAt('slotNode', [0.4, 0.5, -1], {
+    snapSocket: {tag: 'slot', radius: 0.2},
+  });
+  const ts = new XRTraitSystem();
+  const handStart = pose([0, 0.5, -1]);
+  assert(ts.startGrab(peg, 'right', handStart), 'grab started on peg');
+  const emitted: Array<{type: string; detail: any}> = [];
+  if (typeof (globalThis as {CustomEvent?: unknown}).CustomEvent === 'undefined') {
+    (globalThis as {CustomEvent?: unknown}).CustomEvent = class {
+      readonly type: string;
+      readonly detail: unknown;
+      constructor(type: string, init?: {detail?: unknown}) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    };
+  }
+  const elem = {
+    traitSystem: ts,
+    hasAttribute: () => false,
+    getAttribute: () => null,
+    dispatchEvent(ev: any) {
+      emitted.push({type: ev.type, detail: ev.detail});
+      return true;
+    },
+  };
+  const viewer = {meshes: [peg, slot] as unknown[]};
+  const snapCtrl = new XRMagneticSnapController();
+  // Move hand near slot (within 0.2m) -> xrsnap
+  const handNear = pose([0.32, 0.5, -1]);
+  ts.update([peg, slot], pose([0, 1.6, 0]), {right: handNear}, 1 / 60);
+  for (let i = 0; i < 20; i++) snapCtrl.update(viewer, 1 / 60, elem);
+  assert(
+    emitted.some((e) => e.type === 'xrsnap' && e.detail.mode === 'socket' && e.detail.socket === slot),
+    'xrsnap event emitted when dragged into socket',
+  );
+  // Pull far away (> 0.25m) -> xrunsnap
+  const handFar = pose([0.8, 0.5, -1]);
+  ts.update([peg, slot], pose([0, 1.6, 0]), {right: handFar}, 1 / 60);
+  snapCtrl.update(viewer, 1 / 60, elem);
+  assert(emitted.some((e) => e.type === 'xrunsnap' && e.detail.socket === slot), 'xrunsnap event emitted on breakaway');
+  ts.endGrab('right');
+  snapCtrl.dispose(viewer);
 }
 
 function testGoldenParity(): void {
@@ -950,6 +1192,8 @@ async function main(): Promise<void> {
   testSpatialPaint();
   testParticles();
   testSplats();
+  testSpatialMeasure();
+  testMagneticSnap();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

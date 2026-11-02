@@ -134,6 +134,22 @@ enum XRJSON {
     return segments.contains("..") ? nil : url
   }
 
+  /// Sanitizes `#rgb` / `#rrggbb` hex strings, returning `fallback` when invalid.
+  static func safeHexColor(_ value: Any?, fallback: String) -> String {
+    guard let s = shortString(value, max: 16)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !s.isEmpty
+    else { return fallback }
+    let hex = s.hasPrefix("#") ? String(s.dropFirst()) : s
+    guard hex.count == 3 || hex.count == 6 else { return fallback }
+    for scalar in hex.unicodeScalars {
+      let v = scalar.value
+      let isHex =
+        (v >= 0x30 && v <= 0x39) || (v >= 0x41 && v <= 0x46) || (v >= 0x61 && v <= 0x66)
+      if !isHex { return fallback }
+    }
+    return "#" + hex.lowercased()
+  }
+
   /// Whether `url` starts with `[a-z][a-z0-9+.-]*:` (case-insensitive).
   private static func hasScheme(_ url: String) -> Bool {
     var first = true
@@ -373,6 +389,84 @@ public struct XRLiveScaleRange: Codable, Sendable, Equatable {
   }
 }
 
+/// Normalized `dimensions` options (`spatial-measure`).
+public struct XRLiveDimensions: Codable, Sendable, Equatable {
+  public var enabled: Bool
+  /// One of `"m"`, `"cm"`, `"mm"`, `"in"`, `"ft-in"`, `"auto"`.
+  public var unit: String
+  /// Subset of `["x", "y", "z"]` in canonical order.
+  public var axes: [String]
+  public var color: String
+  public var showOnSelect: Bool
+
+  public init(
+    enabled: Bool = true,
+    unit: String = "auto",
+    axes: [String] = ["x", "y", "z"],
+    color: String = "#38bdf8",
+    showOnSelect: Bool = false
+  ) {
+    let validUnits: Set<String> = ["m", "cm", "mm", "in", "ft-in", "auto"]
+    self.enabled = enabled
+    self.unit = validUnits.contains(unit) ? unit : "auto"
+    let filtered = ["x", "y", "z"].filter { axes.contains($0) }
+    self.axes = filtered.isEmpty ? ["x", "y", "z"] : filtered
+    self.color = XRJSON.safeHexColor(color, fallback: "#38bdf8")
+    self.showOnSelect = showOnSelect
+  }
+}
+
+/// Normalized `snapTo` options (`magnetic-snap`).
+public struct XRLiveSnapTo: Codable, Sendable, Equatable {
+  /// Cartesian grid step in meters per axis, or `nil` when grid snapping is disabled.
+  public var grid: SIMD3<Float>?
+  public var angleDeg: Float
+  /// One of `"none"`, `"floor"`, `"wall"`, `"ceiling"`, `"any"`.
+  public var surface: String
+  public var socketTag: String
+  public var radius: Float
+
+  public init(
+    grid: SIMD3<Float>? = nil,
+    angleDeg: Float = 0,
+    surface: String = "none",
+    socketTag: String = "",
+    radius: Float = 0.15
+  ) {
+    let validSurfaces: Set<String> = ["none", "floor", "wall", "ceiling", "any"]
+    if let g = grid {
+      let step = { (v: Float) -> Float in Float(XRJSON.clampNum(Double(v), 0.001, 100, 0.1)) }
+      self.grid = SIMD3<Float>(step(g.x), step(g.y), step(g.z))
+    } else {
+      self.grid = nil
+    }
+    self.angleDeg = Float(XRJSON.clampNum(Double(angleDeg), 0, 180, 0))
+    self.surface = validSurfaces.contains(surface) ? surface : "none"
+    self.socketTag = XRJSON.shortString(socketTag, max: 128) ?? ""
+    self.radius = Float(XRJSON.clampNum(Double(radius), 0.01, 2.0, 0.15))
+  }
+}
+
+/// Normalized `snapSocket` options (`magnetic-snap`).
+public struct XRLiveSnapSocket: Codable, Sendable, Equatable {
+  public var tag: String
+  public var radius: Float
+  public var alignRotation: Bool
+  public var highlightColor: String
+
+  public init(
+    tag: String,
+    radius: Float = 0.15,
+    alignRotation: Bool = true,
+    highlightColor: String = "#22c55e"
+  ) {
+    self.tag = XRJSON.shortString(tag, max: 128) ?? ""
+    self.radius = Float(XRJSON.clampNum(Double(radius), 0.01, 2.0, 0.15))
+    self.alignRotation = alignRotation
+    self.highlightColor = XRJSON.safeHexColor(highlightColor, fallback: "#22c55e")
+  }
+}
+
 /// Canonical, fully-normalized trait set for one glTF node (`NormalizedXRTraits` in TS).
 public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   /// `"1-hand"` or `"2-hand"`.
@@ -397,6 +491,9 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var splatUrl: String?
   public var spatialSlot: String?
   public var audio: XRLiveSpatialAudio?
+  public var dimensions: XRLiveDimensions?
+  public var snapTo: XRLiveSnapTo?
+  public var snapSocket: XRLiveSnapSocket?
   /// `true` when `pointerEvents: "none"` (node is not pickable).
   public var pointerEventsNone: Bool
 
@@ -409,7 +506,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
     grab == nil && scale == nil && billboard == nil && follow == nil && lazyFollow == nil
       && anchor == nil && physics == nil && orbit == nil && handles == nil && particles == nil
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
-      && audio == nil && !pointerEventsNone
+      && audio == nil && dimensions == nil && snapTo == nil && snapSocket == nil
+      && !pointerEventsNone
   }
 }
 
@@ -527,6 +625,65 @@ public enum XRLiveTraitParser {
     return a
   }
 
+  /// Parses a `dimensions` trait (`true` or an object).
+  public static func parseDimensions(_ raw: Any?) -> XRLiveDimensions? {
+    guard XRJSON.truthy(raw) else { return nil }
+    let r = XRJSON.object(raw)
+    if let r = r, XRJSON.bool(r["enabled"]) == false { return nil }
+    let unit = XRJSON.string(r?["unit"]) ?? "auto"
+    var axisList: [String] = []
+    if let arr = XRJSON.array(r?["axes"]) {
+      axisList = arr.compactMap { XRJSON.string($0) }
+    } else if let s = XRJSON.string(r?["axes"]) {
+      axisList = s.map { String($0) }
+    }
+    let filtered = ["x", "y", "z"].filter { axisList.contains($0) }
+    return XRLiveDimensions(
+      enabled: true,
+      unit: unit,
+      axes: filtered.isEmpty ? ["x", "y", "z"] : filtered,
+      color: XRJSON.safeHexColor(r?["color"], fallback: "#38bdf8"),
+      showOnSelect: XRJSON.bool(r?["showOnSelect"]) == true
+    )
+  }
+
+  /// Parses a `snapTo` trait (`true` or an object).
+  public static func parseSnapTo(_ raw: Any?) -> XRLiveSnapTo? {
+    guard XRJSON.truthy(raw) else { return nil }
+    let r = XRJSON.object(raw) ?? [:]
+    let step = { (v: Any?) -> Float in Float(XRJSON.clampNum(v, 0.001, 100, 0.1)) }
+    var grid: SIMD3<Float>?
+    if let a = XRJSON.array(r["grid"]), XRJSON.finiteVec3(a) != nil {
+      grid = SIMD3<Float>(step(a[0]), step(a[1]), step(a[2]))
+    } else if let n = XRJSON.number(r["grid"]), n.isFinite, n > 0 {
+      let s = step(r["grid"])
+      grid = SIMD3<Float>(s, s, s)
+    }
+    return XRLiveSnapTo(
+      grid: grid,
+      angleDeg: Float(XRJSON.clampNum(r["angleDeg"], 0, 180, 0)),
+      surface: XRJSON.string(r["surface"]) ?? "none",
+      socketTag: XRJSON.shortString(r["socketTag"], max: 128) ?? "",
+      radius: Float(XRJSON.clampNum(r["radius"], 0.01, 2.0, 0.15))
+    )
+  }
+
+  /// Parses a `snapSocket` trait (tag string or `{tag, radius, alignRotation, highlightColor}`).
+  public static func parseSnapSocket(_ raw: Any?) -> XRLiveSnapSocket? {
+    if let s = XRJSON.shortString(raw, max: 128) {
+      return XRLiveSnapSocket(tag: s)
+    }
+    guard let r = XRJSON.object(raw), let tag = XRJSON.shortString(r["tag"], max: 128) else {
+      return nil
+    }
+    return XRLiveSnapSocket(
+      tag: tag,
+      radius: Float(XRJSON.clampNum(r["radius"], 0.01, 2.0, 0.15)),
+      alignRotation: XRJSON.bool(r["alignRotation"]) != false,
+      highlightColor: XRJSON.safeHexColor(r["highlightColor"], fallback: "#22c55e")
+    )
+  }
+
   /// Normalizes an authored or compiled `extras.xr` bag. Accepts legacy aliases
   /// (`grabbable`, `scalable`, `traits: ["grab", ...]`). Returns `nil` when no recognized
   /// trait is present or `raw` is not a dictionary.
@@ -589,6 +746,9 @@ public enum XRLiveTraitParser {
     out.splatUrl = XRJSON.safeMediaUrl(r["splatUrl"])
     out.spatialSlot = XRJSON.shortString(r["spatialSlot"])
     out.audio = parseSpatialAudio(r["audio"])
+    out.dimensions = parseDimensions(r["dimensions"])
+    out.snapTo = parseSnapTo(r["snapTo"])
+    out.snapSocket = parseSnapSocket(r["snapSocket"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
 
     return out.isEmpty ? nil : out
@@ -636,6 +796,13 @@ public enum XRLiveTraitParser {
     }
     if let w = gather("worldUnderstanding") { r["worldUnderstanding"] = w }
     if let a = gather("audio") { r["audio"] = a }
+    if let dims = gather("dimensions") { r["dimensions"] = dims }
+    if let snap = gather("snapTo") {
+      r["snapTo"] = snap
+    } else if let snap = d["snapTo"] {
+      r["snapTo"] = snap
+    }
+    if let sock = gather("snapSocket") { r["snapSocket"] = sock }
     return normalize(r)
   }
 

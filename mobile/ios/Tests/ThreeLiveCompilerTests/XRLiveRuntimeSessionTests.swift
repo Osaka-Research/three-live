@@ -1443,4 +1443,62 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(m.columns.3.y, 2.0, accuracy: 1e-5)
     XCTAssertEqual(m.columns.3.z, 2.0, accuracy: 1e-5)
   }
+
+  func testSpatialMeasureAndMagneticSnapParity() throws {
+    XCTAssertEqual(SpatialMeasure.formatDimension(0.64, unit: "auto"), "64.0 cm")
+    XCTAssertEqual(SpatialMeasure.formatDimension(1.25, unit: "auto"), "1.25 m")
+    XCTAssertEqual(SpatialMeasure.formatDimension(0.1234, unit: "mm"), "123 mm")
+    XCTAssertEqual(SpatialMeasure.formatDimension(0.254, unit: "in"), "10.0 in")
+    XCTAssertEqual(SpatialMeasure.formatDimension(0.0254 * 24, unit: "ft-in"), "2' 0.0\"")
+
+    let callouts = SpatialMeasure.buildDimensionCallouts(
+      min: SIMD3<Float>(0, 0, 0), max: SIMD3<Float>(1, 2, 0.5), axes: ["x", "z"])
+    XCTAssertEqual(callouts.count, 2)
+    XCTAssertEqual(callouts[0].lengthMeters, 1.0, accuracy: 1e-5)
+    XCTAssertEqual(callouts[1].lengthMeters, 0.5, accuracy: 1e-5)
+    let labelGeo = SpatialMeasure.buildVectorLabelGeometry("64.0 cm")
+    XCTAssertFalse(labelGeo.positions.isEmpty)
+    XCTAssertEqual(labelGeo.indices.count % 12, 0)
+
+    let usd = try XCTUnwrap(
+      XRLiveTraitParser.normalize(usdCustomData: [
+        "dimensionsEnabled": true,
+        "dimensionsUnit": "cm",
+        "dimensionsAxes": "xz",
+        "snapGrid": [0.05, 0.05, 0.05],
+        "snapAngleDeg": 15,
+        "snapSocketTagValue": "dock",
+      ]))
+    XCTAssertEqual(usd.dimensions?.axes, ["x", "z"])
+    XCTAssertEqual(usd.snapTo?.angleDeg ?? 0, 15, accuracy: 1e-5)
+    XCTAssertEqual(usd.snapSocket?.tag, "dock")
+
+    let q38 = XRSpatialMath.quatFromYaw(38 * .pi / 180)
+    let q45 = MagneticSnap.quantizeQuaternionAngle(q38, angleDeg: 45)
+    let e = MagneticSnap.eulerYXZFromQuat(q45)
+    XCTAssertEqual(e.y * 180 / .pi, 45, accuracy: 0.05)
+
+    let socket = MagneticSnap.SocketCandidate(
+      id: "dock#1", tag: "dock", position: SIMD3<Float>(1, 0.5, -1), radius: 0.2)
+    let cfg = XRLiveSnapTo(socketTag: "dock", radius: 0.2)
+    let snapped = MagneticSnap.evaluate(
+      position: SIMD3<Float>(1.15, 0.5, -1), orientation: XRSpatialMath.identityQuat,
+      config: cfg, sockets: [socket])
+    XCTAssertEqual(snapped.mode, "socket")
+    XCTAssertEqual(snapped.matchedSocketId, "dock#1")
+    let held = MagneticSnap.evaluate(
+      position: SIMD3<Float>(1.24, 0.5, -1), orientation: XRSpatialMath.identityQuat,
+      config: cfg, sockets: [socket], currentSocketId: "dock#1")
+    XCTAssertEqual(held.matchedSocketId, "dock#1")
+    let broken = MagneticSnap.evaluate(
+      position: SIMD3<Float>(1.28, 0.5, -1), orientation: XRSpatialMath.identityQuat,
+      config: cfg, sockets: [socket], currentSocketId: "dock#1")
+    XCTAssertNil(broken.matchedSocketId)
+
+    let (s, _) = session(
+      #"{"nodes": [{"name": "Parent", "translation": [1, 0, 0], "children": [1]}, {"name": "Child"}]}"#)
+    XCTAssertTrue(
+      s.setNodeWorldPose(1, position: SIMD3<Float>(2.5, 1, -1), rotation: XRSpatialMath.identityQuat))
+    XCTAssertEqual(translation(s, 1).x, 1.5, accuracy: 1e-4)
+  }
 }

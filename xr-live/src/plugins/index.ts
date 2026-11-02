@@ -28,6 +28,8 @@
  * | `spatial-paint`        | `spatial-paint` attribute                     |
  * | `depth-particles`      | `userData.xr.particles`                       |
  * | `splat-loader`         | `userData.xr.splatUrl`                        |
+ * | `spatial-measure`      | `spatial-measure` attr / `userData.xr.dimensions` |
+ * | `magnetic-snap`        | `magnetic-snap` attr / `userData.xr.snapTo`   |
  *
  * To register only a subset, import the individual modules and call
  * `registerPlugin()` yourself instead of importing this entry point.
@@ -38,7 +40,9 @@ import {registerXRTraitSerializer} from '../../../three-live/src/xr-trait-schema
 import {depthParticlesPlugin} from './depth-particles';
 import {geminiLivePlugin} from './gemini-live';
 import {headFollowPlugin} from './head-follow';
+import {magneticSnapPlugin} from './magnetic-snap';
 import {manipulationHandlesPlugin} from './manipulation-handles';
+import {spatialMeasurePlugin} from './spatial-measure';
 import {spatialPaintPlugin} from './spatial-paint';
 import {splatLoaderPlugin} from './splat-loader';
 import {worldUnderstandingPlugin} from './world-understanding';
@@ -52,6 +56,8 @@ export const xrSpatialPlugins = [
   spatialPaintPlugin,
   depthParticlesPlugin,
   splatLoaderPlugin,
+  spatialMeasurePlugin,
+  magneticSnapPlugin,
 ] as const;
 
 for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
@@ -70,7 +76,9 @@ if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'fun
 export * from './depth-particles';
 export * from './gemini-live';
 export * from './head-follow';
+export * from './magnetic-snap';
 export * from './manipulation-handles';
+export * from './spatial-measure';
 export * from './spatial-paint';
 export * from './splat-loader';
 export * from './world-understanding';
@@ -78,6 +86,9 @@ export {
   buildXRSceneCoreExtension,
   flattenXRTraitsForUsd,
   normalizeXRTraits,
+  parseDimensions,
+  parseSnapSocket,
+  parseSnapTo,
   parseSpatialAudio,
   parseWorldUnderstanding,
   registerXRTraitSerializer,

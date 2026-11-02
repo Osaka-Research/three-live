@@ -70,6 +70,36 @@ data class XRSpatialAudioTrait(
   val loop: Boolean = false,
 )
 
+/** Normalized `dimensions` trait (`spatial-measure`). */
+data class XRDimensionsTrait(
+  val enabled: Boolean = true,
+  /** One of `m`, `cm`, `mm`, `in`, `ft-in`, `auto`. */
+  val unit: String = "auto",
+  /** Subset of `["x", "y", "z"]` in canonical order. */
+  val axes: List<String> = listOf("x", "y", "z"),
+  val color: String = "#38bdf8",
+  val showOnSelect: Boolean = false,
+)
+
+/** Normalized `snapTo` trait (`magnetic-snap`). */
+data class XRSnapToTrait(
+  /** Cartesian grid step `(x, y, z)` in meters, or `null` when grid snapping is disabled. */
+  val grid: List<Double>? = null,
+  val angleDeg: Double = 0.0,
+  /** One of `none`, `floor`, `wall`, `ceiling`, `any`. */
+  val surface: String = "none",
+  val socketTag: String = "",
+  val radius: Double = 0.15,
+)
+
+/** Normalized `snapSocket` trait (`magnetic-snap`). */
+data class XRSnapSocketTrait(
+  val tag: String,
+  val radius: Double = 0.15,
+  val alignRotation: Boolean = true,
+  val highlightColor: String = "#22c55e",
+)
+
 /** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
   /** `head`, `hand-left` or `hand-right`. */
@@ -120,6 +150,9 @@ data class XRLiveNodeTraits(
   val splatUrl: String? = null,
   val spatialSlot: String? = null,
   val audio: XRSpatialAudioTrait? = null,
+  val dimensions: XRDimensionsTrait? = null,
+  val snapTo: XRSnapToTrait? = null,
+  val snapSocket: XRSnapSocketTrait? = null,
   /** `"none"` when the node must not receive pointer events. */
   val pointerEvents: String? = null,
 ) {
@@ -187,6 +220,12 @@ interface SceneCoreComponentApplier<EntityT> {
   fun onAttachSpatialPanel(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachSpatialAudio(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachDimensions(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachSnapTo(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachSnapSocket(entity: EntityT, node: XRLiveNodeTraits) {}
 }
 
 /**
@@ -210,6 +249,10 @@ object XRLiveSceneCoreHelper {
 
   private val ANCHORS = setOf("horizontal", "vertical", "floor", "wall", "table")
   private val BILLBOARDS = setOf("capsule", "cylindrical", "spherical")
+  private val DIM_UNITS = setOf("m", "cm", "mm", "in", "ft-in", "auto")
+  private val ALL_AXES = listOf("x", "y", "z")
+  private val SNAP_SURFACES = setOf("none", "floor", "wall", "ceiling", "any")
+  private val HEX_COLOR = Regex("^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
   private val PARTICLE_DEFAULT_COUNTS =
     mapOf("rain" to 600, "snow" to 400, "sparks" to 300, "confetti" to 300)
 
@@ -322,6 +365,9 @@ object XRLiveSceneCoreHelper {
     if (trait.splatUrl != null) applier.onAttachSplat(entity, trait)
     if (trait.spatialSlot != null) applier.onAttachSpatialPanel(entity, trait)
     if (trait.audio != null) applier.onAttachSpatialAudio(entity, trait)
+    if (trait.dimensions != null) applier.onAttachDimensions(entity, trait)
+    if (trait.snapTo != null) applier.onAttachSnapTo(entity, trait)
+    if (trait.snapSocket != null) applier.onAttachSnapSocket(entity, trait)
   }
 
   /**
@@ -525,6 +571,80 @@ object XRLiveSceneCoreHelper {
     )
   }
 
+  /** Port of `safeHexColor()`. */
+  @JvmStatic
+  fun safeHexColor(raw: Any?, fallback: String): String {
+    val s = shortString(raw, 16)?.trim() ?: return fallback
+    val m = HEX_COLOR.matchEntire(s) ?: return fallback
+    return "#${m.groupValues[1].lowercase()}"
+  }
+
+  /** Port of `parseDimensions()`. */
+  @JvmStatic
+  fun parseDimensions(raw: Any?): XRDimensionsTrait? {
+    if (!truthy(raw)) return null
+    val r = MiniJson.asMap(raw)
+    if (r != null && r["enabled"] == false) return null
+    val u = r?.get("unit")
+    val unit = if (u is String && u in DIM_UNITS) u else "auto"
+    val rawAxes = r?.get("axes")
+    val axisSet =
+      when (rawAxes) {
+        is List<*> -> rawAxes.filterIsInstance<String>().toSet()
+        is String -> rawAxes.map { it.toString() }.toSet()
+        else -> emptySet()
+      }
+    val axes = ALL_AXES.filter { it in axisSet }.ifEmpty { ALL_AXES }
+    return XRDimensionsTrait(
+      enabled = true,
+      unit = unit,
+      axes = axes,
+      color = safeHexColor(r?.get("color"), "#38bdf8"),
+      showOnSelect = r?.get("showOnSelect") == true,
+    )
+  }
+
+  /** Port of `parseSnapTo()`. */
+  @JvmStatic
+  fun parseSnapTo(raw: Any?): XRSnapToTrait? {
+    if (!truthy(raw)) return null
+    val r = MiniJson.asMap(raw) ?: emptyMap()
+    val g = r["grid"]
+    val vec = finiteVec3(g)
+    val grid =
+      when {
+        vec != null -> vec.map { clampNum(it, 0.001, 100.0, 0.1) }
+        g is Number && g.toDouble().isFinite() && g.toDouble() > 0.0 ->
+          List(3) { clampNum(g, 0.001, 100.0, 0.1) }
+        else -> null
+      }
+    val surf = r["surface"]
+    return XRSnapToTrait(
+      grid = grid,
+      angleDeg = clampNum(r["angleDeg"], 0.0, 180.0, 0.0),
+      surface = if (surf is String && surf in SNAP_SURFACES) surf else "none",
+      socketTag = shortString(r["socketTag"], 128) ?: "",
+      radius = clampNum(r["radius"], 0.01, 2.0, 0.15),
+    )
+  }
+
+  /** Port of `parseSnapSocket()`. */
+  @JvmStatic
+  fun parseSnapSocket(raw: Any?): XRSnapSocketTrait? {
+    if (raw is String) {
+      val tag = shortString(raw, 128) ?: return null
+      return XRSnapSocketTrait(tag = tag)
+    }
+    val r = MiniJson.asMap(raw) ?: return null
+    val tag = shortString(r["tag"], 128) ?: return null
+    return XRSnapSocketTrait(
+      tag = tag,
+      radius = clampNum(r["radius"], 0.01, 2.0, 0.15),
+      alignRotation = r["alignRotation"] != false,
+      highlightColor = safeHexColor(r["highlightColor"], "#22c55e"),
+    )
+  }
+
   /** JavaScript `Math.round` (half rounds toward +infinity). */
   private fun jsRound(v: Double): Double = Math.floor(v + 0.5)
 
@@ -659,6 +779,9 @@ object XRLiveSceneCoreHelper {
       splatUrl = splat,
       spatialSlot = slot,
       audio = parseSpatialAudio(xr["audio"] ?: sc["spatialAudio"]),
+      dimensions = parseDimensions(xr["dimensions"] ?: sc["dimensions"]),
+      snapTo = parseSnapTo(xr["snapTo"] ?: sc["snapTo"]),
+      snapSocket = parseSnapSocket(xr["snapSocket"] ?: sc["snapSocket"]),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,
     )
   }

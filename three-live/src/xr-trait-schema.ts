@@ -269,6 +269,120 @@ export function parseSpatialAudio(raw: unknown): SpatialAudioTrait | null {
   return {src, refDistance: clampNum(r['refDistance'], 0.01, 1000, 1), loop: r['loop'] === true};
 }
 
+/** Sanitizes `#rgb` / `#rrggbb` hex strings, returning `fallback` when invalid. */
+export function safeHexColor(raw: unknown, fallback: string): string {
+  const s = shortString(raw, 16)?.trim();
+  if (!s) return fallback;
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
+  return m ? `#${m[1].toLowerCase()}` : fallback;
+}
+
+/** Supported spatial dimension display units. */
+export type DimensionUnit = 'm' | 'cm' | 'mm' | 'in' | 'ft-in' | 'auto';
+/** Supported spatial dimension axes. */
+export type DimensionAxis = 'x' | 'y' | 'z';
+
+/** Normalized `dimensions` trait options (`spatial-measure`). */
+export interface DimensionsOptions {
+  readonly enabled: true;
+  readonly unit: DimensionUnit;
+  readonly axes: DimensionAxis[];
+  readonly color: string;
+  readonly showOnSelect: boolean;
+}
+
+const DIM_UNITS = new Set<DimensionUnit>(['m', 'cm', 'mm', 'in', 'ft-in', 'auto']);
+const ALL_AXES: readonly DimensionAxis[] = ['x', 'y', 'z'];
+
+/** Parses a `dimensions` trait (`true` or options), returning `null` when disabled. */
+export function parseDimensions(raw: unknown): DimensionsOptions | null {
+  if (!raw) return null;
+  const r = asRecord(raw);
+  if (r && r['enabled'] === false) return null;
+  const u = r?.['unit'];
+  const unit: DimensionUnit =
+    typeof u === 'string' && DIM_UNITS.has(u as DimensionUnit) ? (u as DimensionUnit) : 'auto';
+  const rawAxes = r?.['axes'];
+  const axisSet = new Set<string>(
+    Array.isArray(rawAxes)
+      ? rawAxes.filter((x): x is string => typeof x === 'string')
+      : typeof rawAxes === 'string'
+        ? rawAxes.split('')
+        : [],
+  );
+  const axes = ALL_AXES.filter((a) => axisSet.has(a));
+  return {
+    enabled: true,
+    unit,
+    axes: axes.length > 0 ? axes : [...ALL_AXES],
+    color: safeHexColor(r?.['color'], '#38bdf8'),
+    showOnSelect: r?.['showOnSelect'] === true,
+  };
+}
+
+/** Supported surface snap targets. */
+export type SnapSurfaceMode = 'none' | 'floor' | 'wall' | 'ceiling' | 'any';
+
+/** Normalized `snapTo` trait options (`magnetic-snap`). */
+export interface SnapToOptions {
+  readonly grid: TraitVec3 | null;
+  readonly angleDeg: number;
+  readonly surface: SnapSurfaceMode;
+  readonly socketTag: string;
+  readonly radius: number;
+}
+
+const SNAP_SURFACES = new Set<SnapSurfaceMode>(['none', 'floor', 'wall', 'ceiling', 'any']);
+
+/** Parses a `snapTo` trait (`true` or options), returning `null` when absent/disabled. */
+export function parseSnapTo(raw: unknown): SnapToOptions | null {
+  if (!raw) return null;
+  const r = asRecord(raw) ?? {};
+  const g = r['grid'];
+  const step = (v: unknown): number => clampNum(v, 0.001, 100, 0.1);
+  const grid: TraitVec3 | null = isFiniteVec3(g)
+    ? [step(g[0]), step(g[1]), step(g[2])]
+    : typeof g === 'number' && Number.isFinite(g) && g > 0
+      ? [step(g), step(g), step(g)]
+      : null;
+  const surf = r['surface'];
+  return {
+    grid,
+    angleDeg: clampNum(r['angleDeg'], 0, 180, 0),
+    surface:
+      typeof surf === 'string' && SNAP_SURFACES.has(surf as SnapSurfaceMode)
+        ? (surf as SnapSurfaceMode)
+        : 'none',
+    socketTag: shortString(r['socketTag'], 128) ?? '',
+    radius: clampNum(r['radius'], 0.01, 2.0, 0.15),
+  };
+}
+
+/** Normalized `snapSocket` trait options (`magnetic-snap`). */
+export interface SnapSocketOptions {
+  readonly tag: string;
+  readonly radius: number;
+  readonly alignRotation: boolean;
+  readonly highlightColor: string;
+}
+
+/** Parses a `snapSocket` trait (tag string or options), returning `null` without a tag. */
+export function parseSnapSocket(raw: unknown): SnapSocketOptions | null {
+  if (typeof raw === 'string') {
+    const tag = shortString(raw, 128);
+    return tag ? {tag, radius: 0.15, alignRotation: true, highlightColor: '#22c55e'} : null;
+  }
+  const r = asRecord(raw);
+  const tag = shortString(r?.['tag'], 128);
+  if (!r || !tag) return null;
+  return {
+    tag,
+    radius: clampNum(r['radius'], 0.01, 2.0, 0.15),
+    alignRotation: r['alignRotation'] !== false,
+    highlightColor: safeHexColor(r['highlightColor'], '#22c55e'),
+  };
+}
+
 /** Canonical, fully-normalized trait set for one node. */
 export interface NormalizedXRTraits {
   grab?: '1-hand' | '2-hand';
@@ -290,6 +404,9 @@ export interface NormalizedXRTraits {
   splatUrl?: string;
   spatialSlot?: string;
   audio?: SpatialAudioTrait;
+  dimensions?: DimensionsOptions;
+  snapTo?: SnapToOptions;
+  snapSocket?: SnapSocketOptions;
   pointerEvents?: 'none';
 }
 
@@ -363,6 +480,12 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (slot) out.spatialSlot = slot;
   const audio = parseSpatialAudio(r['audio']);
   if (audio) out.audio = audio;
+  const dims = parseDimensions(r['dimensions']);
+  if (dims) out.dimensions = dims;
+  const snapTo = parseSnapTo(r['snapTo']);
+  if (snapTo) out.snapTo = snapTo;
+  const snapSocket = parseSnapSocket(r['snapSocket']);
+  if (snapSocket) out.snapSocket = snapSocket;
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
 
   return Object.keys(out).length > 0 ? out : null;
@@ -414,6 +537,11 @@ export function buildXRSceneCoreExtension(
   if (n.splatUrl) comp['splat'] = {url: n.splatUrl};
   if (n.spatialSlot) comp['spatialPanel'] = {slot: n.spatialSlot};
   if (n.audio) comp['spatialAudio'] = {...n.audio};
+  if (n.dimensions) comp['dimensions'] = {...n.dimensions, axes: [...n.dimensions.axes]};
+  if (n.snapTo) {
+    comp['snapTo'] = {...n.snapTo, grid: n.snapTo.grid ? [...n.snapTo.grid] : null};
+  }
+  if (n.snapSocket) comp['snapSocket'] = {...n.snapSocket};
   return comp;
 }
 
@@ -461,6 +589,14 @@ export function flattenXRTraitsForUsd(
   if (n.splatUrl) out['splatUrl'] = n.splatUrl;
   if (n.spatialSlot) out['spatialSlot'] = n.spatialSlot;
   if (n.audio) put('audio', n.audio);
+  if (n.dimensions) {
+    put('dimensions', {...n.dimensions, axes: n.dimensions.axes.join('')});
+  }
+  if (n.snapTo) {
+    out['snapTo'] = true;
+    put('snapTo', n.snapTo);
+  }
+  if (n.snapSocket) put('snapSocket', n.snapSocket);
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
   return out;
 }

@@ -654,6 +654,21 @@ public final class XRLiveRuntimeSession {
     return true
   }
 
+  /// Sets node `index`'s world-space position and orientation while preserving its world scale,
+  /// converting cleanly through parent chains and `rootTransform` and notifying `delegate`.
+  @discardableResult
+  public func setNodeWorldPose(_ index: Int, position: SIMD3<Float>, rotation: simd_quatf) -> Bool {
+    guard index >= 0, index < nodes.count else { return false }
+    let qv = rotation.vector
+    guard [position.x, position.y, position.z, qv.x, qv.y, qv.z, qv.w].allSatisfy({ $0.isFinite })
+    else { return false }
+    let world = XRSpatialMath.decompose(worldMatrix(of: index))
+    setWorldTRS(index, rotation: rotation, position: position, scale: world.scale)
+    let updated = dirtyTransforms.contains(index)
+    flush()
+    return updated
+  }
+
   /// Whether node `index` is visible (its own `KHR_node_visibility` flag; ancestors are
   /// not considered). `false` for an invalid index.
   public func isVisible(_ index: Int) -> Bool {

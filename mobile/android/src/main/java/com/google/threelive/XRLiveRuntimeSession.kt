@@ -595,6 +595,19 @@ class XRLiveRuntimeSession(gltfJson: String) {
     }
   }
 
+  /**
+   * Sets a node's world-space (rootTransform-aware) position and optional unit quaternion,
+   * converting through its parent chain and notifying [listener].
+   */
+  @JvmOverloads
+  fun setNodeWorldPose(nodeIndex: Int, position: DoubleArray, quaternion: DoubleArray? = null) {
+    if (nodeIndex !in 0 until nodeCount || position.size < 3) return
+    if (position.take(3).any { !it.isFinite() }) return
+    if (quaternion != null && (quaternion.size < 4 || quaternion.take(4).any { !it.isFinite() })) return
+    setWorldPose(nodeIndex, position, quaternion)
+    flush()
+  }
+
   /** Marks a node as grabbed by the user; grabbed nodes skip follow / orbit stepping. */
   fun setNodeGrabbed(nodeIndex: Int, isGrabbed: Boolean) {
     if (nodeIndex in 0 until nodeCount) grabbed[nodeIndex] = isGrabbed

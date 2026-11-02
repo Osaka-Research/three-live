@@ -32,10 +32,36 @@
     public var onHandlesChange: ((_ mesh: String, _ scale: Float, _ yawDeg: Float) -> Void)?
     /// `{index, points, lengthMeters}` when a stroke ends (web `xr-paint-stroke`).
     public var onPaintStroke: ((_ index: Int, _ points: Int, _ lengthMeters: Float) -> Void)?
+    /// `{start, end, distanceMeters, formatted}` when a tape segment ends (web `measurecomplete`).
+    public var onMeasureComplete:
+      (
+        (
+          _ start: SIMD3<Float>, _ end: SIMD3<Float>, _ distanceMeters: Float,
+          _ formatted: String
+        ) -> Void
+      )?
+    /// `{nodeIndex, socketNodeIndex, position, orientation, mode}` when a node snaps (`xrsnap`).
+    public var onSnap:
+      (
+        (
+          _ nodeIndex: Int, _ socketNodeIndex: Int?, _ position: SIMD3<Float>,
+          _ orientation: simd_quatf, _ mode: String
+        ) -> Void
+      )?
+    /// `{nodeIndex, socketNodeIndex}` when a snapped node breaks away (`xrunsnap`).
+    public var onUnsnap: ((_ nodeIndex: Int, _ socketNodeIndex: Int?) -> Void)?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
     public var floorY: Float?
+    /// Scene-wide bounding-box dimension callout toggle (`<xr-live spatial-measure>`).
+    public var measureBoundsEnabled: Bool = false
+    /// Interactive point-to-point tape measure toggle (`<xr-live spatial-measure="tape">`).
+    public var tapeMeasureEnabled: Bool = false
+    /// Default unit (`"auto"`, `"m"`, `"cm"`, `"mm"`, `"in"`, `"ft-in"`) for `spatial-measure`.
+    public var measureUnit: String = "auto"
+    /// Currently selected node index (used by `dimensions.showOnSelect`).
+    public var selectedNodeIndex: Int = -1
     /// Camera world transform for camera-facing particles (defaults to the live head pose).
     public var cameraTransformProvider: (() -> simd_float4x4?)?
 
@@ -97,11 +123,52 @@
       }
     }
 
+    private final class DimensionVisual {
+      let node: Int
+      let trait: XRLiveDimensions?
+      var barEntity: ModelEntity?
+      var labelEntities: [ModelEntity] = []
+      var labelPositions: [SIMD3<Float>] = []
+      var cacheKey: String = ""
+
+      init(node: Int, trait: XRLiveDimensions?) {
+        self.node = node
+        self.trait = trait
+      }
+    }
+
+    private final class TapeVisual {
+      let start: SIMD3<Float>
+      var end: SIMD3<Float>
+      let lineEntity: ModelEntity
+      let labelEntity: ModelEntity
+
+      init(
+        start: SIMD3<Float>, end: SIMD3<Float>, lineEntity: ModelEntity, labelEntity: ModelEntity
+      ) {
+        self.start = start
+        self.end = end
+        self.lineEntity = lineEntity
+        self.labelEntity = labelEntity
+      }
+    }
+
     private var handles: [HandleNode] = []
     private var emitters: [Emitter] = []
     private var strokes: [Stroke] = []
     private var splats: [SplatCloud] = []
     private var contactShadows: [ContactShadowNode] = []
+    private var dimensionVisuals: [Int: DimensionVisual] = [:]
+    private var dimensionNodeOrder: [Int] = []
+    private var tapeSegments: [TapeVisual] = []
+    private var activeTape: TapeVisual?
+    private var snapTraits: [Int: XRLiveSnapTo] = [:]
+    private var socketTraits: [Int: XRLiveSnapSocket] = [:]
+    private var activeSocketByNode: [Int: String] = [:]
+    private var previewRingEntity: ModelEntity?
+    private var previewRingRadius: Float = 0
+    private var previewRingColor: String = ""
+    private var pulsePhase: Float = 0
     private var gaussianTexture: TextureResource?
     private var customSplatMaterial: RealityKit.Material?
     private var customSplatMaterialChecked = false
@@ -210,6 +277,16 @@
           }
           splats.append(cloud)
         }
+        if let dim = traits.dimensions, dim.enabled {
+          dimensionVisuals[i] = DimensionVisual(node: i, trait: dim)
+          dimensionNodeOrder.append(i)
+        }
+        if let st = traits.snapTo {
+          snapTraits[i] = st
+        }
+        if let ss = traits.snapSocket {
+          socketTraits[i] = ss
+        }
       }
       for h in handles { place(h) }
       stepContactShadows()
@@ -221,6 +298,12 @@
     /// Number of accepted `splatUrl` clouds.
     public var splatCount: Int { splats.count }
 
+    /// Number of nodes configured with `dimensions` callouts.
+    public var dimensionCount: Int { dimensionVisuals.count }
+
+    /// Number of nodes configured as `snapSocket` targets.
+    public var snapSocketCount: Int { socketTraits.count }
+
     /// Steps handles and particles from `scene`'s update events.
     public func startUpdates(in scene: RealityKit.Scene) {
       guard updateSubscription == nil else { return }
@@ -229,17 +312,39 @@
       }
     }
 
+    /// Clears all locked and active tape-measure segments.
+    public func clearMeasurements() {
+      if let active = activeTape {
+        active.lineEntity.removeFromParent()
+        active.labelEntity.removeFromParent()
+        activeTape = nil
+      }
+      for seg in tapeSegments {
+        seg.lineEntity.removeFromParent()
+        seg.labelEntity.removeFromParent()
+      }
+      tapeSegments.removeAll()
+    }
+
     /// Removes every feature entity and stops updates.
     public func dispose() {
       updateSubscription?.cancel()
       updateSubscription = nil
       for sc in splats { sc.loadTask?.cancel() }
+      clearMeasurements()
+      previewRingEntity?.removeFromParent()
+      previewRingEntity = nil
       container.removeFromParent()
       handles.removeAll()
       emitters.removeAll()
       strokes.removeAll()
       splats.removeAll()
       contactShadows.removeAll()
+      dimensionVisuals.removeAll()
+      dimensionNodeOrder.removeAll()
+      snapTraits.removeAll()
+      socketTraits.removeAll()
+      activeSocketByNode.removeAll()
     }
 
     // MARK: Pointer input (world-space rays)
@@ -261,6 +366,11 @@
             startRotation: t.rotation, options: h.options)
         else { continue }
         drag = (h.node, d)
+        return true
+      }
+      if tapeMeasureEnabled && paintColor == nil {
+        guard let pt = tapePoint(origin: origin, direction: direction) else { return false }
+        beginTape(pt)
         return true
       }
       guard let color = paintColor, hitEntity.flatMap({ live.nodeIndex(for: $0) }) == nil,
@@ -292,6 +402,12 @@
           XRNodeTransform(translation: t.translation, rotation: next.rotation, scale: next.scale))
         return
       }
+      if activeTape != nil {
+        if let pt = tapePoint(origin: origin, direction: direction) {
+          updateTape(pt)
+        }
+        return
+      }
       guard let i = painting, i < strokes.count,
         let dir = ManipulationHandles.normalizeRay(direction),
         strokes[i].builder.points.count < TubeStrokeBuilder.maxStrokePoints
@@ -311,6 +427,10 @@
           let yaw = XRSpatialMath.yawFromQuat(t.rotation) * 180 / .pi
           onHandlesChange?(live.session.nodeName(at: active.node) ?? "", t.scale.x, yaw)
         }
+        return
+      }
+      if activeTape != nil {
+        endTape()
         return
       }
       guard let i = painting, i < strokes.count else { return }
@@ -337,20 +457,352 @@
 
     // MARK: Per frame
 
-    /// Repositions handles, contact shadows, and steps particles.
+    /// Repositions handles, contact shadows, dimension callouts, and steps particles.
     public func step(dt: TimeInterval) {
+      let dtClamped = Float(max(0, min(0.1, dt.isFinite ? dt : 0)))
+      pulsePhase += dtClamped * 5.0
       for h in handles { place(h) }
       stepContactShadows()
       let camera: simd_float4x4
       if let provided = cameraTransformProvider?() {
         camera = provided
       } else if let pose = live.headPoseProvider?() {
-        camera = simd_float4x4(pose.orientation)
+        camera = XRSpatialMath.compose(
+          translation: pose.position, rotation: pose.orientation, scale: SIMD3<Float>(1, 1, 1))
       } else {
         camera = matrix_identity_float4x4
       }
       for e in emitters { stepEmitter(e, dt: dt, camera: camera) }
       for sc in splats { stepSplat(sc, dt: dt, camera: camera) }
+      stepDimensions(camera: camera)
+    }
+
+    // MARK: Spatial Measure & Magnetic Snap
+
+    private func tapePoint(origin: SIMD3<Float>, direction: SIMD3<Float>) -> SIMD3<Float>? {
+      guard let dir = ManipulationHandles.normalizeRay(direction) else { return nil }
+      if dir.y < -1e-4 {
+        let fy = floorY ?? 0
+        let t = (fy - origin.y) / dir.y
+        if t >= 0.02 && t <= 20.0 {
+          return origin + dir * t
+        }
+      }
+      return origin + dir
+    }
+
+    /// Begins an interactive tape-measure segment at `start`.
+    public func beginTape(_ start: SIMD3<Float>) {
+      if let prev = activeTape {
+        prev.lineEntity.removeFromParent()
+        prev.labelEntity.removeFromParent()
+      }
+      let lineEntity = ModelEntity()
+      let labelEntity = ModelEntity()
+      container.addChild(lineEntity)
+      container.addChild(labelEntity)
+      let lblGeo = SpatialMeasure.buildVectorLabelGeometry(
+        SpatialMeasure.formatDimension(0, unit: measureUnit))
+      if let mesh = Self.mesh(lblGeo) {
+        labelEntity.model = ModelComponent(
+          mesh: mesh, materials: [Self.material(SIMD4<Float>(0.97, 0.98, 0.99, 1))])
+      }
+      activeTape = TapeVisual(
+        start: start, end: start, lineEntity: lineEntity, labelEntity: labelEntity)
+    }
+
+    /// Updates the endpoint of the active tape-measure segment.
+    public func updateTape(_ end: SIMD3<Float>) {
+      guard let t = activeTape else { return }
+      t.end = end
+      let dist = simd_length(t.end - t.start)
+      let barGeo = SpatialMeasure.buildSegmentBarsGeometry(
+        [(t.start, t.end)], halfThickness: 0.0022)
+      let lblGeo = SpatialMeasure.buildVectorLabelGeometry(
+        SpatialMeasure.formatDimension(dist, unit: measureUnit))
+      if let bMesh = Self.mesh(barGeo) {
+        if t.lineEntity.model == nil {
+          t.lineEntity.model = ModelComponent(
+            mesh: bMesh, materials: [Self.material(Self.parseHexRgba("#38bdf8"))])
+        } else {
+          t.lineEntity.model?.mesh = bMesh
+        }
+      }
+      if let lMesh = Self.mesh(lblGeo) {
+        if t.labelEntity.model == nil {
+          t.labelEntity.model = ModelComponent(
+            mesh: lMesh, materials: [Self.material(SIMD4<Float>(0.97, 0.98, 0.99, 1))])
+        } else {
+          t.labelEntity.model?.mesh = lMesh
+        }
+      }
+    }
+
+    /// Completes the active tape-measure segment and notifies `onMeasureComplete`.
+    public func endTape() {
+      guard let t = activeTape else { return }
+      activeTape = nil
+      let dist = simd_length(t.end - t.start)
+      if dist < 0.002 {
+        t.lineEntity.removeFromParent()
+        t.labelEntity.removeFromParent()
+        return
+      }
+      if tapeSegments.count >= SpatialMeasure.maxTapeSegments {
+        let old = tapeSegments.removeFirst()
+        old.lineEntity.removeFromParent()
+        old.labelEntity.removeFromParent()
+      }
+      tapeSegments.append(t)
+      let formatted = SpatialMeasure.formatDimension(dist, unit: measureUnit)
+      onMeasureComplete?(t.start, t.end, dist, formatted)
+    }
+
+    private func resolvedNodeBounds(_ node: Int) -> (min: SIMD3<Float>, max: SIMD3<Float>)? {
+      if let glb = live.session.localBounds(forNode: node) { return glb }
+      if let entity = live.entity(forNode: node) {
+        let vb = entity.visualBounds(recursive: true, relativeTo: entity)
+        if !vb.isEmpty { return (min: vb.min, max: vb.max) }
+      }
+      return nil
+    }
+
+    private func stepDimensions(camera: simd_float4x4) {
+      let session = live.session
+      if measureBoundsEnabled {
+        for n in 0..<session.nodeCount where dimensionVisuals[n] == nil {
+          if resolvedNodeBounds(n) != nil {
+            dimensionVisuals[n] = DimensionVisual(node: n, trait: nil)
+            dimensionNodeOrder.append(n)
+          }
+        }
+      }
+      var activeLabels = 0
+      for node in dimensionNodeOrder {
+        guard let dv = dimensionVisuals[node] else { continue }
+        let cfg =
+          dv.trait ?? (measureBoundsEnabled ? XRLiveDimensions(unit: measureUnit) : nil)
+        let localBounds = resolvedNodeBounds(node)
+        let show =
+          cfg != nil && localBounds != nil && session.isEffectivelyVisible(node)
+          && (!(cfg?.showOnSelect ?? false) || selectedNodeIndex == node)
+        guard show, let cfg = cfg, let lb = localBounds else {
+          dv.barEntity?.isEnabled = false
+          for le in dv.labelEntities { le.isEnabled = false }
+          continue
+        }
+        let wb = SpatialMeasure.computeWorldBounds(
+          localMin: lb.min, localMax: lb.max, world: session.worldMatrix(of: node))
+        let unit = (cfg.unit == "auto" && measureUnit != "auto") ? measureUnit : cfg.unit
+        let key =
+          "\(Int((wb.min.x * 1000).rounded())),\(Int((wb.min.y * 1000).rounded())),\(Int((wb.min.z * 1000).rounded()))|"
+          + "\(Int((wb.max.x * 1000).rounded())),\(Int((wb.max.y * 1000).rounded())),\(Int((wb.max.z * 1000).rounded()))|"
+          + "\(unit)|\(cfg.axes.joined())|\(cfg.color)"
+        if key != dv.cacheKey {
+          dv.cacheKey = key
+          let callouts = SpatialMeasure.buildDimensionCallouts(
+            min: wb.min, max: wb.max, axes: cfg.axes)
+          var segs: [(SIMD3<Float>, SIMD3<Float>)] = []
+          segs.reserveCapacity(callouts.count * 3)
+          for c in callouts {
+            segs.append((c.start, c.end))
+            segs.append((c.tickStartA, c.tickStartB))
+            segs.append((c.tickEndA, c.tickEndB))
+          }
+          let barGeo = SpatialMeasure.buildSegmentBarsGeometry(segs, halfThickness: 0.002)
+          let mat = Self.material(Self.parseHexRgba(cfg.color))
+          if let bMesh = Self.mesh(barGeo) {
+            if let existing = dv.barEntity {
+              existing.model = ModelComponent(mesh: bMesh, materials: [mat])
+            } else {
+              let be = ModelEntity(mesh: bMesh, materials: [mat])
+              container.addChild(be)
+              dv.barEntity = be
+            }
+          }
+          let allowed = max(
+            0, min(callouts.count, SpatialMeasure.maxDimensionLabels - activeLabels))
+          while dv.labelEntities.count > allowed {
+            dv.labelEntities.removeLast().removeFromParent()
+          }
+          dv.labelPositions.removeAll(keepingCapacity: true)
+          for i in 0..<allowed {
+            let c = callouts[i]
+            let lGeo = SpatialMeasure.buildVectorLabelGeometry(
+              SpatialMeasure.formatDimension(c.lengthMeters, unit: unit))
+            if let lMesh = Self.mesh(lGeo) {
+              if i < dv.labelEntities.count {
+                dv.labelEntities[i].model = ModelComponent(mesh: lMesh, materials: [mat])
+              } else {
+                let le = ModelEntity(mesh: lMesh, materials: [mat])
+                container.addChild(le)
+                dv.labelEntities.append(le)
+              }
+              dv.labelPositions.append(c.labelPosition)
+            }
+          }
+        }
+        activeLabels += dv.labelEntities.count
+        if let be = dv.barEntity {
+          be.isEnabled = true
+          be.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+        }
+        for (i, le) in dv.labelEntities.enumerated() where i < dv.labelPositions.count {
+          le.isEnabled = true
+          le.setTransformMatrix(
+            Self.billboardTransform(at: dv.labelPositions[i], camera: camera), relativeTo: nil)
+        }
+      }
+      for seg in tapeSegments { positionTape(seg, camera: camera) }
+      if let active = activeTape { positionTape(active, camera: camera) }
+    }
+
+    private func positionTape(_ t: TapeVisual, camera: simd_float4x4) {
+      t.lineEntity.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+      let mid = (t.start + t.end) * 0.5 + SIMD3<Float>(0, 0.035, 0)
+      t.labelEntity.setTransformMatrix(
+        Self.billboardTransform(at: mid, camera: camera), relativeTo: nil)
+    }
+
+    private static func billboardTransform(at pos: SIMD3<Float>, camera: simd_float4x4)
+      -> simd_float4x4
+    {
+      let camPos = SIMD3<Float>(camera.columns.3.x, camera.columns.3.y, camera.columns.3.z)
+      let d = camPos - pos
+      let horiz = hypot(d.x, d.z)
+      let yaw = atan2(d.x, d.z)
+      let pitch = -atan2(d.y, max(horiz, 1e-5))
+      let q = MagneticSnap.quatFromEulerYXZ(pitchX: pitch, yawY: yaw, rollZ: 0)
+      return XRSpatialMath.compose(translation: pos, rotation: q, scale: SIMD3<Float>(1, 1, 1))
+    }
+
+    private static func parseHexRgba(_ hex: String, alpha: Float = 1) -> SIMD4<Float> {
+      let clean = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+      if clean.count == 3 {
+        let chars = Array(clean)
+        guard let r = Int(String(chars[0]), radix: 16),
+          let g = Int(String(chars[1]), radix: 16),
+          let b = Int(String(chars[2]), radix: 16)
+        else { return SIMD4<Float>(0.22, 0.74, 0.97, alpha) }
+        return SIMD4<Float>(Float(r * 17) / 255, Float(g * 17) / 255, Float(b * 17) / 255, alpha)
+      }
+      if clean.count == 6 {
+        let rStr = String(clean.prefix(2))
+        let gStr = String(clean.dropFirst(2).prefix(2))
+        let bStr = String(clean.dropFirst(4).prefix(2))
+        guard let r = Int(rStr, radix: 16),
+          let g = Int(gStr, radix: 16),
+          let b = Int(bStr, radix: 16)
+        else { return SIMD4<Float>(0.22, 0.74, 0.97, alpha) }
+        return SIMD4<Float>(Float(r) / 255, Float(g) / 255, Float(b) / 255, alpha)
+      }
+      return SIMD4<Float>(0.22, 0.74, 0.97, alpha)
+    }
+
+    /// Evaluates and applies `magnetic-snap` constraints for a manipulated node, updating its pose,
+    /// preview torus ring, and firing `onSnap` / `onUnsnap`.
+    @discardableResult
+    public func applyMagneticSnap(
+      nodeIndex: Int,
+      rawWorldPosition: SIMD3<Float>,
+      rawWorldOrientation: simd_quatf,
+      planes: [MagneticSnap.SurfacePlane] = [],
+      released: Bool = false
+    ) -> MagneticSnap.Evaluation? {
+      let session = live.session
+      guard nodeIndex >= 0, nodeIndex < session.nodeCount, let cfg = snapTraits[nodeIndex] else {
+        return nil
+      }
+      var sockets: [MagneticSnap.SocketCandidate] = []
+      var socketNodeById: [String: Int] = [:]
+      sockets.reserveCapacity(socketTraits.count)
+      for (sNode, sCfg) in socketTraits where sNode != nodeIndex {
+        guard session.isEffectivelyVisible(sNode) else { continue }
+        let w = XRSpatialMath.decompose(session.worldMatrix(of: sNode))
+        let id = "socket#\(sNode)"
+        sockets.append(
+          MagneticSnap.SocketCandidate(
+            id: id,
+            tag: sCfg.tag,
+            position: w.translation,
+            orientation: w.rotation,
+            radius: sCfg.radius,
+            alignRotation: sCfg.alignRotation,
+            highlightColor: sCfg.highlightColor
+          ))
+        socketNodeById[id] = sNode
+      }
+      let curT = session.nodeTransform(at: nodeIndex)
+      let sy = curT?.scale.y ?? 1
+      let lb = resolvedNodeBounds(nodeIndex)
+      let bottomOffset = (lb != nil && lb!.min.y < -0.001) ? -lb!.min.y * sy : 0
+      let prevId = activeSocketByNode[nodeIndex]
+      let ev = MagneticSnap.evaluate(
+        position: rawWorldPosition,
+        orientation: rawWorldOrientation,
+        config: cfg,
+        sockets: sockets,
+        planes: planes,
+        currentSocketId: prevId,
+        bottomOffset: bottomOffset,
+        defaultFloorY: floorY ?? 0
+      )
+      if let prevId = prevId, prevId != ev.matchedSocketId {
+        onUnsnap?(nodeIndex, socketNodeById[prevId])
+      }
+      if let matchedId = ev.matchedSocketId {
+        if matchedId != prevId {
+          onSnap?(nodeIndex, socketNodeById[matchedId], ev.position, ev.orientation, "socket")
+        }
+        activeSocketByNode[nodeIndex] = matchedId
+      } else {
+        activeSocketByNode.removeValue(forKey: nodeIndex)
+        if released && (ev.mode == "grid" || ev.mode == "surface") {
+          onSnap?(nodeIndex, nil, ev.position, ev.orientation, ev.mode)
+        }
+      }
+      if released {
+        activeSocketByNode.removeValue(forKey: nodeIndex)
+      }
+      if ev.mode != "none" && curT != nil {
+        live.setNodeWorldPose(nodeIndex, position: ev.position, rotation: ev.orientation)
+      }
+      let previewSock =
+        (!released && ev.previewSocketId != nil)
+        ? sockets.first(where: { $0.id == ev.previewSocketId }) : nil
+      if let ps = previewSock {
+        let rad = max(0.03, ps.radius * 0.75)
+        if previewRingEntity == nil || abs(previewRingRadius - rad) > 1e-3
+          || previewRingColor != ps.highlightColor
+        {
+          previewRingEntity?.removeFromParent()
+          let rGeo = MagneticSnap.buildSnapRingGeometry(
+            majorRadius: rad, tubeRadius: max(0.004, rad * 0.08))
+          if let rMesh = Self.mesh(rGeo) {
+            var mat = Self.material(Self.parseHexRgba(ps.highlightColor, alpha: 0.55))
+            if #available(iOS 15.0, macOS 12.0, visionOS 1.0, *) {
+              mat.blending = .transparent(opacity: .init(floatLiteral: 0.55))
+            }
+            let re = ModelEntity(mesh: rMesh, materials: [mat])
+            container.addChild(re)
+            previewRingEntity = re
+            previewRingRadius = rad
+            previewRingColor = ps.highlightColor
+          }
+        }
+        if let re = previewRingEntity {
+          re.isEnabled = true
+          let pulse = 1.0 + 0.07 * sin(pulsePhase)
+          re.setTransformMatrix(
+            XRSpatialMath.compose(
+              translation: ps.position, rotation: ps.orientation,
+              scale: SIMD3<Float>(repeating: pulse)),
+            relativeTo: nil)
+        }
+      } else {
+        previewRingEntity?.isEnabled = false
+      }
+      return ev
     }
 
     private func stepContactShadows() {

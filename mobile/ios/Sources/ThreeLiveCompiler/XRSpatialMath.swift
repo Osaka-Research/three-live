@@ -606,3 +606,6 @@ public enum WorldUnderstanding {
     )
   }
 }
+
+// MARK: - Spatial Measure
+

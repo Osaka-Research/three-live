@@ -200,9 +200,57 @@ $ three-live-cli convert scene.js -o output.glb
 
 Three-Live is in **Developer Preview (Alpha)**. It is an experimental open-source library exploring AI-driven procedural 3D and spatial computing across Web, Android, and Apple platforms.
 
-* **Prebuilt distributions:** Standalone web JavaScript bundles (`three-live-web-dist.zip`), the Apple XCFramework (`ThreeLiveCompiler.xcframework.zip`), the Android release AAR (`three-live-compiler-release.aar`), and native `three-live-cli` binaries for macOS, Linux, and Windows are published on **[GitHub Releases](https://github.com/google/three-live/releases)**.
-* **Package registries:** Direct consumption through **Swift Package Manager**, **GitHub Releases**, and the **GitHub Pages CDN** works today (see [Install packages and bundles](#install-packages-and-bundles)). Publishing to public package registries (`npm`, `Crates.io`, and Maven) is planned for a future release.
-* **Release notes:** See [`CHANGELOG.md`](CHANGELOG.md) for release history and architectural notes.
+-   **Web (CDN / Prebuilt Release / Source):**
+    -   **Hosted ES Module (`<script>`):**
+        ```html
+        <script type="module" src="https://google.github.io/three-live/dist/three-live.min.js"></script>
+        ```
+    -   **Prebuilt Bundle Archive:** Download `three-live-web-dist.zip` from **[GitHub Releases](https://github.com/google/three-live/releases)**.
+    -   **From Source:** `git clone https://github.com/google/three-live.git && cd three-live && npm install && npm run build` *(public `npm` registry publishing is planned for a future release)*.
+-   **iOS, macOS & visionOS (Swift Package Manager):**
+    ```swift
+    .package(url: "https://github.com/google/three-live.git", from: "1.0.0")
+    ```
+    *(Automatically resolves the prebuilt, checksum-pinned `ThreeLiveCompiler.xcframework.zip` from GitHub Releases—no local Rust or Node.js toolchain required).*
+-   **Android (Prebuilt Release AAR / Source):**
+    -   **Prebuilt AAR:** Download `three-live-compiler-release.aar` (includes `arm64-v8a`, `armeabi-v7a`, and `x86_64` JNI `.so` libraries) from **[GitHub Releases](https://github.com/google/three-live/releases)** into `app/libs/` and add `implementation(files("libs/three-live-compiler-release.aar"))`.
+    -   **From Source:** Run `make android` (or `bash scripts/build_android_aar.sh`).
+-   **Rust CLI (`three-live-cli`) & Crate:**
+    -   **Prebuilt Binaries:** Download standalone binaries for macOS (`arm64` / `x86_64`), Linux (`x86_64` / `aarch64`), and Windows (`x86_64.exe`) from **[GitHub Releases](https://github.com/google/three-live/releases)**.
+    -   **From Source:** Run `make rust` (`npm run build && cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli`).
+
+### JS Bundles & Enforced Size Budgets (`es2020`, `SPDX-License-Identifier: Apache-2.0`)
+
+Every bundle targets `es2020`, strips full license blocks
+(`--legal-comments=none`), and emits a single 4-line SPDX header:
+
+| Family | Bundle File | Enforced Budget (`.min.js.gz`) | Included Capabilities |
+| :--------------- | :-------------------------------- | :------------: | :-------------------------- |
+| **`three-live`** | **`three-live-viewer.min.js`** | **`< 25.5 KB gz`** | Lean `.glb`/`.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, AR packager. |
+|  | **`three-live.min.js`** | **`< 54 KB gz`** | Standard `<three-live>` + **`three-author`** (`<script type="text/three">`, `KHR_interactivity` compiler) + AR packager. |
+|  | **`three-live-extras.min.js`** | **`< 17 KB gz`** | Add-on plugin: `KHR_interactivity` VM, PBR Next extensions, HDRI/SH irradiance, dynamic contact shadows, 3D hotspots. |
+|  | **`three-live-animation.min.js`** | **`< 6.5 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading. |
+|  | **`three-live-full.min.js`** | **`< 69 KB gz`** | All-in-one 3D bundle (`three-live` + `extras` + `animation`, all 9 plugins auto-registered). |
+| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 45 KB gz`** | Lean `.glb`/`.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, mobile AR bridge. |
+|  | **`xr-live.min.js`** | **`< 65 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ/GLB compiler. |
+|  | **`xr-live-extras.min.js`** | **`< 9.5 KB gz`** | Add-on plugin: Deep XR (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, WebMCP tools. |
+|  | **`xr-live-full.min.js`** | **`< 112 KB gz`** | All-in-one 3D & XR bundle (`three-live-full` + `xr-live` + `xr-live-extras` + all 9 spatial plugins). |
+|  | **`xr-live-plugins.min.js`** | **`< 33 KB gz`** | Add-on plugin: Spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`). |
+
+--------------------------------------------------------------------------------
+
+## Documentation Guide (Humans & LLMs)
+
+| Guide | Audience | Contents |
+| :--------------------------------------------- | :------- | :------- |
+| **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, `KHR_interactivity` authoring, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
+| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & spatial plugins guide: canonical `userData.xr` traits, all 7 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), `<div slot="spatial">` cards, depth/physics, 25-joint hands, WebMCP, and native Android/iOS bridges. |
+| **[`docs/cookbook.md`](docs/cookbook.md)** | All Developers | Copy-pasteable recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, and native mobile sessions. |
+| **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, canonical `userData.xr` & `userData.interactivity` schemas, strict `THREE.*` allowlist, scene quotas, and few-shot templates. |
+| **[`AGENTS.md`](AGENTS.md)** | Coding Agents | Repository rules, 3-target cross-platform parity contract, build/test commands, bundle budgets, and security invariants. |
+| **[`skills/`](skills/)** | Agent Skills | Progressive-disclosure `SKILL.md` skills for authoring scenes ([`three-live-authoring`](skills/three-live-authoring/SKILL.md)) and developing plugins ([`xr-live-plugin-dev`](skills/xr-live-plugin-dev/SKILL.md)). |
+| **[`llms.txt`](llms.txt) / [`llms-full.txt`](llms-full.txt)** | LLM Context Feeds | Single-file concise index (`llms.txt`) and complete concatenated reference (`llms-full.txt`) for LLM context windows. |
+| **[`CHANGELOG.md`](CHANGELOG.md)** | All Users | Release notes and architectural summary for the Developer Preview release. |
 
 ---
 

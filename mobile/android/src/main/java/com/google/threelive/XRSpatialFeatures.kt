@@ -59,6 +59,23 @@ constructor(
     fun onHandlesChange(mesh: String, scale: Double, yawDeg: Double) {}
 
     fun onPaintStroke(index: Int, points: Int, lengthMeters: Double) {}
+
+    fun onMeasureComplete(
+      start: DoubleArray,
+      end: DoubleArray,
+      distanceMeters: Double,
+      formatted: String,
+    ) {}
+
+    fun onSnap(
+      nodeIndex: Int,
+      socketNodeIndex: Int?,
+      position: DoubleArray,
+      quaternion: DoubleArray,
+      mode: String,
+    ) {}
+
+    fun onUnsnap(nodeIndex: Int, socketNodeIndex: Int?) {}
   }
 
   var listener: Listener? = null
@@ -68,6 +85,18 @@ constructor(
 
   /** Optional floor height (meters) that particles collide with. */
   var floorY: Double? = null
+
+  /** Scene-wide bounding-box dimension callout toggle (`<xr-live spatial-measure>`). */
+  var measureBoundsEnabled: Boolean = false
+
+  /** Interactive point-to-point tape measure toggle (`<xr-live spatial-measure="tape">`). */
+  var tapeMeasureEnabled: Boolean = false
+
+  /** Default unit (`auto`, `m`, `cm`, `mm`, `in`, `ft-in`) for `spatial-measure`. */
+  var measureUnit: String = "auto"
+
+  /** Currently selected node index (used by `dimensions.showOnSelect`). */
+  var selectedNodeIndex: Int = -1
 
   private val session = binding.session
   private val scene = binding.scene
@@ -99,10 +128,35 @@ constructor(
     var order: IntArray? = null
   }
 
+  private class DimensionVisual(
+    val node: Int,
+    val trait: XRDimensionsTrait?,
+    var barMeshId: Int = -1,
+    val labelMeshIds: ArrayList<Int> = ArrayList(),
+    val labelPositions: ArrayList<DoubleArray> = ArrayList(),
+    var cacheKey: String = "",
+  )
+
+  private class TapeVisual(
+    val start: DoubleArray,
+    var end: DoubleArray,
+    var lineMeshId: Int = -1,
+    var labelMeshId: Int = -1,
+  )
+
   private val handles = ArrayList<HandleNode>()
   private val emitters = ArrayList<Emitter>()
   private val strokes = ArrayList<Stroke>()
   private val splats = ArrayList<SplatCloud>()
+  private val dimensionVisuals = LinkedHashMap<Int, DimensionVisual>()
+  private val tapeSegments = ArrayList<TapeVisual>()
+  private var activeTape: TapeVisual? = null
+  private val snapTraits = HashMap<Int, XRSnapToTrait>()
+  private val socketTraits = HashMap<Int, XRSnapSocketTrait>()
+  private val activeSocketByNode = HashMap<Int, String>()
+  private var previewRingMeshId: Int = -1
+  private var previewRingRadius: Double = 0.0
+  private var pulsePhase: Double = 0.0
   private var ownedExecutor = false
   private val executor: Executor =
     backgroundExecutor
@@ -123,6 +177,9 @@ constructor(
       if (node !in 0 until scene.nodeCount) continue
       t.handles?.let { if (scene.meshBounds.getOrNull(scene.nodeMesh[node]) != null) handles.add(HandleNode(node, it)) }
       t.particles?.let { emitters.add(Emitter(node, ParticleEmitter(it, seed = node + 1))) }
+      t.dimensions?.let { dimensionVisuals[node] = DimensionVisual(node, it) }
+      t.snapTo?.let { snapTraits[node] = it }
+      t.snapSocket?.let { socketTraits[node] = it }
       t.splatUrl?.let { raw ->
         val resolved = SplatParser.resolveSplatUrl(raw, baseUrl, allowRemoteSplats)
         if (resolved != null) {
@@ -179,6 +236,28 @@ constructor(
   val splatCount: Int
     get() = splats.size
 
+  /** Number of nodes configured with `dimensions` callouts. */
+  val dimensionCount: Int
+    get() = dimensionVisuals.size
+
+  /** Number of nodes configured as `snapSocket` targets. */
+  val snapSocketCount: Int
+    get() = socketTraits.size
+
+  /** Clears all locked and active tape-measure segments. */
+  fun clearMeasurements() {
+    activeTape?.let {
+      if (it.lineMeshId >= 0) renderer.removeDynamicMesh(it.lineMeshId)
+      if (it.labelMeshId >= 0) renderer.removeDynamicMesh(it.labelMeshId)
+    }
+    activeTape = null
+    for (seg in tapeSegments) {
+      if (seg.lineMeshId >= 0) renderer.removeDynamicMesh(seg.lineMeshId)
+      if (seg.labelMeshId >= 0) renderer.removeDynamicMesh(seg.labelMeshId)
+    }
+    tapeSegments.clear()
+  }
+
   /** Removes every dynamic mesh and detaches from the binding. */
   fun dispose() {
     if (disposed) return
@@ -188,10 +267,21 @@ constructor(
     }
     binding.pointerHandler = null
     binding.frameHandler = null
+    clearMeasurements()
+    for (dv in dimensionVisuals.values) {
+      if (dv.barMeshId >= 0) renderer.removeDynamicMesh(dv.barMeshId)
+      for (id in dv.labelMeshIds) renderer.removeDynamicMesh(id)
+    }
+    if (previewRingMeshId >= 0) renderer.removeDynamicMesh(previewRingMeshId)
+    previewRingMeshId = -1
     for (h in handles) for (id in h.meshIds) renderer.removeDynamicMesh(id)
     for (e in emitters) renderer.removeDynamicMesh(e.meshId)
     for (s in strokes) renderer.removeDynamicMesh(s.meshId)
     for (sc in splats) if (sc.meshId >= 0) renderer.removeDynamicMesh(sc.meshId)
+    dimensionVisuals.clear()
+    snapTraits.clear()
+    socketTraits.clear()
+    activeSocketByNode.clear()
     handles.clear()
     emitters.clear()
     strokes.clear()
@@ -211,6 +301,11 @@ constructor(
         dragging = h
         return true
       }
+    }
+    if (tapeMeasureEnabled && paintColor == null) {
+      val pt = tapePointOf(p) ?: return false
+      beginTape(pt)
+      return true
     }
     val color = paintColor ?: return false
     if (p.pick != null) return false
@@ -234,6 +329,10 @@ constructor(
       }
       return
     }
+    if (activeTape != null) {
+      tapePointOf(p)?.let { updateTape(it) }
+      return
+    }
     val stroke = painting ?: return
     if (stroke.builder.pointCount >= MAX_STROKE_POINTS) return
     if (paintAt(stroke, p) && stroke.builder.pointCount % REBUILD_EVERY == 0) rebuild(stroke)
@@ -247,6 +346,10 @@ constructor(
       val q = t.rotation
       val yaw = XRSpatialMath.yawFromQuat(q[0].toDouble(), q[1].toDouble(), q[2].toDouble(), q[3].toDouble())
       listener?.onHandlesChange(scene.nodeNames.getOrNull(h.node) ?: "", t.scale[0].toDouble(), Math.toDegrees(yaw))
+      return
+    }
+    if (activeTape != null) {
+      endTape()
       return
     }
     val stroke = painting ?: return
@@ -273,9 +376,307 @@ constructor(
 
   private fun frame(dt: Double, cameraWorld: FloatArray) {
     if (disposed) return
+    pulsePhase += dt.coerceIn(0.0, 0.1) * 5.0
     for (h in handles) placeHandles(h)
     for (e in emitters) stepEmitter(e, dt, cameraWorld)
     for (sc in splats) stepSplat(sc, dt, cameraWorld)
+    stepDimensions(cameraWorld)
+  }
+
+  private fun tapePointOf(p: ThreeLivePointer): DoubleArray? {
+    val hit = p.pick?.hitPoint
+    if (hit != null && hit.size >= 3) {
+      return doubleArrayOf(hit[0].toDouble(), hit[1].toDouble(), hit[2].toDouble())
+    }
+    val dir = XRSpatialMath.normalizeRayDir(p.direction.copyOf()) ?: return null
+    if (dir[1] < -1e-4) {
+      val fy = floorY ?: 0.0
+      val t = (fy - p.origin[1]) / dir[1]
+      if (t in 0.02..20.0) {
+        return doubleArrayOf(p.origin[0] + dir[0] * t, p.origin[1] + dir[1] * t, p.origin[2] + dir[2] * t)
+      }
+    }
+    return doubleArrayOf(p.origin[0] + dir[0], p.origin[1] + dir[1], p.origin[2] + dir[2])
+  }
+
+  /** Begins an interactive tape-measure segment at [start]. */
+  fun beginTape(start: DoubleArray) {
+    activeTape?.let {
+      if (it.lineMeshId >= 0) renderer.removeDynamicMesh(it.lineMeshId)
+      if (it.labelMeshId >= 0) renderer.removeDynamicMesh(it.labelMeshId)
+    }
+    val barGeo = SpatialMeasure.buildSegmentBarsGeometry(emptyList())
+    val lblGeo = SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(0.0, measureUnit))
+    val lineId = renderer.addDynamicMesh(barGeo.positions, barGeo.normals, barGeo.indices, MEASURE_COLOR)
+    val labelId = renderer.addDynamicMesh(lblGeo.positions, lblGeo.normals, lblGeo.indices, LABEL_COLOR)
+    activeTape = TapeVisual(start.copyOf(3), start.copyOf(3), lineId, labelId)
+  }
+
+  /** Updates the endpoint of the active tape-measure segment. */
+  fun updateTape(end: DoubleArray) {
+    val t = activeTape ?: return
+    t.end = end.copyOf(3)
+    val dist = XRSpatialMath.dist3(t.start, t.end)
+    val barGeo = SpatialMeasure.buildSegmentBarsGeometry(listOf(t.start to t.end), 0.0022)
+    val lblGeo = SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(dist, measureUnit))
+    renderer.updateDynamicMesh(t.lineMeshId, barGeo.positions, barGeo.normals, barGeo.indices)
+    renderer.updateDynamicMesh(t.labelMeshId, lblGeo.positions, lblGeo.normals, lblGeo.indices)
+  }
+
+  /** Completes the active tape-measure segment and notifies [Listener.onMeasureComplete]. */
+  fun endTape() {
+    val t = activeTape ?: return
+    activeTape = null
+    val dist = XRSpatialMath.dist3(t.start, t.end)
+    if (dist < 0.002) {
+      if (t.lineMeshId >= 0) renderer.removeDynamicMesh(t.lineMeshId)
+      if (t.labelMeshId >= 0) renderer.removeDynamicMesh(t.labelMeshId)
+      return
+    }
+    if (tapeSegments.size >= SpatialMeasure.MAX_TAPE_SEGMENTS) {
+      val old = tapeSegments.removeAt(0)
+      if (old.lineMeshId >= 0) renderer.removeDynamicMesh(old.lineMeshId)
+      if (old.labelMeshId >= 0) renderer.removeDynamicMesh(old.labelMeshId)
+    }
+    tapeSegments.add(t)
+    val formatted = SpatialMeasure.formatDimension(dist, measureUnit)
+    listener?.onMeasureComplete(t.start.copyOf(), t.end.copyOf(), dist, formatted)
+  }
+
+  private fun parseHexRgba(hex: String, alpha: Float = 1f): FloatArray {
+    val clean = hex.removePrefix("#")
+    if (clean.length == 3) {
+      val r = clean[0].digitToIntOrNull(16) ?: return MEASURE_COLOR
+      val g = clean[1].digitToIntOrNull(16) ?: return MEASURE_COLOR
+      val b = clean[2].digitToIntOrNull(16) ?: return MEASURE_COLOR
+      return floatArrayOf((r * 17) / 255f, (g * 17) / 255f, (b * 17) / 255f, alpha)
+    }
+    if (clean.length == 6) {
+      val r = clean.substring(0, 2).toIntOrNull(16) ?: return MEASURE_COLOR
+      val g = clean.substring(2, 4).toIntOrNull(16) ?: return MEASURE_COLOR
+      val b = clean.substring(4, 6).toIntOrNull(16) ?: return MEASURE_COLOR
+      return floatArrayOf(r / 255f, g / 255f, b / 255f, alpha)
+    }
+    return MEASURE_COLOR
+  }
+
+  private fun stepDimensions(cameraWorld: FloatArray) {
+    if (measureBoundsEnabled) {
+      for (n in 0 until scene.nodeCount) {
+        if (scene.meshBounds.getOrNull(scene.nodeMesh[n]) != null && !dimensionVisuals.containsKey(n)) {
+          dimensionVisuals[n] = DimensionVisual(n, null)
+        }
+      }
+    }
+    var activeLabels = 0
+    for (dv in dimensionVisuals.values) {
+      val cfg = dv.trait ?: if (measureBoundsEnabled) XRDimensionsTrait(unit = measureUnit) else null
+      val mb = scene.meshBounds.getOrNull(scene.nodeMesh[dv.node])
+      val show =
+        cfg != null &&
+          mb != null &&
+          session.isEffectivelyVisible(dv.node) &&
+          (!cfg.showOnSelect || selectedNodeIndex == dv.node) &&
+          session.nodeWorldMatrix(dv.node, world)
+      if (!show || cfg == null || mb == null) {
+        if (dv.barMeshId >= 0) {
+          zeroMatrix()
+          renderer.setDynamicMeshTransform(dv.barMeshId, matrix)
+        }
+        for (id in dv.labelMeshIds) {
+          zeroMatrix()
+          renderer.setDynamicMeshTransform(id, matrix)
+        }
+        continue
+      }
+      val wb = SpatialMeasure.computeWorldBounds(mb.copyOfRange(0, 3), mb.copyOfRange(3, 6), world)
+      val unit = if (cfg.unit == "auto" && measureUnit != "auto") measureUnit else cfg.unit
+      val key =
+        "${Math.round(wb.min[0] * 1000)},${Math.round(wb.min[1] * 1000)},${Math.round(wb.min[2] * 1000)}|" +
+          "${Math.round(wb.max[0] * 1000)},${Math.round(wb.max[1] * 1000)},${Math.round(wb.max[2] * 1000)}|" +
+          "$unit|${cfg.axes.joinToString("")}|${cfg.color}"
+      if (key != dv.cacheKey) {
+        dv.cacheKey = key
+        val callouts = SpatialMeasure.buildDimensionCallouts(wb.min, wb.max, cfg.axes)
+        val segs = ArrayList<Pair<DoubleArray, DoubleArray>>(callouts.size * 3)
+        for (c in callouts) {
+          segs.add(c.start to c.end)
+          segs.add(c.tickStartA to c.tickStartB)
+          segs.add(c.tickEndA to c.tickEndB)
+        }
+        val barGeo = SpatialMeasure.buildSegmentBarsGeometry(segs, 0.002)
+        val color = parseHexRgba(cfg.color)
+        if (dv.barMeshId < 0) {
+          dv.barMeshId = renderer.addDynamicMesh(barGeo.positions, barGeo.normals, barGeo.indices, color)
+        } else {
+          renderer.updateDynamicMesh(dv.barMeshId, barGeo.positions, barGeo.normals, barGeo.indices)
+        }
+        val allowed = Math.max(0, Math.min(callouts.size, SpatialMeasure.MAX_DIMENSION_LABELS - activeLabels))
+        while (dv.labelMeshIds.size > allowed) {
+          renderer.removeDynamicMesh(dv.labelMeshIds.removeAt(dv.labelMeshIds.lastIndex))
+        }
+        dv.labelPositions.clear()
+        for (i in 0 until allowed) {
+          val c = callouts[i]
+          val lGeo = SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(c.lengthMeters, unit))
+          if (i < dv.labelMeshIds.size) {
+            renderer.updateDynamicMesh(dv.labelMeshIds[i], lGeo.positions, lGeo.normals, lGeo.indices)
+          } else {
+            dv.labelMeshIds.add(renderer.addDynamicMesh(lGeo.positions, lGeo.normals, lGeo.indices, color))
+          }
+          dv.labelPositions.add(c.labelPosition)
+        }
+      }
+      activeLabels += dv.labelMeshIds.size
+      if (dv.barMeshId >= 0) {
+        identityMatrix()
+        renderer.setDynamicMeshTransform(dv.barMeshId, matrix)
+      }
+      for (i in dv.labelMeshIds.indices) {
+        billboardMatrix(dv.labelPositions[i], cameraWorld)
+        renderer.setDynamicMeshTransform(dv.labelMeshIds[i], matrix)
+      }
+    }
+    for (seg in tapeSegments) positionTape(seg, cameraWorld)
+    activeTape?.let { positionTape(it, cameraWorld) }
+  }
+
+  private fun positionTape(t: TapeVisual, cameraWorld: FloatArray) {
+    if (t.lineMeshId >= 0) {
+      identityMatrix()
+      renderer.setDynamicMeshTransform(t.lineMeshId, matrix)
+    }
+    if (t.labelMeshId >= 0) {
+      val mid =
+        doubleArrayOf(
+          (t.start[0] + t.end[0]) * 0.5,
+          (t.start[1] + t.end[1]) * 0.5 + 0.035,
+          (t.start[2] + t.end[2]) * 0.5,
+        )
+      billboardMatrix(mid, cameraWorld)
+      renderer.setDynamicMeshTransform(t.labelMeshId, matrix)
+    }
+  }
+
+  private fun zeroMatrix() {
+    matrix.fill(0f)
+    matrix[15] = 1f
+  }
+
+  private fun identityMatrix() {
+    matrix.fill(0f)
+    matrix[0] = 1f
+    matrix[5] = 1f
+    matrix[10] = 1f
+    matrix[15] = 1f
+  }
+
+  private fun billboardMatrix(pos: DoubleArray, cameraWorld: FloatArray) {
+    val dx = cameraWorld.getOrElse(12) { 0f } - pos[0]
+    val dy = cameraWorld.getOrElse(13) { 1.6f } - pos[1]
+    val dz = cameraWorld.getOrElse(14) { 0f } - pos[2]
+    val horiz = Math.hypot(dx, dz)
+    val yaw = Math.atan2(dx, dz)
+    val pitch = -Math.atan2(dy, Math.max(horiz, 1e-5))
+    val q = MagneticSnap.quatFromEulerYXZ(pitch, yaw, 0.0)
+    val dMat = XRSpatialMath.mat4FromTRS(pos, q, doubleArrayOf(1.0, 1.0, 1.0))
+    for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
+  }
+
+  /**
+   * Evaluates and applies `magnetic-snap` constraints for a manipulated node, updating its pose,
+   * preview torus ring, and firing [Listener.onSnap] / [Listener.onUnsnap].
+   */
+  @JvmOverloads
+  fun applyMagneticSnap(
+    nodeIndex: Int,
+    rawWorldPosition: DoubleArray,
+    rawWorldQuaternion: DoubleArray,
+    planes: List<MagneticSnap.SurfacePlane> = emptyList(),
+    released: Boolean = false,
+  ): MagneticSnap.Evaluation? {
+    if (disposed || nodeIndex !in 0 until scene.nodeCount) return null
+    val cfg = snapTraits[nodeIndex] ?: return null
+    val sockets = ArrayList<MagneticSnap.SocketCandidate>(socketTraits.size)
+    val socketNodeById = HashMap<String, Int>(socketTraits.size)
+    for ((sNode, sCfg) in socketTraits) {
+      if (sNode == nodeIndex || !session.isEffectivelyVisible(sNode)) continue
+      if (!session.nodeWorldMatrix(sNode, world)) continue
+      val id = "socket#$sNode"
+      val q = XRSpatialMath.extractQuaternion(world)
+      sockets.add(
+        MagneticSnap.SocketCandidate(
+          id = id,
+          tag = sCfg.tag,
+          position = doubleArrayOf(world[12], world[13], world[14]),
+          quaternion = q,
+          radius = sCfg.radius,
+          alignRotation = sCfg.alignRotation,
+          highlightColor = sCfg.highlightColor,
+        )
+      )
+      socketNodeById[id] = sNode
+    }
+    val mb = scene.meshBounds.getOrNull(scene.nodeMesh[nodeIndex])
+    val curT = session.nodeTransform(nodeIndex)
+    val sy = curT?.scale?.getOrNull(1)?.toDouble() ?: 1.0
+    val bottomOffset = if (mb != null && mb[1] < -0.001) -mb[1] * sy else 0.0
+    val prevId = activeSocketByNode[nodeIndex]
+    val ev =
+      MagneticSnap.evaluate(
+        position = rawWorldPosition,
+        quaternion = rawWorldQuaternion,
+        config = cfg,
+        sockets = sockets,
+        planes = planes,
+        currentSocketId = prevId,
+        bottomOffset = bottomOffset,
+        defaultFloorY = floorY ?: 0.0,
+      )
+
+    if (prevId != null && prevId != ev.matchedSocketId) {
+      listener?.onUnsnap(nodeIndex, socketNodeById[prevId])
+    }
+    if (ev.matchedSocketId != null) {
+      if (ev.matchedSocketId != prevId) {
+        listener?.onSnap(nodeIndex, socketNodeById[ev.matchedSocketId], ev.position.copyOf(), ev.quaternion.copyOf(), "socket")
+      }
+      activeSocketByNode[nodeIndex] = ev.matchedSocketId
+    } else {
+      activeSocketByNode.remove(nodeIndex)
+      if (released && (ev.mode == "grid" || ev.mode == "surface")) {
+        listener?.onSnap(nodeIndex, null, ev.position.copyOf(), ev.quaternion.copyOf(), ev.mode)
+      }
+    }
+    if (released) {
+      activeSocketByNode.remove(nodeIndex)
+    }
+
+    if (ev.mode != "none" && curT != null) {
+      session.setNodeWorldPose(nodeIndex, ev.position, ev.quaternion)
+    }
+
+    val previewSock = if (!released && ev.previewSocketId != null) sockets.firstOrNull { it.id == ev.previewSocketId } else null
+    if (previewSock == null) {
+      if (previewRingMeshId >= 0) {
+        zeroMatrix()
+        renderer.setDynamicMeshTransform(previewRingMeshId, matrix)
+      }
+    } else {
+      val rad = Math.max(0.03, previewSock.radius * 0.75)
+      if (previewRingMeshId < 0 || Math.abs(previewRingRadius - rad) > 1e-3) {
+        if (previewRingMeshId >= 0) renderer.removeDynamicMesh(previewRingMeshId)
+        val rGeo = MagneticSnap.buildSnapRingGeometry(rad, Math.max(0.004, rad * 0.08))
+        previewRingMeshId =
+          renderer.addDynamicMesh(rGeo.positions, rGeo.normals, rGeo.indices, parseHexRgba(previewSock.highlightColor, 0.55f))
+        previewRingRadius = rad
+      }
+      val pulse = 1.0 + 0.07 * Math.sin(pulsePhase)
+      val dMat = XRSpatialMath.mat4FromTRS(previewSock.position, previewSock.quaternion, doubleArrayOf(pulse, pulse, pulse))
+      for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
+      renderer.setDynamicMeshTransform(previewRingMeshId, matrix)
+    }
+    return ev
   }
 
   private fun layoutOf(h: HandleNode): ManipulationHandles.Layout? {
@@ -436,6 +837,8 @@ constructor(
     private const val PARTICLE_SIZE = 0.012
 
     private val HANDLE_COLOR = floatArrayOf(0.95f, 0.95f, 1f, 0.9f)
+    private val MEASURE_COLOR = floatArrayOf(0.22f, 0.74f, 0.97f, 1f)
+    private val LABEL_COLOR = floatArrayOf(1f, 1f, 1f, 1f)
     private val PARTICLE_DEFAULT_COLOR = floatArrayOf(0.8f, 0.9f, 1f, 1f)
     private val PARTICLE_COLORS =
       mapOf(

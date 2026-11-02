@@ -116,6 +116,11 @@ export class XRLiveElement extends ThreeLiveElement {
       'xr-simulator',
       'xr-profile',
       'sound-feedback',
+      'spatial-measure',
+      'measure-unit',
+      'magnetic-snap',
+      'snap-grid',
+      'snap-angle',
     ];
   }
 

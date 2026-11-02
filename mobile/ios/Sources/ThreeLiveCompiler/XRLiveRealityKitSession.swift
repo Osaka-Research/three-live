@@ -425,6 +425,15 @@
       }
     }
 
+    /// Sets a node's world-space position and orientation (through parent chains and
+    /// `rootTransform`) in both the session and RealityKit.
+    public func setNodeWorldPose(_ index: Int, position: SIMD3<Float>, rotation: simd_quatf) {
+      let reference = referenceEntity ?? root
+      session.rootTransform = reference.transformMatrix(relativeTo: nil)
+      guard session.setNodeWorldPose(index, position: position, rotation: rotation) else { return }
+      applyPendingChanges()
+    }
+
     /// Shows or hides the built-in 3D AR surface placement reticle and reference floor grid
     /// at height `groundY` (meters) for in-app AR surface placement previews when camera-based
     /// AR Quick Look is unavailable (e.g. on the iOS Simulator).

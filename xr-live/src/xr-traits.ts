@@ -58,6 +58,8 @@ export interface ActiveGrabState {
   initialScale: [number, number, number];
   initialPosition: [number, number, number];
   initialQuaternion: [number, number, number, number];
+  rawTargetPosition: [number, number, number];
+  rawTargetQuaternion: [number, number, number, number];
 }
 
 export function extractPosition(m: Float32Array): [number, number, number] {
@@ -255,6 +257,28 @@ export class XRTraitSystem {
     return this.activeGrabs.has(mesh);
   }
 
+  /** Returns all meshes currently held by an active grab. */
+  public getGrabbedMeshes(): any[] {
+    return Array.from(this.activeGrabs.keys());
+  }
+
+  /**
+   * Returns the unsnapped target pose computed from the hand/controller for an
+   * actively grabbed mesh, or `null` if `mesh` is not currently grabbed.
+   */
+  public getRawGrabPose(mesh: unknown): {
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+  } | null {
+    const s = this.activeGrabs.get(mesh);
+    return s
+      ? {
+          position: [...s.rawTargetPosition] as [number, number, number],
+          quaternion: [...s.rawTargetQuaternion] as [number, number, number, number],
+        }
+      : null;
+  }
+
   /**
    * Starts a 1-hand or 2-hand grab on a mesh with `userData.xr.grab`.
    */
@@ -264,7 +288,9 @@ export class XRTraitSystem {
     handPose: XRPose6DoF,
   ): boolean {
     const traits = getMeshXRTraits(mesh);
-    if (!traits?.grab) return false;
+    if (!traits?.grab && !(traits as {grabbable?: boolean} | undefined)?.grabbable) {
+      return false;
+    }
 
     const existing = this.activeGrabs.get(mesh);
     if (existing && existing.primaryHand !== hand && traits.grab !== '1-hand') {
@@ -281,6 +307,8 @@ export class XRTraitSystem {
     const relMat = mat4Create();
     mat4Multiply(relMat, invController, mesh.transform);
 
+    const initPos = extractPosition(mesh.transform);
+    const initQuat = extractQuaternion(mesh.transform);
     this.activeGrabs.set(mesh, {
       mesh,
       primaryHand: hand,
@@ -289,8 +317,10 @@ export class XRTraitSystem {
       initialHandDist: 0,
       initialHandVec: [1, 0, 0],
       initialScale: extractScale(mesh.transform),
-      initialPosition: extractPosition(mesh.transform),
-      initialQuaternion: extractQuaternion(mesh.transform),
+      initialPosition: initPos,
+      initialQuaternion: initQuat,
+      rawTargetPosition: [...initPos],
+      rawTargetQuaternion: [...initQuat],
     });
     return true;
   }
@@ -422,6 +452,8 @@ export class XRTraitSystem {
             dqw * iw - dqx * ix - dqy * iy - dqz * iz,
           ];
 
+          state.rawTargetPosition = [...midPos];
+          state.rawTargetQuaternion = [...nextQ];
           mat4FromRotationTranslationScale(mesh.transform, nextQ, midPos, [
             state.initialScale[0] * scaleFactor,
             state.initialScale[1] * scaleFactor,
@@ -441,6 +473,8 @@ export class XRTraitSystem {
         const targetQuat = extractQuaternion(targetMat);
         const currScale = extractScale(mesh.transform);
         const targetScale = extractScale(targetMat);
+        state.rawTargetPosition = [...targetPos];
+        state.rawTargetQuaternion = [...targetQuat];
 
         const nextPos: [number, number, number] = [
           currPos[0] + (targetPos[0] - currPos[0]) * alpha,
