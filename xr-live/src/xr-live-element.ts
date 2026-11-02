@@ -33,13 +33,17 @@ import {
 } from '../../three-live/src/plugin';
 import {webxrPlugin} from '../../three-live/src/plugins/webxr';
 import {ThreeLiveElement} from '../../three-live/src/three-live-element';
-import {WebXRSessionManager} from '../../three-live/src/three-xr';
+import {
+  WebXRSessionManager,
+  type ARLaunchResult,
+} from '../../three-live/src/three-xr';
 import type {XRCapturedFrame, XRTransitionOptions} from './xr-extras';
 import {XRInputManager} from './xr-input';
 import {
   launchBestMobileOrHeadsetAR,
   type MobileARLaunchReport,
 } from './xr-mobile-bridge';
+import type {XRCameraCollisionContext} from './xr-physics';
 import {
   getXRExtras,
   registerXRExtras,
@@ -247,7 +251,13 @@ export class XRLiveElement extends ThreeLiveElement {
    * Steps all `<xr-live>` spatial subsystems (`slots`, `simulator`, `traits`, `physics`, `transitions`, `audio`)
    * for `dt` seconds. Automatically invoked during WebXR frames and desktop simulator loops.
    */
-  public stepSpatialFrame(dt = 1 / 60, customViewer?: any): void {
+  public stepSpatialFrame(
+    dt = 1 / 60,
+    customViewer?: any,
+    xrCameraContext?: XRCameraCollisionContext & {
+      headPositionLocal?: [number, number, number];
+    },
+  ): void {
     if (!(dt > 0)) return;
     const viewer = this._getViewer(customViewer);
     if (!viewer) return;
@@ -256,9 +266,15 @@ export class XRLiveElement extends ThreeLiveElement {
     this.slotManager.syncSlots(this, viewer);
 
     // 2. Determine active head and hand poses
-    const headPose: XRPose6DoF = this.simulator.active
+    const baseHeadPose: XRPose6DoF = this.simulator.active
       ? this.simulator.stepLocomotion(dt)
       : this.simulator.getHeadPose();
+    const headPose: XRPose6DoF = xrCameraContext?.headPositionLocal
+      ? {
+          ...baseHeadPose,
+          position: xrCameraContext.headPositionLocal,
+        }
+      : baseHeadPose;
 
     const handPoses = {
       ...this.inputManager.getHandPoses(),
@@ -270,14 +286,20 @@ export class XRLiveElement extends ThreeLiveElement {
         : {}),
     };
 
+    const isARSession = Boolean(
+      viewer.xrSessionActive && xrCameraContext?.isAR !== false,
+    );
+    const activeFloorY = isARSession ? -0.25 : this.simulator.room.floorY;
+    const activeTableY = isARSession ? -0.25 : this.simulator.room.tableY;
+
     // 3. Step declarative manipulation, capsule billboarding, follow springs, and plane anchors
     this.traitSystem.update(
       viewer.meshes || [],
       headPose,
       handPoses,
       dt,
-      this.simulator.room.floorY,
-      this.simulator.room.tableY,
+      activeFloorY,
+      activeTableY,
     );
 
     // 4. Step analytical heightfield & sphere-to-sphere physics
@@ -285,13 +307,14 @@ export class XRLiveElement extends ThreeLiveElement {
       viewer.meshes || [],
       dt,
       this.xrDepth !== 'none' ? this.depthManager : undefined,
-      this.simulator.room.floorY,
-      this.simulator.room.tableY,
+      activeFloorY,
+      activeTableY,
       (mesh, _speed) => {
         if (this.soundFeedback) {
           this.audioController.playEarcon('bounce');
         }
       },
+      xrCameraContext,
     );
 
     // 5. Step AR <-> VR passthrough transition fade & spatial audio
@@ -343,6 +366,34 @@ export class XRLiveElement extends ThreeLiveElement {
       this.depthManager,
       options,
     );
+  }
+
+  /**
+   * Overrides `<three-live>`'s default `activateAR()` so clicking the built-in AR button
+   * launches the full `<xr-live>` spatial session (hiding virtual floor/pedestal surfaces,
+   * configuring hardware depth & hand tracking, and managing WebXR lifecycle).
+   */
+  public override async activateAR(): Promise<ARLaunchResult> {
+    try {
+      const report = await this.enterSpatialAR();
+      const mode =
+        report.platform === 'ios-quicklook'
+          ? 'quick-look'
+          : report.platform === 'android-scene-viewer'
+            ? 'scene-viewer'
+            : 'webxr';
+      return {
+        mode,
+        success: report.platform !== 'simulator',
+        session: this.activeXRSession || undefined,
+      };
+    } catch (err: any) {
+      return {
+        mode: 'webxr',
+        success: false,
+        error: err instanceof Error ? err : new Error(String(err)),
+      };
+    }
   }
 
   /**
@@ -440,6 +491,8 @@ function resolveXRLiveHost(viewer: any): XRLiveElement | undefined {
     : undefined;
 }
 
+const lastXRFrameTimes = new WeakMap<object, number>();
+
 /**
  * Registers the `xr-live-spatial-engine` plugin with `ThreeLive` so active WebXR sessions
  * automatically invoke `XRDepthManager`, `XRInputManager`, `XRHandGestureClassifier`, and `stepSpatialFrame`.
@@ -460,6 +513,13 @@ export const xrLiveSpatialPlugin: ThreeLivePlugin = {
   onXRFrame(viewer: any, session: any, frame: any, refSpace: any): void {
     const host = resolveXRLiveHost(viewer);
     if (!host) return;
+
+    const now =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const prev = lastXRFrameTimes.get(viewer) || 0;
+    lastXRFrameTimes.set(viewer, now);
+    const dt =
+      prev > 0 ? Math.min(Math.max((now - prev) / 1000, 1 / 120), 0.05) : 1 / 72;
 
     const viewerPose = frame?.getViewerPose?.(refSpace);
     const firstView = viewerPose?.views?.[0];
@@ -483,14 +543,51 @@ export const xrLiveSpatialPlugin: ThreeLivePlugin = {
     if (host.xrHands !== 'none') {
       host.gestureClassifier.processXRFrame(host, session, frame, refSpace);
     }
-    host.stepSpatialFrame(1 / 72, viewer);
+
+    let headPositionLocal: [number, number, number] | undefined;
+    const camPos = firstView?.transform?.position;
+    const rm = viewer?.modelRootMatrix as Float32Array | undefined;
+    if (camPos && rm && rm.length === 16) {
+      const s2 = rm[0] * rm[0] + rm[1] * rm[1] + rm[2] * rm[2];
+      if (s2 > 1e-6) {
+        const dx = camPos.x - rm[12];
+        const dy = camPos.y - rm[13];
+        const dz = camPos.z - rm[14];
+        headPositionLocal = [
+          (rm[0] * dx + rm[1] * dy + rm[2] * dz) / s2,
+          (rm[4] * dx + rm[5] * dy + rm[6] * dz) / s2,
+          (rm[8] * dx + rm[9] * dy + rm[10] * dz) / s2,
+        ];
+      }
+    }
+
+    host.stepSpatialFrame(dt, viewer, {
+      modelRootMatrix: rm || null,
+      viewMatrix: firstView?.transform?.inverse?.matrix || null,
+      projMatrix: firstView?.projectionMatrix || null,
+      isAR: session?.environmentBlendMode !== 'opaque',
+      headPositionLocal,
+    });
   },
 
   onUpdate(viewer: any, dt: number): void {
+    if (viewer?.xrSessionActive) return;
     const host = resolveXRLiveHost(viewer);
     if (host) {
       host.stepSpatialFrame(dt, viewer);
     }
+  },
+
+  onXRSessionEnd(viewer: any): void {
+    if (viewer && typeof viewer === 'object') {
+      lastXRFrameTimes.delete(viewer);
+      viewer.onBeforeRenderXRView = undefined;
+      if (viewer.xrDepthState) {
+        viewer.xrDepthState.enabled = false;
+      }
+    }
+    const host = resolveXRLiveHost(viewer);
+    host?.depthManager?.clearSessionDepth?.(viewer);
   },
 };
 

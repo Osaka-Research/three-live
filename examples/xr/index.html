@@ -406,6 +406,90 @@ limitations under the License.
       display: block;
     }
 
+    #xr-viewer .three-live-ar-button {
+      display: none !important;
+    }
+
+    .xr-sim-banner {
+      display: none;
+      position: absolute;
+      top: 62px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 19;
+      background: rgba(10, 15, 26, 0.88);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      border-radius: 999px;
+      padding: 5px 14px;
+      font-size: 11px;
+      color: #bae6fd;
+      white-space: nowrap;
+      max-width: calc(100vw - 24px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    }
+
+    body.xr-immersive-active .xr-sim-banner {
+      display: block;
+    }
+
+    .xr-sim-touch-controls {
+      display: none;
+      position: absolute;
+      left: 50%;
+      bottom: 54px;
+      transform: translateX(-50%);
+      z-index: 21;
+      gap: 8px;
+      align-items: center;
+      background: rgba(10, 15, 26, 0.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      border-radius: 14px;
+      padding: 7px 10px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    body.xr-immersive-active .xr-sim-touch-controls {
+      display: flex;
+    }
+
+    .sim-dpad {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .sim-pad-btn {
+      background: #1e293b;
+      color: #f8fafc;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      min-width: 32px;
+      height: 32px;
+      padding: 0 7px;
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .sim-pad-btn:active,
+    .sim-pad-btn.held {
+      background: #0284c7;
+      border-color: #38bdf8;
+    }
+
     /* Immersive Headset Visor Overlay */
     .xr-visor-overlay {
       display: none;
@@ -781,14 +865,27 @@ limitations under the License.
       }
 
       .xr-virtual-hands {
-        left: 8px;
-        right: 8px;
-        bottom: 44px;
+        display: none !important;
       }
 
-      .xr-hand-pod {
-        padding: 6px 8px;
+      .xr-sim-banner {
+        top: 86px;
         font-size: 10px;
+        padding: 4px 10px;
+      }
+
+      .xr-sim-touch-controls {
+        bottom: 44px;
+        padding: 5px 8px;
+        gap: 6px;
+        max-width: calc(100vw - 16px);
+      }
+
+      .sim-pad-btn {
+        min-width: 28px;
+        height: 29px;
+        font-size: 10.5px;
+        padding: 0 6px;
       }
     }
   </style>
@@ -805,7 +902,7 @@ limitations under the License.
         <span class="tag-pill">&lt;xr-live&gt;</span>
         Spatial Computing Playground
       </h1>
-      <span class="size-pill"><span data-bundle-size="xr-live.min.js">62.8 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
+      <span class="size-pill"><span data-bundle-size="xr-live.min.js">63.9 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
@@ -837,7 +934,7 @@ limitations under the License.
           </div>
           <ol class="guide-list">
             <li><strong>Click any sphere</strong> in the 3D viewport (or press <kbd>Space</kbd>) to blast it upward.</li>
-            <li>Click <strong>Enter XR</strong> in the top-right to walk around in 1st-person 6DoF Headset Mode (<kbd>WASD</kbd> + <kbd>QE</kbd> + Gaze Reticle).</li>
+            <li>Tap <strong>📱 View in AR</strong> for real camera AR, or <strong>🥽 3D Sim</strong> to walk around in 1st-person 6DoF Headset Simulator mode.</li>
             <li>Drag the <strong>Gravity</strong> slider to negative/positive values for Zero-G floating.</li>
           </ol>
           <div class="btn-row">
@@ -949,10 +1046,27 @@ limitations under the License.
     <main class="viewport-pane">
       <div class="xr-visor-overlay"></div>
       <div class="xr-stereo-divider"></div>
+      <div class="xr-sim-banner" id="xr-sim-banner">
+        🥽 6DoF Headset Simulator (Virtual Room — Drag to look • Tap 📱 View in AR for Camera AR)
+      </div>
 
       <!-- Center Gaze Reticle (shown in Immersive Mode) -->
       <div class="xr-reticle" id="xr-reticle">
         <div class="xr-reticle-label" id="xr-reticle-label">Gaze Ray Ready</div>
+      </div>
+
+      <!-- Touch & Mouse Controls for 6DoF Headset Simulator -->
+      <div class="xr-sim-touch-controls" id="xr-sim-touch-controls">
+        <div class="sim-dpad">
+          <button type="button" class="sim-pad-btn" data-sim-key="KeyA" title="Strafe Left (A)">◀</button>
+          <button type="button" class="sim-pad-btn" data-sim-key="KeyW" title="Walk Forward (W)">▲</button>
+          <button type="button" class="sim-pad-btn" data-sim-key="KeyS" title="Walk Back (S)">▼</button>
+          <button type="button" class="sim-pad-btn" data-sim-key="KeyD" title="Strafe Right (D)">▶</button>
+          <button type="button" class="sim-pad-btn" data-sim-key="KeyE" title="Move Up (E)">Up</button>
+          <button type="button" class="sim-pad-btn" data-sim-key="KeyQ" title="Move Down (Q)">Dn</button>
+        </div>
+        <button type="button" class="action-btn primary" style="padding: 5px 9px; font-size: 11px;" onclick="fireSimReticle()">⚡ Fire</button>
+        <button type="button" class="action-btn purple" style="padding: 5px 9px; font-size: 11px;" onclick="cycleHandGesture()">✋ Gesture</button>
       </div>
 
       <!-- Virtual Left & Right 6DoF Hand Controllers (shown in Immersive Mode) -->
@@ -993,7 +1107,7 @@ limitations under the License.
           <button class="action-btn" id="btn-room-toggle" style="padding: 5px 9px; font-size: 11px;" onclick="toggleLivingRoom()">🏠 3D Room: OFF</button>
           <button class="action-btn" id="btn-stereo" style="display:none; padding: 5px 9px; font-size: 11px;" onclick="toggleStereoSBS()">Stereo SBS: OFF</button>
           <button class="action-btn primary" id="btn-view-ar" style="padding: 5px 10px; font-size: 11px;" onclick="launchCameraAR()">📱 View in AR</button>
-          <button class="action-btn" id="btn-enter-xr" style="padding: 5px 10px; font-size: 11px;" onclick="toggleXRSession()">🥽 Sim XR</button>
+          <button class="action-btn" id="btn-enter-xr" style="padding: 5px 10px; font-size: 11px;" title="6DoF Headset Simulator (virtual room, no camera)" onclick="toggleXRSession()">🥽 3D Sim</button>
         </div>
       </div>
 
@@ -1425,7 +1539,8 @@ return scene;`
       stereoSBS = !stereoSBS;
       document.body.classList.toggle('xr-stereo-sbs', stereoSBS);
       document.getElementById('btn-stereo').textContent = 'Stereo SBS: ' + (stereoSBS ? 'ON' : 'OFF');
-      setToast('Stereo Side-by-Side view: ' + (stereoSBS ? 'ON' : 'OFF'));
+      xrEl.viewer?.setStereoSBS?.(stereoSBS);
+      setToast('Stereo Side-by-Side 3D view: ' + (stereoSBS ? 'ON' : 'OFF'));
     }
 
     async function launchCameraAR() {
@@ -1448,7 +1563,7 @@ return scene;`
           return;
         }
         setToast(
-          'Camera WebXR AR is unavailable in this browser/emulator — use Chrome on an ARCore phone, Safari on iPhone/iPad, or click Sim XR.'
+          'Camera WebXR AR is unavailable in this browser/emulator — use Chrome on an ARCore phone, Safari on iPhone/iPad, or click 3D Sim.'
         );
       } catch (err) {
         setToast('AR notice: ' + (err?.message || String(err)));
@@ -1461,7 +1576,7 @@ return scene;`
         return;
       }
 
-      // Launch built-in 3D Headset Simulator Mode (WASD walk, virtual 6DoF hands, G gesture cycle)
+      // Launch built-in 3D Headset Simulator Mode (WASD/Touch walk, virtual 6DoF hands, gesture cycle)
       enterImmersiveSimulator();
     }
 
@@ -1469,7 +1584,7 @@ return scene;`
       immersiveSimActive = true;
       document.body.classList.add('xr-immersive-active');
       const btn = document.getElementById('btn-enter-xr');
-      btn.textContent = 'Exit Sim (Esc)';
+      btn.textContent = '✕ Exit Sim';
       btn.classList.add('danger');
       document.getElementById('btn-stereo').style.display = 'inline-flex';
       document.getElementById('kbd-hint-bar').innerHTML =
@@ -1479,38 +1594,44 @@ return scene;`
         '<span><kbd>Space</kbd> / <kbd>Click</kbd> Gaze Fire</span>' +
         '<span><kbd>G</kbd> Gesture</span>' +
         '<span><kbd>Esc</kbd> Exit Sim</span>';
-      if (xrEl.viewer) xrEl.viewer.resize();
-      xrEl.audioController?.playEarcon?.('snap');
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
-        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      if (isIOS) {
-        setToast('3D Headset Simulator active (no camera in simulator — tap "View in AR" for real iOS camera AR!)');
-      } else {
-        setToast('3D Headset Simulator active — use WASD/QE to walk & G or Gesture button to cycle hand gestures!');
+      if (xrEl.viewer) {
+        xrEl.viewer.resize();
+        xrEl.viewer.render();
       }
+      xrEl.audioController?.playEarcon?.('snap');
+      setToast('6DoF Headset Simulator active (virtual room — drag to look, D-pad/WASD to walk, tap "View in AR" for camera AR)');
     }
 
     function exitImmersiveSimulator() {
       immersiveSimActive = false;
       stereoSBS = false;
+      keysHeld.clear();
       document.body.classList.remove('xr-immersive-active', 'xr-stereo-sbs');
       const btn = document.getElementById('btn-enter-xr');
-      btn.textContent = '🥽 Sim XR';
+      btn.textContent = '🥽 3D Sim';
       btn.classList.remove('danger');
-      document.getElementById('btn-stereo').style.display = 'none';
+      const stereoBtn = document.getElementById('btn-stereo');
+      stereoBtn.style.display = 'none';
+      stereoBtn.textContent = 'Stereo SBS: OFF';
       document.getElementById('kbd-hint-bar').innerHTML =
         '<span><kbd>Click Sphere</kbd> Impulse</span>' +
         '<span><kbd>Click + Drag</kbd> Orbit</span>' +
         '<span><kbd>Space</kbd> Launch</span>' +
         '<span><kbd>G</kbd> Cycle Gesture</span>' +
         '<span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> Modes</span>';
-      if (xrEl.viewer) xrEl.viewer.resize();
-      setToast('Exited Immersive XR Session');
+      if (xrEl.viewer) {
+        xrEl.viewer.setStereoSBS?.(false);
+        xrEl.viewer.resize();
+        xrEl.viewer.render();
+      }
+      setToast('Exited 6DoF Headset Simulator');
     }
 
     let currentGazeHit = null;
     let lastPointerClientX = null;
     let lastPointerClientY = null;
+    let simPointerDownPos = null;
+    let simDragMoved = false;
 
     const GESTURE_ACTION_LABELS = {
       'open-palm': 'Force Push',
@@ -1521,15 +1642,71 @@ return scene;`
       'spread': '360° Scatter'
     };
 
+    xrEl.addEventListener('pointerdown', (e) => {
+      simPointerDownPos = [e.clientX, e.clientY];
+      simDragMoved = false;
+      if (e.pointerType !== 'mouse') {
+        lastPointerClientX = null;
+        lastPointerClientY = null;
+      }
+    });
+
     xrEl.addEventListener('pointermove', (e) => {
-      lastPointerClientX = e.clientX;
-      lastPointerClientY = e.clientY;
+      if (simPointerDownPos) {
+        const d = Math.hypot(e.clientX - simPointerDownPos[0], e.clientY - simPointerDownPos[1]);
+        if (d > 8) simDragMoved = true;
+      }
+      if (e.pointerType === 'mouse') {
+        lastPointerClientX = e.clientX;
+        lastPointerClientY = e.clientY;
+      } else {
+        lastPointerClientX = null;
+        lastPointerClientY = null;
+      }
+    });
+
+    xrEl.addEventListener('pointerup', (e) => {
+      simPointerDownPos = null;
+      if (e.pointerType !== 'mouse') {
+        lastPointerClientX = null;
+        lastPointerClientY = null;
+      }
+    });
+
+    xrEl.addEventListener('pointercancel', () => {
+      simPointerDownPos = null;
+      lastPointerClientX = null;
+      lastPointerClientY = null;
     });
 
     xrEl.addEventListener('pointerleave', () => {
       lastPointerClientX = null;
       lastPointerClientY = null;
     });
+
+    document.querySelectorAll('[data-sim-key]').forEach((btn) => {
+      const code = btn.getAttribute('data-sim-key');
+      const release = () => {
+        keysHeld.delete(code);
+        btn.classList.remove('held');
+      };
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        keysHeld.add(code);
+        btn.classList.add('held');
+      });
+      btn.addEventListener('pointerup', release);
+      btn.addEventListener('pointercancel', release);
+      btn.addEventListener('pointerleave', release);
+    });
+
+    function fireSimReticle() {
+      if (currentGazeHit) {
+        executeGestureOnHit(currentGazeHit);
+      } else {
+        launchBall();
+      }
+    }
 
     const STATIC_SURFACES = new Set(['Room_Floor', 'Pedestal_Table', 'Workbench_Pedestal']);
 
@@ -1657,10 +1834,13 @@ return scene;`
       executeGestureOnHit(e.detail);
     });
 
-    // In Immersive Simulator mode, clicking anywhere executes the active gesture on the reticle target
+    // In Immersive Simulator mode, tapping/clicking (without dragging) executes the active gesture on the reticle target
     xrEl.addEventListener('click', () => {
-      if (immersiveSimActive && currentGazeHit) {
+      if (!immersiveSimActive || simDragMoved) return;
+      if (currentGazeHit) {
         executeGestureOnHit(currentGazeHit);
+      } else {
+        launchBall();
       }
     });
 
@@ -1673,94 +1853,97 @@ return scene;`
 
       const viewer = xrEl.viewer;
       if (viewer && Array.isArray(viewer.meshes)) {
-        if (xrEl.simulator && xrEl.simulator.room) {
-          xrEl.simulator.room.floorY = xrRoomEnabled ? -0.48 : -0.80;
-          xrEl.simulator.room.tableY = xrRoomEnabled ? -0.005 : -0.20;
-        }
-        if (xrEl.physics) {
-          xrEl.physics.colliders = xrRoomEnabled ? LIVING_ROOM_COLLIDERS : [];
-          xrEl.physics.roomBounds = xrRoomEnabled ? LIVING_ROOM_BOUNDS : DEFAULT_ROOM_BOUNDS;
-        }
+        if (!viewer.xrSessionActive) {
+          if (xrEl.simulator && xrEl.simulator.room) {
+            xrEl.simulator.room.floorY = xrRoomEnabled ? -0.48 : -0.80;
+            xrEl.simulator.room.tableY = xrRoomEnabled ? -0.005 : -0.20;
+          }
+          if (xrEl.physics) {
+            xrEl.physics.colliders = xrRoomEnabled ? LIVING_ROOM_COLLIDERS : [];
+            xrEl.physics.roomBounds = xrRoomEnabled ? LIVING_ROOM_BOUNDS : DEFAULT_ROOM_BOUNDS;
+          }
 
-        // Step 6DoF WASD + Q/E headset locomotion (drives real 3D camera + simulator head pose)
-        const theta = typeof viewer.currTheta === 'number' ? viewer.currTheta : 0.6;
-        const phi = typeof viewer.currPhi === 'number' ? viewer.currPhi : 0.35;
-        const dist = typeof viewer.currDistance === 'number' ? viewer.currDistance : 2.5;
-        const fwdX = -Math.sin(theta);
-        const fwdZ = -Math.cos(theta);
-        const rightX = Math.cos(theta);
-        const rightZ = -Math.sin(theta);
+          // Step 6DoF WASD + Q/E headset locomotion (drives real 3D camera + simulator head pose)
+          const theta = typeof viewer.currTheta === 'number' ? viewer.currTheta : 0.6;
+          const phi = typeof viewer.currPhi === 'number' ? viewer.currPhi : 0.35;
+          const dist = typeof viewer.currDistance === 'number' ? viewer.currDistance : 2.5;
+          const fwdX = -Math.sin(theta);
+          const fwdZ = -Math.cos(theta);
+          const rightX = Math.cos(theta);
+          const rightZ = -Math.sin(theta);
 
-        let moveX = 0;
-        let moveY = 0;
-        let moveZ = 0;
-        const speed = 2.4 * dt;
-        if (keysHeld.has('KeyW')) { moveX += fwdX * speed; moveZ += fwdZ * speed; }
-        if (keysHeld.has('KeyS')) { moveX -= fwdX * speed; moveZ -= fwdZ * speed; }
-        if (keysHeld.has('KeyA')) { moveX -= rightX * speed; moveZ -= rightZ * speed; }
-        if (keysHeld.has('KeyD')) { moveX += rightX * speed; moveZ += rightZ * speed; }
-        if (keysHeld.has('KeyE')) { moveY += speed; }
-        if (keysHeld.has('KeyQ')) { moveY -= speed; }
+          let moveX = 0;
+          let moveY = 0;
+          let moveZ = 0;
+          const speed = 2.4 * dt;
+          if (keysHeld.has('KeyW')) { moveX += fwdX * speed; moveZ += fwdZ * speed; }
+          if (keysHeld.has('KeyS')) { moveX -= fwdX * speed; moveZ -= fwdZ * speed; }
+          if (keysHeld.has('KeyA')) { moveX -= rightX * speed; moveZ -= rightZ * speed; }
+          if (keysHeld.has('KeyD')) { moveX += rightX * speed; moveZ += rightZ * speed; }
+          if (keysHeld.has('KeyE')) { moveY += speed; }
+          if (keysHeld.has('KeyQ')) { moveY -= speed; }
 
-        const baseTarget = viewer.customTarget
-          ? [...viewer.customTarget]
-          : (viewer.bounds ? [...viewer.bounds.center] : [0, 0, 0]);
+          const baseTarget = viewer.customTarget
+            ? [...viewer.customTarget]
+            : (viewer.bounds ? [...viewer.bounds.center] : [0, 0, 0]);
 
-        if (moveX !== 0 || moveY !== 0 || moveZ !== 0) {
-          baseTarget[0] += moveX;
-          baseTarget[1] += moveY;
-          baseTarget[2] += moveZ;
-          viewer.customTarget = baseTarget;
-        }
+          if (moveX !== 0 || moveY !== 0 || moveZ !== 0) {
+            baseTarget[0] += moveX;
+            baseTarget[1] += moveY;
+            baseTarget[2] += moveZ;
+            viewer.customTarget = baseTarget;
+          }
 
-        const eyePos = [
-          baseTarget[0] + dist * Math.cos(phi) * Math.sin(theta),
-          baseTarget[1] + dist * Math.sin(phi),
-          baseTarget[2] + dist * Math.cos(phi) * Math.cos(theta),
-        ];
+          const eyePos = [
+            baseTarget[0] + dist * Math.cos(phi) * Math.sin(theta),
+            baseTarget[1] + dist * Math.sin(phi),
+            baseTarget[2] + dist * Math.cos(phi) * Math.cos(theta),
+          ];
 
-        if (xrEl.simulator) {
-          xrEl.simulator.headPosition = [...eyePos];
-          xrEl.simulator.headYaw = -theta;
-          xrEl.simulator.headPitch = -phi;
-        }
+          if (xrEl.simulator) {
+            xrEl.simulator.headPosition = [...eyePos];
+            xrEl.simulator.headYaw = -theta;
+            xrEl.simulator.headPitch = -phi;
+          }
 
-        document.getElementById('hud-pose').textContent =
-          eyePos.map((v) => v.toFixed(2)).join(', ');
+          document.getElementById('hud-pose').textContent =
+            eyePos.map((v) => v.toFixed(2)).join(', ');
 
-        // Continuous 6DoF Hand/Gaze Raycast + 3D Emissive Hover Highlight
-        const canvas = viewer.canvas;
-        if (canvas && typeof viewer.raycastFromScreenPoint === 'function') {
-          const rect = canvas.getBoundingClientRect();
-          const hasPointer = lastPointerClientX !== null && lastPointerClientY !== null;
-          const aimX = hasPointer ? lastPointerClientX : (rect.left + rect.width * 0.5);
-          const aimY = hasPointer ? lastPointerClientY : (rect.top + rect.height * 0.5);
-          const hit = hasPointer ? viewer.raycastFromScreenPoint(aimX, aimY) : null;
-          currentGazeHit = hit;
+          // Continuous 6DoF Hand/Gaze Raycast + 3D Emissive Hover Highlight
+          const canvas = viewer.canvas;
+          if (canvas && typeof viewer.raycastFromScreenPoint === 'function') {
+            const rect = canvas.getBoundingClientRect();
+            const hasPointer = lastPointerClientX !== null && lastPointerClientY !== null;
+            const aimX = hasPointer ? lastPointerClientX : (rect.left + rect.width * 0.5);
+            const aimY = hasPointer ? lastPointerClientY : (rect.top + rect.height * 0.5);
+            const shouldRaycast = hasPointer || immersiveSimActive;
+            const hit = shouldRaycast ? viewer.raycastFromScreenPoint(aimX, aimY) : null;
+            currentGazeHit = hit;
 
-          // Highlight targeted mesh in 3D via ThreeLiveViewer's emissive selection shader
-          viewer.selectedMeshName = hit ? (hit.meshName || '') : '';
+            // Highlight targeted mesh in 3D via ThreeLiveViewer's emissive selection shader
+            viewer.selectedMeshName = hit ? (hit.meshName || '') : '';
 
-          if (immersiveSimActive) {
-            document.getElementById('xr-left-pose').textContent =
-              'Pos: [' + (eyePos[0] - 0.22 * rightX + 0.5 * fwdX).toFixed(2) + ', ' + (eyePos[1] - 0.25).toFixed(2) + ', ' + (eyePos[2] - 0.22 * rightZ + 0.5 * fwdZ).toFixed(2) + ']';
-            document.getElementById('xr-right-pose').textContent =
-              'Pos: [' + (eyePos[0] + 0.22 * rightX + 0.5 * fwdX).toFixed(2) + ', ' + (eyePos[1] - 0.25).toFixed(2) + ', ' + (eyePos[2] + 0.22 * rightZ + 0.5 * fwdZ).toFixed(2) + ']';
+            if (immersiveSimActive) {
+              document.getElementById('xr-left-pose').textContent =
+                'Pos: [' + (eyePos[0] - 0.22 * rightX + 0.5 * fwdX).toFixed(2) + ', ' + (eyePos[1] - 0.25).toFixed(2) + ', ' + (eyePos[2] - 0.22 * rightZ + 0.5 * fwdZ).toFixed(2) + ']';
+              document.getElementById('xr-right-pose').textContent =
+                'Pos: [' + (eyePos[0] + 0.22 * rightX + 0.5 * fwdX).toFixed(2) + ', ' + (eyePos[1] - 0.25).toFixed(2) + ', ' + (eyePos[2] + 0.22 * rightZ + 0.5 * fwdZ).toFixed(2) + ']';
 
-            const reticle = document.getElementById('xr-reticle');
-            const label = document.getElementById('xr-reticle-label');
-            // Position reticle at live hand/pointer ray location
-            reticle.style.left = (aimX - rect.left) + 'px';
-            reticle.style.top = (aimY - rect.top) + 'px';
-            const gesture = GESTURES[gestureIdx] || 'open-palm';
-            const actionName = GESTURE_ACTION_LABELS[gesture] || gesture;
-            if (hit) {
-              reticle.classList.add('hit');
-              const name = hit.meshName || ('Mesh #' + hit.meshIndex);
-              label.textContent = name + ' (' + hit.distance.toFixed(2) + 'm) • [' + gesture + ': ' + actionName + ']';
-            } else {
-              reticle.classList.remove('hit');
-              label.textContent = 'Aim Hand Ray • [' + gesture + ': ' + actionName + ']';
+              const reticle = document.getElementById('xr-reticle');
+              const label = document.getElementById('xr-reticle-label');
+              // Position reticle at live hand/pointer ray location
+              reticle.style.left = (aimX - rect.left) + 'px';
+              reticle.style.top = (aimY - rect.top) + 'px';
+              const gesture = GESTURES[gestureIdx] || 'open-palm';
+              const actionName = GESTURE_ACTION_LABELS[gesture] || gesture;
+              if (hit) {
+                reticle.classList.add('hit');
+                const name = hit.meshName || ('Mesh #' + hit.meshIndex);
+                label.textContent = name + ' (' + hit.distance.toFixed(2) + 'm) • [' + gesture + ': ' + actionName + ']';
+              } else {
+                reticle.classList.remove('hit');
+                label.textContent = 'Aim Center Ray • [' + gesture + ': ' + actionName + ']';
+              }
             }
           }
         }
@@ -2019,13 +2202,19 @@ return scene;`
       keysHeld.delete(e.code);
     });
 
-    window.addEventListener('resize', () => {
-      xrEl.viewer?.resize?.();
-    });
+    const syncViewportResize = () => {
+      const v = xrEl.viewer;
+      if (!v) return;
+      v.resize?.();
+      if (!v.xrSessionActive) {
+        v.render?.();
+      }
+    };
+    window.addEventListener('resize', syncViewportResize);
     if (typeof ResizeObserver !== 'undefined') {
       const vp = document.querySelector('.viewport-pane');
       if (vp) {
-        new ResizeObserver(() => xrEl.viewer?.resize?.()).observe(vp);
+        new ResizeObserver(syncViewportResize).observe(vp);
       }
     }
 

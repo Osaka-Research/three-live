@@ -36,6 +36,13 @@ export interface PhysicsBodyState {
   friction: number;
 }
 
+export interface XRCameraCollisionContext {
+  modelRootMatrix?: Float32Array | null;
+  viewMatrix?: Float32Array | null;
+  projMatrix?: Float32Array | null;
+  isAR?: boolean;
+}
+
 export class XRHeightfieldPhysics {
   private bodies = new WeakMap<object, PhysicsBodyState>();
   public gravity: [number, number, number] = [0, -9.81, 0];
@@ -98,6 +105,7 @@ export class XRHeightfieldPhysics {
     floorY = 0,
     tableY?: number,
     onBounce?: (mesh: any, speed: number) => void,
+    xrCameraContext?: XRCameraCollisionContext,
   ): void {
     if (!(dt > 0)) return;
     const clampedDt = Math.max(0.001, Math.min(0.05, dt));
@@ -126,27 +134,136 @@ export class XRHeightfieldPhysics {
 
       // 2. Check WebXR hardware depth heightfield collision
       if (depthManager && depthManager.getLatestDepthInfo()) {
-        const u = Math.max(0, Math.min(1, pos[0] * 0.5 + 0.5));
-        const v = Math.max(0, Math.min(1, 0.5 - pos[1] * 0.35));
-        const sample = depthManager.sampleDepthAndNormal(u, v);
-        if (sample) {
-          const virtDepth = Math.abs(pos[2]);
-          if (
-            virtDepth + body.radius > sample.depthMeters &&
-            virtDepth - body.radius < sample.depthMeters + 0.25
-          ) {
-            const [nx, ny, nz] = sample.normal;
-            const vDotN =
-              body.velocity[0] * nx +
-              body.velocity[1] * ny +
-              body.velocity[2] * nz;
-            if (vDotN < 0) {
-              const j = -(1 + body.restitution) * vDotN;
-              body.velocity[0] += j * nx;
-              body.velocity[1] += j * ny;
-              body.velocity[2] += j * nz;
-              pos[2] = -Math.max(0.05, sample.depthMeters - body.radius);
-              onBounce?.(mesh, Math.abs(vDotN));
+        const viewMat = xrCameraContext?.viewMatrix;
+        const projMat = xrCameraContext?.projMatrix;
+        if (viewMat && projMat) {
+          const rm = xrCameraContext?.modelRootMatrix;
+          const sRoot = rm
+            ? Math.hypot(rm[0], rm[1], rm[2]) || 1
+            : 1;
+          const wx = rm
+            ? rm[0] * pos[0] + rm[4] * pos[1] + rm[8] * pos[2] + rm[12]
+            : pos[0];
+          const wy = rm
+            ? rm[1] * pos[0] + rm[5] * pos[1] + rm[9] * pos[2] + rm[13]
+            : pos[1];
+          const wz = rm
+            ? rm[2] * pos[0] + rm[6] * pos[1] + rm[10] * pos[2] + rm[14]
+            : pos[2];
+
+          const vx =
+            viewMat[0] * wx + viewMat[4] * wy + viewMat[8] * wz + viewMat[12];
+          const vy =
+            viewMat[1] * wx + viewMat[5] * wy + viewMat[9] * wz + viewMat[13];
+          const vz =
+            viewMat[2] * wx + viewMat[6] * wy + viewMat[10] * wz + viewMat[14];
+          const camDist = -vz;
+
+          const cx =
+            projMat[0] * vx + projMat[4] * vy + projMat[8] * vz + projMat[12];
+          const cy =
+            projMat[1] * vx + projMat[5] * vy + projMat[9] * vz + projMat[13];
+          const cw =
+            projMat[3] * vx + projMat[7] * vy + projMat[11] * vz + projMat[15];
+
+          if (cw > 0.05 && camDist > 0.15) {
+            const u = (cx / cw) * 0.5 + 0.5;
+            const v = 0.5 - (cy / cw) * 0.5;
+            if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+              const sample = depthManager.sampleDepthAndNormal(u, v);
+              const worldRadius = body.radius * sRoot;
+              if (
+                sample &&
+                sample.depthMeters > 0.2 &&
+                camDist + worldRadius > sample.depthMeters &&
+                camDist - worldRadius < sample.depthMeters + 0.18
+              ) {
+                const [vnx, vny, vnz] = sample.normal;
+                const invS = 1 / sRoot;
+                const m00 = rm ? rm[0] * invS : 1,
+                  m10 = rm ? rm[1] * invS : 0,
+                  m20 = rm ? rm[2] * invS : 0;
+                const m01 = rm ? rm[4] * invS : 0,
+                  m11 = rm ? rm[5] * invS : 1,
+                  m21 = rm ? rm[6] * invS : 0;
+                const m02 = rm ? rm[8] * invS : 0,
+                  m12 = rm ? rm[9] * invS : 0,
+                  m22 = rm ? rm[10] * invS : 1;
+
+                // Column vectors of R_vm = R_v * R_m in view space
+                const r00 =
+                  viewMat[0] * m00 + viewMat[4] * m10 + viewMat[8] * m20;
+                const r10 =
+                  viewMat[1] * m00 + viewMat[5] * m10 + viewMat[9] * m20;
+                const r20 =
+                  viewMat[2] * m00 + viewMat[6] * m10 + viewMat[10] * m20;
+
+                const r01 =
+                  viewMat[0] * m01 + viewMat[4] * m11 + viewMat[8] * m21;
+                const r11 =
+                  viewMat[1] * m01 + viewMat[5] * m11 + viewMat[9] * m21;
+                const r21 =
+                  viewMat[2] * m01 + viewMat[6] * m11 + viewMat[10] * m21;
+
+                const r02 =
+                  viewMat[0] * m02 + viewMat[4] * m12 + viewMat[8] * m22;
+                const r12 =
+                  viewMat[1] * m02 + viewMat[5] * m12 + viewMat[9] * m22;
+                const r22 =
+                  viewMat[2] * m02 + viewMat[6] * m12 + viewMat[10] * m22;
+
+                let lnx = r00 * vnx + r10 * vny + r20 * vnz;
+                let lny = r01 * vnx + r11 * vny + r21 * vnz;
+                let lnz = r02 * vnx + r12 * vny + r22 * vnz;
+                const nLen = Math.hypot(lnx, lny, lnz) || 1;
+                lnx /= nLen;
+                lny /= nLen;
+                lnz /= nLen;
+
+                const vDotN =
+                  body.velocity[0] * lnx +
+                  body.velocity[1] * lny +
+                  body.velocity[2] * lnz;
+                if (vDotN < 0) {
+                  const j = -(1 + body.restitution) * vDotN;
+                  body.velocity[0] += j * lnx;
+                  body.velocity[1] += j * lny;
+                  body.velocity[2] += j * lnz;
+                  const pushLocal = Math.min(
+                    (camDist + worldRadius - sample.depthMeters) * invS,
+                    body.radius * 1.5,
+                  );
+                  pos[0] += lnx * pushLocal;
+                  pos[1] += lny * pushLocal;
+                  pos[2] += lnz * pushLocal;
+                  onBounce?.(mesh, Math.abs(vDotN));
+                }
+              }
+            }
+          }
+        } else {
+          const u = Math.max(0, Math.min(1, pos[0] * 0.5 + 0.5));
+          const v = Math.max(0, Math.min(1, 0.5 - pos[1] * 0.35));
+          const sample = depthManager.sampleDepthAndNormal(u, v);
+          if (sample) {
+            const virtDepth = Math.abs(pos[2]);
+            if (
+              virtDepth + body.radius > sample.depthMeters &&
+              virtDepth - body.radius < sample.depthMeters + 0.25
+            ) {
+              const [nx, ny, nz] = sample.normal;
+              const vDotN =
+                body.velocity[0] * nx +
+                body.velocity[1] * ny +
+                body.velocity[2] * nz;
+              if (vDotN < 0) {
+                const j = -(1 + body.restitution) * vDotN;
+                body.velocity[0] += j * nx;
+                body.velocity[1] += j * ny;
+                body.velocity[2] += j * nz;
+                pos[2] = -Math.max(0.05, sample.depthMeters - body.radius);
+                onBounce?.(mesh, Math.abs(vDotN));
+              }
             }
           }
         }
@@ -194,7 +311,8 @@ export class XRHeightfieldPhysics {
         }
       }
 
-      for (const box of this.colliders) {
+      const activeColliders = xrCameraContext?.isAR ? [] : this.colliders;
+      for (const box of activeColliders) {
         const cx = Math.max(box.min[0], Math.min(box.max[0], pos[0]));
         const cy = Math.max(box.min[1], Math.min(box.max[1], pos[1]));
         const cz = Math.max(box.min[2], Math.min(box.max[2], pos[2]));

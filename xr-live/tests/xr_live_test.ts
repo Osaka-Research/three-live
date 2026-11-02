@@ -33,7 +33,11 @@ import {
 } from '../src/xr-extras';
 import {classifyHandJoints, type XRHandJointMap} from '../src/xr-gestures';
 import {raycastGpuMeshes, XRInputManager} from '../src/xr-input';
-import {XRAnchorElement, XRLiveElement} from '../src/xr-live-element';
+import {
+  XRAnchorElement,
+  XRLiveElement,
+  xrLiveSpatialPlugin,
+} from '../src/xr-live-element';
 import {
   buildAndroidSceneViewerIntentUrl,
   launchBestMobileOrHeadsetAR,
@@ -909,6 +913,150 @@ async function runXRLiveTests() {
       delete gAny['navigator'];
     }
   }
+
+  // =========================================================================
+  // Regression X3: Android WebXR Depth Unpacking, Post-AR Freeze Guard & Plugin Lifecycle
+  // =========================================================================
+  const sessionInitCfg: Record<string, any> = {};
+  depthMgr.configureSessionInit(sessionInitCfg, 'occlusion-physics');
+  assert(
+    Array.isArray(sessionInitCfg['depthSensing']?.usagePreference) &&
+      sessionInitCfg['depthSensing'].usagePreference.length === 1 &&
+      sessionInitCfg['depthSensing'].usagePreference[0] === 'cpu-optimized',
+    'Regression X3: XRDepthManager requests only cpu-optimized depth (preventing InvalidStateError on gpu-optimized Android sessions)',
+  );
+
+  let unpackAlignmentSet: number | null = null;
+  const texParams: Array<[number, number]> = [];
+  const u16MockGl: any = {
+    ...mockGl,
+    NEAREST: 0x2600,
+    LINEAR: 0x2601,
+    UNPACK_ALIGNMENT: 0x0cf5,
+    TEXTURE_MIN_FILTER: 0x2801,
+    TEXTURE_MAG_FILTER: 0x2800,
+    pixelStorei: (_pname: number, param: number) => {
+      unpackAlignmentSet = param;
+    },
+    texParameteri: (_target: number, pname: number, param: number) => {
+      texParams.push([pname, param]);
+    },
+  };
+  const u16DepthViewer: any = {
+    gl: u16MockGl,
+    xrDepthState: {
+      enabled: false,
+      texture: null,
+      format: 0,
+      rawValueToMeters: 0.001,
+    },
+  };
+  // 90x160 portrait Android ARCore depth buffer (180 bytes/row -> non-4-byte aligned!)
+  depthMgr.updateFromXRFrame(
+    u16DepthViewer,
+    {
+      session: {depthUsage: 'cpu-optimized', depthDataFormat: 'luminance-alpha'},
+      getDepthInformation: () => ({
+        width: 90,
+        height: 160,
+        rawValueToMeters: 0.001,
+        data: new Uint16Array(90 * 160).fill(1200),
+      }),
+    },
+    {},
+    true,
+  );
+  assert(
+    u16DepthViewer.xrDepthState.enabled === true &&
+      u16DepthViewer.xrDepthState.format === 0 &&
+      unpackAlignmentSet === 1 &&
+      texParams.some((p) => p[0] === 0x2801 && p[1] === 0x2600) &&
+      texParams.some((p) => p[0] === 0x2800 && p[1] === 0x2600),
+    'Regression X3: 16-bit luminance-alpha depth upload sets UNPACK_ALIGNMENT=1 and NEAREST filtering',
+  );
+
+  // Stale XRCPUDepthInformation outside an XRFrame throws InvalidStateError on getDepthInMeters()
+  depthMgr.setSyntheticDepthInfo({
+    width: 4,
+    height: 4,
+    getDepthInMeters: () => {
+      throw new Error('InvalidStateError: XRFrame is no longer active');
+    },
+  });
+  let survivedStaleDepth = false;
+  let staleSample: unknown = 'unset';
+  try {
+    staleSample = depthMgr.sampleDepthAndNormal(0.5, 0.5);
+    survivedStaleDepth = true;
+  } catch {
+    survivedStaleDepth = false;
+  }
+  assert(
+    survivedStaleDepth &&
+      staleSample === null &&
+      depthMgr.getLatestDepthInfo() === null,
+    'Regression X3: sampleDepthAndNormal catches expired XRFrame InvalidStateError and clears stale depth info without freezing renderLoop',
+  );
+
+  // Sentinel u16 depth >= 65500 should be ignored
+  depthMgr.setSyntheticDepthInfo({
+    width: 4,
+    height: 4,
+    rawValueToMeters: 0.001,
+    data: new Uint16Array(16).fill(65535),
+  });
+  assert(
+    depthMgr.sampleDepthAndNormal(0.5, 0.5) === null,
+    'Regression X3: sampleDepthAndNormal ignores invalid u16 sentinel depth >= 65500',
+  );
+
+  depthMgr.clearSessionDepth(u16DepthViewer);
+  assert(
+    u16DepthViewer.xrDepthState.enabled === false &&
+      depthMgr.getLatestDepthInfo() === null,
+    'Regression X3: clearSessionDepth disables xrDepthState and clears cached depth info',
+  );
+  depthMgr.dispose(u16MockGl);
+
+  // Verify xrLiveSpatialPlugin skips onUpdate during active XR session & cleans up on onXRSessionEnd
+  const pluginHost = new XRLiveElement();
+  (pluginHost as any).getAttribute = () => null;
+  (pluginHost as any).hasAttribute = () => false;
+  let hostStepCalls = 0;
+  pluginHost.stepSpatialFrame = () => {
+    hostStepCalls++;
+  };
+  const mockActiveXRViewer: any = {
+    container: pluginHost,
+    xrSessionActive: true,
+    xrDepthState: {enabled: true},
+    onBeforeRenderXRView: () => {},
+  };
+  xrLiveSpatialPlugin.onUpdate?.(mockActiveXRViewer, 1 / 60);
+  assert(
+    hostStepCalls === 0,
+    'Regression X3: xrLiveSpatialPlugin.onUpdate skips stepping while viewer.xrSessionActive is true (no double-step)',
+  );
+  xrLiveSpatialPlugin.onXRSessionEnd?.(mockActiveXRViewer);
+  assert(
+    mockActiveXRViewer.onBeforeRenderXRView === undefined &&
+      mockActiveXRViewer.xrDepthState.enabled === false,
+    'Regression X3: xrLiveSpatialPlugin.onXRSessionEnd clears onBeforeRenderXRView and xrDepthState',
+  );
+
+  // Verify XRLiveElement.activateAR() delegates to enterSpatialAR()
+  let enterSpatialARCalled = false;
+  arElement.enterSpatialAR = async () => {
+    enterSpatialARCalled = true;
+    return {platform: 'ios-quicklook', usdzByteLength: 256};
+  };
+  const activateRes = await arElement.activateAR();
+  assert(
+    enterSpatialARCalled &&
+      activateRes.mode === 'quick-look' &&
+      activateRes.success === true,
+    'Regression X3: XRLiveElement.activateAR() delegates to enterSpatialAR()',
+  );
 
   console.log(`\n🏆 xr-live Test Results: ${passed} Passed, ${failed} Failed.`);
   if (failed > 0) process.exit(1);

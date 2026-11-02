@@ -43,9 +43,20 @@ export class XRDepthManager {
     optional.add('depth-sensing');
     sessionInit.optionalFeatures = Array.from(optional);
     sessionInit.depthSensing = {
-      usagePreference: ['cpu-optimized', 'gpu-optimized'],
+      usagePreference: ['cpu-optimized'],
       dataFormatPreference: ['luminance-alpha', 'float32'],
     };
+  }
+
+  /**
+   * Clears transient WebXR session depth buffers when an immersive session ends
+   * so inline post-AR frames never read invalidated `XRCPUDepthInformation`.
+   */
+  public clearSessionDepth(viewer?: any): void {
+    this.latestDepthInfo = null;
+    if (viewer?.xrDepthState) {
+      viewer.xrDepthState.enabled = false;
+    }
   }
 
   /**
@@ -58,18 +69,26 @@ export class XRDepthManager {
     enabled = true,
   ): XRCPUDepthInfo | null {
     if (!viewer) return null;
-    if (!enabled || !frame || typeof frame.getDepthInformation !== 'function') {
-      if (viewer.xrDepthState) {
-        viewer.xrDepthState.enabled = false;
-      }
+    const session = frame?.session || (xrView as any)?.session;
+    if (
+      !enabled ||
+      !frame ||
+      typeof frame.getDepthInformation !== 'function' ||
+      (session?.depthUsage && session.depthUsage !== 'cpu-optimized')
+    ) {
+      this.clearSessionDepth(viewer);
       return null;
     }
 
-    const depthInfo: XRCPUDepthInfo | null = frame.getDepthInformation(xrView);
+    let depthInfo: XRCPUDepthInfo | null = null;
+    try {
+      depthInfo = frame.getDepthInformation(xrView);
+    } catch {
+      this.clearSessionDepth(viewer);
+      return null;
+    }
     if (!depthInfo) {
-      if (viewer.xrDepthState) {
-        viewer.xrDepthState.enabled = false;
-      }
+      this.clearSessionDepth(viewer);
       return null;
     }
 
@@ -77,69 +96,86 @@ export class XRDepthManager {
     const gl = viewer.gl as WebGL2RenderingContext | undefined;
     const isFloat32 =
       depthInfo.data instanceof Float32Array ||
-      (xrView as any)?.session?.depthDataFormat === 'float32';
+      session?.depthDataFormat === 'float32';
 
-    if (gl && depthInfo.data && typeof gl.createTexture === 'function') {
-      if (!this.depthTexture) {
-        this.depthTexture = gl.createTexture();
-      }
-      if (this.depthTexture) {
-        gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
-        if (isFloat32) {
-          const floatData =
-            depthInfo.data instanceof Float32Array
-              ? depthInfo.data
-              : new Float32Array(
-                  depthInfo.data instanceof ArrayBuffer
-                    ? depthInfo.data
-                    : (depthInfo.data as ArrayBufferView).buffer,
-                );
-          gl.texImage2D(
-            gl.TEXTURE_2D,
-            0,
-            (gl as any).R32F || gl.RED,
-            depthInfo.width,
-            depthInfo.height,
-            0,
-            gl.RED,
-            gl.FLOAT,
-            floatData,
-          );
+    let uploadedOk = false;
+    if (
+      gl &&
+      depthInfo.data &&
+      depthInfo.width > 0 &&
+      depthInfo.height > 0 &&
+      typeof gl.createTexture === 'function'
+    ) {
+      try {
+        if (!this.depthTexture) {
+          this.depthTexture = gl.createTexture();
+        }
+        if (this.depthTexture) {
+          gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
+          gl.pixelStorei?.(gl.UNPACK_ALIGNMENT ?? 0x0cf5, 1);
+          if (isFloat32) {
+            const floatData =
+              depthInfo.data instanceof Float32Array
+                ? depthInfo.data
+                : new Float32Array(
+                    depthInfo.data instanceof ArrayBuffer
+                      ? depthInfo.data
+                      : (depthInfo.data as ArrayBufferView).buffer,
+                    depthInfo.data instanceof ArrayBuffer
+                      ? 0
+                      : (depthInfo.data as ArrayBufferView).byteOffset,
+                    depthInfo.width * depthInfo.height,
+                  );
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              (gl as any).R32F || gl.RED,
+              depthInfo.width,
+              depthInfo.height,
+              0,
+              gl.RED,
+              gl.FLOAT,
+              floatData,
+            );
+          } else {
+            const rawBytes =
+              depthInfo.data instanceof Uint8Array
+                ? depthInfo.data
+                : depthInfo.data instanceof ArrayBuffer
+                  ? new Uint8Array(depthInfo.data)
+                  : new Uint8Array(
+                      (depthInfo.data as ArrayBufferView).buffer,
+                      (depthInfo.data as ArrayBufferView).byteOffset,
+                      (depthInfo.data as ArrayBufferView).byteLength,
+                    );
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.LUMINANCE_ALPHA,
+              depthInfo.width,
+              depthInfo.height,
+              0,
+              gl.LUMINANCE_ALPHA,
+              gl.UNSIGNED_BYTE,
+              rawBytes,
+            );
+          }
+          // Packed 16-bit LUMINANCE_ALPHA and float depth must use NEAREST so
+          // low/high bytes never linearly interpolate across 256-step wraps.
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        } else {
-          const rawBytes =
-            depthInfo.data instanceof Uint8Array
-              ? depthInfo.data
-              : depthInfo.data instanceof ArrayBuffer
-                ? new Uint8Array(depthInfo.data)
-                : new Uint8Array(
-                    (depthInfo.data as ArrayBufferView).buffer,
-                    (depthInfo.data as ArrayBufferView).byteOffset,
-                    (depthInfo.data as ArrayBufferView).byteLength,
-                  );
-          gl.texImage2D(
-            gl.TEXTURE_2D,
-            0,
-            gl.LUMINANCE_ALPHA,
-            depthInfo.width,
-            depthInfo.height,
-            0,
-            gl.LUMINANCE_ALPHA,
-            gl.UNSIGNED_BYTE,
-            rawBytes,
-          );
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          uploadedOk = true;
         }
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      } catch {
+        uploadedOk = false;
       }
     }
 
     if (viewer.xrDepthState) {
-      viewer.xrDepthState.enabled = true;
-      viewer.xrDepthState.texture = this.depthTexture;
+      viewer.xrDepthState.enabled = Boolean(this.depthTexture && uploadedOk);
+      viewer.xrDepthState.texture = uploadedOk ? this.depthTexture : null;
       viewer.xrDepthState.format = isFloat32 ? 1 : 0;
       viewer.xrDepthState.rawValueToMeters =
         depthInfo.rawValueToMeters ?? (isFloat32 ? 1.0 : 0.001);
@@ -181,7 +217,12 @@ export class XRDepthManager {
       const cu = Math.max(0, Math.min(1, nu));
       const cv = Math.max(0, Math.min(1, nv));
       if (typeof info.getDepthInMeters === 'function') {
-        return info.getDepthInMeters(cu, cv);
+        try {
+          return info.getDepthInMeters(cu, cv);
+        } catch {
+          this.latestDepthInfo = null;
+          return 0;
+        }
       }
       if (info.data) {
         const ix = Math.min(
@@ -200,7 +241,9 @@ export class XRDepthManager {
           info.data instanceof Uint16Array
             ? info.data
             : new Uint16Array(info.data as ArrayBuffer);
-        return (u16[idx] || 0) * (info.rawValueToMeters ?? 0.001);
+        const raw = u16[idx] || 0;
+        if (raw >= 65500) return 0;
+        return raw * (info.rawValueToMeters ?? 0.001);
       }
       return 0;
     };

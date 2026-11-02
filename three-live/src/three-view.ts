@@ -362,6 +362,7 @@ uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclu
 uniform float uNormalScale,uOcclusionStrength,uXrRawValueToMeters;
 uniform mat4 uXrDepthUVTransform;
 uniform vec2 uViewportSize;
+uniform vec4 uViewport;
 uniform int uToneMapping,uNumDirLights,uNumPointLights;
 uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2];
 out vec4 fragColor;
@@ -512,15 +513,18 @@ color=color*(vec3(1.0)-ccF)+getStudioRadiance(R,uClearcoat.y)*ccF*uEnvIntensity;
 color=applyToneMapping(color,uToneMapping);
 float outAlpha=base.a;
 if(uXrDepthEnabled==1){
-vec2 normViewUV=gl_FragCoord.xy/max(uViewportSize,vec2(1.0));
+vec2 normViewUV=vec2((gl_FragCoord.x-uViewport.x)/max(uViewport.z,1.0),1.0-(gl_FragCoord.y-uViewport.y)/max(uViewport.w,1.0));
 vec2 depthUV=(uXrDepthUVTransform*vec4(normViewUV,0.0,1.0)).xy;
+if(depthUV.x>=0.0&&depthUV.x<=1.0&&depthUV.y>=0.0&&depthUV.y<=1.0){
 vec4 depthSample=texture(uXrDepthTex,depthUV);
-float realDepth=(uXrDepthFormat==1?depthSample.r:(depthSample.r+depthSample.a*256.0))*uXrRawValueToMeters;
+float rawDepth=uXrDepthFormat==1?depthSample.r:(depthSample.r*255.0+depthSample.a*65280.0);
+float realDepth=rawDepth*uXrRawValueToMeters;
 float virtDepth=length(uCameraPos-vWorldPos);
-if(realDepth>0.05&&virtDepth>realDepth){
-float occAlpha=1.0-smoothstep(0.0,0.025,virtDepth-realDepth);
+if(rawDepth>0.0&&(uXrDepthFormat==1||rawDepth<65500.0)&&realDepth>0.15&&realDepth<20.0&&virtDepth>realDepth+0.02){
+float occAlpha=1.0-smoothstep(0.0,0.035,virtDepth-realDepth-0.02);
 outAlpha*=occAlpha;
 if(outAlpha<0.01)discard;
+}
 }
 }
 fragColor=vec4(color,outAlpha);
@@ -622,6 +626,7 @@ const RENDER_UNIFORMS = [
   'uXrRawValueToMeters',
   'uXrDepthUVTransform',
   'uViewportSize',
+  'uViewport',
 ] as const;
 
 interface PrimitiveGpu {
@@ -2536,7 +2541,7 @@ export class ThreeView {
     const clampedX = Math.max(0, Math.min(w - 1, canvasX));
     const readY = Math.max(0, Math.min(h - 1, h - 1 - canvasY));
 
-    if (this.pickFbo && gl) {
+    if (this.pickFbo && gl && !this.xrSessionActive) {
       if (this.pickFboWidth !== w || this.pickFboHeight !== h) {
         this.resizePickingFbo(w, h);
       }
@@ -2750,6 +2755,40 @@ export class ThreeView {
     return detail;
   }
 
+  public stereoSBS = false;
+
+  public setStereoSBS(enabled: boolean): void {
+    this.stereoSBS = Boolean(enabled);
+    if (!this.xrSessionActive) {
+      this.syncCameraMatrices();
+      this.render();
+    }
+  }
+
+  private syncCameraMatrices(): void {
+    const aspect =
+      Math.max(1, this.canvas.width || 1) /
+      Math.max(1, this.canvas.height || 1);
+    const farPlane =
+      this.backdropMeshes.length > 0
+        ? Math.max(this.bounds.radius * 20, 120)
+        : Math.max(this.bounds.radius * 20, 10);
+    mat4Perspective(this.projMatrix, this.fov, aspect, 0.1, farPlane);
+
+    const c = this.customTarget || this.bounds.center;
+    const eyeX =
+      c[0] +
+      this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
+    const eyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
+    const eyeZ =
+      c[2] +
+      this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
+
+    mat4LookAt(this.viewMatrix, [eyeX, eyeY, eyeZ], c, [0, 1, 0]);
+    mat4Multiply(this.mvpMatrix, this.projMatrix, this.viewMatrix);
+    mat3NormalFromMat4(this.normalMatrix, this.modelMatrix);
+  }
+
   public resize(): void {
     const dpr = Math.min(
       (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1,
@@ -2762,6 +2801,11 @@ export class ThreeView {
       this.canvas.width = w;
       this.canvas.height = h;
       this.resizePickingFbo(w, h);
+      if (!this.xrSessionActive) {
+        this.syncCameraMatrices();
+      }
+    } else if (!this.xrSessionActive && this.projMatrix[0] === 0) {
+      this.syncCameraMatrices();
     }
   }
 
@@ -2773,11 +2817,16 @@ export class ThreeView {
     const wasActive = this.xrSessionActive;
     this.xrSessionActive = active;
     if (wasActive && !active) {
+      this.xrDepthState.enabled = false;
+      for (const plugin of registeredPlugins) {
+        plugin.onXRSessionEnd?.(this);
+      }
       this.lastTime =
         typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.updateTurntableMatrix();
       if (this.isVisible) {
         this.resize();
+        this.syncCameraMatrices();
         this.render();
       }
     }
@@ -2791,17 +2840,25 @@ export class ThreeView {
 
   public start(): void {
     if (this.animFrameId !== null) return;
-    this.lastTime = performance.now();
+    this.lastTime =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
     const renderLoop = (time: number) => {
-      const dt = Math.min((time - this.lastTime) / 1000, 0.1);
+      if (this.animFrameId === null) return;
+      const dt = Math.min(Math.max((time - this.lastTime) / 1000, 0), 0.1);
       this.lastTime = time;
 
       if (this.isVisible && !this.xrSessionActive) {
-        this.resize();
-        this.update(dt);
-        this.render();
+        try {
+          this.resize();
+          this.update(dt);
+          this.render();
+        } catch (_) {
+          // Keep animation loop alive across transient plugin/context errors.
+        }
       }
-      this.animFrameId = requestAnimationFrame(renderLoop);
+      if (this.animFrameId !== null) {
+        this.animFrameId = requestAnimationFrame(renderLoop);
+      }
     };
     this.animFrameId = requestAnimationFrame(renderLoop);
   }
@@ -2893,25 +2950,7 @@ export class ThreeView {
     this.currPhi += (this.targetPhi - this.currPhi) * 0.12;
     this.currDistance += (this.targetDistance - this.currDistance) * 0.12;
 
-    const aspect = (this.canvas.width || 1) / (this.canvas.height || 1);
-    const farPlane =
-      this.backdropMeshes.length > 0
-        ? Math.max(this.bounds.radius * 20, 120)
-        : this.bounds.radius * 20;
-    mat4Perspective(this.projMatrix, this.fov, aspect, 0.1, farPlane);
-
-    const c = this.customTarget || this.bounds.center;
-    const eyeX =
-      c[0] +
-      this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
-    const eyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
-    const eyeZ =
-      c[2] +
-      this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
-
-    mat4LookAt(this.viewMatrix, [eyeX, eyeY, eyeZ], c, [0, 1, 0]);
-    mat4Multiply(this.mvpMatrix, this.projMatrix, this.viewMatrix);
-    mat3NormalFromMat4(this.normalMatrix, this.modelMatrix);
+    this.syncCameraMatrices();
 
     // Telemetry emission (cameraChange)
     const thetaDeg = Math.round(
@@ -3019,18 +3058,90 @@ export class ThreeView {
     clear?: boolean;
     isAR?: boolean;
   }): void {
+    if (!xrOverride && this.stereoSBS) {
+      const fullW = Math.max(2, this.canvas.width || 2);
+      const fullH = Math.max(1, this.canvas.height || 1);
+      const halfW = Math.max(1, Math.floor(fullW * 0.5));
+      const rightW = Math.max(1, fullW - halfW);
+      const farPlane =
+        this.backdropMeshes.length > 0
+          ? Math.max(this.bounds.radius * 20, 120)
+          : Math.max(this.bounds.radius * 20, 10);
+      const c = this.customTarget || this.bounds.center;
+      const baseEyeX =
+        c[0] +
+        this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
+      const baseEyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
+      const baseEyeZ =
+        c[2] +
+        this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
+      const rightVecX = Math.cos(this.currTheta);
+      const rightVecZ = -Math.sin(this.currTheta);
+      const halfIpd = 0.032;
+
+      const leftProj = mat4Create();
+      const leftView = mat4Create();
+      const leftEye: [number, number, number] = [
+        baseEyeX - rightVecX * halfIpd,
+        baseEyeY,
+        baseEyeZ - rightVecZ * halfIpd,
+      ];
+      const leftTarget: [number, number, number] = [
+        c[0] - rightVecX * halfIpd * 0.25,
+        c[1],
+        c[2] - rightVecZ * halfIpd * 0.25,
+      ];
+      mat4Perspective(leftProj, this.fov, halfW / fullH, 0.1, farPlane);
+      mat4LookAt(leftView, leftEye, leftTarget, [0, 1, 0]);
+
+      const rightProj = mat4Create();
+      const rightView = mat4Create();
+      const rightEye: [number, number, number] = [
+        baseEyeX + rightVecX * halfIpd,
+        baseEyeY,
+        baseEyeZ + rightVecZ * halfIpd,
+      ];
+      const rightTarget: [number, number, number] = [
+        c[0] + rightVecX * halfIpd * 0.25,
+        c[1],
+        c[2] + rightVecZ * halfIpd * 0.25,
+      ];
+      mat4Perspective(rightProj, this.fov, rightW / fullH, 0.1, farPlane);
+      mat4LookAt(rightView, rightEye, rightTarget, [0, 1, 0]);
+
+      this.render({
+        viewMatrix: leftView,
+        projMatrix: leftProj,
+        eyePos: leftEye,
+        viewport: [0, 0, halfW, fullH],
+        eye: 'left',
+        clear: true,
+        isAR: false,
+      });
+      this.render({
+        viewMatrix: rightView,
+        projMatrix: rightProj,
+        eyePos: rightEye,
+        viewport: [halfW, 0, rightW, fullH],
+        eye: 'right',
+        clear: false,
+        isAR: false,
+      });
+      this.gl.viewport(0, 0, fullW, fullH);
+      return;
+    }
+
     const gl = this.gl;
+    let vpX = 0;
+    let vpY = 0;
     let vpW = this.canvas.width;
     let vpH = this.canvas.height;
     if (xrOverride?.viewport) {
-      gl.viewport(
-        xrOverride.viewport[0],
-        xrOverride.viewport[1],
-        xrOverride.viewport[2],
-        xrOverride.viewport[3],
-      );
+      vpX = xrOverride.viewport[0];
+      vpY = xrOverride.viewport[1];
       vpW = xrOverride.viewport[2];
       vpH = xrOverride.viewport[3];
+      gl.viewport(vpX, vpY, vpW, vpH);
     } else {
       gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     }
@@ -3152,6 +3263,15 @@ export class ThreeView {
           }
           if (u.uViewportSize) {
             gl.uniform2f(u.uViewportSize, Math.max(1, vpW), Math.max(1, vpH));
+          }
+          if (u.uViewport) {
+            gl.uniform4f(
+              u.uViewport,
+              vpX,
+              vpY,
+              Math.max(1, vpW),
+              Math.max(1, vpH),
+            );
           }
           if (this.xrDepthState.enabled && this.xrDepthState.texture) {
             gl.activeTexture(gl.TEXTURE5);

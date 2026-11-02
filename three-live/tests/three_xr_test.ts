@@ -608,6 +608,68 @@ async function runXRTests() {
       setupFailedAsExpected && brokenEnded && !brokenMgr.isSessionActive(),
       'WebXRSessionManager calls session.end() on post-requestSession failure so subsequent AR taps never wedge',
     );
+
+    // Verify <xr-live> scales to 0.55 on handheld Android phones and 1.0 on headsets
+    let androidXrRootScale = 0;
+    setMockNavigator({
+      userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 9) Mobile',
+      xr: {
+        async isSessionSupported() {
+          return true;
+        },
+        async requestSession() {
+          let cb: any = null;
+          return {
+            renderState: {},
+            addEventListener() {},
+            updateRenderState() {},
+            async requestReferenceSpace() {
+              return {};
+            },
+            requestAnimationFrame(fn: any) {
+              if (!cb) {
+                cb = fn;
+                fn(16, {
+                  getViewerPose: () => ({
+                    views: [
+                      {
+                        eye: 'none',
+                        projectionMatrix: new Float32Array(16),
+                        transform: {
+                          position: {x: 0, y: 1.5, z: 0},
+                          matrix: new Float32Array([
+                            1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1.5, 0, 1,
+                          ]),
+                          inverse: {matrix: new Float32Array(16)},
+                        },
+                      },
+                    ],
+                  }),
+                });
+              }
+              return 1;
+            },
+            async end() {},
+          };
+        },
+      },
+    });
+    const fakeXrLiveView: any = {
+      bounds: {radius: 1.8, center: [0, 0, 0], min: [-1.7, -0.85, -1.7]},
+      meshes: [],
+      modelRootMatrix: new Float32Array(16),
+      setXRSessionActive() {},
+      renderXRView(_v: any, mat: Float32Array) {
+        androidXrRootScale = Math.hypot(mat[0], mat[2]);
+      },
+    };
+    const xrLiveMgr = new WebXRSessionManager();
+    await xrLiveMgr.start(fakeXrLiveView, {tagName: 'XR-LIVE'});
+    await xrLiveMgr.stop();
+    assert(
+      Math.abs(androidXrRootScale - 0.55) < 1e-3,
+      'WebXRSessionManager scales <xr-live> scenes by 0.55x on handheld Android phones so room-scale ballpit fits portrait FOV',
+    );
   } finally {
     if (origNavDesc) {
       Object.defineProperty(globalThis, 'navigator', origNavDesc);
@@ -616,6 +678,110 @@ async function runXRTests() {
     }
     g['XRWebGLLayer'] = origXRWebGLLayer;
   }
+
+  // -------------------------------------------------------------------------
+  // 8. ThreeView Aspect-Ratio Sync on Resize & Stereo SBS Dual-Viewport Render
+  // -------------------------------------------------------------------------
+  let rectW = 390;
+  let rectH = 350;
+  const viewportsCalled: Array<[number, number, number, number]> = [];
+  const mockCanvas: any = {
+    width: 390,
+    height: 350,
+    style: {},
+    addEventListener() {},
+    removeEventListener() {},
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width: rectW,
+      height: rectH,
+    }),
+  };
+  const mockGl2: any = {
+    VERTEX_SHADER: 0x8b31,
+    FRAGMENT_SHADER: 0x8b30,
+    COMPILE_STATUS: 0x8b81,
+    LINK_STATUS: 0x8b82,
+    FRAMEBUFFER: 0x8d40,
+    RENDERBUFFER: 0x8d41,
+    TEXTURE_2D: 0x0de1,
+    RGBA: 0x1908,
+    UNSIGNED_BYTE: 0x1401,
+    COLOR_ATTACHMENT0: 0x8ce0,
+    DEPTH_ATTACHMENT: 0x8d00,
+    DEPTH_COMPONENT16: 0x81a5,
+    DEPTH_TEST: 0x0b71,
+    COLOR_BUFFER_BIT: 0x4000,
+    DEPTH_BUFFER_BIT: 0x0100,
+    NEAREST: 0x2600,
+    CLAMP_TO_EDGE: 0x812f,
+    TEXTURE_MIN_FILTER: 0x2801,
+    TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802,
+    TEXTURE_WRAP_T: 0x2803,
+    createShader: () => ({}),
+    shaderSource() {},
+    compileShader() {},
+    getShaderParameter: () => true,
+    createProgram: () => ({}),
+    attachShader() {},
+    linkProgram() {},
+    getProgramParameter: () => true,
+    getUniformLocation: () => ({}),
+    createFramebuffer: () => ({}),
+    bindFramebuffer() {},
+    createTexture: () => ({}),
+    bindTexture() {},
+    texImage2D() {},
+    texParameteri() {},
+    createRenderbuffer: () => ({}),
+    bindRenderbuffer() {},
+    renderbufferStorage() {},
+    framebufferTexture2D() {},
+    framebufferRenderbuffer() {},
+    viewport: (x: number, y: number, w: number, h: number) => {
+      viewportsCalled.push([x, y, w, h]);
+    },
+    enable() {},
+    disable() {},
+    clearColor() {},
+    clear() {},
+    deleteProgram() {},
+    deleteFramebuffer() {},
+    deleteTexture() {},
+    deleteRenderbuffer() {},
+  };
+  mockCanvas.getContext = () => mockGl2;
+  const mockContainer: any = {
+    appendChild() {},
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const tv = new ThreeView(mockContainer, {
+    canvas: mockCanvas,
+    autoStart: false,
+  });
+  tv.resize();
+  const landscapeProjX = (tv as any).projMatrix[0];
+  // Simulate mobile Sim XR expanding viewport from 390x350 landscape to 390x844 portrait
+  rectW = 390;
+  rectH = 844;
+  tv.resize();
+  const portraitProjX = (tv as any).projMatrix[0];
+  assert(
+    portraitProjX > landscapeProjX * 2.0,
+    'ThreeView.resize() immediately updates projMatrix aspect ratio on portrait expansion (preventing egg-shaped spheres)',
+  );
+
+  viewportsCalled.length = 0;
+  tv.setStereoSBS(true);
+  assert(
+    viewportsCalled.some((v) => v[0] === 0 && v[2] === 195 && v[3] === 844) &&
+      viewportsCalled.some((v) => v[0] === 195 && v[2] === 195 && v[3] === 844),
+    'ThreeView.setStereoSBS(true) renders left and right eye half-viewports for Stereo Side-by-Side mode',
+  );
+  tv.dispose();
 
   console.log(
     `\n🏆 three-xr Test Results: ${passed} Passed, ${failed} Failed.`,

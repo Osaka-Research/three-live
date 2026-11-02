@@ -77,6 +77,7 @@ export interface ThreeLivePlugin {
     frame: unknown,
     refSpace: unknown,
   ): void;
+  onXRSessionEnd?(viewer: unknown): void;
   onDestroy?(gl: WebGL2RenderingContext, viewer: any): void;
 }
 

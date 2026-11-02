@@ -523,8 +523,17 @@ export class WebXRSessionManager {
     const rad = Number(b?.radius) || 1;
     const ctr = Array.isArray(b?.center) ? b.center : [0, 0, 0];
     const mn = Array.isArray(b?.min) ? b.min : [-0.5, -0.5, -0.5];
+    const ua =
+      typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+    const isHandheldPhone =
+      /Android|iPhone|iPad|iPod/i.test(ua) &&
+      !/Quest|Oculus|Pico|Vision/i.test(ua);
     const baseScale = isXRLive
-      ? 1
+      ? opts.arScale === 'fixed'
+        ? 1
+        : isHandheldPhone
+          ? 0.55
+          : 1
       : opts.arScale === 'fixed'
         ? 1
         : rad > 0.45

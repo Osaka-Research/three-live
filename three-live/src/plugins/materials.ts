@@ -149,9 +149,12 @@ export const materialsPlugin: ThreeLivePlugin = {
     let modifiedFS = defaultFS;
 
     if (hasTransmission) {
+      const vpUniform = modifiedFS.includes('uniform vec2 uViewportSize;')
+        ? ''
+        : 'uniform vec2 uViewportSize;\n';
       modifiedFS = modifiedFS.replace(
         'out vec4 fragColor;',
-        'uniform sampler2D uTransmissionTex;\nuniform vec2 uViewportSize;\nout vec4 fragColor;',
+        `uniform sampler2D uTransmissionTex;\n${vpUniform}out vec4 fragColor;`,
       );
     }
 

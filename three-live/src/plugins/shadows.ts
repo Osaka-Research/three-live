@@ -149,7 +149,8 @@ export const contactShadowPlugin: ThreeLivePlugin = {
     if (intensity <= 0 || !viewer.bounds) return;
 
     const ctx = getShadowContext(gl);
-    const hasBackdrop = (viewer.backdropMeshes?.length ?? 0) > 0;
+    const hasBackdrop =
+      !viewer.xrSessionActive && (viewer.backdropMeshes?.length ?? 0) > 0;
     const casters: number[][] = [];
     const supports: number[][] = [];
 
@@ -180,10 +181,32 @@ export const contactShadowPlugin: ThreeLivePlugin = {
     }
 
     const clusters: number[][] = [];
-    const defaultMinY =
-      (viewer.bounds.min
-        ? viewer.bounds.min[1]
-        : viewer.bounds.center[1] - viewer.bounds.radius) + 0.002;
+    const bCenter = viewer.bounds.center || [0, 0, 0];
+    const bRadius = Math.max(0.05, Number(viewer.bounds.radius) || 0.5);
+    const bMin = viewer.bounds.min;
+    let rawBoundsBox: [number, number, number, number, number, number] = bMin
+      ? [
+          bCenter[0],
+          bCenter[1],
+          bCenter[2],
+          bRadius,
+          Math.max(0.01, bCenter[1] - bMin[1]),
+          bRadius,
+        ]
+      : [bCenter[0], bCenter[1], bCenter[2], bRadius, bRadius, bRadius];
+    if (viewer.modelRootMatrix) {
+      rawBoundsBox = xform(viewer.modelRootMatrix, rawBoundsBox);
+    }
+    const isXRLiveAR =
+      viewer.xrSessionActive &&
+      supports.length === 0 &&
+      String((viewer as any).container?.tagName || '').toLowerCase() ===
+        'xr-live';
+    const defaultMinY = isXRLiveAR
+      ? (viewer.modelRootMatrix
+          ? viewer.modelRootMatrix[5] * -0.25 + viewer.modelRootMatrix[13]
+          : -0.25) + 0.002
+      : rawBoundsBox[1] - rawBoundsBox[4] + 0.002;
 
     for (const [wx, wz, whx, whz, minY] of casters) {
       let surfaceY = -Infinity;
@@ -224,9 +247,15 @@ export const contactShadowPlugin: ThreeLivePlugin = {
     }
 
     if (clusters.length === 0) {
-      const c = viewer.bounds.center;
-      const r = Math.max(0.1, viewer.bounds.radius * 1.5) / 1.45;
-      clusters.push([c[0], c[2], r, r, defaultMinY, defaultMinY]);
+      const r = Math.max(0.1, rawBoundsBox[3] * 1.5) / 1.45;
+      clusters.push([
+        rawBoundsBox[0],
+        rawBoundsBox[2],
+        r,
+        r,
+        defaultMinY,
+        defaultMinY,
+      ]);
     }
 
     gl.useProgram(ctx.prog);

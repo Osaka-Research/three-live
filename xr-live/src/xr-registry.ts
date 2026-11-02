@@ -50,6 +50,11 @@ function createNoopExtras(): XRExtrasProvider {
       updateFromXRFrame() {
         return null;
       },
+      clearSessionDepth(viewer?: any) {
+        if (viewer?.xrDepthState) {
+          viewer.xrDepthState.enabled = false;
+        }
+      },
       sampleDepthAndNormal() {
         return null;
       },
