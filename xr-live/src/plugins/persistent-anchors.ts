@@ -323,6 +323,21 @@ function defaultUrlAdapter(): UrlHashAdapter | null {
   };
 }
 
+/** Resolves the deterministic persistence / room-sync key for a scene mesh. */
+// tslint:disable-next-line:no-any Heterogeneous GPU mesh record.
+export function resolvePersistableNodeKey(mesh: any, fallbackIndex = 0): string {
+  const traits = getMeshXRTraits(mesh);
+  const rawAnchor = mesh?.userData?.xr?.anchor ?? mesh?.extras?.xr?.anchor ?? traits?.anchor;
+  const persistMeta =
+    parseAnchorPersist(rawAnchor) ??
+    parseAnchorPersist((traits as {anchorPersist?: unknown} | undefined)?.anchorPersist);
+  return (
+    persistMeta?.id ??
+    safeAnchorId(mesh?.name) ??
+    `node_${typeof mesh?.nodeIndex === 'number' ? mesh.nodeIndex : fallbackIndex}`
+  );
+}
+
 /** Element-level `<xr-live persistent-anchors ...>` configuration. */
 export interface PersistentAnchorsElementConfig {
   readonly enabled: boolean;
@@ -440,10 +455,7 @@ export class XRPersistentAnchorsController {
           ));
       if (!eligible) continue;
 
-      const baseKey =
-        persistMeta?.id ??
-        safeAnchorId(m.name) ??
-        `node_${typeof m.nodeIndex === 'number' ? m.nodeIndex : i}`;
+      const baseKey = resolvePersistableNodeKey(m, i);
       let uniqueKey = baseKey;
       let suffix = 2;
       while (usedKeys.has(uniqueKey)) {
@@ -832,6 +844,10 @@ export const persistentAnchorsPlugin: ThreeLivePlugin = {
     if (!element) return;
     const ctrl = getPersistentAnchorsController(element);
     const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
+    element.savePersistedAnchors = () => {
+      const v = viewerOf();
+      return v ? ctrl.save(v, element) : 0;
+    };
     element.clearPersistedAnchors = () => ctrl.clearPersistedAnchors(element);
     element.exportAnchorState = () => ctrl.exportAnchorState(viewerOf(), element);
     element.importAnchorState = (token: string) =>

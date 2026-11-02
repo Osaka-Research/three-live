@@ -166,6 +166,8 @@ export interface XRMeshTraits {
       };
   /** Marks a mesh as walkable or blocked for parabolic teleportation (`spatial-locomotion`). */
   navigable?: boolean | 'walkable' | 'blocked';
+  /** Syncs node transform & ownership lease across `shared-room` peers (default `true` for grabbable nodes). */
+  sync?: boolean;
   [key: string]: any;
 }
 

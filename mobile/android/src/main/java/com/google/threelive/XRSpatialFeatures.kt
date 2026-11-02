@@ -88,6 +88,12 @@ constructor(
     fun onAnchorsRestored(count: Int, source: String) {}
 
     fun onTeleport(from: DoubleArray, to: DoubleArray, yawDeg: Double) {}
+
+    fun onPeerJoin(peerId: String, name: String, color: String) {}
+
+    fun onPeerLeave(peerId: String, name: String, color: String) {}
+
+    fun onPeerSync(peerId: String, nodeId: String) {}
   }
 
   var listener: Listener? = null
@@ -168,6 +174,22 @@ constructor(
       } else {
         (vignetteRemainingMs / SpatialLocomotion.COMFORT_VIGNETTE_MS).coerceIn(0.0, 1.0)
       }
+
+  /** Local participant ID advertised on `shared-room` messages. */
+  var localPeerId: String = "peer-${Integer.toHexString(System.identityHashCode(this))}"
+
+  /** Local participant display name (`peer-name`, max 32 chars). */
+  var peerName: String = "Peer"
+
+  /** Local participant accent hex color (`peer-color`). */
+  var peerColor: String = SharedRoom.DEFAULT_PEER_COLOR
+
+  /** Pluggable outbound room sender (e.g. OkHttp `WebSocket::send` or test hub). */
+  var roomSend: ((rawJson: String) -> Unit)? = null
+
+  /** Number of active remote peers in the shared room. */
+  val peerCount: Int
+    get() = remotePeers.size
 
   private val session = binding.session
   private val scene = binding.scene
@@ -251,7 +273,28 @@ constructor(
   private val explodeTraits = HashMap<Int, XRExplodeTrait>()
   private val anchorPersistTraits = HashMap<Int, XRAnchorPersistTrait>()
   private val navigableTraits = HashMap<Int, String>()
+  private val syncTraits = HashMap<Int, Boolean>()
   private val grabbableNodes = HashSet<Int>()
+
+  private class RemotePeerVisual(
+    val peerId: String,
+    var name: String,
+    var color: String,
+    var headPos: DoubleArray,
+    var headQuat: DoubleArray,
+    var rayOrigin: DoubleArray?,
+    var rayEnd: DoubleArray?,
+    var hasHit: Boolean,
+    var lastSeenMs: Long,
+    var visorMeshId: Int = -1,
+    var laserMeshId: Int = -1,
+    var appliedColor: String = "",
+  )
+
+  private val remotePeers = LinkedHashMap<String, RemotePeerVisual>()
+  private val nodeLeases = HashMap<String, SharedRoom.NodeSoftLock>()
+  private val remoteStrokeMeshIds = ArrayList<Int>()
+  private var lastPoseSentMs: Long = Long.MIN_VALUE / 2
   private val restParts = ArrayList<RestPart>()
   private var restCaptured: Boolean = false
   private var assemblyCenter: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0)
@@ -298,6 +341,7 @@ constructor(
       t.explode?.let { explodeTraits[node] = it }
       t.anchorPersist?.let { anchorPersistTraits[node] = it }
       t.navigable?.let { navigableTraits[node] = it }
+      t.sync?.let { syncTraits[node] = it }
       if (t.grabbable || t.handles != null) grabbableNodes.add(node)
       if (t.pointerEvents == "none") pointerNoneNodes.add(node)
       t.splatUrl?.let { raw ->
@@ -381,6 +425,11 @@ constructor(
   /** Removes every dynamic mesh and detaches from the binding. */
   fun dispose() {
     if (disposed) return
+    val sender = roomSend
+    val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId)
+    if (sender != null && cleanId != null) {
+      sender(SharedRoom.serializeMessage(SharedRoom.WireMessage.Leave(cleanId)))
+    }
     disposed = true
     if (ownedExecutor && executor is java.util.concurrent.ExecutorService) {
       executor.shutdown()
@@ -404,6 +453,11 @@ constructor(
     teleportArcMeshId = -1
     if (teleportRingMeshId >= 0) renderer.removeDynamicMesh(teleportRingMeshId)
     teleportRingMeshId = -1
+    for (p in remotePeers.values) {
+      if (p.visorMeshId >= 0) renderer.removeDynamicMesh(p.visorMeshId)
+      if (p.laserMeshId >= 0) renderer.removeDynamicMesh(p.laserMeshId)
+    }
+    for (id in remoteStrokeMeshIds) renderer.removeDynamicMesh(id)
     for (h in handles) for (id in h.meshIds) renderer.removeDynamicMesh(id)
     for (e in emitters) renderer.removeDynamicMesh(e.meshId)
     for (s in strokes) renderer.removeDynamicMesh(s.meshId)
@@ -416,6 +470,10 @@ constructor(
     explodeTraits.clear()
     anchorPersistTraits.clear()
     navigableTraits.clear()
+    syncTraits.clear()
+    remotePeers.clear()
+    nodeLeases.clear()
+    remoteStrokeMeshIds.clear()
     grabbableNodes.clear()
     restParts.clear()
     pointerNoneNodes.clear()
@@ -1498,6 +1556,316 @@ constructor(
       }
     }
     return step.deltaYawDeg
+  }
+
+  // ---- Shared Room (Multi-User Co-Presence & State Sync) ----------------------------------------
+
+  private fun shouldSyncNode(node: Int): Boolean =
+    syncTraits[node] ?: (node in grabbableNodes)
+
+  private fun syncNodeKey(node: Int): String =
+    anchorPersistTraits[node]?.id
+      ?: XRLiveSceneCoreHelper.safeAnchorId(scene.nodeNames.getOrNull(node))
+      ?: "node_$node"
+
+  /** Returns the current soft-lock owner for [nodeId] if unexpired at [atMs]. */
+  fun getNodeOwner(nodeId: String, atMs: Long = System.currentTimeMillis()): String? {
+    val lease = nodeLeases[nodeId] ?: return null
+    return if (atMs < lease.leaseUntilMs) lease.ownerPeerId else null
+  }
+
+  /** Broadcasts a rate-limited (`20 Hz`) local head + pointer ray pose tick. */
+  @JvmOverloads
+  fun broadcastPoseTick(
+    headPos: DoubleArray,
+    headQuat: DoubleArray,
+    rayOrigin: DoubleArray? = null,
+    rayEnd: DoubleArray? = null,
+    hasHit: Boolean = false,
+    atMs: Long = System.currentTimeMillis(),
+    force: Boolean = false,
+  ): Boolean {
+    if (disposed) return false
+    val sender = roomSend ?: return false
+    if (!force && atMs - lastPoseSentMs < SharedRoom.POSE_TICK_INTERVAL_MS) return false
+    val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
+    lastPoseSentMs = atMs
+    val json =
+      SharedRoom.serializeMessage(
+        SharedRoom.WireMessage.Pose(
+          peerId = cleanId,
+          name = peerName,
+          color = peerColor,
+          headPos = headPos,
+          headQuat = headQuat,
+          rayOrigin = rayOrigin,
+          rayEnd = rayEnd,
+          hasHit = hasHit,
+        )
+      )
+    if (json.toByteArray(Charsets.UTF_8).size <= SharedRoom.MAX_PAYLOAD_BYTES) {
+      sender(json)
+      return true
+    }
+    return false
+  }
+
+  /**
+   * Acquires/renews the local soft-lock lease for [nodeIndex] and broadcasts its transform delta.
+   * Returns `false` if another peer holds an unexpired lease.
+   */
+  @JvmOverloads
+  fun broadcastNodeDelta(
+    nodeIndex: Int,
+    grabState: String = "move",
+    atMs: Long = System.currentTimeMillis(),
+  ): Boolean {
+    if (disposed || nodeIndex !in 0 until scene.nodeCount || !shouldSyncNode(nodeIndex)) return false
+    val sender = roomSend ?: return false
+    val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
+    val nodeId = syncNodeKey(nodeIndex)
+    if (!SharedRoom.canAcquireNodeLease(nodeLeases[nodeId], cleanId, atMs)) return false
+    if (grabState == "release") {
+      nodeLeases.remove(nodeId)
+    } else {
+      nodeLeases[nodeId] = SharedRoom.NodeSoftLock(cleanId, atMs + SharedRoom.SOFT_LOCK_TTL_MS)
+    }
+    val t = session.nodeTransform(nodeIndex) ?: return false
+    val clean =
+      PersistentAnchors.sanitizePose(
+        doubleArrayOf(t.translation[0].toDouble(), t.translation[1].toDouble(), t.translation[2].toDouble()),
+        doubleArrayOf(t.rotation[0].toDouble(), t.rotation[1].toDouble(), t.rotation[2].toDouble(), t.rotation[3].toDouble()),
+        doubleArrayOf(t.scale[0].toDouble(), t.scale[1].toDouble(), t.scale[2].toDouble()),
+      ) ?: return false
+    val json =
+      SharedRoom.serializeMessage(
+        SharedRoom.WireMessage.Node(cleanId, nodeId, clean.p, clean.q, clean.s, grabState)
+      )
+    if (json.toByteArray(Charsets.UTF_8).size <= SharedRoom.MAX_PAYLOAD_BYTES) {
+      sender(json)
+      return true
+    }
+    return false
+  }
+
+  /** Broadcasts an `exploded-view` factor change (`[0..1]`) to room peers. */
+  fun broadcastExplode(factor: Double): Boolean {
+    if (disposed || !factor.isFinite()) return false
+    val sender = roomSend ?: return false
+    val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
+    val json = SharedRoom.serializeMessage(SharedRoom.WireMessage.Explode(cleanId, factor))
+    sender(json)
+    return true
+  }
+
+  /** Broadcasts a `spatial-paint` 3D stroke chunk to room peers. */
+  @JvmOverloads
+  fun broadcastPaintStroke(
+    strokeId: String,
+    points: List<DoubleArray>,
+    color: String = peerColor,
+    radius: Double = 0.01,
+  ): Boolean {
+    if (disposed || points.size < 2) return false
+    val sender = roomSend ?: return false
+    val cleanPeerId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
+    val cleanStrokeId = XRLiveSceneCoreHelper.safeAnchorId(strokeId) ?: return false
+    val stride =
+      if (points.size > SharedRoom.MAX_STROKE_CHUNK_POINTS) {
+        (points.size + SharedRoom.MAX_STROKE_CHUNK_POINTS - 1) / SharedRoom.MAX_STROKE_CHUNK_POINTS
+      } else {
+        1
+      }
+    val sampled = ArrayList<DoubleArray>()
+    var i = 0
+    while (i < points.size && sampled.size < SharedRoom.MAX_STROKE_CHUNK_POINTS) {
+      val p = points[i]
+      if (p.size >= 3 && p[0].isFinite() && p[1].isFinite() && p[2].isFinite()) {
+        sampled.add(doubleArrayOf(p[0], p[1], p[2]))
+      }
+      i += stride
+    }
+    val lastPt = points.last()
+    if (
+      lastPt.size >= 3 &&
+        lastPt[0].isFinite() &&
+        lastPt[1].isFinite() &&
+        lastPt[2].isFinite() &&
+        sampled.size < SharedRoom.MAX_STROKE_CHUNK_POINTS
+    ) {
+      val prev = sampled.lastOrNull()
+      val dx = if (prev != null) lastPt[0] - prev[0] else 1.0
+      val dy = if (prev != null) lastPt[1] - prev[1] else 0.0
+      val dz = if (prev != null) lastPt[2] - prev[2] else 0.0
+      if (prev == null || dx * dx + dy * dy + dz * dz > 1e-8) {
+        sampled.add(doubleArrayOf(lastPt[0], lastPt[1], lastPt[2]))
+      }
+    }
+    if (sampled.size < 2) return false
+    val json =
+      SharedRoom.serializeMessage(
+        SharedRoom.WireMessage.Paint(
+          peerId = cleanPeerId,
+          strokeId = cleanStrokeId,
+          color = SharedRoom.sanitizePeerColor(color),
+          radius = XRSpatialMath.clampNum(radius, 0.002, 0.1, 0.01),
+          points = sampled,
+        )
+      )
+    if (json.toByteArray(Charsets.UTF_8).size <= SharedRoom.MAX_PAYLOAD_BYTES) {
+      sender(json)
+      return true
+    }
+    return false
+  }
+
+  /** Processes an incoming room JSON payload, updating peer avatars, soft-locks, and scene state. */
+  @JvmOverloads
+  fun handleRoomMessage(rawJson: String, atMs: Long = System.currentTimeMillis()): Boolean {
+    if (disposed) return false
+    val msg = SharedRoom.parseMessage(rawJson) ?: return false
+    val selfId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId)
+    if (msg.peerId == selfId) return false
+
+    return when (msg) {
+      is SharedRoom.WireMessage.Leave -> removeRemotePeer(msg.peerId)
+      is SharedRoom.WireMessage.Pose -> {
+        var peer = remotePeers[msg.peerId]
+        var joined = false
+        if (peer == null) {
+          if (remotePeers.size >= SharedRoom.MAX_PEERS) return false
+          peer =
+            RemotePeerVisual(
+              peerId = msg.peerId,
+              name = msg.name,
+              color = msg.color,
+              headPos = msg.headPos,
+              headQuat = msg.headQuat,
+              rayOrigin = msg.rayOrigin,
+              rayEnd = msg.rayEnd,
+              hasHit = msg.hasHit,
+              lastSeenMs = atMs,
+            )
+          remotePeers[msg.peerId] = peer
+          joined = true
+        } else {
+          peer.name = msg.name
+          peer.color = msg.color
+          peer.headPos = msg.headPos
+          peer.headQuat = msg.headQuat
+          peer.rayOrigin = msg.rayOrigin
+          peer.rayEnd = msg.rayEnd
+          peer.hasHit = msg.hasHit
+          peer.lastSeenMs = atMs
+        }
+        syncRemotePeerVisual(peer)
+        if (joined) listener?.onPeerJoin(peer.peerId, peer.name, peer.color)
+        true
+      }
+      is SharedRoom.WireMessage.Node -> {
+        remotePeers[msg.peerId]?.lastSeenMs = atMs
+        if (!SharedRoom.canAcquireNodeLease(nodeLeases[msg.nodeId], msg.peerId, atMs)) return false
+        if (msg.grabState == "release") {
+          nodeLeases.remove(msg.nodeId)
+        } else {
+          nodeLeases[msg.nodeId] = SharedRoom.NodeSoftLock(msg.peerId, atMs + SharedRoom.SOFT_LOCK_TTL_MS)
+        }
+        for (node in 0 until scene.nodeCount) {
+          if (syncNodeKey(node) == msg.nodeId && shouldSyncNode(node)) {
+            val p = FloatArray(3) { msg.p[it].toFloat() }
+            val q = FloatArray(4) { msg.q[it].toFloat() }
+            val s = FloatArray(3) { msg.s[it].toFloat() }
+            session.setNodeTransform(node, p, q, s)
+            renderer.setNodeTransform(node, p, q, s)
+            listener?.onPeerSync(msg.peerId, msg.nodeId)
+            break
+          }
+        }
+        true
+      }
+      is SharedRoom.WireMessage.Explode -> {
+        remotePeers[msg.peerId]?.lastSeenMs = atMs
+        setExplode(msg.factor, "peer")
+        listener?.onPeerSync(msg.peerId, "__explode__")
+        true
+      }
+      is SharedRoom.WireMessage.Paint -> {
+        remotePeers[msg.peerId]?.lastSeenMs = atMs
+        val builder = TubeStrokeBuilder(radius = msg.radius)
+        for (pt in msg.points) builder.addPoint(pt[0], pt[1], pt[2])
+        val geo = builder.build()
+        if (geo != null && geo.indices.isNotEmpty()) {
+          while (remoteStrokeMeshIds.size >= SharedRoom.MAX_REMOTE_STROKES) {
+            renderer.removeDynamicMesh(remoteStrokeMeshIds.removeAt(0))
+          }
+          val meshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, parseHexRgba(msg.color, 1f))
+          identityMatrix()
+          renderer.setDynamicMeshTransform(meshId, matrix)
+          remoteStrokeMeshIds.add(meshId)
+        }
+        listener?.onPeerSync(msg.peerId, "paint:${msg.strokeId}")
+        true
+      }
+    }
+  }
+
+  /** Prunes remote peers silent for longer than [SharedRoom.PEER_TIMEOUT_MS]. */
+  @JvmOverloads
+  fun pruneStalePeers(atMs: Long = System.currentTimeMillis()): Int {
+    var removed = 0
+    val ids = remotePeers.keys.toList()
+    for (id in ids) {
+      val p = remotePeers[id] ?: continue
+      if (atMs - p.lastSeenMs > SharedRoom.PEER_TIMEOUT_MS) {
+        if (removeRemotePeer(id)) removed++
+      }
+    }
+    return removed
+  }
+
+  private fun removeRemotePeer(peerId: String): Boolean {
+    val p = remotePeers.remove(peerId) ?: return false
+    if (p.visorMeshId >= 0) renderer.removeDynamicMesh(p.visorMeshId)
+    if (p.laserMeshId >= 0) renderer.removeDynamicMesh(p.laserMeshId)
+    val owned = nodeLeases.entries.filter { it.value.ownerPeerId == peerId }.map { it.key }
+    for (k in owned) nodeLeases.remove(k)
+    listener?.onPeerLeave(p.peerId, p.name, p.color)
+    return true
+  }
+
+  private fun syncRemotePeerVisual(peer: RemotePeerVisual) {
+    val colorChanged = peer.appliedColor != peer.color
+    if (peer.visorMeshId < 0 || colorChanged) {
+      if (peer.visorMeshId >= 0) renderer.removeDynamicMesh(peer.visorMeshId)
+      val geo = SharedRoom.buildPeerVisorGeometry()
+      peer.visorMeshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, parseHexRgba(peer.color, 0.92f))
+      peer.appliedColor = peer.color
+    }
+    val dMat = XRSpatialMath.mat4FromTRS(peer.headPos, peer.headQuat, doubleArrayOf(1.0, 1.0, 1.0))
+    for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
+    renderer.setDynamicMeshTransform(peer.visorMeshId, matrix)
+
+    if (colorChanged && peer.laserMeshId >= 0) {
+      renderer.removeDynamicMesh(peer.laserMeshId)
+      peer.laserMeshId = -1
+    }
+
+    val ro = peer.rayOrigin
+    val re = peer.rayEnd
+    if (ro != null && re != null) {
+      val laserGeo = SharedRoom.buildPeerLaserGeometry(ro, re, peer.hasHit)
+      if (peer.laserMeshId < 0) {
+        peer.laserMeshId =
+          renderer.addDynamicMesh(laserGeo.positions, laserGeo.normals, laserGeo.indices, parseHexRgba(peer.color, 0.78f))
+      } else {
+        renderer.updateDynamicMesh(peer.laserMeshId, laserGeo.positions, laserGeo.normals, laserGeo.indices)
+      }
+      identityMatrix()
+      renderer.setDynamicMeshTransform(peer.laserMeshId, matrix)
+    } else if (peer.laserMeshId >= 0) {
+      zeroMatrix()
+      renderer.setDynamicMeshTransform(peer.laserMeshId, matrix)
+    }
   }
 
   private fun layoutOf(h: HandleNode): ManipulationHandles.Layout? {

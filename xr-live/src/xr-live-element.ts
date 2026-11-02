@@ -132,6 +132,9 @@ export class XRLiveElement extends ThreeLiveElement {
       'locomotion',
       'snap-turn-deg',
       'comfort-vignette',
+      'shared-room',
+      'peer-name',
+      'peer-color',
     ];
   }
 

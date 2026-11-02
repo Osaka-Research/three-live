@@ -529,6 +529,110 @@ class XRSpatialFeaturesTest {
     assertTrue(r2.meshes.isEmpty())
   }
 
+  @Test
+  fun sharedRoomSyncsPeersSoftLocksExplodeAndPaint() {
+    assertTrue(SharedRoom.isAllowedRoomUrl("wss://relay.example.com/room/1"))
+    assertTrue(SharedRoom.isAllowedRoomUrl("ws://localhost:8787/room"))
+    assertTrue(SharedRoom.isAllowedRoomUrl("ws://127.0.0.1:8787/room"))
+    assertTrue(!SharedRoom.isAllowedRoomUrl("ws://evil.example.com/room"))
+    assertTrue(!SharedRoom.isAllowedRoomUrl("http://localhost:8787/room"))
+    assertNull(SharedRoom.parseMessage("{\"v\":1,\"type\":\"leave\",\"peerId\":\"__proto__\"}"))
+
+    val sceneJson =
+      """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],
+      "nodes":[
+        {"name":"Chassis","mesh":0,"translation":[0,0.4,-1],"extras":{"xr":{
+          "grab":true,"sync":true,"anchor":{"id":"chassis","persist":true},
+          "explode":{"layer":1,"direction":[0,1,0],"distance":0.4}
+        }}}
+      ],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+      "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-0.2,-0.1,-0.2],"max":[0.2,0.1,0.2]}]}"""
+
+    val rA = FakeRenderer()
+    val bA = ThreeLiveRuntimeBinding(rA, glbOf(sceneJson))
+    val fA = XRSpatialFeatures(bA, rA).apply {
+      localPeerId = "peer-alice"
+      peerName = "Alice"
+      peerColor = "#38bdf8"
+    }
+
+    val rB = FakeRenderer()
+    val bB = ThreeLiveRuntimeBinding(rB, glbOf(sceneJson))
+    val eventsB = ArrayList<String>()
+    val fB = XRSpatialFeatures(bB, rB).apply {
+      localPeerId = "peer-bob"
+      peerName = "Bob"
+      peerColor = "#f472b6"
+      listener =
+        object : XRSpatialFeatures.Listener {
+          override fun onPeerJoin(peerId: String, name: String, color: String) {
+            eventsB += "join:$peerId:$name:$color"
+          }
+
+          override fun onPeerLeave(peerId: String, name: String, color: String) {
+            eventsB += "leave:$peerId:$name"
+          }
+
+          override fun onPeerSync(peerId: String, nodeId: String) {
+            eventsB += "sync:$peerId:$nodeId"
+          }
+        }
+    }
+
+    // Wire in-memory relay hub between A and B.
+    fA.roomSend = { raw -> fB.handleRoomMessage(raw, atMs = 1000L) }
+    fB.roomSend = { raw -> fA.handleRoomMessage(raw, atMs = 1000L) }
+
+    assertTrue(
+      fA.broadcastPoseTick(
+        headPos = doubleArrayOf(0.2, 1.6, 0.5),
+        headQuat = doubleArrayOf(0.0, 0.0, 0.0, 1.0),
+        rayOrigin = doubleArrayOf(0.2, 1.4, 0.4),
+        rayEnd = doubleArrayOf(0.0, 0.4, -1.0),
+        hasHit = true,
+        atMs = 1000L,
+      )
+    )
+    assertTrue(!fA.broadcastPoseTick(doubleArrayOf(0.2, 1.6, 0.5), doubleArrayOf(0.0, 0.0, 0.0, 1.0), atMs = 1020L))
+    assertEquals(1, fB.peerCount)
+    assertTrue(eventsB.contains("join:peer-alice:Alice:#38bdf8"))
+    assertEquals(2, rB.meshes.size) // visor + laser
+
+    // Soft-lock ownership: Alice grabs node 0 -> Bob rejected until lease expires.
+    bA.session.setNodeTransform(0, floatArrayOf(0.65f, 0.8f, -1.2f), floatArrayOf(0f, 0f, 0f, 1f), floatArrayOf(1f, 1f, 1f))
+    assertTrue(fA.broadcastNodeDelta(0, "grab", atMs = 1000L))
+    assertEquals(0.65f, bB.session.nodeTransform(0)!!.translation[0], 1e-3f)
+    assertEquals("peer-alice", fB.getNodeOwner("chassis", atMs = 1500L))
+    assertTrue(!fB.broadcastNodeDelta(0, "move", atMs = 1500L))
+    assertTrue(fB.broadcastNodeDelta(0, "grab", atMs = 1000L + SharedRoom.SOFT_LOCK_TTL_MS))
+
+    // Explode + 3D paint stroke sync.
+    assertTrue(fA.broadcastExplode(0.75))
+    repeat(30) { rB.listener!!.onFrame(1.0 / 30.0, IDENTITY) }
+    assertEquals(0.75, fB.explodeFactor, 1e-3)
+    assertTrue(eventsB.contains("sync:peer-alice:__explode__"))
+    val meshesBeforePaint = rB.meshes.size
+
+    assertTrue(
+      fA.broadcastPaintStroke(
+        "s1",
+        listOf(doubleArrayOf(0.0, 1.0, -0.5), doubleArrayOf(0.1, 1.05, -0.5), doubleArrayOf(0.2, 1.1, -0.5)),
+        "#22c55e",
+        0.01,
+      )
+    )
+    assertTrue(eventsB.contains("sync:peer-alice:paint:s1"))
+    assertEquals(meshesBeforePaint + 1, rB.meshes.size) // +1 remote tube stroke
+
+    // Dispose A sends `leave` to B, cleaning up Alice's visor & laser on B!
+    fA.dispose()
+    assertEquals(0, fB.peerCount)
+    assertTrue(eventsB.contains("leave:peer-alice:Alice"))
+    fB.dispose()
+    assertTrue(rB.meshes.isEmpty())
+  }
+
   private class Mesh(var positions: FloatArray, var indices: IntArray)
 
   private class FakeRenderer : ThreeLiveSceneRenderer {

@@ -561,6 +561,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var anchorPersist: XRLiveAnchorPersist?
   /// `"walkable"` or `"blocked"` when authored via `navigable`.
   public var navigable: String?
+  /// Explicit multi-user `shared-room` transform sync flag (`nil` inherits grabbable default).
+  public var sync: Bool?
   /// `true` when `pointerEvents: "none"` (node is not pickable).
   public var pointerEventsNone: Bool
 
@@ -575,7 +577,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
       && audio == nil && dimensions == nil && snapTo == nil && snapSocket == nil
       && gaze == nil && explode == nil && anchorPersist == nil && navigable == nil
-      && !pointerEventsNone
+      && sync == nil && !pointerEventsNone
   }
 }
 
@@ -893,6 +895,7 @@ public enum XRLiveTraitParser {
     out.gaze = parseGaze(r["gaze"])
     out.explode = parseExplode(r["explode"])
     out.navigable = parseNavigable(r["navigable"])
+    out.sync = XRJSON.bool(r["sync"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
 
     return out.isEmpty ? nil : out
@@ -916,7 +919,7 @@ public enum XRLiveTraitParser {
     var r: [String: Any] = [:]
     for key in [
       "grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "navigable",
-      "pointerEvents",
+      "sync", "pointerEvents",
     ] {
       if let v = d[key] { r[key] = v }
     }

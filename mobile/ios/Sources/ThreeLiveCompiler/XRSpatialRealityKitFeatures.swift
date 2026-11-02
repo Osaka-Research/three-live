@@ -65,6 +65,12 @@
     /// `{from, to, yawDeg}` when a spatial teleport commits (`xrteleport`).
     public var onTeleport:
       ((_ from: SIMD3<Float>, _ to: SIMD3<Float>, _ yawDeg: Float) -> Void)?
+    /// `{peerId, name, color}` when a remote peer joins `shared-room` (`peerjoin`).
+    public var onPeerJoin: ((_ peerId: String, _ name: String, _ color: String) -> Void)?
+    /// `{peerId, name, color}` when a remote peer leaves or times out (`peerleave`).
+    public var onPeerLeave: ((_ peerId: String, _ name: String, _ color: String) -> Void)?
+    /// `{peerId, nodeId}` when a remote state delta is applied (`peersync`).
+    public var onPeerSync: ((_ peerId: String, _ nodeId: String) -> Void)?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
@@ -110,6 +116,16 @@
       guard comfortVignetteEnabled, vignetteRemainingMs > 0 else { return 0 }
       return max(0, min(1, vignetteRemainingMs / SpatialLocomotion.comfortVignetteMs))
     }
+    /// Local participant ID advertised on `shared-room` messages.
+    public var localPeerId: String = "peer-\(UUID().uuidString.prefix(8).lowercased())"
+    /// Local participant display name (`peer-name`, max 32 chars).
+    public var peerName: String = "Peer"
+    /// Local participant accent hex color (`peer-color`).
+    public var peerColor: String = SharedRoom.defaultPeerColor
+    /// Pluggable outbound room sender (e.g. `URLSessionWebSocketTask.send` or custom transport).
+    public var roomSend: ((_ rawJson: String) -> Void)?
+    /// Number of active remote peers in the shared room.
+    public var peerCount: Int { remotePeers.count }
     /// Camera world transform for camera-facing particles (defaults to the live head pose).
     public var cameraTransformProvider: (() -> simd_float4x4?)?
 
@@ -235,10 +251,53 @@
       let depth: Int
     }
 
+    private final class RemotePeerVisual {
+      let peerId: String
+      var name: String
+      var color: String
+      var headPos: SIMD3<Float>
+      var headQuat: simd_quatf
+      var rayOrigin: SIMD3<Float>?
+      var rayEnd: SIMD3<Float>?
+      var hasHit: Bool
+      var lastSeenMs: Int64
+      var visorEntity: ModelEntity?
+      var laserEntity: ModelEntity?
+      var appliedColor: String = ""
+
+      init(
+        peerId: String,
+        name: String,
+        color: String,
+        headPos: SIMD3<Float>,
+        headQuat: simd_quatf,
+        rayOrigin: SIMD3<Float>?,
+        rayEnd: SIMD3<Float>?,
+        hasHit: Bool,
+        lastSeenMs: Int64
+      ) {
+        self.peerId = peerId
+        self.name = name
+        self.color = color
+        self.headPos = headPos
+        self.headQuat = headQuat
+        self.rayOrigin = rayOrigin
+        self.rayEnd = rayEnd
+        self.hasHit = hasHit
+        self.lastSeenMs = lastSeenMs
+      }
+    }
+
     private var explodeTraits: [Int: XRLiveExplode] = [:]
     private var anchorPersistTraits: [Int: XRLiveAnchorPersist] = [:]
     private var navigableTraits: [Int: String] = [:]
+    private var syncTraits: [Int: Bool] = [:]
     private var grabbableNodes: Set<Int> = []
+    private var remotePeers: [String: RemotePeerVisual] = [:]
+    private var nodeLeases: [String: SharedRoom.NodeSoftLock] = [:]
+    private var remoteStrokeEntities: [ModelEntity] = []
+    private var lastPoseSentMs: Int64 = Int64.min / 2
+    private var disposed: Bool = false
     private var restParts: [RestPart] = []
     private var restCaptured: Bool = false
     private var assemblyCenter: SIMD3<Float> = .zero
@@ -386,6 +445,9 @@
         if let nav = traits.navigable {
           navigableTraits[i] = nav
         }
+        if let sync = traits.sync {
+          syncTraits[i] = sync
+        }
         if traits.grabbable || traits.handles != nil {
           grabbableNodes.insert(i)
         }
@@ -433,6 +495,12 @@
 
     /// Removes every feature entity and stops updates.
     public func dispose() {
+      if !disposed, let sender = roomSend,
+        let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
+      {
+        sender(SharedRoom.serializeMessage(.leave(peerId: cleanId)))
+      }
+      disposed = true
       updateSubscription?.cancel()
       updateSubscription = nil
       for sc in splats { sc.loadTask?.cancel() }
@@ -449,6 +517,14 @@
       teleportArcEntity = nil
       teleportRingEntity?.removeFromParent()
       teleportRingEntity = nil
+      for peer in remotePeers.values {
+        peer.visorEntity?.removeFromParent()
+        peer.laserEntity?.removeFromParent()
+      }
+      remotePeers.removeAll()
+      nodeLeases.removeAll()
+      for se in remoteStrokeEntities { se.removeFromParent() }
+      remoteStrokeEntities.removeAll()
       container.removeFromParent()
       handles.removeAll()
       emitters.removeAll()
@@ -464,6 +540,7 @@
       explodeTraits.removeAll()
       anchorPersistTraits.removeAll()
       navigableTraits.removeAll()
+      syncTraits.removeAll()
       grabbableNodes.removeAll()
       restParts.removeAll()
       pointerNoneNodes.removeAll()
@@ -1574,6 +1651,294 @@
         }
       }
       return step.deltaYawDeg
+    }
+
+    // MARK: Shared Room (Multi-User Co-Presence & State Sync)
+
+    private func shouldSyncNode(_ node: Int) -> Bool {
+      syncTraits[node] ?? grabbableNodes.contains(node)
+    }
+
+    private func syncNodeKey(_ node: Int) -> String {
+      anchorPersistTraits[node]?.id
+        ?? XRLiveTraitParser.safeAnchorId(live.session.nodeName(at: node))
+        ?? "node_\(node)"
+    }
+
+    /// Returns the current soft-lock owner for `nodeId` if unexpired at `atMs`.
+    public func getNodeOwner(
+      _ nodeId: String,
+      atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> String? {
+      guard let lease = nodeLeases[nodeId] else { return nil }
+      return atMs < lease.leaseUntilMs ? lease.ownerPeerId : nil
+    }
+
+    /// Broadcasts a rate-limited (`20 Hz`) local head + pointer ray pose tick.
+    @discardableResult
+    public func broadcastPoseTick(
+      headPos: SIMD3<Float>,
+      headQuat: simd_quatf,
+      rayOrigin: SIMD3<Float>? = nil,
+      rayEnd: SIMD3<Float>? = nil,
+      hasHit: Bool = false,
+      atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+      force: Bool = false
+    ) -> Bool {
+      guard !disposed, let sender = roomSend else { return false }
+      if !force && atMs - lastPoseSentMs < SharedRoom.poseTickIntervalMs { return false }
+      guard let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId) else { return false }
+      lastPoseSentMs = atMs
+      let json = SharedRoom.serializeMessage(
+        .pose(
+          peerId: cleanId,
+          name: peerName,
+          color: peerColor,
+          headPos: headPos,
+          headQuat: headQuat,
+          rayOrigin: rayOrigin,
+          rayEnd: rayEnd,
+          hasHit: hasHit
+        ))
+      guard json.utf8.count <= SharedRoom.maxPayloadBytes else { return false }
+      sender(json)
+      return true
+    }
+
+    /// Acquires/renews the local soft-lock lease for `nodeIndex` and broadcasts its transform delta.
+    @discardableResult
+    public func broadcastNodeDelta(
+      nodeIndex: Int,
+      grabState: String = "move",
+      atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> Bool {
+      let session = live.session
+      guard !disposed, nodeIndex >= 0, nodeIndex < session.nodeCount,
+        shouldSyncNode(nodeIndex),
+        let sender = roomSend,
+        let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
+      else { return false }
+      let nodeId = syncNodeKey(nodeIndex)
+      guard SharedRoom.canAcquireNodeLease(
+        existing: nodeLeases[nodeId], candidatePeerId: cleanId, atMs: atMs)
+      else { return false }
+      if grabState == "release" {
+        nodeLeases.removeValue(forKey: nodeId)
+      } else {
+        nodeLeases[nodeId] = SharedRoom.NodeSoftLock(
+          ownerPeerId: cleanId, leaseUntilMs: atMs + SharedRoom.softLockTtlMs)
+      }
+      guard let t = session.nodeTransform(at: nodeIndex),
+        let clean = PersistentAnchors.sanitizePose(p: t.translation, q: t.rotation, s: t.scale)
+      else { return false }
+      let json = SharedRoom.serializeMessage(
+        .node(
+          peerId: cleanId, nodeId: nodeId, p: clean.p, q: clean.q, s: clean.s,
+          grabState: grabState))
+      guard json.utf8.count <= SharedRoom.maxPayloadBytes else { return false }
+      sender(json)
+      return true
+    }
+
+    /// Broadcasts an `exploded-view` factor change (`[0..1]`) to room peers.
+    @discardableResult
+    public func broadcastExplode(_ factor: Float) -> Bool {
+      guard !disposed, factor.isFinite, let sender = roomSend,
+        let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
+      else { return false }
+      sender(SharedRoom.serializeMessage(.explode(peerId: cleanId, factor: factor)))
+      return true
+    }
+
+    /// Broadcasts a `spatial-paint` 3D stroke chunk to room peers.
+    @discardableResult
+    public func broadcastPaintStroke(
+      strokeId: String,
+      points: [SIMD3<Float>],
+      color: String? = nil,
+      radius: Float = 0.01
+    ) -> Bool {
+      guard !disposed, points.count >= 2, let sender = roomSend,
+        let cleanPeerId = XRLiveTraitParser.safeAnchorId(localPeerId),
+        let cleanStrokeId = XRLiveTraitParser.safeAnchorId(strokeId)
+      else { return false }
+      let stride =
+        points.count > SharedRoom.maxStrokeChunkPoints
+        ? (points.count + SharedRoom.maxStrokeChunkPoints - 1) / SharedRoom.maxStrokeChunkPoints : 1
+      var sampled: [SIMD3<Float>] = []
+      var i = 0
+      while i < points.count && sampled.count < SharedRoom.maxStrokeChunkPoints {
+        let p = points[i]
+        if p.x.isFinite && p.y.isFinite && p.z.isFinite {
+          sampled.append(p)
+        }
+        i += stride
+      }
+      if let lastPt = points.last,
+        lastPt.x.isFinite && lastPt.y.isFinite && lastPt.z.isFinite,
+        sampled.count < SharedRoom.maxStrokeChunkPoints
+      {
+        if let prev = sampled.last {
+          if simd_length(lastPt - prev) > 1e-4 { sampled.append(lastPt) }
+        } else {
+          sampled.append(lastPt)
+        }
+      }
+      guard sampled.count >= 2 else { return false }
+      let clampedR = max(0.002, min(0.1, radius.isFinite ? radius : 0.01))
+      let json = SharedRoom.serializeMessage(
+        .paint(
+          peerId: cleanPeerId,
+          strokeId: cleanStrokeId,
+          color: SharedRoom.sanitizePeerColor(color ?? peerColor),
+          radius: clampedR,
+          points: sampled
+        ))
+      guard json.utf8.count <= SharedRoom.maxPayloadBytes else { return false }
+      sender(json)
+      return true
+    }
+
+    /// Processes an incoming room JSON payload, updating peer avatars, soft-locks, and scene state.
+    @discardableResult
+    public func handleRoomMessage(
+      _ rawJson: String,
+      atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> Bool {
+      guard !disposed, let msg = SharedRoom.parseMessage(rawJson) else { return false }
+      let selfId = XRLiveTraitParser.safeAnchorId(localPeerId)
+      if msg.peerId == selfId { return false }
+
+      switch msg {
+      case .leave(let peerId):
+        return removeRemotePeer(peerId)
+      case .pose(let peerId, let name, let color, let headPos, let headQuat, let ro, let re, let hit):
+        let peer: RemotePeerVisual
+        var joined = false
+        if let existing = remotePeers[peerId] {
+          existing.name = name
+          existing.color = color
+          existing.headPos = headPos
+          existing.headQuat = headQuat
+          existing.rayOrigin = ro
+          existing.rayEnd = re
+          existing.hasHit = hit
+          existing.lastSeenMs = atMs
+          peer = existing
+        } else {
+          guard remotePeers.count < SharedRoom.maxPeers else { return false }
+          let created = RemotePeerVisual(
+            peerId: peerId, name: name, color: color, headPos: headPos, headQuat: headQuat,
+            rayOrigin: ro, rayEnd: re, hasHit: hit, lastSeenMs: atMs)
+          remotePeers[peerId] = created
+          peer = created
+          joined = true
+        }
+        syncRemotePeerVisual(peer)
+        if joined { onPeerJoin?(peer.peerId, peer.name, peer.color) }
+        return true
+      case .node(let peerId, let nodeId, let p, let q, let s, let grabState):
+        remotePeers[peerId]?.lastSeenMs = atMs
+        guard SharedRoom.canAcquireNodeLease(
+          existing: nodeLeases[nodeId], candidatePeerId: peerId, atMs: atMs)
+        else { return false }
+        if grabState == "release" {
+          nodeLeases.removeValue(forKey: nodeId)
+        } else {
+          nodeLeases[nodeId] = SharedRoom.NodeSoftLock(
+            ownerPeerId: peerId, leaseUntilMs: atMs + SharedRoom.softLockTtlMs)
+        }
+        for node in 0..<live.session.nodeCount {
+          if syncNodeKey(node) == nodeId && shouldSyncNode(node) {
+            live.setNodeTransform(node, XRNodeTransform(translation: p, rotation: q, scale: s))
+            onPeerSync?(peerId, nodeId)
+            break
+          }
+        }
+        return true
+      case .explode(let peerId, let factor):
+        remotePeers[peerId]?.lastSeenMs = atMs
+        setExplode(factor, source: "peer")
+        onPeerSync?(peerId, "__explode__")
+        return true
+      case .paint(let peerId, let strokeId, let color, let radius, let points):
+        remotePeers[peerId]?.lastSeenMs = atMs
+        var builder = TubeStrokeBuilder(radius: radius)
+        for pt in points { _ = builder.addPoint(pt) }
+        if let geo = builder.build(), let sMesh = Self.mesh(geo) {
+          while remoteStrokeEntities.count >= SharedRoom.maxRemoteStrokes {
+            remoteStrokeEntities.removeFirst().removeFromParent()
+          }
+          let mat = Self.material(Self.parseHexRgba(color, alpha: 1))
+          let se = ModelEntity(mesh: sMesh, materials: [mat])
+          container.addChild(se)
+          se.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+          remoteStrokeEntities.append(se)
+        }
+        onPeerSync?(peerId, "paint:\(strokeId)")
+        return true
+      }
+    }
+
+    /// Prunes remote peers silent for longer than `SharedRoom.peerTimeoutMs`.
+    @discardableResult
+    public func pruneStalePeers(
+      atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> Int {
+      var removed = 0
+      for id in Array(remotePeers.keys) {
+        guard let p = remotePeers[id] else { continue }
+        if atMs - p.lastSeenMs > SharedRoom.peerTimeoutMs {
+          if removeRemotePeer(id) { removed += 1 }
+        }
+      }
+      return removed
+    }
+
+    private func removeRemotePeer(_ peerId: String) -> Bool {
+      guard let p = remotePeers.removeValue(forKey: peerId) else { return false }
+      p.visorEntity?.removeFromParent()
+      p.laserEntity?.removeFromParent()
+      let owned = nodeLeases.filter { $0.value.ownerPeerId == peerId }.map { $0.key }
+      for k in owned { nodeLeases.removeValue(forKey: k) }
+      onPeerLeave?(p.peerId, p.name, p.color)
+      return true
+    }
+
+    private func syncRemotePeerVisual(_ peer: RemotePeerVisual) {
+      if peer.visorEntity == nil || peer.appliedColor != peer.color {
+        peer.visorEntity?.removeFromParent()
+        let vGeo = SharedRoom.buildPeerVisorGeometry()
+        if let vMesh = Self.mesh(vGeo) {
+          let mat = Self.material(Self.parseHexRgba(peer.color, alpha: 0.92))
+          let ve = ModelEntity(mesh: vMesh, materials: [mat])
+          container.addChild(ve)
+          peer.visorEntity = ve
+          peer.appliedColor = peer.color
+        }
+      }
+      peer.visorEntity?.setTransformMatrix(
+        XRSpatialMath.compose(
+          translation: peer.headPos, rotation: peer.headQuat, scale: SIMD3<Float>(1, 1, 1)),
+        relativeTo: nil)
+
+      if let ro = peer.rayOrigin, let re = peer.rayEnd {
+        let lGeo = SharedRoom.buildPeerLaserGeometry(origin: ro, end: re, hasHit: peer.hasHit)
+        if let lMesh = Self.mesh(lGeo) {
+          let mat = Self.material(Self.parseHexRgba(peer.color, alpha: 0.78))
+          if let existing = peer.laserEntity {
+            existing.model = ModelComponent(mesh: lMesh, materials: [mat])
+            existing.isEnabled = true
+          } else {
+            let le = ModelEntity(mesh: lMesh, materials: [mat])
+            container.addChild(le)
+            peer.laserEntity = le
+          }
+          peer.laserEntity?.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+        }
+      } else {
+        peer.laserEntity?.isEnabled = false
+      }
     }
 
     private func stepContactShadows() {

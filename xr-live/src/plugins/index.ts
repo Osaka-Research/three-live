@@ -34,6 +34,7 @@
  * | `exploded-view`        | `explode` / `section-plane` attr / `userData.xr.explode` |
  * | `persistent-anchors`   | `persistent-anchors` / `persist-url-hash` attr / `userData.xr.anchor.persist` |
  * | `spatial-locomotion`   | `locomotion` attr / `userData.xr.navigable`   |
+ * | `shared-room`          | `shared-room` attr / `userData.xr.sync`       |
  *
  * To register only a subset, import the individual modules and call
  * `registerPlugin()` yourself instead of importing this entry point.
@@ -49,6 +50,7 @@ import {headFollowPlugin} from './head-follow';
 import {magneticSnapPlugin} from './magnetic-snap';
 import {manipulationHandlesPlugin} from './manipulation-handles';
 import {persistentAnchorsPlugin} from './persistent-anchors';
+import {sharedRoomPlugin} from './shared-room';
 import {spatialLocomotionPlugin} from './spatial-locomotion';
 import {spatialMeasurePlugin} from './spatial-measure';
 import {spatialPaintPlugin} from './spatial-paint';
@@ -70,6 +72,7 @@ export const xrSpatialPlugins = [
   explodedViewPlugin,
   persistentAnchorsPlugin,
   spatialLocomotionPlugin,
+  sharedRoomPlugin,
 ] as const;
 
 for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
@@ -93,6 +96,7 @@ export * from './head-follow';
 export * from './magnetic-snap';
 export * from './manipulation-handles';
 export * from './persistent-anchors';
+export * from './shared-room';
 export * from './spatial-locomotion';
 export * from './spatial-measure';
 export * from './spatial-paint';

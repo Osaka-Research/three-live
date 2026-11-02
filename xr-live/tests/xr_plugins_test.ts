@@ -139,7 +139,23 @@ import {
   XRSpatialLocomotionController,
 } from '../src/plugins/spatial-locomotion';
 import {
+  buildPeerLaserGeometry,
+  buildPeerVisorGeometry,
+  canAcquireNodeLease,
+  isAllowedRoomUrl,
+  MAX_PAYLOAD_BYTES,
+  MAX_REMOTE_STROKES,
+  parseRoomTarget,
+  parseSharedRoomMessage,
+  PEER_TIMEOUT_MS,
+  sharedRoomPlugin,
+  SOFT_LOCK_TTL_MS,
+  XRSharedRoomController,
+  type SharedRoomTransport,
+} from '../src/plugins/shared-room';
+import {
   catmullRom,
+  getSpatialPaintController,
   paintPointFor,
   parseHexColor,
   TubeStrokeBuilder,
@@ -209,7 +225,7 @@ function meshAt(name: string, pos: [number, number, number], xr: Record<string, 
 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
-  assert(xrSpatialPlugins.length === 13, 'exports thirteen plugins');
+  assert(xrSpatialPlugins.length === 14, 'exports fourteen plugins');
   assert(
     xrLiveFull.xrSpatialPlugins === xrSpatialPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
     'xr-live-full includes the spatial plugins',
@@ -229,6 +245,7 @@ function testRegistration(): void {
     'xr-live-exploded-view',
     'xr-live-persistent-anchors',
     'xr-live-spatial-locomotion',
+    'xr-live-shared-room',
   ]) {
     assert(names.includes(n), `registers ${n}`);
   }
@@ -1728,6 +1745,216 @@ function testGoldenParity(): void {
   );
 }
 
+function testSharedRoom(): void {
+  console.log('\n🤝 shared-room');
+
+  // 1. URL & room target validation + trait schema sync round-trip.
+  assert(isAllowedRoomUrl('wss://relay.example.com/room/1'), 'allows wss:// room endpoint');
+  assert(isAllowedRoomUrl('ws://localhost:8787/room'), 'allows ws://localhost endpoint');
+  assert(isAllowedRoomUrl('ws://127.0.0.1:8787/room'), 'allows ws://127.0.0.1 endpoint');
+  assert(isAllowedRoomUrl('ws://[::1]:8787/room'), 'allows ws://[::1] endpoint');
+  assert(!isAllowedRoomUrl('ws://evil.example.com/room'), 'rejects cleartext remote ws://');
+  assert(!isAllowedRoomUrl('https://relay.example.com/room'), 'rejects non-WebSocket https://');
+  assert(parseRoomTarget('studio-alpha').kind === 'broadcast', 'room slug maps to BroadcastChannel');
+  assert(parseRoomTarget('__proto__').kind === 'rejected', 'rejects __proto__ room slug');
+  assert(parseRoomTarget('ws://evil.example.com/x').kind === 'rejected', 'rejects remote ws:// in parseRoomTarget');
+  assert(parseRoomTarget('none').kind === 'disabled', 'disables on "none"');
+
+  const syncNorm = normalizeXRTraits({grab: true, sync: false});
+  assert(syncNorm?.sync === false, 'normalizeXRTraits preserves explicit sync: false');
+  assert(
+    buildUsdXRLines(syncNorm!, (s) => String(s)).join('\n').includes('bool sync = false'),
+    'USD flattens sync boolean',
+  );
+
+  // 2. Wire parser security hardening.
+  assert(parseSharedRoomMessage('x'.repeat(MAX_PAYLOAD_BYTES + 10)) === null, 'rejects oversized wire payload');
+  assert(
+    parseSharedRoomMessage('{"v":1,"type":"node","peerId":"__proto__","nodeId":"box","p":[0,0,0],"q":[0,0,0,1],"s":[1,1,1]}') === null,
+    'rejects __proto__ peerId',
+  );
+  assert(
+    parseSharedRoomMessage('{"v":1,"type":"explode","peerId":"p1","factor":null}') === null,
+    'rejects non-numeric explode factor',
+  );
+  assert(
+    parseSharedRoomMessage('{"v":1,"type":"paint","peerId":"p1","strokeId":"s1","points":[[0,0,0]]}') === null,
+    'rejects single-point paint stroke',
+  );
+
+  // 3. Peer geometry builders.
+  const visorGeo = buildPeerVisorGeometry();
+  assert(visorGeo.positions.length > 0 && visorGeo.indices.length % 3 === 0, 'builds 3D visor mesh');
+  const laserHitGeo = buildPeerLaserGeometry([0, 1.5, 0], [0, 1.0, -1.5], true);
+  const laserMissGeo = buildPeerLaserGeometry([0, 1.5, 0], [0, 1.0, -1.5], false);
+  assert(laserHitGeo.indices.length > laserMissGeo.indices.length, 'hit laser appends endpoint cube');
+
+  // 4. Multi-peer in-memory hub: pose sync, color updates, soft-locks, explode & paint sync.
+  const endpoints = new Set<SharedRoomTransport>();
+  const makeHubTransport = (): SharedRoomTransport => {
+    const t: SharedRoomTransport = {
+      send(rawJson: string) {
+        for (const other of endpoints) {
+          if (other !== t) other.onMessage?.(rawJson);
+        }
+      },
+      close() {
+        endpoints.delete(t);
+      },
+    };
+    endpoints.add(t);
+    return t;
+  };
+
+  function makeEventHost(attrs: Record<string, string>) {
+    const map = new Map<string, Set<EventListener>>();
+    const events: Array<{type: string; detail: unknown}> = [];
+    const el: Record<string, unknown> = {
+      getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
+      hasAttribute: (k: string) => k in attrs,
+      setAttribute: (k: string, v: string) => {
+        attrs[k] = v;
+      },
+      addEventListener: (type: string, fn: EventListener) => {
+        if (!map.has(type)) map.set(type, new Set());
+        map.get(type)!.add(fn);
+      },
+      removeEventListener: (type: string, fn: EventListener) => {
+        map.get(type)?.delete(fn);
+      },
+      dispatchEvent: (ev: CustomEvent) => {
+        events.push({type: ev.type, detail: ev.detail});
+        for (const fn of map.get(ev.type) ?? []) fn(ev);
+        return true;
+      },
+      events,
+    };
+    return el;
+  }
+
+  const hostA = makeEventHost({'shared-room': 'lab', 'peer-name': 'Alice', 'peer-color': '#38bdf8', 'spatial-paint': '#22c55e'});
+  const hostB = makeEventHost({'shared-room': 'lab', 'peer-name': 'Bob', 'peer-color': '#f472b6'});
+  const cubeA = meshAt('Shared_Cube', [0, 0.5, -1], {grab: true, anchor: {id: 'shared-cube', persist: true}});
+  const cubeB = meshAt('Shared_Cube', [0, 0.5, -1], {grab: true, anchor: {id: 'shared-cube', persist: true}});
+  const viewerA = {meshes: [cubeA], container: hostA, cameraPos: [0.2, 1.6, 0.5] as [number, number, number]};
+  const viewerB = {meshes: [cubeB], container: hostB, cameraPos: [-0.3, 1.55, 0.6] as [number, number, number]};
+  hostA._view = viewerA;
+  hostB._view = viewerB;
+
+  explodedViewPlugin.onElementConnected?.(hostA);
+  explodedViewPlugin.onElementConnected?.(hostB);
+  sharedRoomPlugin.onElementConnected?.(hostA);
+  sharedRoomPlugin.onElementConnected?.(hostB);
+
+  let simNow = 1000;
+  const ctrlA = new XRSharedRoomController('peer-alice', () => simNow);
+  const ctrlB = new XRSharedRoomController('peer-bob', () => simNow);
+  ctrlA.connect('lab', viewerA, hostA, makeHubTransport());
+  ctrlB.connect('lab', viewerB, hostB, makeHubTransport());
+
+  // Alice sends pose + laser ray -> Bob spawns visor + laser and emits `peerjoin`.
+  ctrlA.setLocalRay([0.2, 1.4, 0.4], [0, 0.5, -1], true);
+  assert(ctrlA.broadcastPoseTick(viewerA, hostA), 'Alice broadcasts 20 Hz pose tick');
+  simNow = 1020;
+  assert(!ctrlA.broadcastPoseTick(viewerA, hostA), 'pose tick rate-limited within 50ms');
+  assert(ctrlB.peerCount === 1, 'Bob registers Alice as active peer');
+  assert(
+    hostB.events.some((e) => e.type === 'peerjoin' && (e.detail as {name?: string})?.name === 'Alice'),
+    'Bob emits peerjoin for Alice',
+  );
+  assert(viewerB.meshes.length === 3, 'Bob spawns visor + laser dynamic meshes for Alice');
+
+  // Alice updates `peer-color` -> Bob recreates both visor and laser with new color.
+  simNow = 1100;
+  (hostA.setAttribute as (k: string, v: string) => void)('peer-color', '#eab308');
+  ctrlA.broadcastPoseTick(viewerA, hostA, simNow, true);
+  assert(ctrlB.getPeers()[0].color === '#eab308', 'Bob updates Alice accent color');
+  assert(viewerB.meshes.length === 3, 'color change replaces visor + laser without leaking meshes');
+
+  // Soft-lock conflict resolution: Alice grabs `shared-cube` at t=2000ms; Bob's competing grab at t=2500ms is rejected!
+  simNow = 2000;
+  mat4FromRotationTranslationScale(cubeA.transform, [0, 0, 0, 1], [0.75, 0.8, -1.2], [1, 1, 1]);
+  assert(ctrlA.broadcastMeshDelta(viewerA, cubeA, 'grab'), 'Alice acquires soft-lock and broadcasts node move');
+  assert(near(extractPosition(cubeB.transform)[0], 0.75), 'Bob applies Alice node transform');
+  simNow = 2500;
+  assert(ctrlB.getNodeOwner('shared-cube') === 'peer-alice', 'Bob sees Alice as soft-lock owner');
+
+  mat4FromRotationTranslationScale(cubeB.transform, [0, 0, 0, 1], [-0.9, 0.8, -1.2], [1, 1, 1]);
+  assert(!ctrlB.broadcastMeshDelta(viewerB, cubeB, 'move'), 'Bob blocked while Alice holds unexpired soft-lock');
+  assert(near(extractPosition(cubeA.transform)[0], 0.75), 'Alice transform untouched by rejected conflict');
+
+  // After SOFT_LOCK_TTL_MS (2000ms) expires at t=4000ms, Bob can acquire the node!
+  assert(canAcquireNodeLease({ownerPeerId: 'peer-alice', leaseUntilMs: 4000}, 'peer-bob', 4000), 'soft-lock expires at TTL');
+  simNow = 2000 + SOFT_LOCK_TTL_MS;
+  assert(ctrlB.broadcastMeshDelta(viewerB, cubeB, 'grab'), 'Bob acquires soft-lock after TTL expiry');
+  assert(near(extractPosition(cubeA.transform)[0], -0.9), 'Alice receives Bob post-expiry transform');
+  simNow += 50;
+  assert(ctrlB.broadcastMeshDelta(viewerB, cubeB, 'release'), 'Bob releases soft-lock cleanly');
+  simNow += 10;
+  assert(ctrlA.getNodeOwner('shared-cube') === null, 'soft-lock cleared on release');
+
+  // Explode state sync without infinite echo loop.
+  const beforeEventsB = hostB.events.length;
+  getExplodedViewController(hostA).setExplode(0.65, hostA, 'api');
+  assert(
+    hostB.events
+      .slice(beforeEventsB)
+      .some(
+        (e) =>
+          e.type === 'explodechange' &&
+          near((e.detail as {factor?: number})?.factor ?? -1, 0.65) &&
+          (e.detail as {source?: string})?.source === 'peer',
+      ),
+    'Bob receives peer explodechange at factor 0.65',
+  );
+  const peerSyncExplode = hostB.events
+    .slice(beforeEventsB)
+    .filter((e) => e.type === 'peersync' && (e.detail as {nodeId?: string})?.nodeId === '__explode__');
+  assert(peerSyncExplode.length === 1, 'explodechange syncs once to Bob without infinite echo loop');
+
+  // Automatic `xr-paint-stroke` sync + MAX_REMOTE_STROKES eviction.
+  const paintCtrlA = getSpatialPaintController(hostA);
+  paintCtrlA.begin(viewerA, [0, 1, -0.5], 'right');
+  paintCtrlA.extend(viewerA, [0.1, 1.05, -0.5], 'right', 1);
+  paintCtrlA.extend(viewerA, [0.2, 1.1, -0.5], 'right', 1);
+  const summary = paintCtrlA.end(viewerA, 'right');
+  assert(summary !== null, 'Alice finishes local paint stroke');
+  (hostA.dispatchEvent as (ev: Event) => boolean)(new CustomEvent('xr-paint-stroke', {detail: summary}));
+  assert(
+    hostB.events.some((e) => e.type === 'peersync' && String((e.detail as {nodeId?: string})?.nodeId).startsWith('paint:')),
+    'Alice xr-paint-stroke automatically syncs 3D tube stroke to Bob',
+  );
+
+  for (let i = 0; i < MAX_REMOTE_STROKES + 4; i++) {
+    ctrlA.broadcastPaintStroke(`bulk_${i}`, [[0, 0, 0], [0.05, 0.05, 0], [0.1, 0, 0]], '#38bdf8', 0.008);
+  }
+  const bobRemoteStrokes = viewerB.meshes.filter((m) => String((m as {name?: string}).name).startsWith('__xr_peer_stroke_'));
+  assert(bobRemoteStrokes.length === MAX_REMOTE_STROKES, 'caps remote paint strokes at MAX_REMOTE_STROKES');
+
+  // Stale peer timeout pruning (`PEER_TIMEOUT_MS`).
+  const ctrlC = new XRSharedRoomController('peer-carol', () => simNow);
+  const viewerC = {meshes: [] as unknown[], cameraPos: [0, 1.6, 0] as [number, number, number]};
+  const hostC = makeEventHost({'shared-room': 'lab'});
+  ctrlC.connect('lab', viewerC, hostC, makeHubTransport());
+  simNow = 10000;
+  ctrlC.broadcastPoseTick(viewerC, hostC, simNow, true);
+  assert(ctrlB.peerCount === 2, 'Bob tracks both Alice and Carol');
+  simNow = 10000 + PEER_TIMEOUT_MS + 10;
+  const pruned = ctrlB.pruneStalePeers(viewerB, hostB);
+  assert(pruned >= 1 && ctrlB.peerCount < 2, 'pruneStalePeers evicts silent peers and emits peerleave');
+
+  // Clean disconnect sends `leave` and frees GPU meshes.
+  ctrlA.dispose(viewerA);
+  ctrlB.dispose(viewerB);
+  ctrlC.dispose(viewerC);
+  sharedRoomPlugin.onElementDisconnected?.(hostA);
+  sharedRoomPlugin.onElementDisconnected?.(hostB);
+  assert(
+    viewerB.meshes.filter((m) => (m as {isPluginMesh?: boolean}).isPluginMesh).length === 0,
+    'dispose removes all remote peer visors, lasers, and strokes',
+  );
+}
+
 async function main(): Promise<void> {
   console.log('🧪 Running spatial plugin unit tests...');
   testSchema();
@@ -1746,6 +1973,7 @@ async function main(): Promise<void> {
   testExplodedView();
   await testPersistentAnchors();
   testSpatialLocomotion();
+  testSharedRoom();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

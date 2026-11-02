@@ -1591,4 +1591,61 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertFalse(st3.latched)
     XCTAssertEqual(st4.deltaYawDeg, 30)
   }
+
+  func testSharedRoomProtocolAndSoftLockParity() throws {
+    XCTAssertTrue(SharedRoom.isAllowedRoomUrl("wss://relay.example.com/room/1"))
+    XCTAssertTrue(SharedRoom.isAllowedRoomUrl("ws://localhost:8787/room"))
+    XCTAssertTrue(SharedRoom.isAllowedRoomUrl("ws://127.0.0.1:8787/room"))
+    XCTAssertFalse(SharedRoom.isAllowedRoomUrl("ws://evil.example.com/room"))
+    XCTAssertFalse(SharedRoom.isAllowedRoomUrl("https://relay.example.com/room"))
+
+    let traits = try XCTUnwrap(XRLiveTraitParser.normalize(["grab": true, "sync": false]))
+    XCTAssertEqual(traits.sync, false)
+    let usdTraits = try XCTUnwrap(XRLiveTraitParser.normalize(usdCustomData: ["sync": true]))
+    XCTAssertEqual(usdTraits.sync, true)
+
+    let poseJson = SharedRoom.serializeMessage(
+      .pose(
+        peerId: "peer-alice",
+        name: "Alice",
+        color: "#38bdf8",
+        headPos: SIMD3<Float>(0.2, 1.6, 0.5),
+        headQuat: XRSpatialMath.identityQuat,
+        rayOrigin: SIMD3<Float>(0.2, 1.4, 0.4),
+        rayEnd: SIMD3<Float>(0, 0.5, -1),
+        hasHit: true
+      ))
+    let decodedPose = try XCTUnwrap(SharedRoom.parseMessage(poseJson))
+    if case .pose(let id, let name, let color, let hp, _, _, _, let hit) = decodedPose {
+      XCTAssertEqual(id, "peer-alice")
+      XCTAssertEqual(name, "Alice")
+      XCTAssertEqual(color, "#38bdf8")
+      XCTAssertEqual(hp.y, 1.6, accuracy: 1e-3)
+      XCTAssertTrue(hit)
+    } else {
+      XCTFail("Expected .pose message")
+    }
+
+    XCTAssertNil(
+      SharedRoom.parseMessage(#"{"v":1,"type":"leave","peerId":"__proto__"}"#))
+    XCTAssertNil(
+      SharedRoom.parseMessage(#"{"v":1,"type":"paint","peerId":"p1","strokeId":"s1","points":[[0,0,0]]}"#))
+
+    let lease = SharedRoom.NodeSoftLock(ownerPeerId: "peer-alice", leaseUntilMs: 3000)
+    XCTAssertTrue(
+      SharedRoom.canAcquireNodeLease(existing: lease, candidatePeerId: "peer-alice", atMs: 2500))
+    XCTAssertFalse(
+      SharedRoom.canAcquireNodeLease(existing: lease, candidatePeerId: "peer-bob", atMs: 2500))
+    XCTAssertTrue(
+      SharedRoom.canAcquireNodeLease(existing: lease, candidatePeerId: "peer-bob", atMs: 3000))
+
+    let visor = SharedRoom.buildPeerVisorGeometry()
+    XCTAssertFalse(visor.positions.isEmpty)
+    XCTAssertEqual(visor.indices.count % 3, 0)
+    let laserHit = SharedRoom.buildPeerLaserGeometry(
+      origin: SIMD3<Float>(0, 1.5, 0), end: SIMD3<Float>(0, 1.0, -1.5), hasHit: true)
+    let laserMiss = SharedRoom.buildPeerLaserGeometry(
+      origin: SIMD3<Float>(0, 1.5, 0), end: SIMD3<Float>(0, 1.0, -1.5), hasHit: false)
+    XCTAssertGreaterThan(laserHit.indices.count, laserMiss.indices.count)
+  }
 }

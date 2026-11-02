@@ -151,7 +151,7 @@ limitations under the License.
 
     .mode-switcher {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 6px;
       background: var(--bg);
       padding: 5px;
@@ -900,6 +900,7 @@ limitations under the License.
   </style>
   <script src="./xr-live.min.js"></script>
   <script src="./xr-live-extras.min.js"></script>
+  <script src="./xr-live-plugins.min.js"></script>
   <script>
     window.THREE = Object.assign({}, window.XRLive?.THREE, window.XRLive, window.XRLiveExtras);
   </script>
@@ -931,6 +932,9 @@ limitations under the License.
         </button>
         <button class="mode-btn" id="tab-perception" onclick="switchMode('perception')">
           3. Gemini AI &amp;<br>WebMCP Depth
+        </button>
+        <button class="mode-btn" id="tab-studio" onclick="switchMode('studio')">
+          4. Spatial Studio &amp;<br>Co-Presence
         </button>
       </div>
 
@@ -1038,6 +1042,40 @@ limitations under the License.
           </div>
 
           <pre class="json-output" id="mcp-output">// Click any WebMCP tool above to inspect live agent JSON payloads...</pre>
+        </div>
+      </div>
+
+      <!-- MODE 4: SPATIAL STUDIO (EXPLODE, MEASURE, SNAP, PERSIST, SHARED-ROOM) -->
+      <div class="mode-panel" id="panel-studio">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">CAD Studio &amp; Multi-User Sync</h2>
+            <span class="tag-pill">14 XR Plugins</span>
+          </div>
+          <ol class="guide-list">
+            <li>Drag the <strong>Explode Factor</strong> slider to peel layers 1&ndash;3 apart with 3D leader lines.</li>
+            <li>Toggle <strong>Dimensions</strong>, <strong>Section Cut</strong>, or <strong>Shared Room</strong> (open a 2nd browser tab to see live 3D peer visor &amp; state sync).</li>
+            <li>Snap parts into the magnetic <code>lens-bay</code> socket and persist layout via <code>#xr-state</code>.</li>
+          </ol>
+
+          <div class="slider-row">
+            <div class="slider-label">
+              <span>Exploded Assembly Factor</span>
+              <strong id="val-explode">0%</strong>
+            </div>
+            <input type="range" id="slider-explode" min="0" max="100" step="1" value="0" oninput="updateStudioExplode(this.value)">
+          </div>
+
+          <div class="btn-row">
+            <button class="action-btn primary" id="btn-studio-measure" onclick="toggleStudioMeasure()">Dimensions: ON</button>
+            <button class="action-btn" id="btn-studio-section" onclick="toggleStudioSection()">Section Cut: OFF</button>
+            <button class="action-btn purple" id="btn-studio-room" onclick="toggleStudioSharedRoom()">Shared Room: ON</button>
+          </div>
+
+          <div class="btn-row">
+            <button class="action-btn" onclick="saveStudioAnchors()">Save &amp; Copy #xr-state</button>
+            <button class="action-btn" onclick="clearStudioAnchors()">Reset Saved Layout</button>
+          </div>
         </div>
       </div>
 
@@ -1311,6 +1349,71 @@ depths.forEach((d, idx) => {
   scene.add(pillar);
 });
 
+return scene;`,
+
+      studio: `// Spatial CAD Studio: Explode, Measure, Snap, Persist & Shared Room
+const scene = new THREE.Scene();
+
+// Walkable Floor Pad (spatial-locomotion)
+const pad = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.1, 1.15, 0.06, 40),
+  new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.35, metalness: 0.45 })
+);
+pad.name = 'Studio_Walkable_Pad';
+pad.position.set(0, -0.42, 0);
+pad.userData.xr = { navigable: true };
+scene.add(pad);
+
+// Layer 0 Core Chassis + Magnetic Socket ('lens-bay') + Dimension Callouts
+const chassis = new THREE.Mesh(
+  new THREE.BoxGeometry(0.42, 0.24, 0.32),
+  new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.25, metalness: 0.75 })
+);
+chassis.name = 'Optical_Chassis';
+chassis.position.set(0, 0.02, 0);
+chassis.userData.xr = {
+  grab: true,
+  sync: true,
+  dimensions: { unit: 'cm', axes: ['x', 'y', 'z'] },
+  snapSocket: { tag: 'lens-bay', radius: 0.16, alignRotation: true },
+  anchor: { target: 'table', id: 'optical-chassis', persist: true },
+  gaze: { dwellMs: 700, action: 'select' },
+  explode: { layer: 1, direction: [0, -1, 0], distance: 0.22 }
+};
+scene.add(chassis);
+
+// Layer 2 Precision Sensor Ring (peels upward with leader line)
+const sensor = new THREE.Mesh(
+  new THREE.TorusGeometry(0.14, 0.032, 20, 48),
+  new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.18, metalness: 0.85 })
+);
+sensor.name = 'Sensor_Ring';
+sensor.position.set(0, 0.18, 0);
+sensor.rotation.x = Math.PI / 2;
+sensor.userData.xr = {
+  grab: true,
+  sync: true,
+  snapTo: { socketTag: 'lens-bay', grid: 0.05, angleDeg: 15 },
+  anchor: { id: 'sensor-ring', persist: true },
+  explode: { layer: 2, direction: [0, 1, 0], distance: 0.32, leaderLine: true }
+};
+scene.add(sensor);
+
+// Layer 3 Outer Crown Lens Dome (peels forward/upward)
+const dome = new THREE.Mesh(
+  new THREE.OctahedronGeometry(0.12, 1),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, roughness: 0.15, metalness: 0.65 })
+);
+dome.name = 'Crown_Lens';
+dome.position.set(0, 0.32, 0.04);
+dome.userData.xr = {
+  grab: true,
+  sync: true,
+  gaze: { dwellMs: 650, action: 'select' },
+  explode: { layer: 3, direction: [0, 0.85, 0.5], distance: 0.45, leaderLine: true }
+};
+scene.add(dome);
+
 return scene;`
     };
 
@@ -1452,7 +1555,7 @@ return scene;`
       const token = ++switchToken;
       currentMode = mode;
       document.body.dataset.mode = mode;
-      ['ballpit', 'workbench', 'perception'].forEach((m) => {
+      ['ballpit', 'workbench', 'perception', 'studio'].forEach((m) => {
         document.getElementById('tab-' + m).classList.toggle('active', m === mode);
         document.getElementById('panel-' + m).classList.toggle('active', m === mode);
       });
@@ -1460,9 +1563,11 @@ return scene;`
       const titles = {
         ballpit: 'Ballpit Lab',
         workbench: 'Spatial Workbench',
-        perception: 'Gemini AI & Depth'
+        perception: 'Gemini AI & Depth',
+        studio: 'CAD Studio & Sync'
       };
       document.getElementById('hud-mode').textContent = titles[mode];
+      syncStudioAttributes(mode === 'studio');
 
       editorEl.value = PRESET_SCRIPTS[mode];
       setToast('Switched to ' + titles[mode]);
@@ -2218,8 +2323,127 @@ return scene;`
         switchMode('workbench');
       } else if (e.key === '3') {
         switchMode('perception');
+      } else if (e.key === '4') {
+        switchMode('studio');
       }
     });
+
+    let studioMeasureOn = true;
+    let studioSectionOn = false;
+    let studioRoomOn = true;
+
+    function syncStudioAttributes(enable) {
+      if (enable) {
+        if (studioMeasureOn) xrEl.setAttribute('spatial-measure', 'bounds');
+        xrEl.setAttribute('measure-unit', 'cm');
+        xrEl.setAttribute('magnetic-snap', '');
+        xrEl.setAttribute('gaze-dwell', '');
+        xrEl.setAttribute('persistent-anchors', 'playground-studio');
+        xrEl.setAttribute('persist-url-hash', '');
+        xrEl.setAttribute('locomotion', 'teleport snap-turn');
+        if (studioSectionOn) xrEl.setAttribute('section-plane', 'x:0');
+        else xrEl.removeAttribute('section-plane');
+        if (studioRoomOn) {
+          xrEl.setAttribute('shared-room', 'playground-studio');
+          xrEl.setAttribute('peer-name', 'StudioTab');
+          xrEl.setAttribute('peer-color', '#38bdf8');
+        } else {
+          xrEl.removeAttribute('shared-room');
+        }
+      } else {
+        if (typeof xrEl.setExplode === 'function') xrEl.setExplode(0);
+        const sliderEl = document.getElementById('slider-explode');
+        const valEl = document.getElementById('val-explode');
+        if (sliderEl) sliderEl.value = '0';
+        if (valEl) valEl.textContent = '0%';
+        [
+          'spatial-measure',
+          'measure-unit',
+          'magnetic-snap',
+          'gaze-dwell',
+          'explode',
+          'section-plane',
+          'persistent-anchors',
+          'persist-url-hash',
+          'locomotion',
+          'shared-room',
+          'peer-name',
+          'peer-color'
+        ].forEach((a) => xrEl.removeAttribute(a));
+      }
+    }
+
+    xrEl.addEventListener('explodechange', (e) => {
+      if (e.detail && e.detail.source === 'peer' && typeof e.detail.factor === 'number') {
+        const pct = Math.round(Math.max(0, Math.min(1, e.detail.factor)) * 100);
+        const sliderEl = document.getElementById('slider-explode');
+        const valEl = document.getElementById('val-explode');
+        if (sliderEl) sliderEl.value = String(pct);
+        if (valEl) valEl.textContent = pct + '%';
+      }
+    });
+
+    xrEl.addEventListener('peerjoin', (e) => {
+      if (e.detail && e.detail.name) {
+        setToast('Peer joined shared room: ' + e.detail.name);
+      }
+    });
+
+    xrEl.addEventListener('peerleave', (e) => {
+      if (e.detail && e.detail.name) {
+        setToast('Peer left shared room: ' + e.detail.name);
+      }
+    });
+
+    function updateStudioExplode(val) {
+      const pct = Math.max(0, Math.min(100, Number(val) || 0));
+      document.getElementById('val-explode').textContent = pct + '%';
+      const factor = (pct / 100).toFixed(2);
+      xrEl.setAttribute('explode', factor);
+      if (typeof xrEl.setExplode === 'function') xrEl.setExplode(Number(factor));
+    }
+
+    function toggleStudioMeasure() {
+      studioMeasureOn = !studioMeasureOn;
+      const btn = document.getElementById('btn-studio-measure');
+      btn.textContent = 'Dimensions: ' + (studioMeasureOn ? 'ON' : 'OFF');
+      btn.classList.toggle('primary', studioMeasureOn);
+      if (studioMeasureOn) xrEl.setAttribute('spatial-measure', 'bounds');
+      else xrEl.removeAttribute('spatial-measure');
+      setToast('Spatial dimension callouts: ' + (studioMeasureOn ? 'ON' : 'OFF'));
+    }
+
+    function toggleStudioSection() {
+      studioSectionOn = !studioSectionOn;
+      const btn = document.getElementById('btn-studio-section');
+      btn.textContent = 'Section Cut: ' + (studioSectionOn ? 'ON' : 'OFF');
+      btn.classList.toggle('primary', studioSectionOn);
+      if (studioSectionOn) xrEl.setAttribute('section-plane', 'x:0');
+      else xrEl.removeAttribute('section-plane');
+      setToast('Cross-section cut plane: ' + (studioSectionOn ? 'x:0' : 'OFF'));
+    }
+
+    function toggleStudioSharedRoom() {
+      studioRoomOn = !studioRoomOn;
+      const btn = document.getElementById('btn-studio-room');
+      btn.textContent = 'Shared Room: ' + (studioRoomOn ? 'ON' : 'OFF');
+      btn.classList.toggle('purple', studioRoomOn);
+      if (studioRoomOn) xrEl.setAttribute('shared-room', 'playground-studio');
+      else xrEl.removeAttribute('shared-room');
+      setToast('Multi-tab Shared Room sync: ' + (studioRoomOn ? 'ON' : 'OFF'));
+    }
+
+    function saveStudioAnchors() {
+      const token = typeof xrEl.exportAnchorState === 'function' ? xrEl.exportAnchorState() : '';
+      if (typeof xrEl.savePersistedAnchors === 'function') xrEl.savePersistedAnchors();
+      setToast(token ? 'Saved layout & updated #xr-state (' + token.length + ' chars)' : 'Saved layout to storage');
+    }
+
+    function clearStudioAnchors() {
+      if (typeof xrEl.clearPersistedAnchors === 'function') xrEl.clearPersistedAnchors();
+      switchMode('studio');
+      setToast('Cleared persisted studio layout');
+    }
 
     window.addEventListener('keyup', (e) => {
       keysHeld.delete(e.code);

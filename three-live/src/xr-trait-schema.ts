@@ -509,6 +509,7 @@ export interface NormalizedXRTraits {
   gaze?: GazeOptions;
   explode?: ExplodeOptions;
   navigable?: NavigableMode;
+  sync?: boolean;
   pointerEvents?: 'none';
 }
 
@@ -606,6 +607,7 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (explode) out.explode = explode;
   const navigable = parseNavigable(r['navigable']);
   if (navigable) out.navigable = navigable;
+  if (typeof r['sync'] === 'boolean') out.sync = r['sync'];
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
 
   return Object.keys(out).length > 0 ? out : null;
@@ -677,6 +679,7 @@ export function buildXRSceneCoreExtension(
     };
   }
   if (n.navigable) comp['navigable'] = {mode: n.navigable};
+  if (typeof n.sync === 'boolean') comp['sync'] = {enabled: n.sync};
   return comp;
 }
 
@@ -739,6 +742,7 @@ export function flattenXRTraitsForUsd(
   if (n.gaze) put('gaze', n.gaze);
   if (n.explode) put('explode', n.explode);
   if (n.navigable) out['navigable'] = n.navigable;
+  if (typeof n.sync === 'boolean') out['sync'] = n.sync;
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
   return out;
 }

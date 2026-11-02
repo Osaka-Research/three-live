@@ -183,6 +183,8 @@ data class XRLiveNodeTraits(
   val anchorPersist: XRAnchorPersistTrait? = null,
   /** `"walkable"` or `"blocked"` when authored via `navigable`. */
   val navigable: String? = null,
+  /** Explicit multi-user `shared-room` transform sync flag (`null` inherits grabbable default). */
+  val sync: Boolean? = null,
   /** `"none"` when the node must not receive pointer events. */
   val pointerEvents: String? = null,
 ) {
@@ -262,6 +264,8 @@ interface SceneCoreComponentApplier<EntityT> {
   fun onAttachExplode(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachNavigable(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachSync(entity: EntityT, node: XRLiveNodeTraits) {}
 }
 
 /**
@@ -408,6 +412,7 @@ object XRLiveSceneCoreHelper {
     if (trait.gaze != null) applier.onAttachGaze(entity, trait)
     if (trait.explode != null) applier.onAttachExplode(entity, trait)
     if (trait.navigable != null) applier.onAttachNavigable(entity, trait)
+    if (trait.sync == true) applier.onAttachSync(entity, trait)
   }
 
   /**
@@ -899,6 +904,7 @@ object XRLiveSceneCoreHelper {
       explode = parseExplode(xr["explode"] ?: sc["explode"]),
       anchorPersist = anchorPersist,
       navigable = parseNavigable(xr["navigable"] ?: sc["navigable"]),
+      sync = (xr["sync"] as? Boolean) ?: (MiniJson.asMap(sc["sync"])?.get("enabled") as? Boolean),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,
     )
   }

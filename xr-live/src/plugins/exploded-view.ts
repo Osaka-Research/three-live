@@ -387,9 +387,13 @@ export class XRExplodedViewController {
 
   /** Programmatically sets the target explosion factor and emits `explodechange`. */
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
-  setExplode(factor: number, element?: any, source: 'attribute' | 'gesture' | 'api' = 'api'): void {
+  setExplode(
+    factor: number,
+    element?: any,
+    source: 'attribute' | 'gesture' | 'api' | 'peer' = 'api',
+  ): void {
     const clamped = clampNum(factor, 0, 1, 0);
-    if (source === 'api' || source === 'gesture') {
+    if (source === 'api' || source === 'gesture' || source === 'peer') {
       this.apiOverrideFactor = clamped;
     } else {
       this.apiOverrideFactor = null;
