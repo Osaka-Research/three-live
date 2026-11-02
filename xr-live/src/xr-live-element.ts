@@ -38,6 +38,7 @@ import {
   WebXRSessionManager,
   type ARLaunchResult,
 } from '../../three-live/src/three-xr';
+import {installXRDepthShader} from '../../three-live/src/xr-depth-shader';
 import type {XRCapturedFrame, XRTransitionOptions} from './xr-extras';
 import {XRInputManager} from './xr-input';
 import {
@@ -616,6 +617,9 @@ export const xrLiveSpatialPlugin: ThreeLivePlugin = {
 };
 
 registerPlugin(xrLiveSpatialPlugin);
+// <xr-live> is the only element that requests WebXR depth, so it alone
+// installs the depth-occlusion shader chunk; <three-live> bundles omit it.
+installXRDepthShader();
 
 const BaseHTMLElement: typeof HTMLElement =
   typeof HTMLElement !== 'undefined'

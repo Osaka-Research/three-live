@@ -64,13 +64,13 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
    node scripts/build.js
    ```
    Verify that all 10 `.min.js.gz` bundles in `scripts/build.js` remain within their enforced byte budgets:
-   - `three-live-viewer.min.js`: `< 26 KB gz`
+   - `three-live-viewer.min.js`: `< 25.5 KB gz`
    - `three-live.min.js`: `< 54 KB gz`
    - `three-live-extras.min.js`: `< 17 KB gz`
    - `three-live-animation.min.js`: `< 6.5 KB gz`
    - `three-live-full.min.js`: `< 69 KB gz`
    - `xr-live-viewer.min.js`: `< 46 KB gz`
-   - `xr-live.min.js`: `< 65 KB gz`
+   - `xr-live.min.js`: `< 66 KB gz`
    - `xr-live-extras.min.js`: `< 10 KB gz`
    - `xr-live-plugins.min.js`: `< 52 KB gz`
    - `xr-live-full.min.js`: `< 132 KB gz`

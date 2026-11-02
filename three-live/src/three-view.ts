@@ -357,17 +357,12 @@ uniform vec4 uBaseColor;
 uniform float uMetallic,uRoughness,uEmissive,uEnvIntensity;
 uniform vec2 uClearcoat;
 uniform vec3 uCameraPos,uAmbientColor;
-uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap,uXrDepthTex;
-uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap,uXrDepthEnabled,uXrDepthFormat;
-uniform float uNormalScale,uOcclusionStrength,uXrRawValueToMeters;
-uniform mat4 uXrDepthUVTransform;
-uniform highp sampler2DArray uXrDTA;
-uniform int uXrDL,uXrDR;
-uniform vec2 uXrNF;
-uniform mat4 uXrDVP;
+uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap;
+uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap;
+uniform float uNormalScale,uOcclusionStrength;
+/*XRD_U*/
 uniform vec2 uViewportSize;
-uniform vec4 uViewport,uSectionPlane;
-uniform vec3 uCameraFwd;
+uniform vec4 uSectionPlane;
 uniform int uToneMapping,uNumDirLights,uNumPointLights,uSectionEnabled;
 uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2];
 out vec4 fragColor;
@@ -518,23 +513,7 @@ color=color*(vec3(1.0)-ccF)+getStudioRadiance(R,uClearcoat.y)*ccF*uEnvIntensity;
 }
 color=applyToneMapping(color,uToneMapping);
 float outAlpha=base.a;
-if(uXrDepthEnabled==1){
-vec2 dUV;float vD;bool inV=true;vec2 nf=uXrNF;
-if(uXrDR==1){vec4 dc=uXrDVP*vec4(vWorldPos,1.0);inV=dc.w>0.0;dUV=dc.xy/max(dc.w,1e-4)*0.5+0.5;vD=dc.w;}
-else{dUV=(uXrDepthUVTransform*vec4((gl_FragCoord.x-uViewport.x)/max(uViewport.z,1.0),1.0-(gl_FragCoord.y-uViewport.y)/max(uViewport.w,1.0),0.0,1.0)).xy;
-vD=dot(uCameraFwd,uCameraFwd)>0.5?dot(vWorldPos-uCameraPos,uCameraFwd):length(uCameraPos-vWorldPos);}
-if(inV&&dUV.x>=0.0&&dUV.x<=1.0&&dUV.y>=0.0&&dUV.y<=1.0){
-vec4 ds=uXrDL>=0?texture(uXrDTA,vec3(dUV,float(uXrDL))):texture(uXrDepthTex,dUV);
-float rD=uXrDepthFormat==1?ds.r:(ds.r*255.0+ds.a*65280.0);
-bool nl=nf.y>nf.x;
-float realDepth=nl?2.0*nf.x*nf.y/max(nf.y+nf.x-(rD*2.0-1.0)*(nf.y-nf.x),1e-5):rD*uXrRawValueToMeters;
-if((nl?rD<1.0:(uXrDepthFormat==1||rD<65500.0))&&rD>0.0&&realDepth>0.15&&realDepth<20.0&&vD>realDepth+0.02){
-float occAlpha=1.0-smoothstep(0.0,0.035,vD-realDepth-0.02);
-outAlpha*=occAlpha;
-if(outAlpha<0.01)discard;
-}
-}
-}
+/*XRD_O*/
 fragColor=vec4(color,outAlpha);
 }`;
 
@@ -628,24 +607,27 @@ const RENDER_UNIFORMS = [
   'uPointLightPos',
   'uPointLightColor',
   'uEnvIntensity',
-  'uXrDepthTex',
-  'uXrDepthEnabled',
-  'uXrDepthFormat',
-  'uXrRawValueToMeters',
-  'uXrDepthUVTransform',
-  // GPU depth: array sampler, array layer (-1 = 2D texture), reproject flag,
-  // non-linear near/far planes, and depth-camera world-to-clip matrix.
-  'uXrDTA',
-  'uXrDL',
-  'uXrDR',
-  'uXrNF',
-  'uXrDVP',
   'uViewportSize',
-  'uViewport',
-  'uCameraFwd',
   'uSectionPlane',
   'uSectionEnabled',
 ] as const;
+
+/**
+ * Returns the render fragment shader and its uniform names, with WebXR depth
+ * occlusion spliced in only when `xr-depth-shader.ts` has installed it. The
+ * lean `<three-live>` viewer never imports that module, so it ships no XR
+ * depth GLSL or binding code.
+ */
+function renderShaderSpec(): {fs: string; uniforms: readonly string[]} {
+  const x = getSharedRegistry().xrDepthShader;
+  return {
+    fs: FS_RENDER.replace('/*XRD_U*/', x?.uniformsGLSL || '').replace(
+      '/*XRD_O*/',
+      x?.occlusionGLSL || '',
+    ),
+    uniforms: x ? [...RENDER_UNIFORMS, ...x.uniformNames] : RENDER_UNIFORMS,
+  };
+}
 
 interface PrimitiveGpu {
   vao: WebGLVertexArrayObject;
@@ -1101,8 +1083,9 @@ function buildGpuScene(
           ? gltf.materials[prim.material]
           : null;
 
+      const spec = renderShaderSpec();
       let vsSource = VS_RENDER;
-      let fsSource = FS_RENDER;
+      let fsSource = spec.fs;
       let hasCustomShader = false;
       for (const plugin of registeredPlugins) {
         if (plugin.onResolveShader) {
@@ -1118,7 +1101,7 @@ function buildGpuScene(
         ? createProgram(gl, vsSource, fsSource)
         : null;
       const customUniforms = customProgram
-        ? getUniforms(gl, customProgram, RENDER_UNIFORMS)
+        ? getUniforms(gl, customProgram, spec.uniforms)
         : null;
 
       const pbr = mat?.pbrMetallicRoughness;
@@ -1471,9 +1454,10 @@ export class ThreeView {
       throw new Error('WebGL2 not supported');
     }
     this.gl = gl;
-    this.renderProg = createProgram(gl, VS_RENDER, FS_RENDER);
+    const spec = renderShaderSpec();
+    this.renderProg = createProgram(gl, VS_RENDER, spec.fs);
     this.pickProg = createProgram(gl, VS_PICK, FS_PICK);
-    this.uRender = getUniforms(gl, this.renderProg, RENDER_UNIFORMS);
+    this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
     this.uPick = getUniforms(gl, this.pickProg, ['uMVP', 'uColorId']);
 
     this.setupPickingFbo();
@@ -3232,15 +3216,7 @@ export class ThreeView {
     const vp = mat4Create();
     const activeView = xrOverride?.viewMatrix ?? this.viewMatrix;
     mat4Multiply(vp, xrOverride?.projMatrix ?? this.projMatrix, activeView);
-    // World-space camera forward (-Z row of the view rotation). WebXR depth
-    // buffers store planar Z distance, so occlusion compares against planar
-    // virtual depth rather than radial distance (which over-occludes at the
-    // screen edges by 1/cos(angle)).
-    const camFwd: [number, number, number] = [
-      -activeView[2],
-      -activeView[6],
-      -activeView[10],
-    ];
+    const xrDepth = getSharedRegistry().xrDepthShader;
 
     const toneMode =
       this.toneMapping === 'reinhard' ? 1 : this.toneMapping === 'none' ? 2 : 0;
@@ -3323,9 +3299,6 @@ export class ThreeView {
           gl.uniform1i(u.uToneMapping, toneMode);
           gl.uniform1f(u.uEnvIntensity, this.envIntensity);
           gl.uniform3f(u.uCameraPos, eyeX, eyeY, eyeZ);
-          if (u.uCameraFwd) {
-            gl.uniform3f(u.uCameraFwd, camFwd[0], camFwd[1], camFwd[2]);
-          }
           gl.uniform1f(u.uEmissive, isSelected ? 1.0 : 0.0);
           gl.uniformMatrix4fv(u.uMVP, false, this.mvpMatrix);
           gl.uniformMatrix4fv(u.uModel, false, this.modelMatrix);
@@ -3342,52 +3315,12 @@ export class ThreeView {
           if (u.uViewportSize) {
             gl.uniform2f(u.uViewportSize, Math.max(1, vpW), Math.max(1, vpH));
           }
-          if (u.uViewport) {
-            gl.uniform4f(
-              u.uViewport,
-              vpX,
-              vpY,
-              Math.max(1, vpW),
-              Math.max(1, vpH),
-            );
-          }
-          // The array sampler must always sit on its own unit: two samplers of
-          // different types on the same unit fail every draw call.
-          if (u.uXrDTA) gl.uniform1i(u.uXrDTA, 7);
-          const ds = this.xrDepthState;
-          if (ds.enabled && ds.texture) {
-            const arr =
-              ds.textureType === 'texture-array' &&
-              (gl as any).TEXTURE_2D_ARRAY;
-            gl.activeTexture(gl.TEXTURE0 + (arr ? 7 : 5));
-            gl.bindTexture(arr || gl.TEXTURE_2D, ds.texture);
-            if (u.uXrDepthTex) gl.uniform1i(u.uXrDepthTex, 5);
-            if (u.uXrDepthEnabled) gl.uniform1i(u.uXrDepthEnabled, 1);
-            if (u.uXrDL) gl.uniform1i(u.uXrDL, arr ? ds.layer || 0 : -1);
-            if (u.uXrNF) gl.uniform2f(u.uXrNF, ds.depthNear || 0, ds.depthFar || 0);
-            if (u.uXrDR) gl.uniform1i(u.uXrDR, ds.depthViewProj ? 1 : 0);
-            if (u.uXrDVP && ds.depthViewProj) {
-              gl.uniformMatrix4fv(u.uXrDVP, false, ds.depthViewProj);
-            }
-            if (u.uXrDepthFormat) {
-              gl.uniform1i(u.uXrDepthFormat, ds.format || 0);
-            }
-            if (u.uXrRawValueToMeters) {
-              gl.uniform1f(
-                u.uXrRawValueToMeters,
-                this.xrDepthState.rawValueToMeters,
-              );
-            }
-            if (u.uXrDepthUVTransform) {
-              gl.uniformMatrix4fv(
-                u.uXrDepthUVTransform,
-                false,
-                this.xrDepthState.uvTransform,
-              );
-            }
-          } else {
-            if (u.uXrDepthEnabled) gl.uniform1i(u.uXrDepthEnabled, 0);
-          }
+          xrDepth?.bind(gl, u, this.xrDepthState, activeView, [
+            vpX,
+            vpY,
+            Math.max(1, vpW),
+            Math.max(1, vpH),
+          ]);
 
           if (this.environmentTexture) {
             gl.activeTexture(gl.TEXTURE4);

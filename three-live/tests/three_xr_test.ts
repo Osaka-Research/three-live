@@ -28,6 +28,7 @@ import {
   launchQuickLook,
   WebXRSessionManager,
 } from '../src/three-xr';
+import {installXRDepthShader} from '../src/xr-depth-shader';
 
 let passed = 0;
 let failed = 0;
@@ -761,6 +762,23 @@ async function runXRTests() {
     addEventListener() {},
     removeEventListener() {},
   };
+  // Without <xr-live> installing the depth chunk, ThreeView compiles no XR
+  // depth GLSL (keeps the lean viewer bundle free of it).
+  const plainView = new ThreeView(mockContainer, {
+    canvas: mockCanvas,
+    autoStart: false,
+  });
+  const plainFs = shaderSources.find((s) => s.includes('outAlpha')) || '';
+  assert(
+    plainFs.length > 0 &&
+      !plainFs.includes('uXrDepthTex') &&
+      !plainFs.includes('/*XRD_'),
+    'ThreeView render shader omits WebXR depth occlusion until installXRDepthShader() runs',
+  );
+  plainView.dispose();
+  shaderSources.length = 0;
+  installXRDepthShader();
+
   const tv = new ThreeView(mockContainer, {
     canvas: mockCanvas,
     autoStart: false,

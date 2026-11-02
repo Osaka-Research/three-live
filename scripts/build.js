@@ -764,13 +764,13 @@ function reportSizes() {
   console.log('Asset                                      Raw Size     Gzip Size     Budget');
   console.log('------------------------------------------------------------------------------');
   const files = [
-    {name: 'three-live-viewer.min.js', budgetKb: '26'},
+    {name: 'three-live-viewer.min.js', budgetKb: '25.5'},
     {name: 'three-live.min.js', budgetKb: '54'},
     {name: 'three-live-extras.min.js', budgetKb: '17'},
     {name: 'three-live-animation.min.js', budgetKb: '6.5'},
     {name: 'three-live-full.min.js', budgetKb: '69'},
     {name: 'xr-live-viewer.min.js', budgetKb: '46'},
-    {name: 'xr-live.min.js', budgetKb: '65'},
+    {name: 'xr-live.min.js', budgetKb: '66'},
     {name: 'xr-live-extras.min.js', budgetKb: '10'},
     {name: 'xr-live-full.min.js', budgetKb: '132'},
     {name: 'xr-live-plugins.min.js', budgetKb: '52'},
@@ -801,6 +801,19 @@ function reportSizes() {
     }
   }
   console.log('==============================================================================\n');
+  // <three-live> never requests WebXR depth, so its bundles must not carry the
+  // depth-occlusion shader (installed only by <xr-live>).
+  for (const name of [
+    'three-live-viewer.min.js',
+    'three-live.min.js',
+    'three-live-full.min.js',
+  ]) {
+    const filePath = path.join(DIST_DIR, name);
+    if (fs.existsSync(filePath) &&
+        fs.readFileSync(filePath, 'utf8').includes('uXrDepthTex')) {
+      failures.push(`dist/${name} unexpectedly bundles WebXR depth occlusion`);
+    }
+  }
   if (failures.length > 0) {
     console.error('Bundle size budget check failed:');
     for (const failure of failures) {

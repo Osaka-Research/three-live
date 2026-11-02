@@ -88,6 +88,24 @@ export interface ThreeLivePlugin {
  */
 export const XR_LIVE_AR_SURFACE_Y = -0.25;
 
+/** WebXR depth-occlusion chunk spliced into `ThreeView`'s render shader. */
+export interface XRDepthShaderChunk {
+  /** GLSL uniform declarations replacing the `XRD_U` placeholder. */
+  uniformsGLSL: string;
+  /** GLSL occlusion block (may scale `outAlpha` or discard). */
+  occlusionGLSL: string;
+  /** Uniform names to resolve on render programs. */
+  uniformNames: readonly string[];
+  /** Binds per-draw depth uniforms and textures. */
+  bind(
+    gl: WebGL2RenderingContext,
+    u: Record<string, WebGLUniformLocation | null>,
+    depthState: any,
+    viewMatrix: Float32Array,
+    viewport: [number, number, number, number],
+  ): void;
+}
+
 export interface SharedThreeLiveRegistry {
   plugins: ThreeLivePlugin[];
   decoders: Map<string, any>;
@@ -95,6 +113,12 @@ export interface SharedThreeLiveRegistry {
   scriptRunner?: any;
   xrExtrasProvider?: any;
   xrSceneConverter?: any;
+  /**
+   * WebXR depth-occlusion shader chunk installed by `xr-depth-shader.ts`.
+   * `ThreeView` splices it into its render program only when present, so the
+   * lean viewer bundle carries no XR depth code.
+   */
+  xrDepthShader?: XRDepthShaderChunk;
   /**
    * Canonical `userData.xr` serializer (`xr-trait-schema.ts`). When present,
    * GLB/USDZ exports emit fully normalized spatial traits.
