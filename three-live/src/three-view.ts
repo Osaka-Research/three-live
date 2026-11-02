@@ -2536,6 +2536,7 @@ export class ThreeView {
     const gl = this.gl;
     const w = Math.max(1, this.canvas.width || 300);
     const h = Math.max(1, this.canvas.height || 300);
+    canvasX = this.mapStereoPickX(canvasX, w);
     const vp = mat4Create();
     mat4Multiply(vp, this.projMatrix, this.viewMatrix);
 
@@ -2758,6 +2759,23 @@ export class ThreeView {
   }
 
   public stereoSBS = false;
+
+  /**
+   * Maps a canvas X coordinate inside one Stereo SBS eye half onto the
+   * equivalent full-canvas X for picking. Each eye uses the same vertical FOV
+   * at half the aspect ratio, so eye NDC `n` lands at full-canvas NDC `n / 2`.
+   * The ±32 mm eye offset is ignored (sub-pixel at typical viewing distances).
+   * Returns `canvasX` unchanged outside inline SBS rendering.
+   */
+  private mapStereoPickX(canvasX: number, fullW: number): number {
+    if (!this.stereoSBS || this.xrSessionActive || fullW < 2) return canvasX;
+    const halfW = Math.max(1, Math.floor(fullW * 0.5));
+    const inRight = canvasX >= halfW;
+    const eyeX = inRight ? canvasX - halfW : canvasX;
+    const eyeW = inRight ? Math.max(1, fullW - halfW) : halfW;
+    const eyeNdc = ((eyeX + 0.5) / eyeW) * 2 - 1;
+    return Math.floor((eyeNdc * 0.5 + 1) * 0.5 * fullW);
+  }
 
   public setStereoSBS(enabled: boolean): void {
     this.stereoSBS = Boolean(enabled);

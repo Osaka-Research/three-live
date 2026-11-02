@@ -563,6 +563,15 @@ limitations under the License.
       display: flex;
     }
 
+    /* Second-eye reticle, shown only in Stereo SBS so each eye sees one. */
+    body.xr-immersive-active .xr-reticle.xr-reticle-mirror {
+      display: none;
+    }
+
+    body.xr-immersive-active.xr-stereo-sbs .xr-reticle.xr-reticle-mirror {
+      display: flex;
+    }
+
     .xr-reticle-label {
       position: absolute;
       top: 34px;
@@ -902,7 +911,7 @@ limitations under the License.
         <span class="tag-pill">&lt;xr-live&gt;</span>
         Spatial Computing Playground
       </h1>
-      <span class="size-pill"><span data-bundle-size="xr-live.min.js">64.0 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
+      <span class="size-pill"><span data-bundle-size="xr-live.min.js">64.1 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
@@ -1054,6 +1063,7 @@ limitations under the License.
       <div class="xr-reticle" id="xr-reticle">
         <div class="xr-reticle-label" id="xr-reticle-label">Gaze Ray Ready</div>
       </div>
+      <div class="xr-reticle xr-reticle-mirror" id="xr-reticle-mirror" aria-hidden="true"></div>
 
       <!-- Touch & Mouse Controls for 6DoF Headset Simulator -->
       <div class="xr-sim-touch-controls" id="xr-sim-touch-controls">
@@ -1914,7 +1924,11 @@ return scene;`
           if (canvas && typeof viewer.raycastFromScreenPoint === 'function') {
             const rect = canvas.getBoundingClientRect();
             const hasPointer = lastPointerClientX !== null && lastPointerClientY !== null;
-            const aimX = hasPointer ? lastPointerClientX : (rect.left + rect.width * 0.5);
+            // In Stereo SBS the canvas center is the seam between the eyes, so
+            // the default gaze ray aims from the center of the left eye.
+            // ThreeView maps either eye half back onto the full view for picking.
+            const defaultAimFrac = stereoSBS ? 0.25 : 0.5;
+            const aimX = hasPointer ? lastPointerClientX : (rect.left + rect.width * defaultAimFrac);
             const aimY = hasPointer ? lastPointerClientY : (rect.top + rect.height * 0.5);
             const shouldRaycast = hasPointer || immersiveSimActive;
             const hit = shouldRaycast ? viewer.raycastFromScreenPoint(aimX, aimY) : null;
@@ -1934,6 +1948,15 @@ return scene;`
               // Position reticle at live hand/pointer ray location
               reticle.style.left = (aimX - rect.left) + 'px';
               reticle.style.top = (aimY - rect.top) + 'px';
+              // Mirror the reticle into the other eye so both eyes see it.
+              const mirror = document.getElementById('xr-reticle-mirror');
+              if (mirror && stereoSBS) {
+                const localX = aimX - rect.left;
+                const half = rect.width * 0.5;
+                mirror.style.left = (localX < half ? localX + half : localX - half) + 'px';
+                mirror.style.top = (aimY - rect.top) + 'px';
+                mirror.classList.toggle('hit', Boolean(hit));
+              }
               const gesture = GESTURES[gestureIdx] || 'open-palm';
               const actionName = GESTURE_ACTION_LABELS[gesture] || gesture;
               if (hit) {

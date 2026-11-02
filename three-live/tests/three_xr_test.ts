@@ -784,7 +784,19 @@ async function runXRTests() {
       viewportsCalled.some((v) => v[0] === 195 && v[2] === 195 && v[3] === 844),
     'ThreeView.setStereoSBS(true) renders left and right eye half-viewports for Stereo Side-by-Side mode',
   );
+  const mapPick = (x: number) => (tv as any).mapStereoPickX(x, 390);
+  assert(
+    Math.abs(mapPick(97) - 195) <= 1 &&
+      Math.abs(mapPick(292) - 195) <= 1 &&
+      Math.abs(mapPick(0) - 97) <= 1 &&
+      Math.abs(mapPick(389) - 292) <= 1,
+    'Stereo SBS picking maps each eye half (center and edges) onto the full-view ray',
+  );
   tv.setStereoSBS(false);
+  assert(
+    mapPick(97) === 97,
+    'Picking coordinates are unchanged when Stereo SBS is off',
+  );
 
   // -------------------------------------------------------------------------
   // 9. WebXR depth occlusion shader & render-loop resilience
