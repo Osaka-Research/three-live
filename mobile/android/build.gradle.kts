@@ -81,7 +81,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "compiler"
-      version = "1.1.0"
+      version = "1.1.1"
 
       afterEvaluate { from(components["release"]) }
 

@@ -22,6 +22,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.1.1] - 2026-11-02
+
+### Changed
+
+- **Renamed `XRBlocks*` to `XRSpatial*` across Web, Android, and iOS:**
+  - Web: `window.XRSpatial` (`xr-live/plugins`), `xrSpatialPlugins`, and `xr-spatial` attribute (retaining `window.XRBlocks` / `xr-blocks` aliases for backward compatibility).
+  - Android: `XRSpatialFeatures` and `XRSpatialMath`.
+  - iOS / visionOS: `XRSpatialRealityKitFeatures`, `XRSpatialGeometry`, and `XRSpatialMath`.
+
+### Fixed
+
+- **Android WebXR AR & Depth Sensing:** Fixed 16-bit luminance-alpha depth texture unpacking, planar depth occlusion comparison in eye space, depth-heightfield collision surface normals, and post-AR inline render-loop resume.
+- **iOS `<xr-live>` Quick Look AR Bridge:** Fixed `<xr-live>` mobile AR handoff to export live procedural scenes to `.usdz` and launch Apple AR Quick Look on iOS Safari.
+- **Stereo SBS & 3D Simulator:** Mapped Stereo Side-by-Side pointer picking per eye, mirrored the gaze reticle into both eyes, and fixed 3D Simulator aspect ratio and orbit/WASD controls.
+- **Native Runtime Resilience:** Hardened `XRLiveRuntimeSession` (Kotlin & Swift), `TubeStrokeBuilder`, and `ParticleEmitter` against non-finite inputs and rapid scene teardown.
+
+---
+
 ## [1.1.0] - 2026-10-15
 
 Full multi-platform parity across **Web (`three-live` / `xr-live`)**, **Android (`com.google.threelive`)**, and **iOS / visionOS (`ThreeLiveCompiler`)**.
