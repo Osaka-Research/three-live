@@ -437,19 +437,19 @@
       container.name = "ThreeLiveArSurfacePreview"
       let gridGeo = XRArSurfaceGeometry.buildFloorGridGeometry(
         y: groundY - 0.01, halfExtent: 2.0, divisions: 8)
-      if let gridMesh = XRBlocksRealityKitFeatures.mesh(gridGeo) {
+      if let gridMesh = XRSpatialRealityKitFeatures.mesh(gridGeo) {
         let gridEntity = ModelEntity(
           mesh: gridMesh,
-          materials: [XRBlocksRealityKitFeatures.material(XRArSurfaceGeometry.defaultGridColor)])
+          materials: [XRSpatialRealityKitFeatures.material(XRArSurfaceGeometry.defaultGridColor)])
         gridEntity.name = "ThreeLiveArFloorGrid"
         container.addChild(gridEntity)
       }
       let reticleGeo = XRArSurfaceGeometry.buildReticleGeometry(
         y: groundY, innerRadius: 0.52, outerRadius: 0.60)
-      if let reticleMesh = XRBlocksRealityKitFeatures.mesh(reticleGeo) {
+      if let reticleMesh = XRSpatialRealityKitFeatures.mesh(reticleGeo) {
         let reticleEntity = ModelEntity(
           mesh: reticleMesh,
-          materials: [XRBlocksRealityKitFeatures.material(XRArSurfaceGeometry.defaultReticleColor)])
+          materials: [XRSpatialRealityKitFeatures.material(XRArSurfaceGeometry.defaultReticleColor)])
         reticleEntity.name = "ThreeLiveArReticle"
         container.addChild(reticleEntity)
       }
@@ -517,7 +517,7 @@
       guard let entity = entitiesByNode[index] else { return }
       if let invW0 = inverseBakedSceneByNode[index] {
         let delta = session.sceneMatrix(of: index) * invW0
-        let trs = XRBlocksMath.decompose(delta)
+        let trs = XRSpatialMath.decompose(delta)
         entity.transform = Transform(
           scale: trs.scale, rotation: trs.rotation, translation: trs.translation)
       } else {

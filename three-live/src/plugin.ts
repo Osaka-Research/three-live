@@ -89,7 +89,7 @@ export interface SharedThreeLiveRegistry {
   xrSceneConverter?: any;
   /**
    * Canonical `userData.xr` serializer (`xr-trait-schema.ts`). When present,
-   * GLB/USDZ exports emit fully normalized XR Blocks traits.
+   * GLB/USDZ exports emit fully normalized spatial traits.
    */
   xrTraitSerializer?: import('./xr-trait-schema').XRTraitSerializer;
   /**

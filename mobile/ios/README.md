@@ -119,10 +119,10 @@ func openAR(viewController: UIViewController) async {
 }
 ```
 
-### 4. Run behaviors and XR Blocks traits natively
+### 4. Run behaviors and spatial traits natively
 
 Compiled `.glb` files carry `KHR_interactivity` behavior graphs and canonical
-`extras.xr` traits (see [`docs/xr-blocks-parity.md`](../../docs/xr-blocks-parity.md)).
+`extras.xr` traits (see [`docs/xr-spatial-parity.md`](../../docs/xr-spatial-parity.md)).
 `XRLiveRuntimeSession` (platform-neutral) executes them; `XRLiveRealityKitSession`
 binds it to RealityKit entities.
 
@@ -143,7 +143,7 @@ func run(glb: Data) async throws -> XRLiveRealityKitSession? {
 // visionOS: SpatialTapGesture().targetedToAnyEntity().onEnded { live.handleTap(on: $0.entity) }
 ```
 
-Shared XR Blocks algorithms are exposed as pure helpers: `XRBlocksMath` (lazy follow
+Shared spatial algorithms are exposed as pure helpers: `XRSpatialMath` (lazy follow
 spring, orbit), `ManipulationHandles`, `WorldUnderstanding.unprojectDetection`,
 `TubeStrokeBuilder`, `ParticleEmitter`, and `SplatParser` (`.splat`, `.spz` v2/v3).
 

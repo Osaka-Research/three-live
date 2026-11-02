@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `world-understanding` plugin for `<xr-live>`.
+ * @fileoverview Spatial `world-understanding` plugin for `<xr-live>`.
  *
  * - Tracks WebXR `detectedPlanes` / `detectedMeshes` (opt in with the
  *   `world-understanding` attribute or a `userData.xr.worldUnderstanding`

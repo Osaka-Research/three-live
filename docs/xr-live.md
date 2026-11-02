@@ -14,14 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# `<xr-live>` Spatial Computing & XR Blocks Guide
+# `<xr-live>` Spatial Computing & Plugins Guide
 
 `<xr-live>` extends `<three-live>` into a full spatial computing runtime for
 **WebXR (Android XR, Meta Quest, Apple Vision Pro)**, **Mobile Web AR**, and
 **Native Android XR (`SceneCore` / `Filament`) & iOS/visionOS (`RealityKit`)**.
 
-It brings declarative spatial traits (`userData.xr`), the 7 **XR Blocks**
-plugins (`head-follow`, `manipulation-handles`, `world-understanding`,
+It brings declarative spatial traits (`userData.xr`), the 7 modular **spatial plugins** (`head-follow`, `manipulation-handles`, `world-understanding`,
 `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), interactive
 HTML/CSS spatial cards (`<div slot="spatial">`), real-world depth occlusion &
 heightfield physics, 25-joint hand gesture recognition, a desktop 6DoF
@@ -114,7 +113,7 @@ Defined in [`three-live/src/xr-trait-schema.ts`](../three-live/src/xr-trait-sche
 | **`grab`** | `'1-hand' \| '2-hand' \| true` | 6DoF single-hand grab/rotate (`'1-hand'`) or two-hand grab + pinch-scale/twist (`'2-hand'`). Legacy `grabbable: true` is also accepted. |
 | **`scale`** | `{ min?: number, max?: number } \| true` | Two-handed pinch scaling clamped to `[min, max]` (defaults to `{ min: 0.05, max: 5 }`). |
 | **`billboard`** | `'capsule' \| 'cylindrical' \| 'spherical' \| true` | Orients node toward the viewer (`'capsule'` and `'cylindrical'` rotate around Y; `'spherical'` faces camera in 3D). |
-| **`follow`** | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values apply an eager spring follow; object values activate XR Blocks lazy head/hand follow with angular deadzone (`deadzoneDeg`, default `15°`) and critically damped spring (`stiffness`, default `6`). |
+| **`follow`** | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values apply an eager spring follow; object values activate lazy head/hand follow with angular deadzone (`deadzoneDeg`, default `15°`) and critically damped spring (`stiffness`, default `6`). |
 | **`anchor`** | `'floor' \| 'wall' \| 'table' \| 'horizontal' \| 'vertical'` | Pins the node to a detected real-world plane or simulator surface. |
 | **`physics`** | `'dynamic' \| 'static'` | Steps rigid-body gravity, restitution bounce (`userData.xr.restitution`), sphere-to-sphere collisions, and depth heightfield collisions. |
 | **`orbit`** | `{ target: [x,y,z] \| string, radius?: number, speed?: number, height?: number, phase?: number, faceCenter?: boolean }` | Orbits around a 3D world point or another mesh's `name` at `speed` rad/s. |
@@ -128,9 +127,9 @@ Defined in [`three-live/src/xr-trait-schema.ts`](../three-live/src/xr-trait-sche
 
 --------------------------------------------------------------------------------
 
-## XR Blocks Plugin Suite (`xr-live-blocks.min.js` / `xr-live-full.min.js`)
+## Spatial Plugin Suite (`xr-live-plugins.min.js` / `xr-live-full.min.js`)
 
-All 7 XR Blocks plugins are included automatically in `xr-live-full.min.js` (or can be loaded modularly via `xr-live-blocks.min.js` or `xr-live/plugins`):
+All 7 spatial plugins are included automatically in `xr-live-full.min.js` (or can be loaded modularly via `xr-live-plugins.min.js` or `xr-live/plugins`):
 
 1. **`head-follow` (`xr-live-head-follow`):**
    - Implements `FollowHead` lazy HUD behavior (angular deadzone + critically damped spring `stepCriticallyDampedSpring`) and `Orbit` satellite motion (`userData.xr.orbit`).
@@ -200,7 +199,7 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
 
 ### Android (`mobile/android/src/main/java/com/google/threelive/`)
 
--   **[`XRLiveRuntimeSession.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveRuntimeSession.kt) & [`XRBlocksFeatures.kt`](../mobile/android/src/main/java/com/google/threelive/XRBlocksFeatures.kt):**
+-   **[`XRLiveRuntimeSession.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveRuntimeSession.kt) & [`XRSpatialFeatures.kt`](../mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt):**
     Executes lazy head-follow springs, orbits, manipulation handles, Catmull-Rom
     spatial paint tubes, depth-colliding particles, Gaussian splat sorting, and
     `KHR_interactivity` behavior graphs natively on Google Filament.
@@ -213,7 +212,7 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
 
 ### iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`)
 
--   **[`XRLiveRealityKit.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRLiveRealityKit.swift) & [`XRBlocksRealityKitFeatures.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRBlocksRealityKitFeatures.swift):**
+-   **[`XRLiveRealityKit.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRLiveRealityKit.swift) & [`XRSpatialRealityKitFeatures.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRSpatialRealityKitFeatures.swift):**
     Native Swift + RealityKit runtime supporting all `userData.xr` traits,
     manipulation handles, spatial paint tubes, particle emitters, Gaussian
     splats, `KHR_interactivity`, and `XRGeminiLiveController.swift`.

@@ -20,16 +20,16 @@
 
   /// Declarative spatial traits extracted from `mesh.userData.xr` in a Three.js scene.
   ///
-  /// The original fields (`grabbable` ... `mass`) are kept source-compatible. The XR Blocks
+  /// The original fields (`grabbable` ... `mass`) are kept source-compatible. The extended spatial
   /// fields added after them are parsed from the canonical compiled form
-  /// (`nodes[i].extras.xr`, see `docs/xr-blocks-parity.md`) with the same clamps as every
+  /// (`nodes[i].extras.xr`, see `docs/xr-spatial-parity.md`) with the same clamps as every
   /// other platform.
   public struct XRLiveEntityTraits: Codable, Sendable, Equatable {
     public var grabbable: Bool?
     public var billboard: String?
     public var anchor: String?
     /// Follow mode (`"head"`, `"hand-left"`, `"hand-right"`). Set for both eager and lazy
-    /// follows; `lazyFollow` is non-`nil` only for XR Blocks lazy follows.
+    /// follows; `lazyFollow` is non-`nil` only for lazy follows.
     public var follow: String?
     public var followDistance: Float?
     public var physics: String?
@@ -42,7 +42,7 @@
     public var minScale: Float?
     /// Maximum uniform scale for system manipulation (`scale.max`).
     public var maxScale: Float?
-    /// XR Blocks lazy head / hand follow parameters.
+    /// Lazy head / hand follow parameters.
     public var lazyFollow: XRLiveLazyFollow?
     /// Orbit parameters (named target or literal center).
     public var orbit: XRLiveOrbit?

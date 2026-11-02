@@ -16,7 +16,7 @@
 
 // Platform-neutral iOS / visionOS runtime for compiled three-live scenes: a sandboxed
 // `KHR_interactivity` behavior-graph VM (port of `three-live/src/plugins/interactivity.ts`)
-// plus the XR Blocks lazy-follow and orbit traits (`xr-live/src/plugins/head-follow.ts`).
+// plus the Lazy-follow and orbit traits (`xr-live/src/plugins/head-follow.ts`).
 // Pure Swift + simd; the RealityKit binding lives in `XRLiveRealityKitSession.swift`.
 
 import Foundation
@@ -67,7 +67,7 @@ public struct XRNodeTransform: Sendable, Equatable {
 
   public init(
     translation: SIMD3<Float> = .zero,
-    rotation: simd_quatf = XRBlocksMath.identityQuat,
+    rotation: simd_quatf = XRSpatialMath.identityQuat,
     scale: SIMD3<Float> = SIMD3<Float>(1, 1, 1)
   ) {
     self.translation = translation
@@ -77,7 +77,7 @@ public struct XRNodeTransform: Sendable, Equatable {
 
   /// Column-major local matrix.
   public var matrix: simd_float4x4 {
-    XRBlocksMath.compose(translation: translation, rotation: rotation, scale: scale)
+    XRSpatialMath.compose(translation: translation, rotation: rotation, scale: scale)
   }
 
   public static func == (lhs: XRNodeTransform, rhs: XRNodeTransform) -> Bool {
@@ -354,7 +354,7 @@ public final class XRLiveRuntimeSession {
         let mat = simd_float4x4(
           SIMD4<Float>(f[0], f[1], f[2], f[3]), SIMD4<Float>(f[4], f[5], f[6], f[7]),
           SIMD4<Float>(f[8], f[9], f[10], f[11]), SIMD4<Float>(f[12], f[13], f[14], f[15]))
-        let trs = XRBlocksMath.decompose(mat)
+        let trs = XRSpatialMath.decompose(mat)
         state.translation = SIMD3<Double>(
           Double(trs.translation.x), Double(trs.translation.y), Double(trs.translation.z))
         state.rotation = SIMD4<Double>(
@@ -1747,9 +1747,9 @@ public final class XRLiveRuntimeSession {
     let parent = parentWorld(of: index)
     let det = simd_determinant(parent)
     guard det.isFinite, abs(det) > 1e-12 else { return }
-    let desired = XRBlocksMath.compose(translation: position, rotation: rotation, scale: scale)
+    let desired = XRSpatialMath.compose(translation: position, rotation: rotation, scale: scale)
     let local = parent.inverse * desired
-    let trs = XRBlocksMath.decompose(local)
+    let trs = XRSpatialMath.decompose(local)
     let t = trs.translation
     let s = trs.scale
     let q = trs.rotation.vector
@@ -1786,8 +1786,8 @@ public final class XRLiveRuntimeSession {
   }
 
   private func stepBillboard(_ i: Int, mode: String, headPose: XRPose, dt: Float) {
-    let world = XRBlocksMath.decompose(worldMatrix(of: i))
-    let targetRot = XRBlocksMath.billboardTowards(
+    let world = XRSpatialMath.decompose(worldMatrix(of: i))
+    let targetRot = XRSpatialMath.billboardTowards(
       from: world.translation, to: headPose.position, mode: mode)
     let alpha = min(Float(1.0), max(Float(0.0), dt * 10.0))
     let rotation = simd_slerp(world.rotation, targetRot, alpha)
@@ -1827,7 +1827,7 @@ public final class XRLiveRuntimeSession {
         let lx = (c & 1) == 0 ? bounds.min.x : bounds.max.x
         let ly = (c & 2) == 0 ? bounds.min.y : bounds.max.y
         let lz = (c & 4) == 0 ? bounds.min.z : bounds.max.z
-        let p = XRBlocksMath.transformPoint(m, SIMD3<Float>(lx, ly, lz))
+        let p = XRSpatialMath.transformPoint(m, SIMD3<Float>(lx, ly, lz))
         minP = simd_min(minP, p)
         maxP = simd_max(maxP, p)
       }
@@ -2141,7 +2141,7 @@ public final class XRLiveRuntimeSession {
       let horizSpeed = hypot(st.velocity.x, st.velocity.z)
       if horizSpeed > 0.03 {
         let angle = horizSpeed * clampedDt / max(0.04, st.radius)
-        let axis = XRBlocksMath.normalize(
+        let axis = XRSpatialMath.normalize(
           SIMD3<Float>(st.velocity.z, 0, -st.velocity.x), fallback: SIMD3<Float>(1, 0, 0))
         let dq = simd_quatf(angle: angle, axis: axis)
         let cur = simd_quatf(
@@ -2166,21 +2166,21 @@ public final class XRLiveRuntimeSession {
     default: anchor = headPose
     }
     guard let anchorPose = anchor else { return }
-    let world = XRBlocksMath.decompose(worldMatrix(of: i))
-    let target = XRBlocksMath.computeFollowTarget(anchor: anchorPose, options: options)
+    let world = XRSpatialMath.decompose(worldMatrix(of: i))
+    let target = XRSpatialMath.computeFollowTarget(anchor: anchorPose, options: options)
     var state =
       followStates[i]
       ?? FollowState(
         spring: XRSpringState(position: options.snapOnStart ? target : world.translation),
         following: false)
     if !state.following
-      && XRBlocksMath.shouldStartFollowing(
+      && XRSpatialMath.shouldStartFollowing(
         position: state.spring.position, target: target, anchor: anchorPose, options: options)
     {
       state.following = true
     }
     if state.following {
-      XRBlocksMath.stepCriticallyDampedSpring(
+      XRSpatialMath.stepCriticallyDampedSpring(
         &state.spring, target: target, omega: options.stiffness, dt: dt)
       if simd_length(state.spring.position - target) < 0.01
         && simd_length(state.spring.velocity) < 0.01
@@ -2191,7 +2191,7 @@ public final class XRLiveRuntimeSession {
     followStates[i] = state
     var rotation = world.rotation
     if options.faceUser, let head = headPose {
-      rotation = XRBlocksMath.yawTowards(from: state.spring.position, to: head.position)
+      rotation = XRSpatialMath.yawTowards(from: state.spring.position, to: head.position)
     }
     setWorldTRS(i, rotation: rotation, position: state.spring.position, scale: world.scale)
   }
@@ -2209,14 +2209,14 @@ public final class XRLiveRuntimeSession {
       }
     } else {
       // Literal targets are authored in scene (model) space.
-      center = XRBlocksMath.transformPoint(rootTransform, options.targetPoint)
+      center = XRSpatialMath.transformPoint(rootTransform, options.targetPoint)
     }
     let t = (orbitTimes[i] ?? 0) + Double(dt)
     orbitTimes[i] = t
-    let world = XRBlocksMath.decompose(worldMatrix(of: i))
-    let pos = XRBlocksMath.computeOrbitPosition(center: center, options: options, t: Float(t))
+    let world = XRSpatialMath.decompose(worldMatrix(of: i))
+    let pos = XRSpatialMath.computeOrbitPosition(center: center, options: options, t: Float(t))
     let rotation =
-      options.faceCenter ? XRBlocksMath.yawTowards(from: pos, to: center) : world.rotation
+      options.faceCenter ? XRSpatialMath.yawTowards(from: pos, to: center) : world.rotation
     setWorldTRS(i, rotation: rotation, position: pos, scale: world.scale)
   }
 

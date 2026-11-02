@@ -65,7 +65,7 @@ export interface XRMeshTraits {
   stereo?: 'sbs' | 'ou' | 'mono';
   audio?: string | {src: string; refDistance?: number; loop?: boolean};
   pointerEvents?: 'auto' | 'none';
-  /** XR Blocks `Orbit`: circles a point, the head, or a named mesh. */
+  /** Spatial `Orbit`: circles a point, the head, or a named mesh. */
   orbit?: {
     target?: [number, number, number] | 'head' | string;
     radius?: number;
@@ -74,20 +74,20 @@ export interface XRMeshTraits {
     phase?: number;
     faceCenter?: boolean;
   };
-  /** XR Blocks manipulation handles (corner scale + pedestal yaw bar). */
+  /** Spatial manipulation handles (corner scale + pedestal yaw bar). */
   handles?:
     | boolean
     | {rotateAxis?: 'y' | 'none'; minScale?: number; maxScale?: number};
-  /** XR Blocks depth-colliding particle emitter. */
+  /** Depth-colliding particle emitter. */
   particles?: {
     preset?: 'rain' | 'snow' | 'sparks' | 'confetti';
     count?: number;
     area?: number | [number, number, number];
     speed?: number;
   };
-  /** XR Blocks press-and-hold "ask Gemini about this object". */
+  /** Press-and-hold "ask Gemini about this object". */
   holdToAsk?: boolean | {prompt?: string; holdMs?: number};
-  /** XR Blocks world understanding (planes, meshes, reticle, detection). */
+  /** World understanding (planes, meshes, reticle, detection). */
   worldUnderstanding?: {
     planes?: boolean;
     meshes?: boolean;
@@ -290,7 +290,7 @@ export function sceneToCanvas3D(
           MOZ_hubs_components: sceneCoreExt,
           ANDROID_xr_scenecore: sceneCoreExt,
         };
-        // The canonical serializer (XR Blocks bundle / compiler engine) upgrades
+        // The canonical serializer (spatial plugins bundle / compiler engine) upgrades
         // `extras.xr` and `ANDROID_xr_scenecore` to the normalized trait set.
         getSharedRegistry().xrTraitSerializer?.gltfNode(node, obj.userData.xr);
         nodeExtensionsUsed.add('MOZ_hubs_components').add('ANDROID_xr_scenecore');
@@ -1727,9 +1727,6 @@ export function generateUSDZ(source: SceneOrGLBSource): Uint8Array {
  * Creates an in-memory browser Blob with MIME type `model/vnd.usdz+zip`.
  */
 export function createUSDZBlob(source: SceneOrGLBSource): Blob {
-  const usdzBytes =
-    source && typeof (source as any).toUSDZ === 'function'
-      ? (source as any).toUSDZ()
-      : glbToUSDZ(source as GLBData | ArrayBuffer | ArrayBufferView);
+  const usdzBytes = generateUSDZ(source);
   return new Blob([usdzBytes], {type: 'model/vnd.usdz+zip'});
 }

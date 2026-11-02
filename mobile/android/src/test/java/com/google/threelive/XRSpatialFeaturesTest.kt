@@ -24,8 +24,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Native XR Blocks features (handles, paint, particles) against a recording fake renderer. */
-class XRBlocksFeaturesTest {
+/** Native spatial features (handles, paint, particles) against a recording fake renderer. */
+class XRSpatialFeaturesTest {
 
   @Test
   fun meshBoundsComeFromPositionAccessors() {
@@ -37,10 +37,10 @@ class XRBlocksFeaturesTest {
   fun cornerDragScalesWithinTraitLimitsAndReportsChange() {
     val r = FakeRenderer()
     val b = ThreeLiveRuntimeBinding(r, glbOf(SCENE))
-    val f = XRBlocksFeatures(b, r)
+    val f = XRSpatialFeatures(b, r)
     val changes = ArrayList<Triple<String, Double, Double>>()
     f.listener =
-      object : XRBlocksFeatures.Listener {
+      object : XRSpatialFeatures.Listener {
         override fun onHandlesChange(mesh: String, scale: Double, yawDeg: Double) {
           changes.add(Triple(mesh, scale, yawDeg))
         }
@@ -73,7 +73,7 @@ class XRBlocksFeaturesTest {
   fun turntableRootRotatesHandleLayoutAndDragStillScales() {
     val r = FakeRenderer()
     val b = ThreeLiveRuntimeBinding(r, glbOf(SCENE))
-    val f = XRBlocksFeatures(b, r)
+    val f = XRSpatialFeatures(b, r)
     // 90° about +Y: the box at (0, 0, -2) moves to (-2, 0, 0).
     r.root = floatArrayOf(0f, 0f, -1f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 1f)
     r.listener!!.onFrame(1.0 / 60, IDENTITY)
@@ -120,11 +120,11 @@ class XRBlocksFeaturesTest {
   fun emptySpaceDragPaintsStrokeAtScreenDepth() {
     val r = FakeRenderer()
     val b = ThreeLiveRuntimeBinding(r, glbOf("""{"nodes":[{"name":"A"}],"scenes":[{"nodes":[0]}]}"""))
-    val f = XRBlocksFeatures(b, r)
+    val f = XRSpatialFeatures(b, r)
     f.paintColor = floatArrayOf(1f, 0f, 0f, 1f)
     var summary: Triple<Int, Int, Double>? = null
     f.listener =
-      object : XRBlocksFeatures.Listener {
+      object : XRSpatialFeatures.Listener {
         override fun onPaintStroke(index: Int, points: Int, lengthMeters: Double) {
           summary = Triple(index, points, lengthMeters)
         }
@@ -155,7 +155,7 @@ class XRBlocksFeaturesTest {
         r,
         glbOf("""{"nodes":[{"name":"Snow","translation":[0,1,0],"extras":{"xr":{"particles":{"preset":"snow","count":10}}}}],"scenes":[{"nodes":[0]}]}"""),
       )
-    val f = XRBlocksFeatures(b, r)
+    val f = XRSpatialFeatures(b, r)
     assertEquals(1, f.emitterCount)
     r.listener!!.onFrame(1.0 / 60, IDENTITY)
     val mesh = r.meshes.values.single()
@@ -163,7 +163,7 @@ class XRBlocksFeaturesTest {
     assertEquals(10 * 6, mesh.indices.size)
     r.listener!!.onFrame(1.0 / 60, IDENTITY)
     assertEquals(1, r.meshes.size)
-    val (quad, _) = XRBlocksFeatures.particleQuads(floatArrayOf(0f, 0f, 0f), 1, IDENTITY, 2.0)
+    val (quad, _) = XRSpatialFeatures.particleQuads(floatArrayOf(0f, 0f, 0f), 1, IDENTITY, 2.0)
     assertArrayEquals(floatArrayOf(-1f, -1f, 0f, 1f, -1f, 0f, 1f, 1f, 0f, -1f, 1f, 0f), quad, 1e-6f)
     f.dispose()
   }
@@ -179,7 +179,7 @@ class XRBlocksFeaturesTest {
     val b = ThreeLiveRuntimeBinding(r, glb)
     // Cross-origin URL rejected when allowRemoteSplats = false against a different baseUrl.
     val blocked =
-      XRBlocksFeatures(
+      XRSpatialFeatures(
         b,
         r,
         baseUrl = "https://site.test/scene.glb",
@@ -197,7 +197,7 @@ class XRBlocksFeaturesTest {
     fakeData.scales.fill(0.2f)
     fakeData.colors.fill(200.toByte())
     val allowed =
-      XRBlocksFeatures(
+      XRSpatialFeatures(
         b,
         r,
         baseUrl = "https://site.test/scene.glb",
@@ -219,7 +219,7 @@ class XRBlocksFeaturesTest {
     // GPU billboard path: static local positions uploaded once, only indices updated on re-sort.
     r.gpuSplats = true
     val gpuFeatures =
-      XRBlocksFeatures(
+      XRSpatialFeatures(
         b,
         r,
         baseUrl = "https://site.test/scene.glb",

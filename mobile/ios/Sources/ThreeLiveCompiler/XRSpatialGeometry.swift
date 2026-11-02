@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// Platform-neutral ports of the XR Blocks geometry generators:
+// Platform-neutral ports of the spatial geometry generators:
 // - xr-live/src/plugins/spatial-paint.ts (TubeStrokeBuilder)
 // - xr-live/src/plugins/depth-particles.ts (ParticleEmitter, mulberry32)
 // Buffer layouts and counts match the web implementation exactly so strokes and particle
@@ -55,10 +55,10 @@ public struct TubeStrokeBuilder: Sendable {
     radius: Float = 0.006, radialSegments: Int = 8, samplesPerSpan: Int = 4,
     minSpacing: Float = 0.004
   ) {
-    self.radius = XRBlocksMath.clamp(radius, 0.0005, 0.25, fallback: 0.006)
+    self.radius = XRSpatialMath.clamp(radius, 0.0005, 0.25, fallback: 0.006)
     self.radialSegments = min(32, max(3, radialSegments))
     self.samplesPerSpan = min(16, max(1, samplesPerSpan))
-    self.minSpacing = XRBlocksMath.clamp(minSpacing, 0, 0.5, fallback: 0.004)
+    self.minSpacing = XRSpatialMath.clamp(minSpacing, 0, 0.5, fallback: 0.004)
   }
 
   /// Evaluates a uniform Catmull-Rom spline segment between `p1` and `p2`.
@@ -149,12 +149,12 @@ public struct TubeStrokeBuilder: Sendable {
     tangents.reserveCapacity(n)
     for i in 0..<n {
       tangents.append(
-        XRBlocksMath.normalize(
+        XRSpatialMath.normalize(
           center[min(n - 1, i + 1)] - center[max(0, i - 1)], fallback: SIMD3<Float>(0, 0, 1)))
     }
     // Rotation-minimizing frames via the double-reflection method (Wang et al. 2008).
     let up: SIMD3<Float> = abs(tangents[0].y) < 0.9 ? SIMD3<Float>(0, 1, 0) : SIMD3<Float>(1, 0, 0)
-    var normal = XRBlocksMath.normalize(simd_cross(tangents[0], up))
+    var normal = XRSpatialMath.normalize(simd_cross(tangents[0], up))
     for i in 0..<n {
       if i > 0 {
         let v1 = center[i] - center[i - 1]
@@ -173,7 +173,7 @@ public struct TubeStrokeBuilder: Sendable {
           }
         }
         // Guard against drift: keep the frame orthonormal.
-        normal = XRBlocksMath.normalize(
+        normal = XRSpatialMath.normalize(
           normal - tangents[i] * simd_dot(normal, tangents[i]), fallback: normal)
       }
       let binormal = simd_cross(tangents[i], normal)

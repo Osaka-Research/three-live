@@ -111,7 +111,7 @@ Any mesh or group inside `<script type="text/three">` can declare interactive st
 
 ## 4. Programmatic Plugin Controllers (`xr-live/plugins`)
 
-When importing from `xr-live/plugins` (or using `xr-live-blocks.min.js` / `xr-live-full.min.js`):
+When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-live-full.min.js`):
 
 - **Gemini Live (`gemini-live.ts`):**
   ```ts

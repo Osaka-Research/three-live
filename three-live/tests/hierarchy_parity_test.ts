@@ -16,7 +16,7 @@
  * @fileoverview Web half of the web <-> native exporter parity check.
  *
  * Runs `compiler/tests/fixtures/hierarchy_parity.js` through `sceneToCanvas3D`
- * (with the canonical XR trait serializer, as in the XR Blocks bundle and the
+ * (with the canonical XR trait serializer, as in the spatial plugins bundle and the
  * native engine) and compares a projection of the glTF (node names, hierarchy,
  * local TRS, mesh/material references, XR extras/extensions and the compiled
  * KHR_interactivity graph) against

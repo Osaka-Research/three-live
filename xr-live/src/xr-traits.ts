@@ -16,7 +16,7 @@
  *
  * @fileoverview Phase 1.2: Declarative Spatial Traits Engine (`userData.xr`).
  * Implements 1-hand grab/rotate, 2-hand pinch-to-scale & twist,
- * XR Blocks `TurnToFace` capsule/cylindrical/spherical billboarding,
+ * billboard (`TurnToFace`) capsule/cylindrical/spherical billboarding,
  * lazy head/hand spring followers, and surface plane anchoring.
  */
 
@@ -219,7 +219,7 @@ export function emitXREvent(element: any, name: string, detail: any): void {
 }
 
 /**
- * Computes XR Blocks `TurnToFace` quaternion for `'capsule'`, `'cylindrical'`, or `'spherical'` billboarding.
+ * Computes billboard (`TurnToFace`) quaternion for `'capsule'`, `'cylindrical'`, or `'spherical'` billboarding.
  */
 export function computeBillboardQuaternion(
   objectPos: [number, number, number],
@@ -239,7 +239,7 @@ export function computeBillboardQuaternion(
   if (mode === 'cylindrical') {
     pitch = 0;
   } else if (mode === 'capsule' || mode === true) {
-    // Clamp pitch to [-30 deg, +30 deg] matching XR Blocks TurnToFace capsule constraint
+    // Clamp pitch to [-30 deg, +30 deg] matching the [-30 deg, +30 deg] capsule pitch constraint
     const maxPitch = (30 * Math.PI) / 180;
     pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
   }

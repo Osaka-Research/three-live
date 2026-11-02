@@ -1301,6 +1301,7 @@ export class ThreeView {
 
   private animFrameId: number | null = null;
   private isVisible = true;
+  public xrSessionActive = false;
   private lastTime = 0;
   private lastReportedTheta = -999;
   private lastReportedPhi = -999;
@@ -2764,6 +2765,30 @@ export class ThreeView {
     }
   }
 
+  public getGLContext(): WebGL2RenderingContext {
+    return this.gl;
+  }
+
+  public setXRSessionActive(active: boolean): void {
+    const wasActive = this.xrSessionActive;
+    this.xrSessionActive = active;
+    if (wasActive && !active) {
+      this.lastTime =
+        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.updateTurntableMatrix();
+      if (this.isVisible) {
+        this.resize();
+        this.render();
+      }
+    }
+  }
+
+  public stepXRUpdate(dt: number): void {
+    for (const plugin of registeredPlugins) {
+      plugin.onUpdate?.(this, dt);
+    }
+  }
+
   public start(): void {
     if (this.animFrameId !== null) return;
     this.lastTime = performance.now();
@@ -2771,7 +2796,7 @@ export class ThreeView {
       const dt = Math.min((time - this.lastTime) / 1000, 0.1);
       this.lastTime = time;
 
-      if (this.isVisible) {
+      if (this.isVisible && !this.xrSessionActive) {
         this.resize();
         this.update(dt);
         this.render();
@@ -2957,6 +2982,8 @@ export class ThreeView {
     placementMatrix?: Float32Array | null,
     isPlaced?: boolean,
     viewport?: [number, number, number, number],
+    isAR = true,
+    viewIndex = 0,
   ): void {
     if (this.onBeforeRenderXRView) {
       this.onBeforeRenderXRView(xrView);
@@ -2967,7 +2994,9 @@ export class ThreeView {
     const eyePos: [number, number, number] = pos
       ? [pos.x, pos.y, pos.z]
       : [0, 1.6, 0];
-    if (isPlaced && placementMatrix) {
+    if (placementMatrix) {
+      this.modelRootMatrix.set(placementMatrix);
+    } else if (isPlaced && placementMatrix) {
       this.modelRootMatrix.set(placementMatrix);
     }
     this.render({
@@ -2976,7 +3005,8 @@ export class ThreeView {
       eyePos,
       viewport,
       eye: (xrView?.eye as 'left' | 'right' | 'none') || 'none',
-      clear: xrView?.eye !== 'right',
+      clear: viewIndex > 0 ? false : xrView?.eye !== 'right',
+      isAR,
     });
   }
 
@@ -2987,6 +3017,7 @@ export class ThreeView {
     viewport?: [number, number, number, number];
     eye?: 'left' | 'right' | 'none';
     clear?: boolean;
+    isAR?: boolean;
   }): void {
     const gl = this.gl;
     let vpW = this.canvas.width;
@@ -3005,12 +3036,16 @@ export class ThreeView {
     }
     gl.enable(gl.DEPTH_TEST);
     if (!xrOverride || xrOverride.clear !== false) {
-      gl.clearColor(
-        this.clearColor[0],
-        this.clearColor[1],
-        this.clearColor[2],
-        this.clearColor[3],
-      );
+      if (xrOverride?.isAR) {
+        gl.clearColor(0, 0, 0, 0);
+      } else {
+        gl.clearColor(
+          this.clearColor[0],
+          this.clearColor[1],
+          this.clearColor[2],
+          this.clearColor[3],
+        );
+      }
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     }
 
@@ -3047,11 +3082,11 @@ export class ThreeView {
       );
     }
 
-    if (this.meshes.length === 0 && this.backdropMeshes.length === 0) return;
+    const numBackdrop = xrOverride?.isAR ? 0 : this.backdropMeshes.length;
+    if (this.meshes.length === 0 && numBackdrop === 0) return;
 
     const currentEye = xrOverride?.eye || 'none';
     let hasTransmissive = false;
-    const numBackdrop = this.backdropMeshes.length;
     const renderList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
     const drawPass = (transmissivePass: boolean) => {
@@ -3061,7 +3096,11 @@ export class ThreeView {
         const isSelected =
           this.selectedMeshName !== '' && mesh.name === this.selectedMeshName;
 
-        if (i < numBackdrop) {
+        if (
+          i < numBackdrop ||
+          (mesh as any).worldSpace === true ||
+          mesh.name === '__xr_reticle__'
+        ) {
           this.modelMatrix.set(mesh.transform);
         } else {
           mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);

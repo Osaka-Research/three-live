@@ -15,7 +15,7 @@
  */
 
 // Numeric expectations mirror `xr-live/tests/xr_plugins_test.ts` so every platform is
-// checked against the same contract (docs/xr-blocks-parity.md).
+// checked against the same contract (docs/xr-spatial-parity.md).
 
 import XCTest
 import simd
@@ -306,13 +306,13 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     s.step(dt: 0.25)
     XCTAssertEqual(translation(s, 0).y, 1, accuracy: 1e-5)
     let q = try XCTUnwrap(s.nodeTransform(at: 0)?.rotation)
-    XCTAssertEqual(XRBlocksMath.yawFromQuat(q), Float.pi / 4, accuracy: 1e-3, "slerp halfway")
+    XCTAssertEqual(XRSpatialMath.yawFromQuat(q), Float.pi / 4, accuracy: 1e-3, "slerp halfway")
     XCTAssertEqual(simd_length(q.vector), 1, accuracy: 1e-4)
     // `step` clamps dt to 0.25 s (web VM parity), so finish the 1 s tween in two steps.
     s.step(dt: 0.25)
     s.step(dt: 0.25)
     XCTAssertEqual(
-      XRBlocksMath.yawFromQuat(try XCTUnwrap(s.nodeTransform(at: 0)?.rotation)), Float.pi / 2,
+      XRSpatialMath.yawFromQuat(try XCTUnwrap(s.nodeTransform(at: 0)?.rotation)), Float.pi / 2,
       accuracy: 1e-3)
     XCTAssertEqual(r.transforms[0]?.translation.y ?? 0, 1, accuracy: 1e-5)
   }
@@ -554,22 +554,22 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   func testCriticallyDampedSpringConvergesWithoutOvershoot() {
     var s = XRSpringState(position: SIMD3<Float>(1, 0, 0))
     for _ in 0..<600 {
-      XRBlocksMath.stepCriticallyDampedSpring(&s, target: .zero, omega: 6, dt: 1.0 / 60.0)
+      XRSpatialMath.stepCriticallyDampedSpring(&s, target: .zero, omega: 6, dt: 1.0 / 60.0)
     }
     XCTAssertLessThan(abs(s.position.x), 1e-4)
     var s2 = XRSpringState(position: SIMD3<Float>(1, 0, 0))
     var overshoot = false
     for _ in 0..<600 {
-      XRBlocksMath.stepCriticallyDampedSpring(&s2, target: .zero, omega: 10, dt: 0.1)
+      XRSpatialMath.stepCriticallyDampedSpring(&s2, target: .zero, omega: 10, dt: 0.1)
       if s2.position.x < -1e-6 { overshoot = true }
     }
     XCTAssertFalse(overshoot, "stable for large dt")
     let head = XRPose(position: SIMD3<Float>(0, 1.6, 0))
     XCTAssertEqual(
-      XRBlocksMath.angleFromForwardDeg(anchor: head, point: SIMD3<Float>(0, 1.6, -1)), 0,
+      XRSpatialMath.angleFromForwardDeg(anchor: head, point: SIMD3<Float>(0, 1.6, -1)), 0,
       accuracy: 1e-3)
     XCTAssertEqual(
-      XRBlocksMath.angleFromForwardDeg(anchor: head, point: SIMD3<Float>(1, 1.6, 0)), 90,
+      XRSpatialMath.angleFromForwardDeg(anchor: head, point: SIMD3<Float>(1, 1.6, 0)), 90,
       accuracy: 1e-3)
   }
 
@@ -611,7 +611,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   func testOrbitPositions() throws {
     let rawOrbit: [String: Any] = ["radius": 2, "speed": Double.pi, "target": [1, 0, 0]]
     let opts = try XCTUnwrap(XRLiveTraitParser.parseOrbit(rawOrbit))
-    let op = XRBlocksMath.computeOrbitPosition(center: SIMD3<Float>(1, 0, 0), options: opts, t: 0.5)
+    let op = XRSpatialMath.computeOrbitPosition(center: SIMD3<Float>(1, 0, 0), options: opts, t: 0.5)
     XCTAssertEqual(op.x, 1, accuracy: 1e-3)
     XCTAssertEqual(op.z, 2, accuracy: 1e-3)
 
@@ -637,8 +637,8 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   // MARK: - Manipulation handles
 
   func testHandlesCornerScaleClampAndPedestalYaw() throws {
-    let world = XRBlocksMath.compose(
-      translation: SIMD3<Float>(0, 0, -2), rotation: XRBlocksMath.identityQuat,
+    let world = XRSpatialMath.compose(
+      translation: SIMD3<Float>(0, 0, -2), rotation: XRSpatialMath.identityQuat,
       scale: SIMD3<Float>(1, 1, 1))
     let layout = ManipulationHandles.computeLayout(
       localMin: SIMD3<Float>(-0.5, -0.5, -0.5), localMax: SIMD3<Float>(0.5, 0.5, 0.5), world: world)
@@ -662,7 +662,7 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       ManipulationHandles.Drag(
         layout: layout, hit: hit, rayOrigin: SIMD3<Float>(0.5, 0.5, 0),
         rayDirection: SIMD3<Float>(0, 0, -1), startScale: SIMD3<Float>(1, 1, 1),
-        startRotation: XRBlocksMath.identityQuat, options: opts))
+        startRotation: XRSpatialMath.identityQuat, options: opts))
     let scaled = try XCTUnwrap(
       drag.update(rayOrigin: SIMD3<Float>(5, 5, 0), rayDirection: SIMD3<Float>(0, 0, -1)))
     XCTAssertEqual(scaled.scale.x, 2, accuracy: 1e-4, "corner drag clamps to maxScale")
@@ -678,12 +678,12 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     let yawDrag = try XCTUnwrap(
       ManipulationHandles.Drag(
         layout: layout, hit: rotHit, rayOrigin: origin, rayDirection: down,
-        startScale: SIMD3<Float>(1, 1, 1), startRotation: XRBlocksMath.identityQuat,
+        startScale: SIMD3<Float>(1, 1, 1), startRotation: XRSpatialMath.identityQuat,
         options: defaults))
     let rotated = try XCTUnwrap(
       yawDrag.update(rayOrigin: SIMD3<Float>(0, ped.y + 1, -1.5), rayDirection: down))
     XCTAssertEqual(
-      abs(XRBlocksMath.yawFromQuat(rotated.rotation)) * 180 / Float.pi, 90, accuracy: 1)
+      abs(XRSpatialMath.yawFromQuat(rotated.rotation)) * 180 / Float.pi, 90, accuracy: 1)
     XCTAssertEqual(rotated.scale, SIMD3<Float>(1, 1, 1), "rotation keeps scale")
   }
 
@@ -1248,9 +1248,9 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
       case "autoRotate":
         let deg = (step["angleDeg"] as? NSNumber)?.floatValue ?? 0
         let rad = deg * .pi / 180
-        s.rootTransform = XRBlocksMath.compose(
+        s.rootTransform = XRSpatialMath.compose(
           translation: .zero,
-          rotation: XRBlocksMath.quatFromYaw(rad),
+          rotation: XRSpatialMath.quatFromYaw(rad),
           scale: SIMD3<Float>(1, 1, 1)
         )
       case "detect":

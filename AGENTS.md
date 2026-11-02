@@ -28,10 +28,10 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Goal | Element | Recommended Bundle | Enforced Budget |
 | :--- | :--- | :--- | :---: |
 | `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 25.5 KB gz` |
-| Procedural `<script type="text/three">` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 51 KB gz` |
-| Full 3D viewer + PBR Next + HDRI + contact shadows + skeletal animation + hotspots | `<three-live>` | `three-live-full.min.js` | `< 66 KB gz` |
-| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 62 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 7 XR Blocks plugins | `<xr-live>` | `xr-live-full.min.js` | `< 99 KB gz` |
+| Procedural `<script type="text/three">` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 54 KB gz` |
+| Full 3D viewer + PBR Next + HDRI + contact shadows + skeletal animation + hotspots | `<three-live>` | `three-live-full.min.js` | `< 69 KB gz` |
+| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 64 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 7 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 103 KB gz` |
 
 ---
 
@@ -79,12 +79,12 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
    - Single source of truth for normalizing and clamping `userData.xr` fields (`normalizeXRTraits()`), emitting glTF `nodes[i].extras.xr` + `nodes[i].extensions.ANDROID_xr_scenecore` (`buildXRSceneCoreExtension()`), and flattening USDZ `customData = {dictionary xr = {...}}` (`flattenXRTraitsForUsd()`).
 2. **Web Runtime (`three-live/src/` & `xr-live/src/`):**
    - `<three-live>` (`three-live/src/three-live-element.ts`) and `ThreeView` (`three-live/src/three-view.ts`) provide WebGL2 PBR rendering, Worker/iframe sandboxing, and plugin hooks (`three-live/src/plugin.ts`).
-   - `<xr-live>` (`xr-live/src/xr-live-element.ts`) and the 7 XR Blocks plugins (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`) implement 6DoF WebXR and desktop simulation.
+   - `<xr-live>` (`xr-live/src/xr-live-element.ts`) and the 7 spatial plugins (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`) implement 6DoF WebXR and desktop simulation.
 3. **In-Process Rust Compiler (`compiler/`):**
    - Embeds `compiler/assets/three-author-engine.min.js` inside an isolated Boa JS context with strict opcode/wall-clock watchdogs, outputting `.glb` and `.usdz` bytes via C FFI (`compiler/include/three_live.h`) and `three-live-cli`.
 4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
-   - **Android (`mobile/android/src/main/java/com/google/threelive/`):** `XRLiveSceneCoreHelper.kt`, `XRBlocksMath.kt`, `XRBlocksFeatures.kt`, `XRLiveRuntimeSession.kt`, and `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
-   - **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):** `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`, `XRBlocksRealityKitFeatures.swift`, and `XRLiveRealityKit.swift`.
+   - **Android (`mobile/android/src/main/java/com/google/threelive/`):** `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt`, `XRLiveRuntimeSession.kt`, and `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
+   - **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):** `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`, `XRSpatialRealityKitFeatures.swift`, and `XRLiveRealityKit.swift`.
 
 **Parity Rule:** Whenever you add or modify a trait in `three-live/src/xr-trait-schema.ts`, you must update its handling in Web (`xr-live/src/plugins/`), Android (`mobile/android/`), and iOS/visionOS (`mobile/ios/`) and keep `XRLiveSwiftSourceParityTest.kt` green.
 

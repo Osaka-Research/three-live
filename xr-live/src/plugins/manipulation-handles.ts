@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `manipulation-handles` plugin for `<xr-live>`.
+ * @fileoverview Spatial `manipulation-handles` plugin for `<xr-live>`.
  *
  * Adds four top-corner uniform-scale handles and a pedestal yaw-rotation bar
  * to every mesh tagged with `userData.xr.handles`:

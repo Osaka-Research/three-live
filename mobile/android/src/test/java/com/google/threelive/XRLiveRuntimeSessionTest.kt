@@ -30,7 +30,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * Host-side JVM tests for the pure-Kotlin XR Blocks runtime: [MiniJson], canonical trait parsing,
+ * Host-side JVM tests for the pure-Kotlin spatial runtime: [MiniJson], canonical trait parsing,
  * the `KHR_interactivity` VM in [XRLiveRuntimeSession], and the math / geometry / decoder helpers.
  *
  * Numeric expectations mirror `xr-live/tests/xr_plugins_test.ts` so web and Android stay in parity.
@@ -775,7 +775,7 @@ class XRLiveRuntimeSessionTest {
     assertTrue(h2 is ManipulationHandles.Hit.Rotate)
     rot.update(doubleArrayOf(0.0, ped[1] + 1, -2.0 + 0.5), doubleArrayOf(0.0, -1.0, 0.0))
     val q = rot.rotation
-    val yawDeg = Math.toDegrees(XRBlocksMath.yawFromQuat(q[0], q[1], q[2], q[3]))
+    val yawDeg = Math.toDegrees(XRSpatialMath.yawFromQuat(q[0], q[1], q[2], q[3]))
     assertEquals(90.0, Math.abs(yawDeg), 1.0)
     assertArrayEquals(doubleArrayOf(1.0, 1.0, 1.0), rot.scale, 1e-9)
   }
@@ -1340,7 +1340,7 @@ class XRLiveRuntimeSessionTest {
           val cornerIdx = (step["cornerIndex"] as Number).toInt()
           val rayOrigin = MiniJson.asList(step["rayOrigin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
           val rawDir = MiniJson.asList(step["rayDirection"])!!.map { (it as Number).toDouble() }.toDoubleArray()
-          val dirLen = XRBlocksMath.len3(rawDir[0], rawDir[1], rawDir[2])
+          val dirLen = XRSpatialMath.len3(rawDir[0], rawDir[1], rawDir[2])
           val rayDir = doubleArrayOf(rawDir[0] / dirLen, rawDir[1] / dirLen, rawDir[2] / dirLen)
           val world = DoubleArray(16)
           session.nodeWorldMatrix(nodeIdx, world)
@@ -1361,9 +1361,9 @@ class XRLiveRuntimeSessionTest {
         }
         "autoRotate" -> {
           val rad = (step["angleDeg"] as Number).toDouble() * Math.PI / 180.0
-          val q = XRBlocksMath.quatFromYaw(rad)
+          val q = XRSpatialMath.quatFromYaw(rad)
           val root = DoubleArray(16)
-          XRBlocksMath.mat4FromTRS(doubleArrayOf(0.0, 0.0, 0.0), q, doubleArrayOf(1.0, 1.0, 1.0), root)
+          XRSpatialMath.mat4FromTRS(doubleArrayOf(0.0, 0.0, 0.0), q, doubleArrayOf(1.0, 1.0, 1.0), root)
           session.rootTransform = root
         }
         "detect" -> {

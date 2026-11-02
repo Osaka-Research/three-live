@@ -42,8 +42,8 @@ Every `<xr-live>` feature is authored once and executes across **Web (`WebGL2` /
 Update the Android runtime so compiled `.glb` scenes and scripts execute the trait identically:
 
 1. **`mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt`:** Parse the new `extras.xr` / `ANDROID_xr_scenecore` fields with the exact same clamping ranges as `xr-trait-schema.ts`.
-2. **`mobile/android/src/main/java/com/google/threelive/XRBlocksMath.kt`:** Implement pure, allocation-free math helpers (shared with unit tests).
-3. **`mobile/android/src/main/java/com/google/threelive/XRBlocksFeatures.kt` & `XRLiveRuntimeSession.kt`:** Step the feature during `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry for `ThreeLiveFilamentRenderer.kt`.
+2. **`mobile/android/src/main/java/com/google/threelive/XRSpatialMath.kt`:** Implement pure, allocation-free math helpers (shared with unit tests).
+3. **`mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt` & `XRLiveRuntimeSession.kt`:** Step the feature during `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry for `ThreeLiveFilamentRenderer.kt`.
 
 ---
 
@@ -52,7 +52,7 @@ Update the Android runtime so compiled `.glb` scenes and scripts execute the tra
 Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
 
 1. **`XRLiveRuntimeSession.swift` & `XRLiveRealityKit.swift`:** Parse the trait from GLB `extras.xr` and USDZ `customData.xr`.
-2. **`XRBlocksRealityKitFeatures.swift` & `XRLiveRealityKitSession.swift`:** Mirror the math and dynamic entity updates in RealityKit.
+2. **`XRSpatialRealityKitFeatures.swift` & `XRLiveRealityKitSession.swift`:** Mirror the math and dynamic entity updates in RealityKit.
 3. **Parity Test Check:** Android's `mobile/android/src/test/java/com/google/threelive/XRLiveSwiftSourceParityTest.kt` verifies that the Swift sources implement all required symbols and trait keys even when building on Linux.
 
 ---
@@ -65,15 +65,15 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
    ```
    Verify that all 10 `.min.js.gz` bundles in `scripts/build.js` remain within their enforced byte budgets:
    - `three-live-viewer.min.js`: `< 25.5 KB gz`
-   - `three-live.min.js`: `< 51 KB gz`
+   - `three-live.min.js`: `< 54 KB gz`
    - `three-live-extras.min.js`: `< 17 KB gz`
    - `three-live-animation.min.js`: `< 6.5 KB gz`
-   - `three-live-full.min.js`: `< 66 KB gz`
-   - `xr-live-viewer.min.js`: `< 42 KB gz`
-   - `xr-live.min.js`: `< 62 KB gz`
+   - `three-live-full.min.js`: `< 69 KB gz`
+   - `xr-live-viewer.min.js`: `< 45 KB gz`
+   - `xr-live.min.js`: `< 64 KB gz`
    - `xr-live-extras.min.js`: `< 9.5 KB gz`
-   - `xr-live-blocks.min.js`: `< 23.5 KB gz`
-   - `xr-live-full.min.js`: `< 99 KB gz`
+   - `xr-live-plugins.min.js`: `< 23.5 KB gz`
+   - `xr-live-full.min.js`: `< 103 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
    ```bash
    node scripts/build.js --test

@@ -70,7 +70,7 @@ data class XRSpatialAudioTrait(
   val loop: Boolean = false,
 )
 
-/** Normalized XR Blocks lazy-follow options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
+/** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
   /** `head`, `hand-left` or `hand-right`. */
   val mode: String = "head",
@@ -104,7 +104,7 @@ data class XRLiveNodeTraits(
   /** Uniform scale limits from the `scale` trait (web `XRTraitSystem` defaults when absent). */
   val minScale: Double = 0.05,
   val maxScale: Double = 5.0,
-  /** `true` for XR Blocks object-valued (lazy HUD) follows; eager string follows are `false`. */
+  /** `true` for object-valued (lazy HUD) follows; eager string follows are `false`. */
   val followLazy: Boolean = false,
   val followDistance: Double = 1.0,
   val followDeadzoneDeg: Double = 15.0,

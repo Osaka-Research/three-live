@@ -1332,7 +1332,7 @@ fn test_unified_presets_compile_to_glb_and_usdz() {
 }
 
 #[test]
-fn test_khr_interactivity_and_xr_blocks_traits_in_glb_and_usdz() {
+fn test_khr_interactivity_and_xr_spatial_traits_in_glb_and_usdz() {
     use three_live_compiler::compile_three_to_usdz;
 
     let script = r#"
@@ -1363,7 +1363,7 @@ fn test_khr_interactivity_and_xr_blocks_traits_in_glb_and_usdz() {
         scene.add(other);
     "#;
 
-    let glb = transcode_three_to_glb(script).expect("GLB with XR Blocks traits should compile");
+    let glb = transcode_three_to_glb(script).expect("GLB with extended XR traits should compile");
     let gltf = parse_gltf_json(&glb);
 
     // KHR_interactivity is compiled with the shared TS compiler and declared.
@@ -1411,7 +1411,7 @@ fn test_khr_interactivity_and_xr_blocks_traits_in_glb_and_usdz() {
     assert_eq!(other["extensions"]["ANDROID_xr_scenecore"]["follow"]["lazy"], false);
 
     // USDZ carries the flattened canonical traits for RealityKit.
-    let usdz = compile_three_to_usdz(script).expect("USDZ with XR Blocks traits should compile");
+    let usdz = compile_three_to_usdz(script).expect("USDZ with extended XR traits should compile");
     let usdz_str = String::from_utf8_lossy(&usdz);
     for needle in [
         "double followDistance = 10",

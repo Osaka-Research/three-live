@@ -96,7 +96,7 @@ Combines procedural PBR geometry, Khronos `KHR_interactivity` click behaviors
 
 ## 2. Precision Manipulation Handles, Lazy Head-Follow HUD & Orbiting Nodes (`<xr-live>`)
 
-Uses the XR Blocks `manipulation-handles` and `head-follow` plugins so users can
+Uses the `manipulation-handles` and `head-follow` plugins so users can
 scale a model via 4 top-corner handles, rotate it about Y via the pedestal bar,
 and keep a floating HUD within a comfortable 18° deadzone.
 
@@ -199,7 +199,7 @@ ask a voice question about that specific part.
 
 <script type="module">
   import '/dist/xr-live-full.min.js';
-  import { connectGeminiLive } from '/dist/xr-live-blocks.min.js';
+  import { connectGeminiLive } from '/dist/xr-live-plugins.min.js';
 
   const xr = document.getElementById('gemini-scene');
   xr.addEventListener('xr-transcription', (e) => {
@@ -270,7 +270,7 @@ streaming (`userData.xr.splatUrl`).
 ## 5. Native Android & iOS/visionOS Runtime Sessions
 
 Compile the exact same procedural `<script type="text/three">` string on-device
-and step all XR Blocks traits natively without a WebView:
+and step all spatial traits natively without a WebView:
 
 ### Android (Kotlin + Google Filament + Jetpack XR SceneCore)
 ```kotlin

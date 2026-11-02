@@ -65,9 +65,9 @@ class ParticleEmitter @JvmOverloads constructor(val options: XRParticlesTrait, s
   private var frame = 0
   private val scratch = DoubleArray(3)
   private val presetId = PRESETS.indexOf(options.preset).let { if (it < 0) 0 else it }
-  private val areaW = XRBlocksMath.clampNum(options.area.getOrElse(0) { 2.0 }, 0.05, 50.0, 2.0)
-  private val areaH = XRBlocksMath.clampNum(options.area.getOrElse(1) { 2.0 }, 0.05, 50.0, 2.0)
-  private val areaD = XRBlocksMath.clampNum(options.area.getOrElse(2) { 2.0 }, 0.05, 50.0, 2.0)
+  private val areaW = XRSpatialMath.clampNum(options.area.getOrElse(0) { 2.0 }, 0.05, 50.0, 2.0)
+  private val areaH = XRSpatialMath.clampNum(options.area.getOrElse(1) { 2.0 }, 0.05, 50.0, 2.0)
+  private val areaD = XRSpatialMath.clampNum(options.area.getOrElse(2) { 2.0 }, 0.05, 50.0, 2.0)
 
   /** Re-seeds every particle uniformly inside the volume around ([cx], [cy], [cz]). */
   fun reset(cx: Double, cy: Double, cz: Double) {
@@ -130,7 +130,7 @@ class ParticleEmitter @JvmOverloads constructor(val options: XRParticlesTrait, s
     floorY: Double? = null,
     depth: ParticleDepthCamera? = null,
   ) {
-    val step = XRBlocksMath.clampNum(dt, 0.0, 0.1, 1.0 / 60)
+    val step = XRSpatialMath.clampNum(dt, 0.0, 0.1, 1.0 / 60)
     center[0] = cx
     center[1] = cy
     center[2] = cz

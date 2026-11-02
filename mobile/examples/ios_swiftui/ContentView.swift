@@ -39,7 +39,7 @@
     @State private var currentEntity: Entity? = nil
     @State private var currentSceneBounds: (center: SIMD3<Double>, radius: Double) = (.zero, 1.48)
     @State private var runtimeSession: XRLiveRealityKitSession? = nil
-    @State private var runtimeFeatures: XRBlocksRealityKitFeatures? = nil
+    @State private var runtimeFeatures: XRSpatialRealityKitFeatures? = nil
     @State private var cameraDistanceMode: String = "auto"
     @State private var cameraResetToken: Int = 0
 
@@ -517,7 +517,7 @@
 
         var newBounds: (center: SIMD3<Double>, radius: Double) = (.zero, 1.48)
         var newSession: XRLiveRealityKitSession? = nil
-        var newFeatures: XRBlocksRealityKitFeatures? = nil
+        var newFeatures: XRSpatialRealityKitFeatures? = nil
 
         if let live = XRLiveRealityKitSession(glbData: glbData, root: entity) {
           newBounds = live.session.sceneBounds
@@ -533,7 +533,7 @@
           if isArPreviewMode && arShowReticle {
             live.setArSurfacePreviewEnabled(true, groundY: -0.95)
           }
-          let features = XRBlocksRealityKitFeatures(live: live)
+          let features = XRSpatialRealityKitFeatures(live: live)
           features.onHandlesChange = { mesh, scale, yawDeg in
             lastEventMessage =
               String(format: "Handles %@: scale %.2f×, yaw %.0f°", mesh, scale, yawDeg)
@@ -627,7 +627,7 @@
     let modelScale: Float
     let resetToken: Int
     let runtimeSession: XRLiveRealityKitSession?
-    let runtimeFeatures: XRBlocksRealityKitFeatures?
+    let runtimeFeatures: XRSpatialRealityKitFeatures?
     let onTapNode: ((String) -> Void)?
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
@@ -639,7 +639,7 @@
       var lastCameraOptions: XRCameraOptions?
       var lastResetToken: Int = -1
       var runtimeSession: XRLiveRealityKitSession?
-      var runtimeFeatures: XRBlocksRealityKitFeatures?
+      var runtimeFeatures: XRSpatialRealityKitFeatures?
       var onTapNode: ((String) -> Void)?
       var isDragging: Bool = false
       var isDraggingHandle: Bool = false

@@ -16,7 +16,7 @@
  * @fileoverview Canonical, cross-platform schema for `userData.xr` spatial
  * traits. This module is the single source of truth used by:
  *
- * - the optional `<xr-live>` XR Blocks plugins (runtime parsing on web),
+ * - the optional `<xr-live>` spatial plugins (runtime parsing on web),
  * - `three-convert.ts` (`extras.xr`, `ANDROID_xr_scenecore`, USDZ
  *   `customData`) once {@link registerXRTraitSerializer} has run, and
  * - the embedded Rust compiler engine (`ENABLE_SERVER_EXTRACT`), whose
@@ -64,7 +64,7 @@ function shortString(v: unknown, max = 256): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : undefined;
 }
 
-/** Normalized XR Blocks lazy-follow options. */
+/** Normalized lazy-follow spatial options. */
 export interface LazyFollowOptions {
   readonly mode: 'head' | 'hand-left' | 'hand-right';
   readonly lazy: boolean;
@@ -278,7 +278,7 @@ export interface NormalizedXRTraits {
   /** Legacy alias of `scale` kept for older native parsers. */
   scalable?: true;
   billboard?: 'capsule' | 'cylindrical' | 'spherical';
-  /** Eager spring follow (string) or XR Blocks lazy follow (object). */
+  /** Eager spring follow (string) or lazy follow (object). */
   follow?: 'head' | 'hand-left' | 'hand-right' | LazyFollowOptions;
   anchor?: 'horizontal' | 'vertical' | 'floor' | 'wall' | 'table';
   physics?: 'dynamic' | 'static';
@@ -529,7 +529,7 @@ export interface XRTraitSerializer {
 /**
  * Registers the canonical trait serializer on the shared registry so GLB and
  * USDZ exports emit the full normalized `extras.xr`, `ANDROID_xr_scenecore`,
- * and USD `customData`. Called by the XR Blocks bundle and the compiler engine.
+ * and USD `customData`. Called by the spatial plugins bundle and the compiler engine.
  */
 export function registerXRTraitSerializer(): void {
   // Locked so untrusted scene scripts in the compiler engine (which may be

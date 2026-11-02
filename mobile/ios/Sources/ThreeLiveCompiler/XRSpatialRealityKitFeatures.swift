@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Native XR Blocks features on RealityKit: manipulation handles, spatial paint and depth
+// Native spatial features on RealityKit: manipulation handles, spatial paint and depth
 // particles, driven by world-space pointer rays from the host (ARView touches on iOS,
 // DragGesture / spatial events on visionOS). Same math and event details as the web plugins.
 
@@ -27,7 +27,7 @@
   #endif
 
   @MainActor
-  public final class XRBlocksRealityKitFeatures {
+  public final class XRSpatialRealityKitFeatures {
     /// `{mesh, scale, yawDeg}` when a handle drag ends (web `xr-handles-change`).
     public var onHandlesChange: ((_ mesh: String, _ scale: Float, _ yawDeg: Float) -> Void)?
     /// `{index, points, lengthMeters}` when a stroke ends (web `xr-paint-stroke`).
@@ -87,7 +87,7 @@
       var sorting: Bool = false
       var lastCameraWorld: simd_float4x4?
       var lastNodeWorld: simd_float4x4?
-      var sinceLastSort: TimeInterval = XRBlocksRealityKitFeatures.splatResortMinInterval
+      var sinceLastSort: TimeInterval = XRSpatialRealityKitFeatures.splatResortMinInterval
       var loadTask: Task<Void, Never>?
 
       init(node: Int, url: URL, entity: ModelEntity) {
@@ -117,7 +117,7 @@
       maxSplats: Int? = nil
     ) {
       self.live = live
-      container.name = "XRBlocksFeatures"
+      container.name = "XRSpatialFeatures"
       live.root.addChild(container)
       let useGpuBillboard = Self.probeGpuBillboardMaterial(
         into: &customSplatMaterial, checked: &customSplatMaterialChecked)
@@ -308,7 +308,7 @@
       if let active = drag {
         drag = nil
         if let t = live.session.nodeTransform(at: active.node) {
-          let yaw = XRBlocksMath.yawFromQuat(t.rotation) * 180 / .pi
+          let yaw = XRSpatialMath.yawFromQuat(t.rotation) * 180 / .pi
           onHandlesChange?(live.session.nodeName(at: active.node) ?? "", t.scale.x, yaw)
         }
         return
@@ -838,7 +838,7 @@
         positions.append(
           SIMD3<Float>(g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]))
       }
-      var descriptor = MeshDescriptor(name: "xr-blocks")
+      var descriptor = MeshDescriptor(name: "xr-spatial")
       descriptor.positions = MeshBuffers.Positions(positions)
       if g.normals.count == g.positions.count {
         var normals: [SIMD3<Float>] = []

@@ -863,6 +863,53 @@ async function runXRLiveTests() {
     'P1-3: capture_xr_view returns 8x8 depthGridMeters once webmcp-allow-depth is opted in',
   );
 
+  // =========================================================================
+  // Regression X2: XRLiveElement.enterSpatialAR uses currentModel on iOS
+  //                and avoids cross-process blob: Scene Viewer intents
+  // =========================================================================
+  const arElement = new XRLiveElement();
+  (arElement as any).getAttribute = () => null;
+  (arElement as any).hasAttribute = () => false;
+  (arElement as any).currentModel = glbBytes;
+  const iosReport = await arElement.enterSpatialAR(undefined, 'ios-quicklook');
+  assert(
+    iosReport.platform === 'ios-quicklook' &&
+      typeof iosReport.usdzByteLength === 'number' &&
+      iosReport.usdzByteLength > 100,
+    'Regression X2: enterSpatialAR() compiles loaded currentModel into non-empty USDZ for iOS Quick Look',
+  );
+
+  const gAny = globalThis as Record<string, unknown>;
+  const prevNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile',
+      },
+      configurable: true,
+      writable: true,
+    });
+    const inMemAndroidReport = await launchBestMobileOrHeadsetAR(glbBytes);
+    assert(
+      inMemAndroidReport.platform === 'simulator',
+      'Regression X2: Android without WebXR does not launch broken cross-process blob: Scene Viewer intent',
+    );
+    const hostedAndroidReport = await launchBestMobileOrHeadsetAR(
+      'https://example.com/model.glb',
+    );
+    assert(
+      hostedAndroidReport.platform === 'android-scene-viewer' &&
+        Boolean(hostedAndroidReport.intentUrl?.includes('example.com')),
+      'Regression X2: Android without WebXR launches Scene Viewer when given an https:// GLB URL',
+    );
+  } finally {
+    if (prevNavDesc) {
+      Object.defineProperty(globalThis, 'navigator', prevNavDesc);
+    } else {
+      delete gAny['navigator'];
+    }
+  }
+
   console.log(`\n🏆 xr-live Test Results: ${passed} Passed, ${failed} Failed.`);
   if (failed > 0) process.exit(1);
 }

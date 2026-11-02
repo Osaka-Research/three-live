@@ -3732,7 +3732,7 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
-  // Native GLB/USDZ exports carry the full canonical XR Blocks trait set.
+  // Native GLB/USDZ exports carry the full canonical spatial trait set.
   registerXRTraitSerializer();
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();

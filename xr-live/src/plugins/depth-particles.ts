@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `depth-particles` plugin for `<xr-live>`.
+ * @fileoverview Spatial `depth-particles` plugin for `<xr-live>`.
  *
  * Any mesh tagged with `userData.xr.particles` becomes an emitter volume:
  *

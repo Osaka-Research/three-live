@@ -346,21 +346,88 @@ export class XRLiveElement extends ThreeLiveElement {
   }
 
   /**
-   * Phase 3.2: Launches the best AR experience across Headset WebXR, iPhone Safari (`<15ms` USDZ QuickLook),
-   * Android Scene Viewer (`intent://`), or Desktop Simulator.
+   * Phase 3.2: Launches the best AR experience across Headset/Android WebXR, iPhone Safari (`<15ms` USDZ QuickLook),
+   * Android Scene Viewer (`intent://` when hosted GLB URL is available), or Desktop Simulator.
    */
   public async enterSpatialAR(
     sourceOverride?: any,
     forceFallback?: 'ios-quicklook' | 'android-scene-viewer',
   ): Promise<MobileARLaunchReport> {
+    if (
+      this.activeXRSession &&
+      typeof this.activeXRSession.isSessionActive === 'function' &&
+      this.activeXRSession.isSessionActive()
+    ) {
+      await this.activeXRSession.stop().catch(() => {});
+      this.activeXRSession = null;
+    }
+
     const source =
       sourceOverride ||
       (this as any)._scene ||
       (this as any)._glbData ||
-      new Uint8Array(0);
-    const report = await launchBestMobileOrHeadsetAR(source, {forceFallback});
+      this.currentModel;
+
+    if (!source) {
+      const err = new Error('No 3D scene is loaded in <xr-live>.');
+      this.showToast(err.message, 6000);
+      throw err;
+    }
+
+    const report = await launchBestMobileOrHeadsetAR(source, {
+      forceFallback,
+      glbUrl:
+        typeof this.currentModel === 'string' ? this.currentModel : undefined,
+    });
+
     if (report.platform === 'webxr' && this.viewer) {
-      const sessionManager = new WebXRSessionManager();
+      const savedVisibility = new Map<any, boolean>();
+      const hideNames = new Set([
+        'Room_Floor',
+        'Pedestal_Table',
+        'Workbench_Pedestal',
+      ]);
+      for (const m of this.viewer.meshes || []) {
+        if (m && hideNames.has(m.name)) {
+          savedVisibility.set(m, m.visible !== false);
+          (m as any).visible = false;
+        }
+      }
+      const restoreVisibility = () => {
+        for (const [m, vis] of savedVisibility.entries()) {
+          m.visible = vis;
+        }
+        savedVisibility.clear();
+      };
+
+      const sessionManager = new WebXRSessionManager({
+        arScale: this.arScale,
+        arPlacement: this.arPlacement,
+        onExit: () => {
+          restoreVisibility();
+          this.activeXRSession = null;
+          this.dispatchEvent(
+            new CustomEvent('ar-status', {
+              bubbles: true,
+              composed: true,
+              detail: {status: 'not-presenting'},
+            }),
+          );
+        },
+        onError: (err) => {
+          restoreVisibility();
+          this.activeXRSession = null;
+          this.dispatchEvent(
+            new CustomEvent('ar-status', {
+              bubbles: true,
+              composed: true,
+              detail: {status: 'failed', error: err},
+            }),
+          );
+          this.showToast(`AR error: ${err.message}`, 6000);
+        },
+      });
+      this.activeXRSession = sessionManager;
       await sessionManager.start(this.viewer, this);
     }
     return report;

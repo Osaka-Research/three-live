@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @fileoverview Unit tests for the seven optional XR Blocks `<xr-live>`
+ * @fileoverview Unit tests for the seven optional `<xr-live>` spatial
  * plugins (`xr-live/src/plugins/*`).
  */
 
@@ -72,7 +72,7 @@ import {
   XRHeadFollowController,
 } from '../src/plugins/head-follow';
 import * as xrLiveFull from '../src/full';
-import {xrBlocksPlugins} from '../src/plugins/index';
+import {xrSpatialPlugins} from '../src/plugins/index';
 import {
   computeHandleLayout,
   parseHandles,
@@ -150,10 +150,10 @@ function meshAt(name: string, pos: [number, number, number], xr: Record<string, 
 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
-  assert(xrBlocksPlugins.length === 7, 'exports seven plugins');
+  assert(xrSpatialPlugins.length === 7, 'exports seven plugins');
   assert(
-    xrLiveFull.xrBlocksPlugins === xrBlocksPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
-    'xr-live-full includes the XR Blocks plugins',
+    xrLiveFull.xrSpatialPlugins === xrSpatialPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
+    'xr-live-full includes the spatial plugins',
   );
   const names = getRegisteredPlugins().map((p) => p.name);
   for (const n of [
@@ -930,7 +930,7 @@ function testGoldenParity(): void {
 }
 
 async function main(): Promise<void> {
-  console.log('🧪 Running XR Blocks plugin unit tests...');
+  console.log('🧪 Running spatial plugin unit tests...');
   testSchema();
   testRegistration();
   testCommon();
@@ -942,7 +942,7 @@ async function main(): Promise<void> {
   testParticles();
   testSplats();
   testGoldenParity();
-  console.log(`\n📊 XR Blocks plugins: ${passed} passed, ${failed} failed`);
+  console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }
 

@@ -33,9 +33,9 @@ Full multi-platform parity across **Web (`three-live` / `xr-live`)**, **Android 
   - Pure-Kotlin (`XRLiveRuntimeSession`) and pure-Swift (`XRLiveRuntimeSession` + `XRLiveRealityKitSession`) `KHR_interactivity` behavior-graph VMs with step/evaluation/tween/delay budgets and RFC 6901 JSON Pointer sandboxing.
   - Cross-platform golden parity suite (`testdata/golden/`) verified across Web, Android JVM, and iOS XCTest within `1e-4`.
 
-- **XR Blocks Spatial Features on Web, Android & iOS/visionOS:**
+- **Spatial Computing Plugins & Native Features on Web, Android & iOS/visionOS:**
   - **Lazy Head Follow & Orbit:** Critically damped spring follow with angular deadzone and radial/vertical slack, plus orbit around named nodes, literal coordinates, or the user's head, with turntable `autoRotate` (`rootTransform`) compensation.
-  - **Manipulation Handles:** Four top-corner uniform-scale handles and pedestal yaw bar (`ManipulationHandles`, `XRBlocksFeatures`, `XRBlocksRealityKitFeatures`).
+  - **Manipulation Handles:** Four top-corner uniform-scale handles and pedestal yaw bar (`ManipulationHandles`, `XRSpatialFeatures`, `XRSpatialRealityKitFeatures`).
   - **Spatial Paint & Depth Particles:** Parallel-transported Catmull-Rom tube strokes (`TubeStrokeBuilder`) and seeded `mulberry32` particle emitters (`ParticleEmitter` with `rain`, `snow`, `dust`, `sparks` presets and floor/depth collision).
   - **Gaussian Splats (`.splat` & Niantic `.spz` v2/v3):** Gzip decompression with size caps, 16-bit bucket depth sort, CPU billboard quad baseline, and GPU covariance-projected ellipse paths (compiled Filament `splat.filamat` + index-only re-sorts on Android up to 1 M splats; runtime Metal `CustomMaterial` + `LowLevelMesh` on iOS/visionOS up to 1 M splats).
   - **World Understanding & Object Detection:** 2D-to-3D bounding-box unprojection (`WorldUnderstanding`), Gemini Live `report_objects` tool calling (`detectObjects`), and optional on-device detectors (`:mobile:android-detect-mlkit` and iOS `XRVisionDetector` + `XRObjectDetectionLoop`).

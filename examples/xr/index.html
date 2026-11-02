@@ -805,7 +805,7 @@ limitations under the License.
         <span class="tag-pill">&lt;xr-live&gt;</span>
         Spatial Computing Playground
       </h1>
-      <span class="size-pill"><span data-bundle-size="xr-live.min.js">60.0 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
+      <span class="size-pill"><span data-bundle-size="xr-live.min.js">62.8 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
@@ -990,9 +990,10 @@ limitations under the License.
         <div class="hud-card">
           <span class="stat-label stat-label-gesture">Hand Gesture:</span>
           <span class="gesture-badge" id="hud-gesture">open-palm</span>
-          <button class="action-btn" id="btn-room-toggle" style="padding: 5px 9px; font-size: 11px;" onclick="toggleXRBlocksRoom()">🏠 XR Room: OFF</button>
+          <button class="action-btn" id="btn-room-toggle" style="padding: 5px 9px; font-size: 11px;" onclick="toggleLivingRoom()">🏠 3D Room: OFF</button>
           <button class="action-btn" id="btn-stereo" style="display:none; padding: 5px 9px; font-size: 11px;" onclick="toggleStereoSBS()">Stereo SBS: OFF</button>
-          <button class="action-btn primary" id="btn-enter-xr" style="padding: 5px 10px; font-size: 11px;" onclick="toggleXRSession()">Enter XR</button>
+          <button class="action-btn primary" id="btn-view-ar" style="padding: 5px 10px; font-size: 11px;" onclick="launchCameraAR()">📱 View in AR</button>
+          <button class="action-btn" id="btn-enter-xr" style="padding: 5px 10px; font-size: 11px;" onclick="toggleXRSession()">🥽 Sim XR</button>
         </div>
       </div>
 
@@ -1112,7 +1113,7 @@ for (let i = 0; i < 14; i++) {
 
 return scene;`,
 
-      workbench: `// Spatial Workbench in XR Blocks Living Room: 6DoF Grab, Scale & Billboard
+      workbench: `// Spatial Workbench in 3D Living Room: 6DoF Grab, Scale & Billboard
 const scene = new THREE.Scene();
 
 // Tabletop Anchor Pad (shown when room backdrop is off)
@@ -1194,7 +1195,7 @@ return scene;`
     }
 
     let lastCompiledGLB = null;
-    const XRBLOCKS_ROOM_CDN =
+    const LIVING_ROOM_CDN =
       'https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/simulator/scenes/XREmulatorsceneV5_livingRoom.glb';
     let cachedRoomGLB = null;
     let roomGLBPromise = null;
@@ -1206,8 +1207,8 @@ return scene;`
       roomGLBPromise = (async () => {
         const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
         const urls = isCorpHost
-          ? ['./livingRoom.glb', '../livingRoom.glb', XRBLOCKS_ROOM_CDN]
-          : [XRBLOCKS_ROOM_CDN, './livingRoom.glb', '../livingRoom.glb'];
+          ? ['./livingRoom.glb', '../livingRoom.glb', LIVING_ROOM_CDN]
+          : [LIVING_ROOM_CDN, './livingRoom.glb', '../livingRoom.glb'];
         for (const url of urls) {
           try {
             const res = await fetch(url);
@@ -1290,11 +1291,11 @@ return scene;`
       }
     }
 
-    async function syncXRBlocksRoom(enable) {
+    async function syncLivingRoom(enable) {
       xrRoomEnabled = Boolean(enable);
       const btn = document.getElementById('btn-room-toggle');
       if (btn) {
-        btn.textContent = '🏠 XR Room: ' + (xrRoomEnabled ? 'ON' : 'OFF');
+        btn.textContent = '🏠 3D Room: ' + (xrRoomEnabled ? 'ON' : 'OFF');
         btn.classList.toggle('primary', xrRoomEnabled);
       }
       if (xrEl.simulator && xrEl.simulator.room) {
@@ -1316,9 +1317,9 @@ return scene;`
       }
     }
 
-    async function toggleXRBlocksRoom() {
-      await syncXRBlocksRoom(!xrRoomEnabled);
-      setToast('XR Blocks Living Room: ' + (xrRoomEnabled ? 'ON' : 'OFF'));
+    async function toggleLivingRoom() {
+      await syncLivingRoom(!xrRoomEnabled);
+      setToast('3D Living Room: ' + (xrRoomEnabled ? 'ON' : 'OFF'));
     }
 
     let switchToken = 0;
@@ -1344,7 +1345,7 @@ return scene;`
       xrRoomEnabled = (mode === 'workbench');
       const btn = document.getElementById('btn-room-toggle');
       if (btn) {
-        btn.textContent = '🏠 XR Room: ' + (xrRoomEnabled ? 'ON' : 'OFF');
+        btn.textContent = '🏠 3D Room: ' + (xrRoomEnabled ? 'ON' : 'OFF');
         btn.classList.toggle('primary', xrRoomEnabled);
       }
 
@@ -1427,22 +1428,40 @@ return scene;`
       setToast('Stereo Side-by-Side view: ' + (stereoSBS ? 'ON' : 'OFF'));
     }
 
+    async function launchCameraAR() {
+      if (immersiveSimActive) {
+        exitImmersiveSimulator();
+      }
+      try {
+        setToast('Launching Camera AR...');
+        const report = await xrEl.enterSpatialAR(lastCompiledGLB || undefined);
+        if (report?.platform === 'webxr') {
+          setToast('WebXR Camera AR active — move phone to detect a surface & tap to place!');
+          return;
+        }
+        if (report?.platform === 'ios-quicklook') {
+          setToast('Opened native iOS AR Quick Look camera view (Apple disables WebXR in iOS Safari).');
+          return;
+        }
+        if (report?.platform === 'android-scene-viewer') {
+          setToast('Opening Google ARCore Scene Viewer...');
+          return;
+        }
+        setToast(
+          'Camera WebXR AR is unavailable in this browser/emulator — use Chrome on an ARCore phone, Safari on iPhone/iPad, or click Sim XR.'
+        );
+      } catch (err) {
+        setToast('AR notice: ' + (err?.message || String(err)));
+      }
+    }
+
     async function toggleXRSession() {
       if (immersiveSimActive) {
         exitImmersiveSimulator();
         return;
       }
 
-      // 1. Try real WebXR first if a hardware headset or emulator is active
-      try {
-        const report = await xrEl.enterSpatialAR();
-        if (report?.platform === 'webxr') {
-          setToast('Hardware WebXR Session Active!');
-          return;
-        }
-      } catch (_) {}
-
-      // 2. Otherwise launch built-in Immersive Desktop XR Simulator Mode!
+      // Launch built-in 3D Headset Simulator Mode (WASD walk, virtual 6DoF hands, G gesture cycle)
       enterImmersiveSimulator();
     }
 
@@ -1450,9 +1469,8 @@ return scene;`
       immersiveSimActive = true;
       document.body.classList.add('xr-immersive-active');
       const btn = document.getElementById('btn-enter-xr');
-      btn.textContent = 'Exit XR (Esc)';
+      btn.textContent = 'Exit Sim (Esc)';
       btn.classList.add('danger');
-      btn.classList.remove('primary');
       document.getElementById('btn-stereo').style.display = 'inline-flex';
       document.getElementById('kbd-hint-bar').innerHTML =
         '<span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Walk</span>' +
@@ -1460,10 +1478,16 @@ return scene;`
         '<span><kbd>Drag</kbd> Look</span>' +
         '<span><kbd>Space</kbd> / <kbd>Click</kbd> Gaze Fire</span>' +
         '<span><kbd>G</kbd> Gesture</span>' +
-        '<span><kbd>Esc</kbd> Exit XR</span>';
+        '<span><kbd>Esc</kbd> Exit Sim</span>';
       if (xrEl.viewer) xrEl.viewer.resize();
       xrEl.audioController?.playEarcon?.('snap');
-      setToast('Immersive Desktop XR Simulator active — use WASD/QE to walk & gaze reticle to interact!');
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOS) {
+        setToast('3D Headset Simulator active (no camera in simulator — tap "View in AR" for real iOS camera AR!)');
+      } else {
+        setToast('3D Headset Simulator active — use WASD/QE to walk & G or Gesture button to cycle hand gestures!');
+      }
     }
 
     function exitImmersiveSimulator() {
@@ -1471,9 +1495,8 @@ return scene;`
       stereoSBS = false;
       document.body.classList.remove('xr-immersive-active', 'xr-stereo-sbs');
       const btn = document.getElementById('btn-enter-xr');
-      btn.textContent = 'Enter XR';
+      btn.textContent = '🥽 Sim XR';
       btn.classList.remove('danger');
-      btn.classList.add('primary');
       document.getElementById('btn-stereo').style.display = 'none';
       document.getElementById('kbd-hint-bar').innerHTML =
         '<span><kbd>Click Sphere</kbd> Impulse</span>' +

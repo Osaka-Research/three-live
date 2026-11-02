@@ -20,10 +20,10 @@ import java.nio.ByteBuffer
 
 /**
  * Pure-Kotlin runtime for a compiled `three-live` scene: executes the root `KHR_interactivity`
- * behavior graph and steps XR Blocks lazy `follow` / `orbit` traits.
+ * behavior graph and steps lazy `follow` and `orbit` spatial traits.
  *
  * This is the Android counterpart of `three-live/src/plugins/interactivity.ts` and
- * `xr-live/src/plugins/head-follow.ts` (see `docs/xr-blocks-parity.md`). It uses no Android
+ * `xr-live/src/plugins/head-follow.ts` (see `docs/xr-spatial-parity.md`). It uses no Android
  * framework classes so it is JVM-unit-testable; hosts mirror state changes onto Filament or
  * Jetpack XR SceneCore entities through [Listener].
  *
@@ -370,7 +370,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
               Math.abs(scale[ni * 3]),
               Math.max(Math.abs(scale[ni * 3 + 1]), Math.abs(scale[ni * 3 + 2])),
             )
-          val r = XRBlocksMath.clampNum(localR * maxS, 0.04, 1.5, 0.12)
+          val r = XRSpatialMath.clampNum(localR * maxS, 0.04, 1.5, 0.12)
           val initVel =
             if (dynNodes.size > 1) {
               val angle = (idx.toDouble() / dynNodes.size) * Math.PI * 2.0
@@ -412,7 +412,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
           val lx = if (c and 1 == 0) mb[0] else mb[3]
           val ly = if (c and 2 == 0) mb[1] else mb[4]
           val lz = if (c and 4 == 0) mb[2] else mb[5]
-          XRBlocksMath.transformPoint(mA, lx, ly, lz, v3a)
+          XRSpatialMath.transformPoint(mA, lx, ly, lz, v3a)
           for (k in 0 until 3) {
             aabb[k] = Math.min(aabb[k], v3a[k])
             aabb[3 + k] = Math.max(aabb[3 + k], v3a[k])
@@ -547,7 +547,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     ensureStarted()
     guard { tickVm(dtSeconds) }
     guard {
-      val dt = XRBlocksMath.clampNum(dtSeconds, 0.0, 0.1, 1.0 / 60)
+      val dt = XRSpatialMath.clampNum(dtSeconds, 0.0, 0.1, 1.0 / 60)
       for (i in followers) {
         if (grabbed[i]) {
           followStates[i] = null
@@ -834,7 +834,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     if (isQuat && a.size == 4 && b.size == 4) {
       normQuat(a, q4b)
       normQuat(b, q4c)
-      XRBlocksMath.quatSlerp(out, q4b, q4c, t)
+      XRSpatialMath.quatSlerp(out, q4b, q4c, t)
       return
     }
     for (i in out.indices) out[i] = a[i] + (b[i] - a[i]) * t
@@ -1649,7 +1649,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
       followStates[i] = state
     }
     val pos = state.spring.position
-    val err = XRBlocksMath.dist3(pos, target)
+    val err = XRSpatialMath.dist3(pos, target)
     if (!state.following) {
       val angle = XRFollowMath.angleFromForwardDeg(anchor, pos)
       val rx = pos[0] - anchor.position[0]
@@ -1664,7 +1664,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     if (state.following) {
       XRFollowMath.stepCriticallyDampedSpring(state.spring, target, options.stiffness, dt)
       val v = state.spring.velocity
-      if (XRBlocksMath.dist3(pos, target) < 0.01 && XRBlocksMath.len3(v[0], v[1], v[2]) < 0.01) {
+      if (XRSpatialMath.dist3(pos, target) < 0.01 && XRSpatialMath.len3(v[0], v[1], v[2]) < 0.01) {
         state.following = false
       }
     }
@@ -1691,7 +1691,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
         center[1] = ty
         center[2] = tz
       } else {
-        XRBlocksMath.transformPoint(root, tx, ty, tz, center)
+        XRSpatialMath.transformPoint(root, tx, ty, tz, center)
       }
     } else if (name == "head") {
       for (k in 0 until 3) center[k] = headPose.position[k].toDouble()
@@ -1722,10 +1722,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
     v3b[0] = headPose.position[0].toDouble()
     v3b[1] = headPose.position[1].toDouble()
     v3b[2] = headPose.position[2].toDouble()
-    XRBlocksMath.extractQuaternion(mA, q4a)
+    XRSpatialMath.extractQuaternion(mA, q4a)
     XRFollowMath.billboardTowards(v3a, v3b, mode, q4b)
     val alpha = Math.min(1.0, dt * 10.0)
-    XRBlocksMath.quatSlerp(q4c, q4a, q4b, alpha)
+    XRSpatialMath.quatSlerp(q4c, q4a, q4b, alpha)
     normalizeQuatInto(q4c)
     setWorldPose(i, v3a, q4c)
   }
@@ -2010,7 +2010,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     var d = 0
     while (cur >= 0 && d < 128) {
       localMatrix(cur, mB)
-      XRBlocksMath.mat4Multiply(mB, out, mC)
+      XRSpatialMath.mat4Multiply(mB, out, mC)
       mC.copyInto(out)
       cur = parent[cur]
       d++
@@ -2021,7 +2021,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     for (k in 0 until 3) tmpT[k] = translation[i * 3 + k]
     for (k in 0 until 4) tmpQ[k] = rotation[i * 4 + k]
     for (k in 0 until 3) tmpS[k] = scale[i * 3 + k]
-    XRBlocksMath.mat4FromTRS(tmpT, tmpQ, tmpS, out)
+    XRSpatialMath.mat4FromTRS(tmpT, tmpQ, tmpS, out)
   }
 
   /** Composes the scene-space matrix of node [i] into [out]. */
@@ -2031,13 +2031,13 @@ class XRLiveRuntimeSession(gltfJson: String) {
     var d = 0
     while (cur >= 0 && d < 128) {
       localMatrix(cur, mB)
-      XRBlocksMath.mat4Multiply(mB, out, mC)
+      XRSpatialMath.mat4Multiply(mB, out, mC)
       mC.copyInto(out)
       cur = parent[cur]
       d++
     }
     if (!rootIsIdentity) {
-      XRBlocksMath.mat4Multiply(root, out, mC)
+      XRSpatialMath.mat4Multiply(root, out, mC)
       mC.copyInto(out)
     }
   }
@@ -2054,15 +2054,15 @@ class XRLiveRuntimeSession(gltfJson: String) {
     } else {
       // Convert through the parent's world matrix (the scene root for root nodes).
       if (p < 0) root.copyInto(mA) else worldMatrix(p, mA)
-      if (!XRBlocksMath.mat4Invert(mA, mB)) return
-      val local = XRBlocksMath.transformPoint(mB, pos[0], pos[1], pos[2], localScratch)
+      if (!XRSpatialMath.mat4Invert(mA, mB)) return
+      val local = XRSpatialMath.transformPoint(mB, pos[0], pos[1], pos[2], localScratch)
       for (k in 0 until 3) translation[i * 3 + k] = local[k]
       if (quat != null) {
-        val pq = XRBlocksMath.extractQuaternion(mA, pqScratch)
+        val pq = XRSpatialMath.extractQuaternion(mA, pqScratch)
         pq[0] = -pq[0]
         pq[1] = -pq[1]
         pq[2] = -pq[2]
-        val lq = XRBlocksMath.quatMultiply(pq, quat, lqScratch)
+        val lq = XRSpatialMath.quatMultiply(pq, quat, lqScratch)
         normalizeQuatInto(lq)
         for (k in 0 until 4) rotation[i * 4 + k] = lq[k]
       }
@@ -2126,8 +2126,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
     if (t == null && r == null && s == null && m != null && m.size == 16) {
       val mat = DoubleArray(16) { numOr(m[it], if (it % 5 == 0) 1.0 else 0.0) }
       for (k in 0 until 3) translation[i * 3 + k] = mat[12 + k]
-      val sc = XRBlocksMath.extractScale(mat)
-      val q = XRBlocksMath.extractQuaternion(mat)
+      val sc = XRSpatialMath.extractScale(mat)
+      val q = XRSpatialMath.extractQuaternion(mat)
       for (k in 0 until 3) scale[i * 3 + k] = sc[k]
       for (k in 0 until 4) rotation[i * 4 + k] = q[k]
       return

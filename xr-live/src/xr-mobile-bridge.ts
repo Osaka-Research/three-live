@@ -18,13 +18,14 @@
  * - On iPhone/iPad Safari (where Apple disables WebXR), compiles the live scene + `userData.xr`
  *   schemas (`preliminary_anchoring`, `PhysicsBodyAPI`, `timeSamples`) into an in-memory `.usdz`
  *   in <15ms and launches native iOS ARKit Quick Look (`<a rel="ar">`).
- * - On Android In-App WebViews (where WebXR is unavailable), compiles the live scene into a
- *   `.glb` and launches native Google ARCore Scene Viewer via `intent://`.
+ * - On Android In-App WebViews (where WebXR is unavailable and a hosted `https://` GLB URL is
+ *   provided), launches native Google ARCore Scene Viewer via `intent://`.
  */
 
 import type {SceneOrGLBSource} from '../../three-live/src/three-convert';
 import {
   createSceneViewerIntent,
+  createUSDZBlob,
   isQuickLookSupported,
   isSceneViewerSupported,
   isWebXRSupported,
@@ -47,25 +48,32 @@ export const buildAndroidSceneViewerIntentUrl = createSceneViewerIntent;
  * Resolves the optimal mobile/headset AR launch path for `<xr-live>`.
  */
 export async function launchBestMobileOrHeadsetAR(
-  source: SceneOrGLBSource,
+  source: SceneOrGLBSource | string,
   options?: {
+    glbUrl?: string;
     quickLook?: QuickLookOptions;
     sceneViewer?: SceneViewerOptions;
     forceFallback?: 'ios-quicklook' | 'android-scene-viewer';
   },
 ): Promise<MobileARLaunchReport> {
   const converter = getXRSceneConverter();
+  const webxrSupported = options?.forceFallback
+    ? false
+    : await isWebXRSupported();
+
   if (
     options?.forceFallback === 'ios-quicklook' ||
-    (!options?.forceFallback &&
-      !(await isWebXRSupported()) &&
-      isQuickLookSupported())
+    (!options?.forceFallback && !webxrSupported && isQuickLookSupported())
   ) {
+    if (typeof source === 'string') {
+      if (typeof document !== 'undefined') {
+        launchQuickLook(source, options?.quickLook);
+      }
+      return {platform: 'ios-quicklook'};
+    }
     const blob = converter
       ? converter.createUSDZBlob(source)
-      : new Blob([source instanceof Uint8Array ? source : new Uint8Array(0)], {
-          type: 'model/vnd.usdz+zip',
-        });
+      : createUSDZBlob(source);
     if (typeof document !== 'undefined') {
       launchQuickLook(blob, options?.quickLook);
     }
@@ -75,12 +83,38 @@ export async function launchBestMobileOrHeadsetAR(
     };
   }
 
+  const hostedGlbUrl =
+    options?.glbUrl ||
+    (typeof source === 'string' && /^https?:\/\//i.test(source.trim())
+      ? source.trim()
+      : undefined);
+
+  // Note: External Android Scene Viewer (`com.google.ar.core`) runs in a separate
+  // OS process and cannot read browser-tab `blob:` URLs, so auto-fallback only
+  // uses Scene Viewer when a real `http(s)://` GLB URL is available.
   if (
     options?.forceFallback === 'android-scene-viewer' ||
     (!options?.forceFallback &&
-      !(await isWebXRSupported()) &&
-      isSceneViewerSupported())
+      !webxrSupported &&
+      isSceneViewerSupported() &&
+      Boolean(hostedGlbUrl))
   ) {
+    if (hostedGlbUrl) {
+      const intentUrl = buildAndroidSceneViewerIntentUrl(
+        hostedGlbUrl,
+        options?.sceneViewer,
+      );
+      if (typeof window !== 'undefined' && window.location) {
+        try {
+          window.location.href = intentUrl;
+        } catch (_) {}
+      }
+      return {
+        platform: 'android-scene-viewer',
+        intentUrl,
+      };
+    }
+
     let glbBytes: Uint8Array;
     if (source && typeof (source as any).traverse === 'function' && converter) {
       glbBytes = converter.sceneToGLB(source as any);
@@ -125,7 +159,7 @@ export async function launchBestMobileOrHeadsetAR(
     };
   }
 
-  if (await isWebXRSupported()) {
+  if (webxrSupported) {
     return {platform: 'webxr'};
   }
 

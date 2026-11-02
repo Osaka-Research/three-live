@@ -29,7 +29,7 @@ import kotlin.math.sin
  * The core library ships no renderer. Apps either add the optional `three-live-filament` module
  * (`ThreeLiveFilament.install()`) or register their own implementation with [ThreeLiveRenderers].
  * [ThreeLiveRuntimeBinding] connects a renderer to an [XRLiveRuntimeSession], so behavior graphs,
- * spatial traits and XR Blocks features work the same with any renderer.
+ * spatial traits and spatial features work the same with any renderer.
  *
  * Node and material indices are glTF indices of the loaded GLB. All methods are called on the main
  * thread, and listener callbacks are delivered on the main thread.
@@ -121,7 +121,7 @@ interface ThreeLiveSceneRenderer {
   fun stopAnimation() {}
 
   /**
-   * Adds a world-space triangle mesh used by XR Blocks features (handles, paint strokes,
+   * Adds a world-space triangle mesh used by spatial features (handles, paint strokes,
    * particles). [positions] and [normals] are xyz triples, [color] is sRGB RGBA (like Three.js hex
    * colors). Returns a mesh id,
    * or `-1` when dynamic meshes are unsupported.

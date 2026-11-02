@@ -677,7 +677,7 @@ async function runThreeViewTests() {
 
   // 17. Features 2.1 - 2.3: In-Browser WebXR Suite Configuration
   let shieldedSelect = false;
-  const mockElement = {
+  const customOverlay = {
     addEventListener: (_type: string, cb: any) => {
       cb({
         preventDefault: () => {
@@ -686,17 +686,33 @@ async function runThreeViewTests() {
       });
     },
   };
+  const mockHostWithoutSlot = {
+    querySelector: () => null,
+  };
+  const noSlotInit: any = {optionalFeatures: []};
+  webxrPlugin.onConfigureXRSessionInit?.(mockHostWithoutSlot, noSlotInit);
+  assert(
+    noSlotInit.optionalFeatures.includes('hit-test') &&
+      noSlotInit.optionalFeatures.includes('light-estimation') &&
+      !noSlotInit.domOverlay,
+    'webxrPlugin adds hit-test and light-estimation without binding opaque host element when no [slot="ar-overlay"] exists',
+  );
+
+  const mockElement = {
+    querySelector: (sel: string) =>
+      sel === '[slot="ar-overlay"]' ? customOverlay : null,
+  };
   const sessionInit: any = {optionalFeatures: []};
   webxrPlugin.onConfigureXRSessionInit?.(mockElement, sessionInit);
   assert(
     sessionInit.optionalFeatures.includes('hit-test') &&
       sessionInit.optionalFeatures.includes('light-estimation') &&
       sessionInit.optionalFeatures.includes('dom-overlay'),
-    'webxrPlugin adds hit-test, light-estimation, and dom-overlay to XRSessionInit.optionalFeatures',
+    'webxrPlugin adds hit-test, light-estimation, and dom-overlay when [slot="ar-overlay"] is present',
   );
   assert(
-    sessionInit.domOverlay?.root === mockElement && shieldedSelect === true,
-    'webxrPlugin sets domOverlay.root and shields beforexrselect events',
+    sessionInit.domOverlay?.root === customOverlay && shieldedSelect === true,
+    'webxrPlugin sets domOverlay.root to [slot="ar-overlay"] and shields beforexrselect events',
   );
 
   // 18. Regression Test: Mesh Inspector Ray-Triangle Intersection (OuterOrbitRing & QuantumCore)

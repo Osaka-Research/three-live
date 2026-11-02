@@ -161,15 +161,15 @@ Every bundle targets `es2020`, strips full license blocks
 | Family | Bundle File | Enforced Budget (`.min.js.gz`) | Included Capabilities |
 | :--------------- | :-------------------------------- | :------------: | :-------------------------- |
 | **`three-live`** | **`three-live-viewer.min.js`** | **`< 25.5 KB gz`** | Lean `.glb`/`.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, AR packager. |
-|  | **`three-live.min.js`** | **`< 51 KB gz`** | Standard `<three-live>` + **`three-author`** (`<script type="text/three">`, `KHR_interactivity` compiler) + AR packager. |
+|  | **`three-live.min.js`** | **`< 54 KB gz`** | Standard `<three-live>` + **`three-author`** (`<script type="text/three">`, `KHR_interactivity` compiler) + AR packager. |
 |  | **`three-live-extras.min.js`** | **`< 17 KB gz`** | Add-on plugin: `KHR_interactivity` VM, PBR Next extensions, HDRI/SH irradiance, dynamic contact shadows, 3D hotspots. |
 |  | **`three-live-animation.min.js`** | **`< 6.5 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading. |
-|  | **`three-live-full.min.js`** | **`< 66 KB gz`** | All-in-one 3D bundle (`three-live` + `extras` + `animation`, all 9 plugins auto-registered). |
-| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 42 KB gz`** | Lean `.glb`/`.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, mobile AR bridge. |
-|  | **`xr-live.min.js`** | **`< 62 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ/GLB compiler. |
+|  | **`three-live-full.min.js`** | **`< 69 KB gz`** | All-in-one 3D bundle (`three-live` + `extras` + `animation`, all 9 plugins auto-registered). |
+| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 45 KB gz`** | Lean `.glb`/`.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, mobile AR bridge. |
+|  | **`xr-live.min.js`** | **`< 64 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ/GLB compiler. |
 |  | **`xr-live-extras.min.js`** | **`< 9.5 KB gz`** | Add-on plugin: Deep XR (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, WebMCP tools. |
-|  | **`xr-live-full.min.js`** | **`< 99 KB gz`** | All-in-one 3D & XR bundle (`three-live-full` + `xr-live` + `xr-live-extras` + all 7 XR Blocks plugins). |
-|  | **`xr-live-blocks.min.js`** | **`< 23.5 KB gz`** | Add-on plugin: XR Blocks (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`). |
+|  | **`xr-live-full.min.js`** | **`< 103 KB gz`** | All-in-one 3D & XR bundle (`three-live-full` + `xr-live` + `xr-live-extras` + all 7 spatial plugins). |
+|  | **`xr-live-plugins.min.js`** | **`< 23.5 KB gz`** | Add-on plugin: Spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`). |
 
 --------------------------------------------------------------------------------
 
@@ -178,7 +178,7 @@ Every bundle targets `es2020`, strips full license blocks
 | Guide | Audience | Contents |
 | :--------------------------------------------- | :------- | :------- |
 | **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, `KHR_interactivity` authoring, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
-| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & XR Blocks guide: canonical `userData.xr` traits, all 7 XR Blocks plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), `<div slot="spatial">` cards, depth/physics, 25-joint hands, WebMCP, and native Android/iOS bridges. |
+| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & spatial plugins guide: canonical `userData.xr` traits, all 7 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), `<div slot="spatial">` cards, depth/physics, 25-joint hands, WebMCP, and native Android/iOS bridges. |
 | **[`docs/cookbook.md`](docs/cookbook.md)** | All Developers | Copy-pasteable recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, and native mobile sessions. |
 | **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, canonical `userData.xr` & `userData.interactivity` schemas, strict `THREE.*` allowlist, scene quotas, and few-shot templates. |
 | **[`AGENTS.md`](AGENTS.md)** | Coding Agents | Repository rules, 3-target cross-platform parity contract, build/test commands, bundle budgets, and security invariants. |

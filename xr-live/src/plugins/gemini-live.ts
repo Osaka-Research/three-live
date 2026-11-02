@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `gemini-live` plugin for `<xr-live>`.
+ * @fileoverview Spatial `gemini-live` plugin for `<xr-live>`.
  *
  * Coordinates a multimodal Gemini Live session from an XR scene:
  * (frames are captures of the rendered 3D canvas, i.e. virtual content only;

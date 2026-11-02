@@ -48,10 +48,10 @@ data class XRPose(
 }
 
 /**
- * Pure math shared by the XR Blocks runtime helpers. Mirrors `xr-live/src/plugins/common.ts` and
+ * Pure math shared by the spatial runtime helpers. Mirrors `xr-live/src/plugins/common.ts` and
  * `head-follow.ts`. Matrices are column-major `FloatArray(16)` (glTF / WebGL convention).
  */
-object XRBlocksMath {
+object XRSpatialMath {
 
   /** Clamps [v] into `[lo, hi]`, mapping non-finite values to [fallback]. */
   @JvmStatic
@@ -370,7 +370,7 @@ class SpringState(
   val velocity: DoubleArray = DoubleArray(3),
 )
 
-/** XR Blocks lazy-follow and orbit math (port of `xr-live/src/plugins/head-follow.ts`). */
+/** Lazy-follow and orbit math (port of `xr-live/src/plugins/head-follow.ts`). */
 object XRFollowMath {
 
   /**
@@ -404,7 +404,7 @@ object XRFollowMath {
       return out
     }
     val yaw =
-      XRBlocksMath.yawFromQuat(
+      XRSpatialMath.yawFromQuat(
         anchor.quaternion[0].toDouble(),
         anchor.quaternion[1].toDouble(),
         anchor.quaternion[2].toDouble(),
@@ -423,7 +423,7 @@ object XRFollowMath {
   @JvmStatic
   fun angleFromForwardDeg(anchor: XRPose, point: DoubleArray): Double {
     val yaw =
-      XRBlocksMath.yawFromQuat(
+      XRSpatialMath.yawFromQuat(
         anchor.quaternion[0].toDouble(),
         anchor.quaternion[1].toDouble(),
         anchor.quaternion[2].toDouble(),
@@ -459,10 +459,10 @@ object XRFollowMath {
   @JvmStatic
   @JvmOverloads
   fun yawTowards(from: DoubleArray, to: DoubleArray, out: DoubleArray = DoubleArray(4)): DoubleArray =
-    XRBlocksMath.quatFromYaw(Math.atan2(to[0] - from[0], to[2] - from[2]), out)
+    XRSpatialMath.quatFromYaw(Math.atan2(to[0] - from[0], to[2] - from[2]), out)
 
   /**
-   * Writes the XR Blocks `TurnToFace` quaternion for `"capsule"`, `"cylindrical"`, or `"spherical"`
+   * Writes the billboard (`TurnToFace`) quaternion for `"capsule"`, `"cylindrical"`, or `"spherical"`
    * billboarding from [from] toward [to] into [out] (port of `computeBillboardQuaternion` in
    * `xr-live/src/xr-traits.ts`).
    */
@@ -545,26 +545,26 @@ object ManipulationHandles {
     val mx = localMax
     val corners =
       listOf(
-        XRBlocksMath.transformPoint(world, mn[0], mx[1], mn[2], DoubleArray(3)),
-        XRBlocksMath.transformPoint(world, mx[0], mx[1], mn[2], DoubleArray(3)),
-        XRBlocksMath.transformPoint(world, mx[0], mx[1], mx[2], DoubleArray(3)),
-        XRBlocksMath.transformPoint(world, mn[0], mx[1], mx[2], DoubleArray(3)),
+        XRSpatialMath.transformPoint(world, mn[0], mx[1], mn[2], DoubleArray(3)),
+        XRSpatialMath.transformPoint(world, mx[0], mx[1], mn[2], DoubleArray(3)),
+        XRSpatialMath.transformPoint(world, mx[0], mx[1], mx[2], DoubleArray(3)),
+        XRSpatialMath.transformPoint(world, mn[0], mx[1], mx[2], DoubleArray(3)),
       )
     val cz = (mn[2] + mx[2]) * 0.5
-    val ps = XRBlocksMath.transformPoint(world, mn[0], mn[1], cz, DoubleArray(3))
-    val pe = XRBlocksMath.transformPoint(world, mx[0], mn[1], cz, DoubleArray(3))
+    val ps = XRSpatialMath.transformPoint(world, mn[0], mn[1], cz, DoubleArray(3))
+    val pe = XRSpatialMath.transformPoint(world, mx[0], mn[1], cz, DoubleArray(3))
     ps[1] -= 0.03
     pe[1] -= 0.03
-    val diag = XRBlocksMath.dist3(corners[0], corners[2])
-    val q = XRBlocksMath.extractQuaternion(world)
+    val diag = XRSpatialMath.dist3(corners[0], corners[2])
+    val q = XRSpatialMath.extractQuaternion(world)
     return Layout(
       origin = doubleArrayOf(world[12], world[13], world[14]),
       corners = corners,
       pedestalStart = ps,
       pedestalEnd = pe,
       pedestalCenter = doubleArrayOf((ps[0] + pe[0]) * 0.5, (ps[1] + pe[1]) * 0.5, (ps[2] + pe[2]) * 0.5),
-      yaw = XRBlocksMath.yawFromQuat(q[0], q[1], q[2], q[3]),
-      handleRadius = XRBlocksMath.clampNum(diag * 0.06, 0.012, 0.08, 0.02),
+      yaw = XRSpatialMath.yawFromQuat(q[0], q[1], q[2], q[3]),
+      handleRadius = XRSpatialMath.clampNum(diag * 0.06, 0.012, 0.08, 0.02),
     )
   }
 
@@ -582,7 +582,7 @@ object ManipulationHandles {
     val t =
       Math.max(0.0, (p[0] - origin[0]) * dir[0] + (p[1] - origin[1]) * dir[1] + (p[2] - origin[2]) * dir[2])
     val miss =
-      XRBlocksMath.len3(origin[0] + dir[0] * t - p[0], origin[1] + dir[1] * t - p[1], origin[2] + dir[2] * t - p[2])
+      XRSpatialMath.len3(origin[0] + dir[0] * t - p[0], origin[1] + dir[1] * t - p[1], origin[2] + dir[2] * t - p[2])
     return doubleArrayOf(t, miss)
   }
 
@@ -594,14 +594,14 @@ object ManipulationHandles {
   ): DoubleArray {
     val ab = doubleArrayOf(b[0] - a[0], b[1] - a[1], b[2] - a[2])
     val ao = doubleArrayOf(origin[0] - a[0], origin[1] - a[1], origin[2] - a[2])
-    val abLen2 = Math.max(XRBlocksMath.dot3(ab, ab), 1e-10)
-    val d1 = XRBlocksMath.dot3(dir, ab)
+    val abLen2 = Math.max(XRSpatialMath.dot3(ab, ab), 1e-10)
+    val d1 = XRSpatialMath.dot3(dir, ab)
     val denom = abLen2 - d1 * d1
     var s =
       if (Math.abs(denom) < 1e-10) {
         0.0
       } else {
-        (XRBlocksMath.dot3(ao, ab) - d1 * XRBlocksMath.dot3(ao, dir)) / denom
+        (XRSpatialMath.dot3(ao, ab) - d1 * XRSpatialMath.dot3(ao, dir)) / denom
       }
     s = Math.max(0.0, Math.min(1.0, s))
     val onSeg = doubleArrayOf(a[0] + ab[0] * s, a[1] + ab[1] * s, a[2] + ab[2] * s)
@@ -649,9 +649,9 @@ object ManipulationHandles {
   ): Double {
     val t = rayPointDistance(rayOrigin, rayDir, startPoint)[0]
     val p = doubleArrayOf(rayOrigin[0] + rayDir[0] * t, rayOrigin[1] + rayDir[1] * t, rayOrigin[2] + rayDir[2] * t)
-    val r0 = Math.max(XRBlocksMath.dist3(startPoint, pivot), 1e-4)
-    val ratio = XRBlocksMath.dist3(p, pivot) / r0
-    return XRBlocksMath.clampNum(startScale * ratio, minScale, maxScale, startScale)
+    val r0 = Math.max(XRSpatialMath.dist3(startPoint, pivot), 1e-4)
+    val ratio = XRSpatialMath.dist3(p, pivot) / r0
+    return XRSpatialMath.clampNum(startScale * ratio, minScale, maxScale, startScale)
   }
 
   /**
@@ -702,7 +702,7 @@ object ManipulationHandles {
       localScale: DoubleArray,
       localRotation: DoubleArray,
     ): Hit? {
-      val dir = XRBlocksMath.normalizeRayDir(rawDir) ?: return null
+      val dir = XRSpatialMath.normalizeRayDir(rawDir) ?: return null
       val h = pick(layout, rayOrigin, dir, options) ?: return null
       hit = h
       startPoint =
@@ -724,7 +724,7 @@ object ManipulationHandles {
     /** Applies a new ray; returns `false` when idle or the ray is degenerate. */
     fun update(rayOrigin: DoubleArray, rawDir: DoubleArray): Boolean {
       val h = hit ?: return false
-      val dir = XRBlocksMath.normalizeRayDir(rawDir) ?: return false
+      val dir = XRSpatialMath.normalizeRayDir(rawDir) ?: return false
       if (h is Hit.Corner) {
         val s0 = startScale[0]
         val s = cornerScale(s0, startPoint, pivot, rayOrigin, dir, options.minScale, options.maxScale)
@@ -732,7 +732,7 @@ object ManipulationHandles {
         for (i in 0 until 3) scale[i] = startScale[i] * k
       } else {
         val d = pedestalYawDelta(startPoint, pivot, rayOrigin, dir, planeY) ?: return false
-        XRBlocksMath.quatMultiply(XRBlocksMath.quatFromYaw(d), startQuat, rotation)
+        XRSpatialMath.quatMultiply(XRSpatialMath.quatFromYaw(d), startQuat, rotation)
       }
       return true
     }
@@ -808,10 +808,10 @@ object WorldUnderstanding {
     for (i in 0 until 4) if (!box[i].isFinite()) return null
     var scale = 1.0
     for (i in 0 until 4) if (box[i] > 1.0001) scale = 1000.0
-    val y0 = XRBlocksMath.clampNum(box[0] / scale, 0.0, 1.0, 0.0)
-    val x0 = XRBlocksMath.clampNum(box[1] / scale, 0.0, 1.0, 0.0)
-    val y1 = XRBlocksMath.clampNum(box[2] / scale, 0.0, 1.0, 0.0)
-    val x1 = XRBlocksMath.clampNum(box[3] / scale, 0.0, 1.0, 0.0)
+    val y0 = XRSpatialMath.clampNum(box[0] / scale, 0.0, 1.0, 0.0)
+    val x0 = XRSpatialMath.clampNum(box[1] / scale, 0.0, 1.0, 0.0)
+    val y1 = XRSpatialMath.clampNum(box[2] / scale, 0.0, 1.0, 0.0)
+    val x1 = XRSpatialMath.clampNum(box[3] / scale, 0.0, 1.0, 0.0)
     return doubleArrayOf(Math.min(y0, y1), Math.min(x0, x1), Math.max(y0, y1), Math.max(x0, x1))
   }
 
@@ -841,9 +841,9 @@ object WorldUnderstanding {
     val viewDir = doubleArrayOf((ndcX + proj[8]) / p0, (ndcY + proj[9]) / p5, -1.0)
     val origin =
       doubleArrayOf(cameraWorld[12].toDouble(), cameraWorld[13].toDouble(), cameraWorld[14].toDouble())
-    val far = XRBlocksMath.transformPoint(cameraWorld, viewDir[0], viewDir[1], viewDir[2], DoubleArray(3))
+    val far = XRSpatialMath.transformPoint(cameraWorld, viewDir[0], viewDir[1], viewDir[2], DoubleArray(3))
     val d = doubleArrayOf(far[0] - origin[0], far[1] - origin[1], far[2] - origin[2])
-    val dir = XRBlocksMath.normalizeRayDir(d) ?: doubleArrayOf(0.0, 0.0, -1.0)
+    val dir = XRSpatialMath.normalizeRayDir(d) ?: doubleArrayOf(0.0, 0.0, -1.0)
     return Ray(origin, dir, viewDir)
   }
 
@@ -852,7 +852,7 @@ object WorldUnderstanding {
   fun hitTestPlanes(planes: List<TrackedPlane>, origin: DoubleArray, dir: DoubleArray): PlaneHit? {
     var best: PlaneHit? = null
     for (plane in planes) {
-      val denom = XRBlocksMath.dot3(plane.normal, dir)
+      val denom = XRSpatialMath.dot3(plane.normal, dir)
       if (Math.abs(denom) < 1e-6) continue
       val t =
         ((plane.center[0] - origin[0]) * plane.normal[0] +
@@ -860,7 +860,7 @@ object WorldUnderstanding {
           (plane.center[2] - origin[2]) * plane.normal[2]) / denom
       if (t <= 0.01 || (best != null && t >= best.distance)) continue
       val point = doubleArrayOf(origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t)
-      if (XRBlocksMath.dist3(point, plane.center) > plane.radius) continue
+      if (XRSpatialMath.dist3(point, plane.center) > plane.radius) continue
       best = PlaneHit(point, plane.normal.copyOf(), t, plane)
     }
     return best
@@ -900,7 +900,7 @@ object WorldUnderstanding {
     } else {
       val hit = hitTestPlanes(planes, ray.origin, ray.dir)
       if (hit != null) {
-        depth = hit.distance / XRBlocksMath.len3(ray.viewDir[0], ray.viewDir[1], ray.viewDir[2])
+        depth = hit.distance / XRSpatialMath.len3(ray.viewDir[0], ray.viewDir[1], ray.viewDir[2])
         source = DepthSource.PLANE
       } else {
         depth = FALLBACK_DEPTH_METERS
@@ -908,7 +908,7 @@ object WorldUnderstanding {
       }
     }
     val world =
-      XRBlocksMath.transformPoint(
+      XRSpatialMath.transformPoint(
         cameraWorld,
         ray.viewDir[0] * depth,
         ray.viewDir[1] * depth,
@@ -937,14 +937,14 @@ object WorldUnderstanding {
       if (!x.isFinite() || !y.isFinite() || !z.isFinite()) return 0.0
       points.add(doubleArrayOf(x, y, z))
       val n = points.size
-      return if (n < 2) 0.0 else XRBlocksMath.dist3(points[n - 1], points[n - 2])
+      return if (n < 2) 0.0 else XRSpatialMath.dist3(points[n - 1], points[n - 2])
     }
 
     /** Summed length of every segment in meters. */
     val totalMeters: Double
       get() {
         var total = 0.0
-        for (i in 1 until points.size) total += XRBlocksMath.dist3(points[i], points[i - 1])
+        for (i in 1 until points.size) total += XRSpatialMath.dist3(points[i], points[i - 1])
         return total
       }
 

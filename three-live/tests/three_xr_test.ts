@@ -14,7 +14,7 @@
 
 import THREE from '../src/three-author';
 import {generateUSDA, generateUSDZ} from '../src/three-convert';
-import {parseGLB} from '../src/three-view';
+import {parseGLB, ThreeView} from '../src/three-view';
 import {
   activateAR,
   buildUSDZZip,
@@ -362,6 +362,259 @@ async function runXRTests() {
   } finally {
     g['document'] = originalDocument;
     g['setTimeout'] = originalSetTimeout;
+  }
+
+  // -------------------------------------------------------------------------
+  // 8. Android WebXR Regression Tests: getGLContext, XRWebGLLayer, Viewport,
+  //    Progressive requestSession Fallback & Wedged-Session Cleanup
+  // -------------------------------------------------------------------------
+  assert(
+    typeof ThreeView.prototype.getGLContext === 'function',
+    'ThreeView exposes getGLContext() for WebXR XRWebGLLayer binding',
+  );
+
+  const origNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const setMockNavigator = (val: unknown) => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: val,
+      configurable: true,
+      writable: true,
+    });
+  };
+  const origXRWebGLLayer = g['XRWebGLLayer'];
+  try {
+    let makeXRCompatibleCalled = false;
+    let baseLayerAssigned: any = null;
+    let requestAttempts = 0;
+    let capturedXRCallback: ((time: number, frame: any) => void) | null = null;
+    let selectListener: (() => void) | null = null;
+    let renderedViewport: [number, number, number, number] | undefined;
+    let renderedMatrix: Float32Array | null = null;
+    let xrSessionEnded = false;
+    let hitTriggered = false;
+    let placedTriggered = false;
+
+    const fakeFramebuffer = {id: 'xr-fbo'};
+    g['XRWebGLLayer'] = class FakeXRWebGLLayer {
+      session: any;
+      gl: any;
+      options: any;
+      framebuffer = fakeFramebuffer;
+      constructor(session: any, gl: any, options: any) {
+        this.session = session;
+        this.gl = gl;
+        this.options = options;
+      }
+      getViewport() {
+        return {x: 0, y: 0, width: 1080, height: 2400};
+      }
+    };
+
+    const fakeSession: any = {
+      renderState: {} as any,
+      addEventListener(type: string, cb: () => void) {
+        if (type === 'select') selectListener = cb;
+      },
+      updateRenderState(state: any) {
+        baseLayerAssigned = state.baseLayer;
+        this.renderState.baseLayer = state.baseLayer;
+      },
+      async requestReferenceSpace() {
+        return {kind: 'local'};
+      },
+      async requestHitTestSource() {
+        return {cancel() {}};
+      },
+      requestAnimationFrame(cb: (time: number, frame: any) => void) {
+        capturedXRCallback = cb;
+      },
+      async end() {
+        xrSessionEnded = true;
+      },
+    };
+
+    setMockNavigator({
+      userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) Chrome/134.0',
+      xr: {
+        async isSessionSupported(mode: string) {
+          return mode === 'immersive-ar';
+        },
+        async requestSession(_mode: string, init?: any) {
+          requestAttempts++;
+          // Simulate an Android browser rejecting advanced sessionInit on attempt 1
+          if (
+            requestAttempts === 1 &&
+            init?.optionalFeatures?.includes('light-estimation')
+          ) {
+            throw new Error('Unsupported optional feature dictionary');
+          }
+          return fakeSession;
+        },
+      },
+    });
+
+    const fakeGl: any = {
+      FRAMEBUFFER: 0x8d40,
+      ARRAY_BUFFER: 0x8892,
+      ELEMENT_ARRAY_BUFFER: 0x8893,
+      STATIC_DRAW: 0x88e4,
+      FLOAT: 0x1406,
+      UNSIGNED_SHORT: 0x1403,
+      async makeXRCompatible() {
+        makeXRCompatibleCalled = true;
+      },
+      bindFramebuffer() {},
+      createVertexArray: () => ({}),
+      bindVertexArray() {},
+      createBuffer: () => ({}),
+      bindBuffer() {},
+      bufferData() {},
+      enableVertexAttribArray() {},
+      vertexAttribPointer() {},
+      deleteVertexArray() {},
+      deleteBuffer() {},
+    };
+
+    const fakeView: any = {
+      gl: fakeGl,
+      bounds: {
+        center: [0, 0, 0],
+        radius: 2.0,
+        min: [-2, -1, -2],
+        max: [2, 1, 2],
+      },
+      meshes: [],
+      modelRootMatrix: new Float32Array(16),
+      xrActive: false,
+      getGLContext() {
+        return this.gl;
+      },
+      setXRSessionActive(active: boolean) {
+        this.xrActive = active;
+      },
+      stepXRUpdate() {},
+      renderXRView(
+        _xrView: any,
+        placementMatrix: Float32Array | null,
+        _isPlaced: boolean,
+        viewport?: [number, number, number, number],
+      ) {
+        renderedMatrix = placementMatrix
+          ? new Float32Array(placementMatrix)
+          : null;
+        renderedViewport = viewport;
+      },
+    };
+
+    const mgr = new WebXRSessionManager({
+      onHit: () => {
+        hitTriggered = true;
+      },
+      onPlaced: () => {
+        placedTriggered = true;
+      },
+    });
+    await mgr.start(fakeView);
+
+    assert(
+      requestAttempts === 2,
+      'WebXRSessionManager retries with minimal features if first requestSession rejects',
+    );
+    assert(
+      makeXRCompatibleCalled && baseLayerAssigned !== null,
+      'WebXRSessionManager calls gl.makeXRCompatible() and attaches XRWebGLLayer baseLayer',
+    );
+    assert(
+      fakeView.xrActive === true,
+      'WebXRSessionManager pauses inline render loop while immersive XR session is active',
+    );
+
+    const hitMat = new Float32Array([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.25, -0.4, -1.3, 1,
+    ]);
+    capturedXRCallback!(16, {
+      getViewerPose: () => ({
+        views: [
+          {
+            eye: 'none',
+            projectionMatrix: new Float32Array(16),
+            transform: {
+              position: {x: 0, y: 1.5, z: 0},
+              matrix: new Float32Array([
+                1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1.5, 0, 1,
+              ]),
+              inverse: {matrix: new Float32Array(16)},
+            },
+          },
+        ],
+      }),
+      getHitTestResults: () => [
+        {
+          getPose: () => ({transform: {matrix: hitMat}}),
+        },
+      ],
+    });
+
+    assert(
+      hitTriggered &&
+        renderedViewport !== undefined &&
+        renderedViewport[2] === 1080 &&
+        renderedViewport[3] === 2400 &&
+        renderedMatrix !== null &&
+        Math.hypot(renderedMatrix[0], renderedMatrix[2]) < 0.2,
+      'WebXRSessionManager passes full camera XRWebGLLayer viewport and auto-scales oversized scenes (~0.30m tabletop radius)',
+    );
+
+    selectListener!();
+    assert(
+      placedTriggered && mgr.hasPlacedModel(),
+      'WebXRSessionManager locks placement matrix on select tap',
+    );
+
+    await mgr.stop();
+    assert(
+      xrSessionEnded && !mgr.isSessionActive() && fakeView.xrActive === false,
+      'WebXRSessionManager.stop() ends session, cleans up reticle, and resumes inline viewer',
+    );
+
+    // Verify setup failure calls session.end() so Chrome never stays wedged
+    let brokenEnded = false;
+    setMockNavigator({
+      xr: {
+        async isSessionSupported() {
+          return true;
+        },
+        async requestSession() {
+          return {
+            addEventListener() {},
+            async requestReferenceSpace() {
+              throw new Error('ReferenceSpace unavailable');
+            },
+            async end() {
+              brokenEnded = true;
+            },
+          };
+        },
+      },
+    });
+    let setupFailedAsExpected = false;
+    const brokenMgr = new WebXRSessionManager();
+    try {
+      await brokenMgr.start(fakeView);
+    } catch {
+      setupFailedAsExpected = true;
+    }
+    assert(
+      setupFailedAsExpected && brokenEnded && !brokenMgr.isSessionActive(),
+      'WebXRSessionManager calls session.end() on post-requestSession failure so subsequent AR taps never wedge',
+    );
+  } finally {
+    if (origNavDesc) {
+      Object.defineProperty(globalThis, 'navigator', origNavDesc);
+    } else {
+      delete g['navigator'];
+    }
+    g['XRWebGLLayer'] = origXRWebGLLayer;
   }
 
   console.log(

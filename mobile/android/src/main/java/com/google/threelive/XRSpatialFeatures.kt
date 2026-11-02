@@ -20,7 +20,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
 /**
- * Native XR Blocks features on top of any [ThreeLiveSceneRenderer] that supports dynamic meshes:
+ * Native spatial features on top of any [ThreeLiveSceneRenderer] that supports dynamic meshes:
  *
  * - **Manipulation handles** for nodes with a `handles` trait: corner cubes scale uniformly and the
  *   pedestal bar yaws the node (same math as `manipulation-handles.ts`), reported as
@@ -36,7 +36,7 @@ import java.util.concurrent.Executors
  *
  * Attach after creating the [binding]; [dispose] removes everything. Main thread only.
  */
-class XRBlocksFeatures
+class XRSpatialFeatures
 @JvmOverloads
 constructor(
   private val binding: ThreeLiveRuntimeBinding,
@@ -245,7 +245,7 @@ constructor(
       dragging = null
       val t = session.nodeTransform(h.node) ?: return
       val q = t.rotation
-      val yaw = XRBlocksMath.yawFromQuat(q[0].toDouble(), q[1].toDouble(), q[2].toDouble(), q[3].toDouble())
+      val yaw = XRSpatialMath.yawFromQuat(q[0].toDouble(), q[1].toDouble(), q[2].toDouble(), q[3].toDouble())
       listener?.onHandlesChange(scene.nodeNames.getOrNull(h.node) ?: "", t.scale[0].toDouble(), Math.toDegrees(yaw))
       return
     }
@@ -256,7 +256,7 @@ constructor(
   }
 
   private fun paintAt(stroke: Stroke, p: ThreeLivePointer): Boolean {
-    val dir = XRBlocksMath.normalizeRayDir(p.direction.copyOf()) ?: return false
+    val dir = XRSpatialMath.normalizeRayDir(p.direction.copyOf()) ?: return false
     return stroke.builder.addPoint(
       p.origin[0] + dir[0] * SCREEN_PAINT_DEPTH,
       p.origin[1] + dir[1] * SCREEN_PAINT_DEPTH,
@@ -294,7 +294,7 @@ constructor(
       renderer.setDynamicMeshTransform(h.meshIds[k], matrix)
     }
     val showPedestal = visible && h.trait.rotateAxis != "none"
-    val len = XRBlocksMath.dist3(layout.pedestalStart, layout.pedestalEnd)
+    val len = XRSpatialMath.dist3(layout.pedestalStart, layout.pedestalEnd)
     boxMatrix(layout.pedestalCenter, len, size * 0.5, size * 0.5, layout.yaw, showPedestal)
     renderer.setDynamicMeshTransform(h.meshIds[4], matrix)
   }

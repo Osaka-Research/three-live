@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `splat-loader` plugin for `<xr-live>`.
+ * @fileoverview Spatial `splat-loader` plugin for `<xr-live>`.
  *
  * Loads 3D Gaussian Splat captures (`.splat` 32-byte records, or Niantic
  * `.spz` v2/v3, gzip-compressed or raw) for any mesh tagged with

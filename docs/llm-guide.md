@@ -38,7 +38,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ### 1. Choose the Right Component & Bundle
 - Use `<three-live>` (`three-live.min.js` or `three-live-full.min.js`) for 3D product viewers, procedural Three.js scenes, `KHR_interactivity` behavior graphs, PBR Next materials, and 1-tap mobile AR handoff (Quick Look / Scene Viewer / WebXR).
-- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), or XR Blocks plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`).
+- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), or spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`).
 
 ### 2. Procedural `<script type="text/three">` Rules
 - Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
@@ -150,7 +150,7 @@ Three.js assumptions never crash or abort a 3D/XR scene:
 </three-live>
 ```
 
-### Template 2: Full Spatial Computing Scene with XR Blocks Traits (`<xr-live>`)
+### Template 2: Full Spatial Computing Scene with Extended XR Traits (`<xr-live>`)
 
 ```html
 <script type="module" src="/dist/xr-live-full.min.js"></script>

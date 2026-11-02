@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// Platform-neutral ports of the XR Blocks web algorithms:
+// Platform-neutral ports of the spatial math and interaction algorithms:
 // - xr-live/src/plugins/head-follow.ts (lazy follow spring + orbit)
 // - xr-live/src/plugins/manipulation-handles.ts (corner scale / pedestal yaw)
 // - xr-live/src/plugins/world-understanding.ts (2D detection unprojection)
@@ -40,18 +40,18 @@ public struct XRPose: Sendable, Equatable {
 
   /// Creates a pose from a rigid world matrix (scale is discarded).
   public init(matrix: simd_float4x4) {
-    let trs = XRBlocksMath.decompose(matrix)
+    let trs = XRSpatialMath.decompose(matrix)
     self.init(position: trs.translation, orientation: trs.rotation)
   }
 
   /// Creates a pose at `position` yawed `yaw` radians about +Y.
   public static func yawed(_ yaw: Float, at position: SIMD3<Float>) -> XRPose {
-    XRPose(position: position, orientation: XRBlocksMath.quatFromYaw(yaw))
+    XRPose(position: position, orientation: XRSpatialMath.quatFromYaw(yaw))
   }
 
   /// The pose as a rigid column-major matrix.
   public var matrix: simd_float4x4 {
-    XRBlocksMath.compose(translation: position, rotation: orientation, scale: SIMD3<Float>(1, 1, 1))
+    XRSpatialMath.compose(translation: position, rotation: orientation, scale: SIMD3<Float>(1, 1, 1))
   }
 
   public static func == (lhs: XRPose, rhs: XRPose) -> Bool {
@@ -78,8 +78,8 @@ public struct XRSpringState: Sendable, Equatable {
 
 // MARK: - Math
 
-/// Shared XR Blocks math (lazy follow, orbit, quaternion and matrix helpers).
-public enum XRBlocksMath {
+/// Shared spatial math (lazy follow, orbit, quaternion and matrix helpers).
+public enum XRSpatialMath {
   /// Identity quaternion.
   public static let identityQuat = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
 
@@ -300,21 +300,21 @@ public enum ManipulationHandles {
       SIMD3<Float>(mx.x, mx.y, mn.z),
       SIMD3<Float>(mx.x, mx.y, mx.z),
       SIMD3<Float>(mn.x, mx.y, mx.z),
-    ].map { XRBlocksMath.transformPoint(world, $0) }
+    ].map { XRSpatialMath.transformPoint(world, $0) }
     let cz = (mn.z + mx.z) * 0.5
     let drop = SIMD3<Float>(0, -0.03, 0)
-    let pedestalStart = XRBlocksMath.transformPoint(world, SIMD3<Float>(mn.x, mn.y, cz)) + drop
-    let pedestalEnd = XRBlocksMath.transformPoint(world, SIMD3<Float>(mx.x, mn.y, cz)) + drop
+    let pedestalStart = XRSpatialMath.transformPoint(world, SIMD3<Float>(mn.x, mn.y, cz)) + drop
+    let pedestalEnd = XRSpatialMath.transformPoint(world, SIMD3<Float>(mx.x, mn.y, cz)) + drop
     let diag = simd_length(corners[0] - corners[2])
-    let trs = XRBlocksMath.decompose(world)
+    let trs = XRSpatialMath.decompose(world)
     return Layout(
       origin: trs.translation,
       corners: corners,
       pedestalStart: pedestalStart,
       pedestalEnd: pedestalEnd,
       pedestalCenter: (pedestalStart + pedestalEnd) * 0.5,
-      yaw: XRBlocksMath.yawFromQuat(trs.rotation),
-      handleRadius: XRBlocksMath.clamp(diag * 0.06, 0.012, 0.08, fallback: 0.02)
+      yaw: XRSpatialMath.yawFromQuat(trs.rotation),
+      handleRadius: XRSpatialMath.clamp(diag * 0.06, 0.012, 0.08, fallback: 0.02)
     )
   }
 
@@ -426,7 +426,7 @@ public enum ManipulationHandles {
         let r0 = max(simd_length(startPoint - pivot), 1e-4)
         let ratio = simd_length(p - pivot) / r0
         let s0 = startScale.x
-        let s = XRBlocksMath.clamp(s0 * ratio, options.minScale, options.maxScale, fallback: s0)
+        let s = XRSpatialMath.clamp(s0 * ratio, options.minScale, options.maxScale, fallback: s0)
         let k = s / max(s0, 1e-6)
         return (startRotation, startScale * k)
       case .rotate:
@@ -436,7 +436,7 @@ public enum ManipulationHandles {
         else { return nil }
         let a0 = atan2(startPoint.x - pivot.x, startPoint.z - pivot.z)
         let a1 = atan2(p.x - pivot.x, p.z - pivot.z)
-        return (XRBlocksMath.quatFromYaw(a1 - a0) * startRotation, startScale)
+        return (XRSpatialMath.quatFromYaw(a1 - a0) * startRotation, startScale)
       }
     }
   }
@@ -469,7 +469,7 @@ public enum WorldUnderstanding {
     public init(orientation: Orientation, center: SIMD3<Float>, normal: SIMD3<Float>, radius: Float) {
       self.orientation = orientation
       self.center = center
-      self.normal = XRBlocksMath.normalize(normal, fallback: SIMD3<Float>(0, 1, 0))
+      self.normal = XRSpatialMath.normalize(normal, fallback: SIMD3<Float>(0, 1, 0))
       self.radius = radius
     }
 
@@ -516,7 +516,7 @@ public enum WorldUnderstanding {
     let b = Array(box.prefix(4))
     guard b.allSatisfy({ $0.isFinite }) else { return nil }
     let scale: Float = b.contains(where: { $0 > 1.0001 }) ? 1000 : 1
-    let v = b.map { XRBlocksMath.clamp($0 / scale, 0, 1, fallback: 0) }
+    let v = b.map { XRSpatialMath.clamp($0 / scale, 0, 1, fallback: 0) }
     return SIMD4<Float>(min(v[0], v[2]), min(v[1], v[3]), max(v[0], v[2]), max(v[1], v[3]))
   }
 
@@ -531,8 +531,8 @@ public enum WorldUnderstanding {
     let p5 = p.columns.1.y != 0 ? p.columns.1.y : 1
     let viewDir = SIMD3<Float>((ndcX + p.columns.2.x) / p0, (ndcY + p.columns.2.y) / p5, -1)
     let origin = SIMD3<Float>(cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
-    let far = XRBlocksMath.transformPoint(cameraWorld, viewDir)
-    return (origin, XRBlocksMath.normalize(far - origin), viewDir)
+    let far = XRSpatialMath.transformPoint(cameraWorld, viewDir)
+    return (origin, XRSpatialMath.normalize(far - origin), viewDir)
   }
 
   /// Intersects a ray with tracked planes, returning the nearest hit within each plane's
@@ -583,7 +583,7 @@ public enum WorldUnderstanding {
     } else {
       depth = fallbackDepthMeters
     }
-    let world = XRBlocksMath.transformPoint(cameraWorld, ray.viewDirection * depth)
+    let world = XRSpatialMath.transformPoint(cameraWorld, ray.viewDirection * depth)
     let p0 = abs(projection.columns.0.x != 0 ? projection.columns.0.x : 1)
     let p5 = abs(projection.columns.1.y != 0 ? projection.columns.1.y : 1)
     return Detection3D(

@@ -290,15 +290,26 @@ export class ThreeLiveElement extends BaseElement {
   private canvas: HTMLCanvasElement | null = null;
   private posterEl: HTMLImageElement | null = null;
   private arButton: HTMLButtonElement | null = null;
-  private currentModel:
+  protected currentModel:
     | GLBData
     | ArrayBuffer
     | ArrayBufferView
     | string
     | null = null;
+  protected activeXRSession: any = null;
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
   /** Host scene limits to apply when `currentModel` is (re)loaded. */
   private currentModelLimits: HostSceneLimits | undefined = undefined;
   private isModelLoaded = false;
+
+  public getLoadedModel():
+    | GLBData
+    | ArrayBuffer
+    | ArrayBufferView
+    | string
+    | null {
+    return this.currentModel;
+  }
 
   private scriptHandle: ScriptExecutionHandle | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -357,6 +368,14 @@ export class ThreeLiveElement extends BaseElement {
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
       this.resizeObserver = null;
+    }
+    if (this.activeXRSession) {
+      this.activeXRSession.stop?.().catch?.(() => {});
+      this.activeXRSession = null;
+    }
+    if (this.toastTimer) {
+      clearTimeout(this.toastTimer);
+      this.toastTimer = null;
     }
     if (this.viewer) {
       this.viewer.destroy();
@@ -968,17 +987,21 @@ export class ThreeLiveElement extends BaseElement {
     }
   }
 
-  public showToast(message: string, durationMs = 4000): void {
+  public showToast(message: string, durationMs = 4500): void {
     if (typeof document === 'undefined') return;
     let toast = this.querySelector<HTMLDivElement>('.three-live-toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.className = 'three-live-toast';
       toast.style.cssText =
-        'position:absolute;bottom:70px;left:50%;transform:translateX(-50%) translateY(10px);z-index:10;padding:10px 18px;background-color:rgba(15,23,42,0.92);color:#f8fafc;border:1px solid rgba(56,189,248,0.4);border-radius:9999px;font:500 13px system-ui,-apple-system,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.4);backdrop-filter:blur(12px);pointer-events:none;opacity:0;transition:opacity .25s ease,transform .25s ease;max-width:90%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+        'position:absolute;bottom:70px;left:50%;transform:translateX(-50%) translateY(10px);z-index:10;padding:10px 16px;background-color:rgba(15,23,42,0.94);color:#f8fafc;border:1px solid rgba(56,189,248,0.45);border-radius:14px;font:500 13px/1.35 system-ui,-apple-system,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.45);backdrop-filter:blur(12px);pointer-events:none;opacity:0;transition:opacity .25s ease,transform .25s ease;max-width:88%;text-align:center;white-space:normal;word-break:break-word';
       this.appendChild(toast);
     }
     toast.textContent = message;
+    if (this.toastTimer) {
+      clearTimeout(this.toastTimer);
+      this.toastTimer = null;
+    }
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(() => {
         if (toast) {
@@ -990,15 +1013,25 @@ export class ThreeLiveElement extends BaseElement {
       toast.style.opacity = '1';
       toast.style.transform = 'translateX(-50%) translateY(0)';
     }
-    setTimeout(() => {
+    this.toastTimer = setTimeout(() => {
       if (toast) {
         toast.style.opacity = '0';
         toast.style.transform = 'translateX(-50%) translateY(10px)';
       }
+      this.toastTimer = null;
     }, durationMs);
   }
 
   public async activateAR(): Promise<ARLaunchResult> {
+    if (
+      this.activeXRSession &&
+      typeof this.activeXRSession.isSessionActive === 'function' &&
+      this.activeXRSession.isSessionActive()
+    ) {
+      await this.activeXRSession.stop().catch(() => {});
+      this.activeXRSession = null;
+    }
+
     if (!this.currentModel) {
       const err = new Error('No 3D model is loaded in <three-live>.');
       this.dispatchEvent(
@@ -1008,7 +1041,7 @@ export class ThreeLiveElement extends BaseElement {
           detail: {status: 'failed', error: err},
         }),
       );
-      this.showToast(err.message);
+      this.showToast(err.message, 6000);
       throw err;
     }
 
@@ -1023,7 +1056,7 @@ export class ThreeLiveElement extends BaseElement {
           detail: {status: 'failed', error: err},
         }),
       );
-      this.showToast(err.message);
+      this.showToast(err.message, 6000);
       throw err;
     }
 
@@ -1045,11 +1078,13 @@ export class ThreeLiveElement extends BaseElement {
         glbUrl:
           typeof this.currentModel === 'string' ? this.currentModel : undefined,
         view: this.viewer || undefined,
+        element: this,
         preferredModes: preferredModes.length > 0 ? preferredModes : undefined,
         arScale: this.arScale,
         arPlacement: this.arPlacement,
         webXROptions: {
           onExit: () => {
+            this.activeXRSession = null;
             this.dispatchEvent(
               new CustomEvent('ar-status', {
                 bubbles: true,
@@ -1059,6 +1094,7 @@ export class ThreeLiveElement extends BaseElement {
             );
           },
           onError: (err) => {
+            this.activeXRSession = null;
             this.dispatchEvent(
               new CustomEvent('ar-status', {
                 bubbles: true,
@@ -1066,13 +1102,22 @@ export class ThreeLiveElement extends BaseElement {
                 detail: {status: 'failed', error: err},
               }),
             );
-            this.showToast(`AR error: ${err.message}`);
+            this.showToast(`AR error: ${err.message}`, 6000);
           },
         },
       });
 
       if (!result.success) {
+        const ua =
+          typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+        const isDesktopMac =
+          /Macintosh/i.test(ua) &&
+          !(typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1);
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+
         if (
+          isDesktopMac &&
+          !isMobile &&
           typeof document !== 'undefined' &&
           this.currentModel &&
           ThreeLiveElement.arProvider.createUSDZBlob
@@ -1094,18 +1139,21 @@ export class ThreeLiveElement extends BaseElement {
             document.body.removeChild(a);
             setTimeout(() => URL.revokeObjectURL(url), 3000);
             this.showToast(
-              '📱 AR camera requires iOS / Android. Downloaded USDZ for macOS Quick Look!',
+              'Downloaded USDZ preview for macOS Quick Look.',
+              5000,
             );
           } catch {
             this.showToast(
               result.error?.message ||
-                'AR requires an iOS (Quick Look) or Android (Scene Viewer / WebXR) device.',
+                'AR requires an iOS (Quick Look) or Android (WebXR / Scene Viewer) device.',
+              6000,
             );
           }
         } else {
           this.showToast(
             result.error?.message ||
-              'AR requires an iOS (Quick Look) or Android (Scene Viewer / WebXR) device.',
+              'AR requires an iOS (Quick Look) or Android (WebXR / Scene Viewer) device.',
+            6000,
           );
         }
 
@@ -1119,6 +1167,9 @@ export class ThreeLiveElement extends BaseElement {
           );
         }
       } else {
+        if (result.session) {
+          this.activeXRSession = result.session;
+        }
         if (result.mode === 'quick-look') {
           this.showToast('Opening Apple AR Quick Look...');
         } else if (result.mode === 'scene-viewer') {
@@ -1129,6 +1180,7 @@ export class ThreeLiveElement extends BaseElement {
       }
       return result;
     } catch (err: any) {
+      this.activeXRSession = null;
       this.dispatchEvent(
         new CustomEvent('ar-status', {
           bubbles: true,
@@ -1136,7 +1188,7 @@ export class ThreeLiveElement extends BaseElement {
           detail: {status: 'failed', error: err},
         }),
       );
-      this.showToast(`AR error: ${err.message || String(err)}`);
+      this.showToast(`AR error: ${err.message || String(err)}`, 6000);
       throw err;
     }
   }

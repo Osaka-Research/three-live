@@ -61,5 +61,5 @@ mobile/examples/ios_swiftui/Info.plist
 local.properties
 
 # Local planning / parity notes (never committed to GitHub).
-docs/xr-blocks-parity.md
+docs/xr-spatial-parity.md
 docs/*-plan.md

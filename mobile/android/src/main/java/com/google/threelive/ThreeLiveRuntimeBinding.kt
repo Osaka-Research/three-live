@@ -73,12 +73,12 @@ class ThreeLiveRuntimeBinding(
   var handSource: HandJointSource? = null
 
   /**
-   * Extra pointer handler consulted before camera orbiting (XR Blocks features such as handles
+   * Extra pointer handler consulted before camera orbiting (spatial features such as handles
    * and paint plug in here).
    */
   var pointerHandler: ThreeLiveRendererListener? = null
 
-  /** Extra per-frame hook, run after the session step (XR Blocks features plug in here). */
+  /** Extra per-frame hook, run after the session step (spatial features plug in here). */
   var frameHandler: ((dtSeconds: Double, cameraWorld: FloatArray) -> Unit)? = null
 
   private val pendingVisibility = LinkedHashSet<Int>()
@@ -247,7 +247,7 @@ class ThreeLiveRuntimeBinding(
 
   private fun headPoseOf(cameraWorld: FloatArray): XRPose {
     for (k in 0 until 16) m[k] = cameraWorld.getOrElse(k) { if (k % 5 == 0) 1f else 0f }.toDouble()
-    XRBlocksMath.extractQuaternion(m, q)
+    XRSpatialMath.extractQuaternion(m, q)
     return XRPose(
       floatArrayOf(m[12].toFloat(), m[13].toFloat(), m[14].toFloat()),
       floatArrayOf(q[0].toFloat(), q[1].toFloat(), q[2].toFloat(), q[3].toFloat()),

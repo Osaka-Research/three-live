@@ -74,7 +74,7 @@ import java.util.concurrent.Executors
  *
  * Renders the loaded GLB with an orbit camera matching the web viewer, maps glTF nodes to gltfio
  * entities for runtime transform / visibility / material changes, plays glTF animations, picks with
- * `View.pick`, and draws dynamic meshes for XR Blocks features. Every method must be called on the
+ * `View.pick`, and draws dynamic meshes for spatial features. Every method must be called on the
  * main thread (Filament is not thread-safe).
  */
 class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
@@ -1177,7 +1177,7 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   // ---- Touch input -----------------------------------------------------------------------------
 
-  /** Orbit drag, pinch zoom, tap pick, long press, and pointer capture for XR Blocks features. */
+  /** Orbit drag, pinch zoom, tap pick, long press, and pointer capture for spatial features. */
   private inner class TouchHandler(context: Context) : View.OnTouchListener {
     private var lastX = 0f
     private var lastY = 0f

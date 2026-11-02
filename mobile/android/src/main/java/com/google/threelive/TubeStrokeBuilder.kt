@@ -40,7 +40,7 @@ constructor(
   minSpacing: Double = 0.004,
 ) {
   /** Tube radius in meters, clamped to `[0.0005, 0.25]`. */
-  val radius: Double = XRBlocksMath.clampNum(radius, 0.0005, 0.25, 0.006)
+  val radius: Double = XRSpatialMath.clampNum(radius, 0.0005, 0.25, 0.006)
 
   /** Radial segments, clamped to `[3, 32]`. */
   val radialSegments: Int = Math.max(3, Math.min(32, radialSegments))
@@ -48,7 +48,7 @@ constructor(
   /** Catmull-Rom samples per span, clamped to `[1, 16]`. */
   val samplesPerSpan: Int = Math.max(1, Math.min(16, samplesPerSpan))
 
-  private val minSpacing: Double = XRBlocksMath.clampNum(minSpacing, 0.0, 0.5, 0.004)
+  private val minSpacing: Double = XRSpatialMath.clampNum(minSpacing, 0.0, 0.5, 0.004)
   private val pts = ArrayList<DoubleArray>()
 
   /** Number of accepted raw points. */
@@ -63,7 +63,7 @@ constructor(
     if (!x.isFinite() || !y.isFinite() || !z.isFinite()) return false
     if (pts.size >= MAX_STROKE_POINTS) return false
     val last = pts.lastOrNull()
-    if (last != null && XRBlocksMath.len3(x - last[0], y - last[1], z - last[2]) < minSpacing) {
+    if (last != null && XRSpatialMath.len3(x - last[0], y - last[1], z - last[2]) < minSpacing) {
       return false
     }
     pts.add(doubleArrayOf(x, y, z))
@@ -74,7 +74,7 @@ constructor(
   val lengthMeters: Double
     get() {
       var len = 0.0
-      for (i in 1 until pts.size) len += XRBlocksMath.dist3(pts[i], pts[i - 1])
+      for (i in 1 until pts.size) len += XRSpatialMath.dist3(pts[i], pts[i - 1])
       return len
     }
 
@@ -129,17 +129,17 @@ constructor(
         val c = center[i]
         val p = center[i - 1]
         val v1 = doubleArrayOf(c[0] - p[0], c[1] - p[1], c[2] - p[2])
-        val c1 = XRBlocksMath.dot3(v1, v1)
+        val c1 = XRSpatialMath.dot3(v1, v1)
         if (c1 > 1e-12) {
-          val rL = sub(normal, scale(v1, (2 / c1) * XRBlocksMath.dot3(v1, normal)))
+          val rL = sub(normal, scale(v1, (2 / c1) * XRSpatialMath.dot3(v1, normal)))
           val tPrev = tangents[i - 1]
-          val tL = sub(tPrev, scale(v1, (2 / c1) * XRBlocksMath.dot3(v1, tPrev)))
+          val tL = sub(tPrev, scale(v1, (2 / c1) * XRSpatialMath.dot3(v1, tPrev)))
           val v2 = sub(tangents[i], tL)
-          val c2 = XRBlocksMath.dot3(v2, v2)
-          normal = if (c2 > 1e-12) sub(rL, scale(v2, (2 / c2) * XRBlocksMath.dot3(v2, rL))) else rL
+          val c2 = XRSpatialMath.dot3(v2, v2)
+          normal = if (c2 > 1e-12) sub(rL, scale(v2, (2 / c2) * XRSpatialMath.dot3(v2, rL))) else rL
         }
         // Guard against drift: keep the frame orthonormal.
-        normal = norm(sub(normal, scale(tangents[i], XRBlocksMath.dot3(normal, tangents[i]))), normal)
+        normal = norm(sub(normal, scale(tangents[i], XRSpatialMath.dot3(normal, tangents[i]))), normal)
       }
       val binormal = cross(tangents[i], normal)
       for (r in 0 until radial) {
@@ -231,7 +231,7 @@ constructor(
       doubleArrayOf(a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
     private fun norm(a: DoubleArray, fallback: DoubleArray): DoubleArray {
-      val l = XRBlocksMath.len3(a[0], a[1], a[2])
+      val l = XRSpatialMath.len3(a[0], a[1], a[2])
       return if (l > 1e-8) doubleArrayOf(a[0] / l, a[1] / l, a[2] / l) else fallback.copyOf()
     }
   }

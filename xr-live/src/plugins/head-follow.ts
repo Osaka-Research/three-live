@@ -14,9 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `head-follow` plugin for `<xr-live>`.
+ * @fileoverview Spatial `head-follow` plugin for `<xr-live>`.
  *
- * Implements the XR Blocks `FollowHead` lazy HUD behavior (angular deadzone
+ * Implements lazy head-follow HUD behavior (angular deadzone
  * plus a critically damped spring) and the `Orbit` satellite behavior:
  *
  * ```js

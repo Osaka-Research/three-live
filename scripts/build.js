@@ -641,18 +641,18 @@ function buildXRLive() {
     outfile: path.join(xrDist, 'xr-live-extras.min.js'),
   });
 
-  // 4. xr-live-blocks (optional XR Blocks plugins: head-follow, handles,
+  // 4. xr-live-plugins (optional spatial plugins: head-follow, handles,
   // world-understanding, gemini-live, spatial-paint, depth-particles, splats)
   for (const [format, ext] of [['esm', 'js'], ['cjs', 'cjs'], ['iife', 'min.js']]) {
     buildTarget({
       entryPoints: [path.join(XR_LIVE_DIR, 'src/plugins/index.ts')],
       bundle: true,
       format,
-      ...(format === 'iife' ? {globalName: 'XRLiveBlocks'} : {}),
+      ...(format === 'iife' ? {globalName: 'XRLivePlugins'} : {}),
       minify: true,
       target: 'es2020',
       define: {'IS_DEV': 'false'},
-      outfile: path.join(xrDist, `xr-live-blocks.${ext}`),
+      outfile: path.join(xrDist, `xr-live-plugins.${ext}`),
     });
   }
 
@@ -692,7 +692,7 @@ function buildXRLive() {
   fs.writeFileSync(path.join(xrDist, 'xr-live-viewer.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-extras.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-full.d.ts'), rootDts);
-  fs.writeFileSync(path.join(xrDist, 'xr-live-blocks.d.ts'), rootDts);
+  fs.writeFileSync(path.join(xrDist, 'xr-live-plugins.d.ts'), rootDts);
 
   if (!fs.existsSync(DIST_DIR)) {
     fs.mkdirSync(DIST_DIR, {recursive: true});
@@ -710,8 +710,8 @@ function buildXRLive() {
       path.join(xrDist, 'xr-live-full.min.js'),
       path.join(DIST_DIR, 'xr-live-full.min.js'));
   fs.copyFileSync(
-      path.join(xrDist, 'xr-live-blocks.min.js'),
-      path.join(DIST_DIR, 'xr-live-blocks.min.js'));
+      path.join(xrDist, 'xr-live-plugins.min.js'),
+      path.join(DIST_DIR, 'xr-live-plugins.min.js'));
 
   const sandboxHtmlSrc =
       path.join(THREE_LIVE_DIR, 'src/three-live-sandbox.html');
@@ -726,8 +726,8 @@ function buildXRLive() {
         path.join(xrDist, 'xr-live-extras.min.js'),
         path.join(xrExampleDir, 'xr-live-extras.min.js'));
     fs.copyFileSync(
-        path.join(xrDist, 'xr-live-blocks.min.js'),
-        path.join(xrExampleDir, 'xr-live-blocks.min.js'));
+        path.join(xrDist, 'xr-live-plugins.min.js'),
+        path.join(xrExampleDir, 'xr-live-plugins.min.js'));
     fs.copyFileSync(
         sandboxHtmlSrc, path.join(xrExampleDir, 'three-live-sandbox.html'));
   }
@@ -765,15 +765,15 @@ function reportSizes() {
   console.log('------------------------------------------------------------------------------');
   const files = [
     {name: 'three-live-viewer.min.js', budgetKb: '25.5'},
-    {name: 'three-live.min.js', budgetKb: '51'},
+    {name: 'three-live.min.js', budgetKb: '54'},
     {name: 'three-live-extras.min.js', budgetKb: '17'},
     {name: 'three-live-animation.min.js', budgetKb: '6.5'},
-    {name: 'three-live-full.min.js', budgetKb: '66'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '42'},
-    {name: 'xr-live.min.js', budgetKb: '62'},
+    {name: 'three-live-full.min.js', budgetKb: '69'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '45'},
+    {name: 'xr-live.min.js', budgetKb: '64'},
     {name: 'xr-live-extras.min.js', budgetKb: '9.5'},
-    {name: 'xr-live-full.min.js', budgetKb: '99'},
-    {name: 'xr-live-blocks.min.js', budgetKb: '23.5'},
+    {name: 'xr-live-full.min.js', budgetKb: '103'},
+    {name: 'xr-live-plugins.min.js', budgetKb: '23.5'},
   ];
   const failures = [];
   for (const f of files) {

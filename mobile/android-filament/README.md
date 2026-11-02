@@ -39,7 +39,7 @@ What it provides:
   visibility, material-factor, `alphaCutoff` and animation changes from
   `ThreeLiveRuntimeBinding` show up on screen.
 - Tap picking (`View.pick`) to the owning glTF node, long press (hold-to-ask),
-  and pointer capture for XR Blocks features.
+  and pointer capture for spatial features.
 - Dynamic world-space meshes (handles, paint strokes, particles) drawn with
   gltfio's unlit material.
 

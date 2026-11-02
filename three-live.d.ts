@@ -74,7 +74,7 @@ export {
   type XRProfile,
   type XRSimulatorRoom,
 } from './xr-live/src/xr-live-element';
-/** Optional XR Blocks plugins (`xr-live/blocks`, `xr-live-blocks.min.js`). */
+/** Optional spatial plugins (`xr-live/plugins`, `xr-live-plugins.min.js`). */
 export * from './xr-live/src/plugins/index';
 
 /**
@@ -191,9 +191,9 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'xr-simulator'?: XRSimulatorRoom;
   /** Spatial UI profile ("quest3", "android-xr", "visionos", "auto"). */
   'xr-profile'?: XRProfile;
-  /** XR Blocks: enables plane/mesh detection; include "reticle" for a gaze reticle. */
+  /** Spatial plugin: enables plane/mesh detection; include "reticle" for a gaze reticle. */
   'world-understanding'?: boolean | string;
-  /** XR Blocks: pinch in empty space to paint 3D tubes (optional `#rrggbb` color). */
+  /** Spatial plugin: pinch in empty space to paint 3D tubes (optional `#rrggbb` color). */
   'spatial-paint'?: boolean | string;
   'onxr-object-detected'?: (e: CustomEvent<Detection3D>) => void;
   'onxr-transcription'?: (e: CustomEvent<TranscriptEvent>) => void;

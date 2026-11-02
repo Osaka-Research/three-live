@@ -39,7 +39,7 @@ description: >-
 3. **Never use `GLTFLoader` or `TextureLoader` inside `<script type="text/three">`:**
    - Network APIs (`fetch`, `XMLHttpRequest`) are revoked inside the procedural sandbox. Load `.glb` assets declaratively via `<three-live src="model.glb">` or `<xr-anchor src="model.glb">`.
 4. **Prefer `mesh.userData.xr = { ... }` over legacy `userData.xrTraits`:**
-   - The structured `userData.xr` object supports all core and XR Blocks traits and exports cleanly to `.glb` (`extras.xr` + `ANDROID_xr_scenecore`) and `.usdz` (`customData.xr`).
+   - The structured `userData.xr` object supports all core and extended spatial traits and exports cleanly to `.glb` (`extras.xr` + `ANDROID_xr_scenecore`) and `.usdz` (`customData.xr`).
 5. **Always name interactive meshes (`mesh.name = '...'`):**
    - `meshclick` events, `selected-mesh`, `userData.xr.orbit.target`, `userData.interactivity` target references, `holdToAsk` prompts, and WebMCP `place_xr_object_at_gaze` all identify nodes by `mesh.name`.
 
@@ -54,7 +54,7 @@ Attach `userData.xr` to any `THREE.Mesh` or `THREE.Group` inside `<script type="
 | `grab` | `'1-hand' \| '2-hand' \| true` | Enables 6DoF pinch / controller trigger grabbing (`true` defaults to `'2-hand'`). |
 | `scale` | `{ min?: number, max?: number } \| true` | Two-hand pinch-to-scale clamped to `[min, max]` (default `0.05`–`5.0`). |
 | `billboard` | `'capsule' \| 'cylindrical' \| 'spherical' \| true` | Faces the active viewer camera (`'capsule'` / `'cylindrical'` yaw-only; `'spherical'` full 3D). |
-| `follow` | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values use eager spring follow; object values activate XR Blocks lazy follow with angular deadzone + critically damped spring. |
+| `follow` | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values use eager spring follow; object values activate lazy follow with angular deadzone + critically damped spring. |
 | `anchor` | `'floor' \| 'wall' \| 'table' \| 'horizontal' \| 'vertical'` | Snaps node to detected real-world planes or simulated room surfaces. |
 | `physics` | `'dynamic' \| 'static'` | Participates in gravity, restitution (`userData.xr.restitution`), sphere-to-sphere, and real-world depth heightfield collisions. |
 | `orbit` | `{ target: [x,y,z] \| 'nodeName', radius, speed, height, phase, faceCenter }` | Orbits around a 3D point or named target mesh at `speed` rad/s. |
@@ -73,5 +73,5 @@ Attach `userData.xr` to any `THREE.Mesh` or `THREE.Group` inside `<script type="
 Read these reference files when you need detailed schemas, copy-pasteable recipes, or debugging steps:
 
 - **[`references/xr-traits-and-plugins.md`](references/xr-traits-and-plugins.md)**: Complete attribute tables, clamping ranges, DOM events, `userData.interactivity` (`KHR_interactivity`) actions, Gemini Live API, and WebMCP tool schemas.
-- **[`references/recipes.md`](references/recipes.md)**: 6 production-ready, copy-pasteable code templates (E-commerce configurator, Physics ballpit & spatial HTML UI, XR Blocks handles & lazy HUD, Gemini Live + World Understanding, Spatial Paint + Particles + Gaussian Splats, and Native Android/iOS integration).
+- **[`references/recipes.md`](references/recipes.md)**: 6 production-ready, copy-pasteable code templates (E-commerce configurator, Physics ballpit & spatial HTML UI, manipulation handles & lazy HUD, Gemini Live + World Understanding, Spatial Paint + Particles + Gaussian Splats, and Native Android/iOS integration).
 - **[`references/debugging-and-csp.md`](references/debugging-and-csp.md)**: Diagnosing blank scenes, inspecting `THREE.getAuthorWarnings()`, configuring Worker/iframe sandboxes under strict CSP / Trusted Types, and verifying bundle budgets.

@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview Optional XR Blocks plugin bundle for `<xr-live>`
- * (`xr-live-blocks.min.js`). Importing this module registers all seven
+ * @fileoverview Optional spatial plugin bundle for `<xr-live>`
+ * (`xr-live-plugins.min.js`). Importing this module registers all seven
  * plugins; each is inert until a scene opts in via `userData.xr` traits or
  * host attributes:
  *
@@ -43,8 +43,8 @@ import {spatialPaintPlugin} from './spatial-paint';
 import {splatLoaderPlugin} from './splat-loader';
 import {worldUnderstandingPlugin} from './world-understanding';
 
-/** Every XR Blocks plugin, in registration order. */
-export const xrBlocksPlugins = [
+/** Every `<xr-live>` spatial plugin, in registration order. */
+export const xrSpatialPlugins = [
   headFollowPlugin,
   manipulationHandlesPlugin,
   worldUnderstandingPlugin,
@@ -54,8 +54,8 @@ export const xrBlocksPlugins = [
   splatLoaderPlugin,
 ] as const;
 
-for (const plugin of xrBlocksPlugins) registerPlugin(plugin);
-// Exports (GLB / USDZ) now carry the full normalized XR Blocks trait set.
+for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
+// Exports (GLB / USDZ) now carry the full normalized spatial trait set.
 registerXRTraitSerializer();
 
 // This bundle may load after `<xr-live>` elements already connected; attach
@@ -63,7 +63,7 @@ registerXRTraitSerializer();
 if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
   for (const el of Array.from(document.querySelectorAll('xr-live, three-live'))) {
     if (!el.isConnected) continue;
-    for (const plugin of xrBlocksPlugins) plugin.onElementConnected?.(el);
+    for (const plugin of xrSpatialPlugins) plugin.onElementConnected?.(el);
   }
 }
 

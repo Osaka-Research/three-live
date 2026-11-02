@@ -16,7 +16,7 @@
 
 // Platform-neutral (pure Foundation + simd) port of `three-live/src/xr-trait-schema.ts`.
 // Every clamp and default below mirrors the TypeScript schema so a scene authored once
-// behaves identically on web, Android and iOS / visionOS (docs/xr-blocks-parity.md).
+// behaves identically on web, Android and iOS / visionOS (docs/xr-spatial-parity.md).
 
 import Foundation
 import simd
@@ -157,7 +157,7 @@ enum XRJSON {
 
 // MARK: - Canonical trait types
 
-/// Normalized XR Blocks lazy-follow options (`follow: {mode, distance, ...}` with `lazy`).
+/// Normalized lazy-follow spatial options (`follow: {mode, distance, ...}` with `lazy`).
 public struct XRLiveLazyFollow: Codable, Sendable, Equatable {
   /// `"head"`, `"hand-left"` or `"hand-right"`.
   public var mode: String
@@ -384,7 +384,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var billboard: String?
   /// Eager (string) follow mode. `nil` when absent or when `lazyFollow` is set.
   public var follow: String?
-  /// XR Blocks lazy follow (object-valued `follow`).
+  /// Lazy follow (object-valued `follow`).
   public var lazyFollow: XRLiveLazyFollow?
   public var anchor: String?
   /// `"dynamic"` or `"static"`.

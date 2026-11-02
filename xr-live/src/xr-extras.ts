@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview Phase 4: Closing High-Value XR Blocks Gaps.
+ * @fileoverview Phase 4: Extended Spatial Computing Capabilities.
  * - Phase 4.1: Smooth AR <-> VR Passthrough Transitions (`transitionToVR` / `transitionToAR`)
  * - Phase 4.3: Zero-Dependency HRTF Spatial Audio & Procedural Earcons (`XRSpatialAudioController`)
  * - Phase 4.4: Multimodal AI / Gemini Live Frame Capture (`captureViewFrame`) & WebMCP Spatial Tools

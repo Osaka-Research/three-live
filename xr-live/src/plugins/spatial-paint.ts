@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview XR Blocks `spatial-paint` plugin for `<xr-live>`.
+ * @fileoverview Spatial `spatial-paint` plugin for `<xr-live>`.
  *
  * Add the `spatial-paint` attribute (optionally `spatial-paint="#ff3366"`) and
  * pinch / trigger in empty space to draw. Stroke points are smoothed with a

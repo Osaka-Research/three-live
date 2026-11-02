@@ -29,10 +29,10 @@
       "import": "./dist/xr-live.js",
       "require": "./dist/xr-live.cjs"
     },
-    "./blocks": {
-      "types": "./dist/xr-live-blocks.d.ts",
-      "import": "./dist/xr-live-blocks.js",
-      "require": "./dist/xr-live-blocks.cjs"
+    "./plugins": {
+      "types": "./dist/xr-live-plugins.d.ts",
+      "import": "./dist/xr-live-plugins.js",
+      "require": "./dist/xr-live-plugins.cjs"
     }
   },
   "dependencies": {

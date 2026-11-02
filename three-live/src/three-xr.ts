@@ -76,6 +76,7 @@ export interface WebXROptions {
   requiredFeatures?: string[];
   optionalFeatures?: string[];
   reticleColor?: number[];
+  arScale?: 'auto' | 'fixed';
   arPlacement?: 'floor' | 'wall';
   onPlaced?: (matrix: Float32Array) => void;
   onHit?: (hitMatrix: Float32Array) => void;
@@ -87,6 +88,7 @@ export interface ARLaunchOptions {
   model: SceneOrGLBSource | string;
   glbUrl?: string;
   view?: ThreeView;
+  element?: any;
   preferredModes?: ARMode[];
   arScale?: 'auto' | 'fixed';
   arPlacement?: 'floor' | 'wall';
@@ -378,201 +380,622 @@ export function launchSceneViewer(
 // 4. In-Browser WebXR Session Manager (immersive-ar)
 // ---------------------------------------------------------------------------
 
+let activeWebXRManager: WebXRSessionManager | null = null;
+
+function createARReticleGpu(gl: WebGL2RenderingContext, color?: number[]): any {
+  const segs = 24;
+  const pos = new Float32Array(segs * 6);
+  const norm = new Float32Array(segs * 6);
+  const uvs = new Float32Array(segs * 4);
+  const idx = new Uint16Array(segs * 6);
+  for (let i = 0; i < segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    const c = Math.cos(a),
+      s = Math.sin(a),
+      v0 = i * 2,
+      v1 = v0 + 1,
+      n0 = ((i + 1) % segs) * 2;
+    pos[v0 * 3] = c * 0.11;
+    pos[v0 * 3 + 1] = 0.002;
+    pos[v0 * 3 + 2] = s * 0.11;
+    pos[v1 * 3] = c * 0.145;
+    pos[v1 * 3 + 1] = 0.002;
+    pos[v1 * 3 + 2] = s * 0.145;
+    norm[v0 * 3 + 1] = norm[v1 * 3 + 1] = 1;
+    idx.set([v0, n0, v1, v1, n0, n0 + 1], i * 6);
+  }
+  const vao = gl.createVertexArray()!;
+  gl.bindVertexArray(vao);
+  const mk = (d: Float32Array, loc: number, sz: number) => {
+    const b = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, d, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, sz, gl.FLOAT, false, 0, 0);
+    return b;
+  };
+  const buffers = [mk(pos, 0, 3), mk(norm, 1, 3), mk(uvs, 2, 2)];
+  const ib = gl.createBuffer()!;
+  buffers.push(ib);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return {
+    name: '__xr_reticle__',
+    nodeIndex: -1,
+    worldSpace: true,
+    visible: false,
+    transform: new Float32Array([
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+    ]),
+    normalMatrix: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+    primitives: [
+      {
+        vao,
+        indexCount: idx.length,
+        indexType: gl.UNSIGNED_SHORT,
+        baseColor: (color && color.length >= 3
+          ? [color[0], color[1], color[2], color[3] ?? 0.95]
+          : [0.22, 0.74, 0.97, 0.95]) as [number, number, number, number],
+        metallic: 0,
+        roughness: 0.2,
+        positions: pos,
+        indices: idx,
+        texture: null,
+        metallicRoughnessTexture: null,
+        normalTexture: null,
+        occlusionTexture: null,
+        normalScale: 1,
+        occlusionStrength: 1,
+        buffers,
+      },
+    ],
+  };
+}
+
+function buildARMatrix(
+  out: Float32Array,
+  anchor: [number, number, number],
+  pivot: [number, number, number],
+  yaw: number,
+  scale: number,
+): void {
+  const c = Math.cos(yaw),
+    sn = Math.sin(yaw),
+    s = Math.max(0.01, scale);
+  out.fill(0);
+  out[0] = s * c;
+  out[2] = -s * sn;
+  out[5] = s;
+  out[8] = s * sn;
+  out[10] = s * c;
+  out[12] = anchor[0] - s * (c * pivot[0] + sn * pivot[2]);
+  out[13] = anchor[1] - s * pivot[1];
+  out[14] = anchor[2] - s * (-sn * pivot[0] + c * pivot[2]);
+  out[15] = 1;
+}
+
 /**
- * Manages an in-browser WebXR 'immersive-ar' session with floor hit-testing.
+ * Manages an in-browser WebXR 'immersive-ar' session with surface hit-testing.
  */
 export class WebXRSessionManager {
-  private session: any = null;
-  private refSpace: any = null;
-  private viewerSpace: any = null;
-  private hitTestSource: any = null;
-  private isPlaced = false;
-  private placedMatrix: Float32Array = new Float32Array(16);
-  private currentHitMatrix: Float32Array | null = null;
-  private view: ThreeView | null = null;
-  private options: WebXROptions;
+  private s: any = null;
+  private placed = false;
+  private placedMat = new Float32Array([
+    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+  ]);
+  private opts: WebXROptions;
+  private cleanFn: (() => void) | null = null;
 
   constructor(options: WebXROptions = {}) {
-    this.options = options;
+    this.opts = options;
   }
 
   public isSessionActive(): boolean {
-    return this.session !== null;
+    return this.s !== null;
   }
 
   public hasPlacedModel(): boolean {
-    return this.isPlaced;
+    return this.placed;
   }
 
   public getPlacedMatrix(): Float32Array {
-    return this.placedMatrix;
+    return this.placedMat;
   }
 
-  /**
-   * Starts the WebXR immersive-ar session attached to a ThreeView renderer.
-   */
   public async start(view: ThreeView, element?: any): Promise<void> {
     if (typeof navigator === 'undefined' || !(navigator as any).xr) {
       throw new Error('WebXR is not supported on this browser.');
     }
-    const navXR = (navigator as any).xr;
-    this.view = view;
+    if (
+      activeWebXRManager &&
+      activeWebXRManager !== this &&
+      activeWebXRManager.isSessionActive()
+    ) {
+      await activeWebXRManager.stop().catch(() => {});
+    }
 
-    const sessionInit: any = {
-      requiredFeatures: this.options.requiredFeatures || [],
-      optionalFeatures: this.options.optionalFeatures || [
-        'local',
-        'hit-test',
-        'dom-overlay',
-        'light-estimation',
-      ],
+    const navXR = (navigator as any).xr;
+    const opts = this.opts;
+    const el = element || (view as any)?.container;
+    const isXRLive = String(el?.tagName || '').toLowerCase() === 'xr-live';
+    const b = (view as any)?.bounds;
+    const rad = Number(b?.radius) || 1;
+    const ctr = Array.isArray(b?.center) ? b.center : [0, 0, 0];
+    const mn = Array.isArray(b?.min) ? b.min : [-0.5, -0.5, -0.5];
+    const baseScale = isXRLive
+      ? 1
+      : opts.arScale === 'fixed'
+        ? 1
+        : rad > 0.45
+          ? 0.3 / rad
+          : rad < 0.05
+            ? 0.12 / Math.max(rad, 0.001)
+            : 1;
+    const pivot: [number, number, number] = isXRLive
+      ? [0, -0.25, 0]
+      : [
+          ctr[0] || 0,
+          opts.arPlacement === 'wall' ? ctr[1] : (mn[1] ?? 0),
+          ctr[2] || 0,
+        ];
+
+    let mode: 'immersive-ar' | 'immersive-vr' = 'immersive-ar';
+    try {
+      if (!(await navXR.isSessionSupported('immersive-ar'))) {
+        mode = 'immersive-vr';
+      }
+    } catch {
+      mode = 'immersive-vr';
+    }
+
+    let overlayRoot: HTMLElement | null =
+      el?.querySelector?.('[slot="ar-overlay"]') || null;
+    let ownsOverlay = false;
+    let pill: HTMLElement | null = null;
+    const rmOverlay = () => {
+      if (ownsOverlay && overlayRoot?.parentNode) {
+        overlayRoot.parentNode.removeChild(overlayRoot);
+      }
+      overlayRoot = null;
+      pill = null;
+      ownsOverlay = false;
     };
 
-    const el = element || (view as any)?.container;
+    if (mode === 'immersive-ar') {
+      if (overlayRoot) {
+        overlayRoot.addEventListener?.('beforexrselect', (e: Event) =>
+          e.preventDefault(),
+        );
+      } else if (
+        typeof document !== 'undefined' &&
+        document.body &&
+        typeof document.createElement === 'function'
+      ) {
+        const root = document.createElement('div');
+        root.style.cssText =
+          'position:fixed;inset:0;pointer-events:none;background:transparent!important;z-index:2147483647;font-family:system-ui,sans-serif;user-select:none';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = '✕ Exit AR';
+        btn.style.cssText =
+          'position:absolute;top:max(16px,env(safe-area-inset-top,16px));right:16px;pointer-events:auto;padding:8px 14px;border-radius:99px;border:1px solid rgba(255,255,255,.3);background:rgba(15,23,42,.8);color:#f8fafc;font:600 13px system-ui,sans-serif';
+        btn.addEventListener('beforexrselect', (e: Event) =>
+          e.preventDefault(),
+        );
+        btn.addEventListener('click', (e: Event) => {
+          e.stopPropagation();
+          this.stop().catch(() => {});
+        });
+        pill = document.createElement('div');
+        pill.style.cssText =
+          'position:absolute;bottom:max(28px,env(safe-area-inset-bottom,28px));left:50%;transform:translateX(-50%);padding:8px 15px;border-radius:99px;border:1px solid rgba(56,189,248,.4);background:rgba(15,23,42,.82);color:#f8fafc;font:500 12.5px system-ui,sans-serif;text-align:center;max-width:88vw';
+        pill.textContent = 'Move phone to detect a surface • Tap to place';
+        root.appendChild(btn);
+        root.appendChild(pill);
+        document.body.appendChild(root);
+        overlayRoot = root;
+        ownsOverlay = true;
+      }
+    }
+
+    const optSet = new Set<string>(
+      opts.optionalFeatures || [
+        'local',
+        'local-floor',
+        'hit-test',
+        'light-estimation',
+      ],
+    );
+    const sessionInit: any = {
+      requiredFeatures: opts.requiredFeatures ? [...opts.requiredFeatures] : [],
+      optionalFeatures: Array.from(optSet),
+    };
+    if (overlayRoot) {
+      optSet.add('dom-overlay');
+      sessionInit.optionalFeatures = Array.from(optSet);
+      sessionInit.domOverlay = {root: overlayRoot};
+    }
     for (const plugin of registeredPlugins) {
       plugin.onConfigureXRSessionInit?.(el, sessionInit);
     }
-
-    let targetMode = 'immersive-ar';
-    try {
-      const arSupported = await navXR.isSessionSupported('immersive-ar');
-      if (!arSupported) {
-        targetMode = 'immersive-vr';
-      }
-    } catch {
-      targetMode = 'immersive-vr';
-    }
-
-    try {
-      this.session = await navXR.requestSession(targetMode, sessionInit);
-    } catch (err: any) {
-      this.options.onError?.(err);
-      throw err;
-    }
-
-    this.session.addEventListener('end', () => {
-      this.cleanup();
-      this.options.onExit?.();
-    });
-
-    this.session.addEventListener('select', () => {
-      this.handleSelect();
-    });
-
-    const gl = view.getGLContext?.();
-    if (gl && (gl as any).makeXRCompatible) {
-      await (gl as any).makeXRCompatible();
-    }
-
     if (
-      gl &&
-      typeof window !== 'undefined' &&
-      typeof (window as any).XRWebGLLayer === 'function' &&
-      typeof this.session.updateRenderState === 'function'
+      Array.isArray(sessionInit.optionalFeatures) &&
+      sessionInit.optionalFeatures.includes('dom-overlay') &&
+      !sessionInit.domOverlay?.root
     ) {
-      const baseLayer = new (window as any).XRWebGLLayer(this.session, gl);
-      this.session.updateRenderState({baseLayer});
+      sessionInit.optionalFeatures = sessionInit.optionalFeatures.filter(
+        (f: string) => f !== 'dom-overlay',
+      );
     }
 
-    this.refSpace = await this.session.requestReferenceSpace('local');
-    this.viewerSpace = await this.session.requestReferenceSpace('viewer');
-
-    if (this.session.requestHitTestSource) {
+    const isFatalPerm = (e: any) => {
+      const n = String(e?.name || '');
+      return n === 'NotAllowedError' || n === 'SecurityError';
+    };
+    try {
+      this.s = await navXR.requestSession(mode, sessionInit);
+    } catch (e1: any) {
+      rmOverlay();
+      if (isFatalPerm(e1)) {
+        opts.onError?.(e1);
+        throw e1;
+      }
       try {
-        this.hitTestSource = await this.session.requestHitTestSource({
-          space: this.viewerSpace,
+        this.s = await navXR.requestSession(mode, {
+          requiredFeatures: [],
+          optionalFeatures: ['local', 'hit-test'],
         });
-      } catch (_) {}
-    }
-
-    this.session.requestAnimationFrame(this.onXRFrame.bind(this));
-  }
-
-  /**
-   * Ends the active WebXR session.
-   */
-  public async stop(): Promise<void> {
-    if (this.session) {
-      await this.session.end();
-      this.cleanup();
-    }
-  }
-
-  private handleSelect(): void {
-    if (this.currentHitMatrix && !this.isPlaced) {
-      this.placedMatrix.set(this.currentHitMatrix);
-      this.isPlaced = true;
-      this.options.onPlaced?.(this.placedMatrix);
-    }
-  }
-
-  private onXRFrame(time: number, frame: any): void {
-    if (!this.session) return;
-    this.session.requestAnimationFrame(this.onXRFrame.bind(this));
-
-    const pose = frame.getViewerPose(this.refSpace);
-    if (!pose) return;
-
-    const gl = this.view?.getGLContext?.();
-    const glLayer = this.session.renderState?.baseLayer;
-    if (gl && glLayer && glLayer.framebuffer) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
-    }
-
-    if (this.hitTestSource && !this.isPlaced) {
-      const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-      for (const hit of hitTestResults) {
-        const hitPose = hit.getPose(this.refSpace);
-        if (hitPose) {
-          const m = hitPose.transform.matrix;
-          const normalY = m[5];
-          if (this.options.arPlacement === 'wall' && Math.abs(normalY) > 0.35) {
-            continue;
-          }
-          if (
-            this.options.arPlacement === 'floor' &&
-            Math.abs(normalY) < 0.65
-          ) {
-            continue;
-          }
-          this.currentHitMatrix = m;
-          this.options.onHit?.(this.currentHitMatrix!);
-          break;
+      } catch (e2: any) {
+        if (isFatalPerm(e2)) {
+          opts.onError?.(e2);
+          throw e2;
+        }
+        try {
+          this.s = await navXR.requestSession(mode);
+        } catch (e3: any) {
+          opts.onError?.(e3);
+          throw e3;
         }
       }
     }
 
-    for (const plugin of registeredPlugins) {
-      plugin.onXRFrame?.(this.view, this.session, frame, this.refSpace);
-    }
+    const session = this.s;
+    activeWebXRManager = this;
+    this.placed = false;
 
-    // Render WebXR views
-    for (const xrView of pose.views) {
-      if (this.view && typeof (this.view as any).renderXRView === 'function') {
-        (this.view as any).renderXRView(
-          xrView,
-          this.isPlaced ? this.placedMatrix : this.currentHitMatrix,
-          this.isPlaced,
-        );
+    let refSpace: any = null;
+    let hitSource: any = null;
+    let reticle: any = null;
+    let hitMat: Float32Array | null = null;
+    let hitPos: [number, number, number] | null = null;
+    let previewPos: [number, number, number] = [0, -0.25, -1.2];
+    let placedPos: [number, number, number] = [0, -0.25, -1.2];
+    const activeMat = new Float32Array(16);
+    let hasPreview = false;
+    let userScale = 1;
+    let yaw = 0;
+    let dragging = false;
+    let lastDist: number | null = null;
+    let lastAng: number | null = null;
+    let lastTime = 0;
+    let cleanTouch: (() => void) | null = null;
+
+    const cleanup = () => {
+      if (activeWebXRManager === this) activeWebXRManager = null;
+      cleanTouch?.();
+      cleanTouch = null;
+      try {
+        hitSource?.cancel?.();
+      } catch (_) {}
+      hitSource = null;
+      if (reticle) {
+        const meshes = (view as any)?.meshes;
+        if (Array.isArray(meshes)) {
+          const idx = meshes.indexOf(reticle);
+          if (idx !== -1) meshes.splice(idx, 1);
+        }
+        const gl = view.getGLContext?.() || (view as any)?.gl;
+        if (gl) {
+          for (const pr of reticle.primitives || []) {
+            gl.deleteVertexArray?.(pr.vao);
+            for (const bf of pr.buffers || []) gl.deleteBuffer?.(bf);
+          }
+        }
+        reticle = null;
       }
-    }
+      (view as any)?.setXRSessionActive?.(false);
+      rmOverlay();
+      this.s = null;
+      this.placed = false;
+      this.cleanFn = null;
+    };
+    this.cleanFn = cleanup;
 
-    if (gl && glLayer && glLayer.framebuffer) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    session.addEventListener('end', () => {
+      cleanup();
+      opts.onExit?.();
+    });
+    session.addEventListener('select', () => {
+      if (!this.placed) {
+        const a = hitPos || previewPos;
+        placedPos = [a[0], a[1], a[2]];
+        buildARMatrix(
+          this.placedMat,
+          placedPos,
+          pivot,
+          yaw,
+          baseScale * userScale,
+        );
+        this.placed = true;
+        if (reticle) reticle.visible = false;
+        if (pill) pill.textContent = 'Placed • Drag to move • Pinch to scale';
+        opts.onPlaced?.(this.placedMat);
+      }
+    });
+
+    try {
+      const gl = view.getGLContext?.() || (view as any)?.gl;
+      if (gl && typeof (gl as any).makeXRCompatible === 'function') {
+        await (gl as any).makeXRCompatible();
+      }
+      const LayerCtor =
+        typeof XRWebGLLayer !== 'undefined'
+          ? XRWebGLLayer
+          : (globalThis as any)?.XRWebGLLayer;
+      if (
+        gl &&
+        typeof LayerCtor === 'function' &&
+        typeof session.updateRenderState === 'function'
+      ) {
+        session.updateRenderState({
+          baseLayer: new LayerCtor(session, gl, {alpha: true}),
+        });
+      }
+
+      try {
+        refSpace = await session.requestReferenceSpace('local');
+      } catch {
+        try {
+          refSpace = await session.requestReferenceSpace('local-floor');
+        } catch {
+          refSpace = await session.requestReferenceSpace('viewer');
+        }
+      }
+      const viewerSpace = await session
+        .requestReferenceSpace('viewer')
+        .catch(() => refSpace);
+      if (typeof session.requestHitTestSource === 'function' && viewerSpace) {
+        hitSource = await session
+          .requestHitTestSource({space: viewerSpace})
+          .catch(() => null);
+      }
+
+      if (
+        mode === 'immersive-ar' &&
+        gl &&
+        typeof gl.createVertexArray === 'function' &&
+        Array.isArray((view as any).meshes)
+      ) {
+        reticle = createARReticleGpu(gl, opts.reticleColor);
+        (view as any).meshes.push(reticle);
+      }
+
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.addEventListener === 'function'
+      ) {
+        const tDist = (e: TouchEvent) =>
+          Math.hypot(
+            e.touches[1].clientX - e.touches[0].clientX,
+            e.touches[1].clientY - e.touches[0].clientY,
+          );
+        const tAng = (e: TouchEvent) =>
+          Math.atan2(
+            e.touches[1].clientY - e.touches[0].clientY,
+            e.touches[1].clientX - e.touches[0].clientX,
+          );
+        const onStart = (e: TouchEvent) => {
+          if (!this.s) return;
+          if (e.touches.length === 1 && this.placed) dragging = true;
+          else if (e.touches.length >= 2) {
+            dragging = false;
+            lastDist = tDist(e);
+            lastAng = tAng(e);
+          }
+        };
+        const onMove = (e: TouchEvent) => {
+          if (!this.s || e.touches.length < 2) return;
+          const d = tDist(e),
+            a = tAng(e);
+          if (lastDist && lastDist > 4 && opts.arScale !== 'fixed') {
+            userScale = Math.max(
+              0.15,
+              Math.min(6, userScale * (d / lastDist)),
+            );
+          }
+          if (lastAng !== null) {
+            let da = a - lastAng;
+            if (da > Math.PI) da -= Math.PI * 2;
+            if (da < -Math.PI) da += Math.PI * 2;
+            yaw -= da;
+          }
+          lastDist = d;
+          lastAng = a;
+        };
+        const onEnd = (e: TouchEvent) => {
+          if (!e.touches || e.touches.length === 0) dragging = false;
+          if (!e.touches || e.touches.length < 2) {
+            lastDist = null;
+            lastAng = null;
+          }
+        };
+        window.addEventListener('touchstart', onStart, {passive: true});
+        window.addEventListener('touchmove', onMove, {passive: true});
+        window.addEventListener('touchend', onEnd, {passive: true});
+        window.addEventListener('touchcancel', onEnd, {passive: true});
+        cleanTouch = () => {
+          window.removeEventListener('touchstart', onStart);
+          window.removeEventListener('touchmove', onMove);
+          window.removeEventListener('touchend', onEnd);
+          window.removeEventListener('touchcancel', onEnd);
+        };
+      }
+
+      (view as any).setXRSessionActive?.(true);
+
+      const onFrame = (time: number, frame: any) => {
+        if (this.s !== session) return;
+        session.requestAnimationFrame(onFrame);
+        const dt =
+          lastTime > 0
+            ? Math.min(Math.max((time - lastTime) / 1000, 0), 0.1)
+            : 1 / 60;
+        lastTime = time;
+        (view as any)?.stepXRUpdate?.(dt);
+
+        const pose = frame.getViewerPose(refSpace);
+        if (!pose) return;
+
+        const fv = pose.views?.[0];
+        if (!hasPreview && fv?.transform) {
+          const p = fv.transform.position;
+          const m = fv.transform.matrix;
+          const px = p?.x ?? (m ? m[12] : 0),
+            py = p?.y ?? (m ? m[13] : 0),
+            pz = p?.z ?? (m ? m[14] : 0);
+          let fx = m ? -m[8] : 0,
+            fz = m ? -m[10] : -1;
+          const hl = Math.hypot(fx, fz);
+          if (hl > 1e-4) {
+            fx /= hl;
+            fz /= hl;
+          } else {
+            fx = 0;
+            fz = -1;
+          }
+          previewPos = [px + fx * 1.2, py - 0.25, pz + fz * 1.2];
+          yaw = Math.atan2(-fx, -fz);
+          hasPreview = true;
+        }
+
+        if (
+          hitSource &&
+          typeof frame.getHitTestResults === 'function' &&
+          (!this.placed || dragging)
+        ) {
+          const results = frame.getHitTestResults(hitSource) || [];
+          let matched = false;
+          for (const hit of results) {
+            const hp = hit.getPose(refSpace);
+            if (hp?.transform?.matrix) {
+              const m = hp.transform.matrix;
+              const ny = m[5];
+              if (opts.arPlacement === 'wall' && Math.abs(ny) > 0.35) continue;
+              if (opts.arPlacement === 'floor' && Math.abs(ny) < 0.65) continue;
+              if (!hitMat) hitMat = new Float32Array(16);
+              hitMat.set(m);
+              hitPos = [m[12], m[13], m[14]];
+              if (this.placed && dragging) placedPos = [m[12], m[13], m[14]];
+              if (reticle) {
+                reticle.visible = !this.placed || dragging;
+                reticle.transform.set(m);
+              }
+              if (!this.placed && pill) {
+                pill.textContent =
+                  'Surface found • Tap to place • Pinch to scale';
+              }
+              opts.onHit?.(hitMat);
+              matched = true;
+              break;
+            }
+          }
+          if (!matched && reticle) reticle.visible = false;
+        }
+
+        buildARMatrix(
+          activeMat,
+          this.placed ? placedPos : hitPos || previewPos,
+          pivot,
+          yaw,
+          baseScale * userScale,
+        );
+        if (this.placed) this.placedMat.set(activeMat);
+        if ((view as any).modelRootMatrix) {
+          (view as any).modelRootMatrix.set(activeMat);
+        }
+
+        for (const plugin of registeredPlugins) {
+          plugin.onXRFrame?.(view, session, frame, refSpace);
+        }
+
+        const glRef = view.getGLContext?.() || (view as any)?.gl;
+        const glLayer = session.renderState?.baseLayer;
+        if (glRef && glLayer && glLayer.framebuffer !== undefined) {
+          glRef.bindFramebuffer(glRef.FRAMEBUFFER, glLayer.framebuffer);
+        }
+
+        const isAR = mode === 'immersive-ar';
+        const views = pose.views || [];
+        for (let i = 0; i < views.length; i++) {
+          const xrView = views[i];
+          if (typeof (view as any).renderXRView === 'function') {
+            let vpTuple: [number, number, number, number] | undefined;
+            if (glLayer && typeof glLayer.getViewport === 'function') {
+              const vp = glLayer.getViewport(xrView);
+              if (vp && vp.width > 0 && vp.height > 0) {
+                vpTuple = [vp.x, vp.y, vp.width, vp.height];
+              }
+            } else if (
+              glLayer?.framebufferWidth > 0 &&
+              glLayer?.framebufferHeight > 0
+            ) {
+              vpTuple = [
+                0,
+                0,
+                glLayer.framebufferWidth,
+                glLayer.framebufferHeight,
+              ];
+            }
+            (view as any).renderXRView(
+              xrView,
+              activeMat,
+              this.placed,
+              vpTuple,
+              isAR,
+              i,
+            );
+          }
+        }
+
+        if (glRef && glLayer && glLayer.framebuffer) {
+          glRef.bindFramebuffer(glRef.FRAMEBUFFER, null);
+        }
+      };
+
+      session.requestAnimationFrame(onFrame);
+    } catch (setupErr: any) {
+      if (typeof session.end === 'function') {
+        await session.end().catch(() => {});
+      }
+      cleanup();
+      opts.onError?.(setupErr);
+      throw setupErr;
     }
   }
 
-  private cleanup(): void {
-    if (this.hitTestSource) {
-      this.hitTestSource.cancel?.();
-      this.hitTestSource = null;
+  public async stop(): Promise<void> {
+    const s = this.s;
+    if (s) {
+      try {
+        await s.end();
+      } catch (_) {
+      } finally {
+        this.cleanFn?.();
+      }
+    } else {
+      this.cleanFn?.();
     }
-    this.session = null;
-    this.refSpace = null;
-    this.viewerSpace = null;
-    this.currentHitMatrix = null;
-    this.isPlaced = false;
-    this.view = null;
   }
 }
 
@@ -632,6 +1055,7 @@ export async function activateAR(
   };
   const xrOptions: WebXROptions = {
     ...options.webXROptions,
+    arScale: options.arScale || options.webXROptions?.arScale,
     arPlacement: options.arPlacement || options.webXROptions?.arPlacement,
   };
 
@@ -671,7 +1095,7 @@ export async function activateAR(
         throw new Error('WebXR AR mode requires an active ThreeView instance.');
       }
       const mgr = new WebXRSessionManager(xrOptions);
-      await mgr.start(options.view);
+      await mgr.start(options.view, options.element);
       return {mode: 'webxr', success: true, session: mgr};
     }
   } catch (err: any) {

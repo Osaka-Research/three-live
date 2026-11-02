@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview Shared helpers for the optional XR Blocks `<xr-live>` plugins
+ * @fileoverview Shared helpers for the optional `<xr-live>` spatial plugins
  * (`xr-live/src/plugins/*`): vector math, head-pose resolution, local bounds,
  * and dynamic (CPU-generated) GPU mesh upload / update / disposal.
  */

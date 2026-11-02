@@ -282,7 +282,7 @@ export class XRHeightfieldPhysics {
       applyMeshTRS(mesh, quat, pos, scl);
     }
 
-    // 5. Resolve sphere-to-sphere elastic collisions (for XR Blocks Ballpit scenes!)
+    // 5. Resolve sphere-to-sphere elastic collisions (for dynamic ballpit scenes!)
     for (let i = 0; i < dynamicMeshes.length; i++) {
       for (let j = i + 1; j < dynamicMeshes.length; j++) {
         const a = dynamicMeshes[i];

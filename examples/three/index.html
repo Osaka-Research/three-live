@@ -397,7 +397,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">49.1 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">52.6 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -690,7 +690,7 @@ for (let i = 0; i < 5; i++) {
   scene.add(sphere);
 }`,
 
-    spheres: `// Tabletop Quantum Artifact in XR Blocks Living Room
+    spheres: `// Tabletop Quantum Artifact in 3D Living Room
 const core = new THREE.Mesh(
   new THREE.SphereGeometry(0.14, 32, 24),
   new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.92, roughness: 0.08 })
@@ -730,7 +730,7 @@ sat2.position.set(-0.23, 0.14, 0.14);
 scene.add(sat2);`
   };
 
-  const XRBLOCKS_ROOM_CDN =
+  const LIVING_ROOM_CDN =
     "https://cdn.jsdelivr.net/gh/xrblocks/assets@5582bd1b2d1a4e19f7ee7093b63a5ee328e974ac/simulator/scenes/XREmulatorsceneV5_livingRoom.glb";
   let cachedRoomGLB = null;
   let roomGLBPromise = null;
@@ -741,8 +741,8 @@ scene.add(sat2);`
     roomGLBPromise = (async () => {
       const isCorpHost = /\.corp\.google\.com$|\.googlers\.com$/.test(location.hostname);
       const urls = isCorpHost
-        ? ["./livingRoom.glb", "../livingRoom.glb", XRBLOCKS_ROOM_CDN]
-        : [XRBLOCKS_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
+        ? ["./livingRoom.glb", "../livingRoom.glb", LIVING_ROOM_CDN]
+        : [LIVING_ROOM_CDN, "./livingRoom.glb", "../livingRoom.glb"];
       for (const url of urls) {
         try {
           const res = await fetch(url);
@@ -798,7 +798,7 @@ scene.add(sat2);`
 
         const roomPromise = presetId === "spheres" ? ensureRoomGLB() : Promise.resolve(null);
         if (presetId === "spheres" && !cachedRoomGLB) {
-          arStatus.textContent = "Loading XR Blocks Living Room...";
+          arStatus.textContent = "Loading 3D Living Room...";
         } else if (arStatus) {
           arStatus.textContent = "";
         }
@@ -814,7 +814,7 @@ scene.add(sat2);`
             el.viewer.setInitialCamera(-150, 18, 1.65);
             if (roomBuf) {
               el.viewer.setBackdropGLB(roomBuf, [-1.66, -0.50, 1.30]);
-              arStatus.textContent = "XR Blocks Living Room loaded!";
+              arStatus.textContent = "3D Living Room loaded!";
             }
           } else {
             el.viewer.setBackdropGLB(null);

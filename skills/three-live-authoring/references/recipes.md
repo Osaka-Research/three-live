@@ -191,7 +191,7 @@ All 6 recipes below use features available in the repository today and work with
 ```html
 <script type="module">
   import '/dist/xr-live-full.min.js';
-  import { connectGeminiLive } from '/dist/xr-live-blocks.min.js';
+  import { connectGeminiLive } from '/dist/xr-live-plugins.min.js';
 
   const xr = document.getElementById('gemini-xr');
 
