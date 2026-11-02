@@ -732,7 +732,16 @@ function testGoldenParity(): void {
   const fs = require('fs');
   // tslint:disable-next-line:no-require-imports
   const path = require('path');
-  const goldenDir = path.resolve(__dirname, '../../../testdata/golden');
+  const goldenCandidates = [
+    path.resolve(__dirname, '../../../testdata/golden'),
+    path.resolve(__dirname, '../../testdata/golden'),
+    path.resolve(__dirname, '../testdata/golden'),
+    path.resolve(process.cwd(), 'testdata/golden'),
+    path.resolve(process.cwd(), 'experimental/users/binghamj/three_live/testdata/golden'),
+  ];
+  const goldenDir =
+    goldenCandidates.find((d: string) => fs.existsSync(path.join(d, 'scene.glb.json'))) ??
+    goldenCandidates[0];
   const gltf = JSON.parse(fs.readFileSync(path.join(goldenDir, 'scene.glb.json'), 'utf8'));
   const script = JSON.parse(fs.readFileSync(path.join(goldenDir, 'script.json'), 'utf8'));
 
