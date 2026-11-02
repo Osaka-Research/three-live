@@ -1,0 +1,26 @@
+# Three-Live & XR-Live (`<three-live>` / `<xr-live>`)
+
+> On-device JIT compiler and Web Components turning declarative HTML and AI-generated Three.js (`<script type="text/three">`) into WebGL2 & WebXR on the Web, Google Filament & Jetpack XR SceneCore on Android, and Apple RealityKit & Quick Look on iOS/visionOS.
+
+## Golden Rules for LLMs & Coding Agents
+
+- Always include `allow-client-scripts` on any `<three-live>` or `<xr-live>` element that contains an inline `<script type="text/three">`.
+- Inside `<script type="text/three">`, `THREE` and `scene` (`THREE.Scene`) are pre-defined globals in an isolated Worker sandbox. Add objects via `scene.add(mesh)`.
+- Never instantiate `THREE.WebGLRenderer`, `GLTFLoader`, `TextureLoader`, `ShaderMaterial`, or `requestAnimationFrame` inside `<script type="text/three">`. Load external `.glb` files via `<three-live src="...">` or `<xr-anchor src="...">`.
+- Attach spatial traits via `mesh.userData.xr = { grab, scale, billboard, follow, anchor, physics, orbit, handles, particles, holdToAsk, worldUnderstanding, splatUrl, audio }`.
+- Attach declarative `KHR_interactivity` behavior graphs via `mesh.userData.interactivity = { onSelect, onHoverIn, onHoverOut, onStart, onReceive }`.
+- Scene quotas: max `1,000` meshes, `100,000` vertices, `300,000` indices, `16` textures (`2048x2048`), `3,000 ms` execution timeout.
+
+## Documentation & Guides
+
+- [Complete Single-File LLM Reference (`llms-full.txt`)](https://google.github.io/three-live/llms-full.txt): Full concatenated authoring guide, `userData.xr` trait dictionary, XR Blocks plugin reference, and copy-paste recipes.
+- [LLM & Agent Authoring Guide (`docs/llm-guide.md`)](https://github.com/google/three-live/blob/main/docs/llm-guide.md): Copy-paste system prompt snippet, allowed `THREE.*` constructors, and permissive fallback shims.
+- [`<three-live>` Reference (`docs/three-live.md`)](https://github.com/google/three-live/blob/main/docs/three-live.md): Attributes, `<model-viewer>` drop-in API, `KHR_interactivity` authoring, PBR Next, HDRI, animations, and Worker/iframe sandboxing.
+- [`<xr-live>` Spatial Computing & XR Blocks Guide (`docs/xr-live.md`)](https://github.com/google/three-live/blob/main/docs/xr-live.md): Canonical `userData.xr` traits, all 7 XR Blocks plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), `<div slot="spatial">` cards, depth/physics, 25-joint hands, and native mobile bridges.
+- [Developer Cookbook (`docs/cookbook.md`)](https://github.com/google/three-live/blob/main/docs/cookbook.md): Copy-pasteable end-to-end recipes.
+
+## Agent Skills & Repository Rules
+
+- [Repository Agent Instructions (`AGENTS.md`)](https://github.com/google/three-live/blob/main/AGENTS.md): Architectural invariants, 3-target parity contract, and build/test commands.
+- [Scene & App Authoring Skill (`skills/three-live-authoring/SKILL.md`)](https://github.com/google/three-live/blob/main/skills/three-live-authoring/SKILL.md): Progressive-disclosure skill for building 3D and XR apps.
+- [Cross-Platform Plugin Dev Skill (`skills/xr-live-plugin-dev/SKILL.md`)](https://github.com/google/three-live/blob/main/skills/xr-live-plugin-dev/SKILL.md): Contributor workflow for adding traits and plugins across Web, Android, and iOS/visionOS.

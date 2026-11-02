@@ -1,0 +1,1171 @@
+# Three-Live & XR-Live Complete LLM Reference (`llms-full.txt`)
+
+> Auto-generated from `docs/` and `skills/`. Do not edit by hand; run `node scripts/build_llms_txt.js`.
+
+================================================================================
+SOURCE: docs/llm-guide.md
+================================================================================
+
+# LLM & Agent Authoring Guide (`three-live` & `xr-live`)
+
+This guide is designed for **LLMs, coding assistants, and autonomous agents**
+generating 3D and Spatial Computing (AR/VR/XR) code with `<three-live>` and
+`<xr-live>`.
+
+- **Repository Agent Instructions:** [`AGENTS.md`](../AGENTS.md)
+- **Installable Agent Skills:**
+  - [`skills/three-live-authoring/SKILL.md`](../skills/three-live-authoring/SKILL.md) (building 3D/XR scenes and apps)
+  - [`skills/xr-live-plugin-dev/SKILL.md`](../skills/xr-live-plugin-dev/SKILL.md) (contributing cross-platform traits and plugins)
+- **Single-File Context Feeds:** [`/llms.txt`](../llms.txt) (concise index) and [`/llms-full.txt`](../llms-full.txt) (complete reference)
+
+You can copy the **System Prompt Snippet** below directly into any LLM prompt or
+agent skill to guarantee valid, zero-hallucination output.
+
+--------------------------------------------------------------------------------
+
+## Copy-Paste System Prompt Snippet for LLMs
+
+```markdown
+You are authoring 3D and Spatial Computing scenes using Google's `three-live` and `xr-live` web components.
+
+### 1. Choose the Right Component & Bundle
+- Use `<three-live>` (`three-live.min.js` or `three-live-full.min.js`) for 3D product viewers, procedural Three.js scenes, `KHR_interactivity` behavior graphs, PBR Next materials, and 1-tap mobile AR handoff (Quick Look / Scene Viewer / WebXR).
+- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), or XR Blocks plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`).
+
+### 2. Procedural `<script type="text/three">` Rules
+- Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
+- ALWAYS add the `allow-client-scripts` attribute to any `<three-live>` or `<xr-live>` element that contains an inline `<script type="text/three">`; without it the script is refused and nothing renders.
+- Add all meshes, groups, and lights directly to `scene.add(...)`, and give interactive meshes a unique `mesh.name = '...'`.
+- Attach canonical spatial traits via `mesh.userData.xr = { ... }`:
+  - `grab`: `'1-hand' | '2-hand' | true`
+  - `scale`: `{ min: 0.1, max: 5.0 } | true`
+  - `billboard`: `'capsule' | 'cylindrical' | 'spherical' | true`
+  - `follow`: `'head' | 'hand-left' | 'hand-right'` or `{ mode: 'head', lazy: true, distance: 1.2, deadzoneDeg: 15, stiffness: 6, height: -0.1, faceUser: true }`
+  - `anchor`: `'floor' | 'wall' | 'table' | 'horizontal' | 'vertical'`
+  - `physics`: `'dynamic' | 'static'` (optional `restitution: 0.7`)
+  - `orbit`: `{ target: [x, y, z] | 'nodeName', radius: 0.5, speed: 0.8, height: 0, faceCenter: true }`
+  - `handles`: `{ rotateAxis: 'y' | 'none', minScale: 0.2, maxScale: 3.0 } | true`
+  - `particles`: `{ preset: 'rain' | 'snow' | 'sparks' | 'confetti', count: 400, area: [2, 2, 2], speed: 1.0 }`
+  - `holdToAsk`: `{ prompt: 'What is this?', holdMs: 600 } | true`
+  - `worldUnderstanding`: `{ planes: true, meshes: false, reticle: true }`
+  - `splatUrl`: `'https://.../capture.spz'` (or `.splat`)
+  - `audio`: `{ src: 'https://.../sound.mp3', refDistance: 1.0, loop: false }`
+- Attach declarative `KHR_interactivity` behaviors via `mesh.userData.interactivity = { onSelect: [...], onHoverIn: [...], onStart: [...] }` using actions `toggleTransform`, `interpolate`, `setProperty`, `toggleVisibility`, `cycleMaterialColor`, `playAnimation`, `stopAnimation`, or `sendEvent`.
+- NEVER use `GLTFLoader`, `OBJLoader`, `TextureLoader`, `EffectComposer`, `ShaderMaterial`, `RawShaderMaterial`, or `requestAnimationFrame` inside `<script type="text/three">`.
+- NEVER create a `THREE.WebGLRenderer` or attach DOM canvas elements inside `<script type="text/three">`.
+- Respect strict scene quotas: max 1,000 meshes, 100,000 vertices, 300,000 indices, 16 textures, 3-second execution timeout.
+
+### 3. Allowed `THREE.*` Constructors inside `<script type="text/three">`
+- Math: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`
+- Geometries: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `BufferGeometry`, `BufferAttribute`
+- Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial`
+- Scene Graph: `Scene`, `Group`, `Mesh`, `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`)
+- Lights & Cameras: `AmbientLight`, `DirectionalLight`, `PointLight`, `Camera`, `PerspectiveCamera`
+```
+
+--------------------------------------------------------------------------------
+
+## DO vs. DO NOT Cheat Sheet
+
+| DO (Supported & Fast) | DO NOT (Unsupported / Anti-Pattern) |
+| :------------------------------------------------------------------------------ | :------------------------------------------------------------------ |
+| Use `new THREE.MeshStandardMaterial({ color, metalness, roughness })` | Do NOT use `THREE.ShaderMaterial` or custom GLSL strings in scripts |
+| Add objects to the global `scene` (`scene.add(mesh)`) | Do NOT instantiate `new THREE.WebGLRenderer()` or call `renderer.render()` |
+| Set `mesh.userData.xr = { grab: '2-hand', handles: { rotateAxis: 'y' } }` | Do NOT write manual WebXR session setup (`navigator.xr.requestSession`) |
+| Set `mesh.userData.interactivity = { onSelect: [{ action: 'toggleTransform', ... }] }` | Do NOT try to access `window` or `document` inside sandboxed `<script type="text/three">` |
+| Use `<div slot="spatial" data-position="x y z" data-xr-traits="grab billboard">` for spatial HTML UI | Do NOT use `new THREE.GLTFLoader().load(...)` inside procedural scripts (use `src="..."` or `<xr-anchor src="...">`) |
+
+### Permissive Fallback Shims & Diagnostic Warnings (JS & Rust Compiler)
+
+While LLMs should prefer the canonical APIs above for highest fidelity, both the
+JavaScript authoring runtime (`three-author`) and the native Rust compiler
+(`compiler/`) include **permissive fallback shims** so common LLM-generated
+Three.js assumptions never crash or abort a 3D/XR scene:
+
+-   **Shaders (`ShaderMaterial`, `RawShaderMaterial`):** Gracefully downgraded
+    to `MeshStandardMaterial`, preserving `uniforms.color.value` /
+    `params.color` and opacity so the mesh renders in 3D and XR.
+-   **Polyhedra & Extended Geometries (`IcosahedronGeometry`,
+    `OctahedronGeometry`, `DodecahedronGeometry`, `TetrahedronGeometry`,
+    `CapsuleGeometry`, `RingGeometry`, `CircleGeometry`):** Mapped to
+    parameter-compatible `SphereGeometry` or `CylinderGeometry` primitives.
+-   **Lights (`SpotLight`, `HemisphereLight`, `RectAreaLight`):** Mapped to
+    `PointLight` or `AmbientLight`.
+-   **Unknown / Hallucinated Classes:** Any unknown `THREE.*` class resolves to
+    a safe recursive no-op proxy, and `new THREE.Mesh(geo, mat)` automatically
+    substitutes a fallback `BoxGeometry` / `MeshStandardMaterial` if passed a
+    non-geometry or non-material proxy.
+-   **Browser Boilerplate (`requestAnimationFrame`, `window`, `document`):**
+    Safely shimmed in headless/Worker/Rust sandboxes so trailing render loops
+    (`requestAnimationFrame(animate)`) or `window.innerWidth /
+    window.innerHeight` checks do not throw `ReferenceError`.
+-   **Diagnostic Warnings:** Every degraded feature logs a deduplicated
+    `console.warn` and is recorded in `THREE.getAuthorWarnings()` (reset via
+    `THREE.clearAuthorWarnings()`).
+
+--------------------------------------------------------------------------------
+
+## Canonical Few-Shot Templates
+
+### Template 1: Interactive 3D Scene with `KHR_interactivity` & AR Handoff (`<three-live>`)
+
+```html
+<script type="module" src="/dist/three-live-full.min.js"></script>
+
+<three-live allow-client-scripts camera-controls ar auto-rotate shadow-intensity="0.7" style="width: 100%; height: 500px; display: block;">
+  <script type="text/three">
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.6, 0.7, 0.2, 32),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8, roughness: 0.2 })
+    );
+    base.name = 'pedestal';
+    scene.add(base);
+
+    const crystal = new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 32, 32),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.1, roughness: 0.1 })
+    );
+    crystal.name = 'crystal';
+    crystal.position.set(0, 0.55, 0);
+    crystal.userData.interactivity = {
+      onSelect: [
+        { action: 'toggleTransform', property: 'translation', from: [0, 0.55, 0], to: [0, 0.85, 0], duration: 0.35 },
+        { action: 'cycleMaterialColor', colors: [[0.22, 0.74, 0.97, 1], [0.66, 0.33, 0.97, 1]], duration: 0.25 }
+      ]
+    };
+    scene.add(crystal);
+
+    const light = new THREE.DirectionalLight(0xffffff, 2.0);
+    light.position.set(2, 4, 3);
+    scene.add(light);
+  </script>
+</three-live>
+```
+
+### Template 2: Full Spatial Computing Scene with XR Blocks Traits (`<xr-live>`)
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  xr-mode="ar"
+  xr-depth="occlusion-physics"
+  xr-hands="gestures"
+  xr-simulator="living-room"
+  world-understanding="planes reticle"
+  spatial-paint="#38bdf8"
+  camera-controls
+  style="width: 100%; height: 600px; display: block;">
+
+  <!-- Interactive procedural 3D objects with canonical userData.xr traits -->
+  <script type="text/three">
+    const sculpture = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.18, 0.06, 64, 16),
+      new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.6, roughness: 0.25 })
+    );
+    sculpture.name = 'sculpture';
+    sculpture.position.set(0, 1.1, -1.0);
+    sculpture.userData.xr = {
+      grab: '2-hand',
+      handles: { rotateAxis: 'y', minScale: 0.3, maxScale: 3.0 },
+      holdToAsk: { prompt: 'What is this sculpture?', holdMs: 600 }
+    };
+    scene.add(sculpture);
+
+    const satellite = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 24, 24),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+    );
+    satellite.name = 'satellite';
+    satellite.userData.xr = {
+      orbit: { target: 'sculpture', radius: 0.38, speed: 1.0, faceCenter: true }
+    };
+    scene.add(satellite);
+  </script>
+
+  <!-- Live HTML spatial card floating next to the 3D object -->
+  <div slot="spatial" data-position="0.45 1.1 -1.0" data-xr-traits="grab billboard">
+    <div style="padding: 14px; background: #111827; color: #f9fafb; border-radius: 12px; width: 220px;">
+      <h4>Spatial Control Panel</h4>
+      <p>Drag corner handles to scale, or pinch in empty space to paint in 3D.</p>
+      <button onclick="console.log('Clicked in 3D space!')">Inspect Details</button>
+    </div>
+  </div>
+</xr-live>
+```
+
+================================================================================
+SOURCE: skills/three-live-authoring/references/xr-traits-and-plugins.md
+================================================================================
+
+# `<three-live>` & `<xr-live>` Complete Traits, Plugins & Events Reference
+
+## 1. `<xr-live>` Host Attributes
+
+`<xr-live>` inherits every `<three-live>` attribute (`src`, `ios-src`, `poster`, `scale`, `camera-orbit`, `camera-target`, `min-camera-orbit`, `max-camera-orbit`, `field-of-view`, `selected-mesh`, `camera-controls`, `ar`, `ar-modes`, `ar-scale`, `ar-placement`, `script-src`, `sandbox`, `allow-client-scripts`, `exposure`, `environment-image`, `skybox-image`, `shadow-intensity`, `shadow-softness`, `tone-mapping`, `autoplay`, `animation-name`, `auto-rotate`) and adds:
+
+| Attribute | Values | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `xr-mode` | `'ar' \| 'vr' \| 'inline' \| 'auto'` | `'auto'` | Target WebXR session mode. |
+| `xr-depth` | `'occlusion' \| 'occlusion-physics' \| 'mesh' \| 'none'` | `'none'` | Hardware depth occlusion and analytical heightfield physics collision. |
+| `xr-hands` | `'gestures' \| 'joints' \| 'pinch' \| 'none'` | `'none'` | 25-joint `XRHand` tracking and gesture classification (`pinch`, `grab`, `point`, `palm-up`). |
+| `xr-simulator` | `'living-room' \| 'office' \| 'tabletop' \| 'none'` | `'none'` | Enables the desktop 6DoF keyboard/mouse simulator with room floor/table planes. |
+| `xr-profile` | `'quest3' \| 'android-xr' \| 'visionos' \| 'auto'` | `'auto'` | Target hardware profile hint. |
+| `sound-feedback` | boolean attribute | `false` | Plays procedural Web Audio earcons (`grab`, `release`, `bounce`, `hover`) on interaction. |
+| `world-understanding` | `'' \| 'planes' \| 'planes reticle' \| 'false'` | — | Activates `xr-live-world-understanding` plane/mesh tracking and optional gaze reticle. |
+| `spatial-paint` | `'' \| '#rrggbb' \| 'false'` | — | Activates `xr-live-spatial-paint`; pinching in empty space extrudes Catmull-Rom 3D tube strokes. |
+| `webmcp` | boolean attribute | `false` | Registers `inspect_xr_scene`, `place_xr_object_at_gaze`, and `capture_xr_view` on `navigator.modelContext`. |
+| `webmcp-allow-depth` | boolean attribute | `false` | Opt-in gate allowing `capture_xr_view` to include the 8×8 metric `depthGridMeters` array. |
+| `webmcp-omit-pose` | boolean attribute | `false` | When present, `inspect_xr_scene` omits `headPosition` entirely. |
+
+## 3. Declarative `KHR_interactivity` Authoring (`userData.interactivity`)
+
+Any mesh or group inside `<script type="text/three">` can declare interactive state machines compiled into standard Khronos `KHR_interactivity` graphs (`three-live/src/interactivity-compiler.ts`):
+
+- **Triggers:**
+  - `onSelect`: Fired when clicked/tapped or pinched in XR (`pointer/onSelect`).
+  - `onHoverIn` / `onHoverOut`: Fired on pointer/ray hover enter and exit.
+  - `onStart`: Fired automatically when the scene loads (`event/onStart`).
+  - `onReceive`: `{ [eventName: string]: Action | Action[] }` — reacts to custom events sent by `sendEvent`.
+- **Actions (single object or array executed in sequence):**
+  - `{ action: 'toggleTransform', property: 'translation' | 'rotation' | 'scale', to: number[], from?: number[], duration?: number }`
+  - `{ action: 'interpolate', target?: string, property: 'translation' | 'rotation' | 'scale' | 'baseColorFactor' | 'metallicFactor' | 'roughnessFactor' | 'emissiveFactor', to: number | number[], duration?: number }`
+  - `{ action: 'setProperty', target?: string, property: string, value: any }`
+  - `{ action: 'toggleVisibility', target?: string }`
+  - `{ action: 'cycleMaterialColor', colors: Array<[number, number, number, number?]>, duration?: number }`
+  - `{ action: 'playAnimation', animation?: number }` / `{ action: 'stopAnimation' }`
+  - `{ action: 'sendEvent', event: string, values?: Record<string, any> }`
+
+---
+
+## 4. Programmatic Plugin Controllers (`xr-live/plugins`)
+
+When importing from `xr-live/plugins` (or using `xr-live-blocks.min.js` / `xr-live-full.min.js`):
+
+- **Gemini Live (`gemini-live.ts`):**
+  ```ts
+  import { connectGeminiLive } from 'xr-live/plugins';
+
+  const live = connectGeminiLive(xrElement, {
+    url: 'wss://your-backend.example.com/gemini-live', // wss:// required (or ws://localhost)
+    model: 'models/gemini-2.0-flash-exp',
+    systemInstruction: 'You are a spatial assistant.',
+    frameIntervalMs: 1000,   // clamped to [250, 60000] ms
+    streamAudio: true,       // streams 16 kHz PCM mic chunks
+    playAudio: true,         // plays streamed 24 kHz PCM model audio
+    speakReplies: false,     // SpeechSynthesis fallback
+    detectObjects: true,     // auto-registers report_objects tool -> xr-object-detected events
+  });
+  ```
+- **Spatial Paint (`spatial-paint.ts`):**
+  ```ts
+  import { getSpatialPaintController } from 'xr-live/plugins';
+
+  const paint = getSpatialPaintController(xrElement);
+  paint.color = [0.22, 0.74, 0.97, 1.0];
+  paint.radius = 0.008;
+  paint.undo(xrElement.viewer);
+  paint.clear(xrElement.viewer);
+  ```
+- **World Understanding (`world-understanding.ts`):**
+  ```ts
+  import { detectObjects, parseDetections, XRTapeMeasure } from 'xr-live/plugins';
+
+  const detections = parseDetections('[{"label":"chair","box":[200,300,800,700]}]');
+  const located3D = detectObjects(xrElement, detections);
+  ```
+
+---
+
+## 5. DOM Events Summary
+
+| Event Name | Dispatched By | `event.detail` Payload |
+| :--- | :--- | :--- |
+| `load` | `<three-live>` / `<xr-live>` | `{ model: GLBData }` |
+| `error` | `<three-live>` / `<xr-live>` | `{ error: Error }` |
+| `meshclick` | `<three-live>` / `<xr-live>` | `{ meshName, hitPoint, normal, distance }` |
+| `camera-change` | `<three-live>` / `<xr-live>` | `{ theta, phi, distance }` |
+| `ar-status` | `<three-live>` / `<xr-live>` | `{ status: 'session-started' \| 'not-presenting' \| 'failed', error? }` |
+| `interactivityEvent` | `KHR_interactivity` VM | `{ id: string, values: Record<string, any> }` |
+| `xr-select-start` / `move` / `end` | `XRInputManager` | `{ hand: 'left' \| 'right' \| 'screen', pivotPosition, quaternion, rayOrigin, rayDirection, hit }` |
+| `xr-handles-change` | `manipulation-handles` | `{ mesh, scale: number, yawDeg: number }` |
+| `xr-object-detected` | `world-understanding` | `{ label: string, position: [number, number, number], distanceMeters: number, source: 'plane' \| 'depth' \| 'fallback' }` |
+| `xr-transcription` | `gemini-live` | `{ speaker: 'user' \| 'model', text: string, isFinal: boolean }` |
+| `xr-hold-to-ask-listening` | `gemini-live` | `{ mesh: string }` |
+| `xr-hold-to-ask` | `gemini-live` | `{ mesh: string, transcript: string, prompt: string }` |
+| `xr-gemini-interrupted` | `gemini-live` | `{}` |
+| `xr-paint-stroke` | `spatial-paint` | `{ index: number, points: number, lengthMeters: number }` |
+| `xr-webmcp-capture` | `xr-extras` (WebMCP) | Fired when `capture_xr_view` captures a frame (`data-xr-webmcp-indicator="active"`). |
+
+================================================================================
+SOURCE: skills/three-live-authoring/references/recipes.md
+================================================================================
+
+# Copy-Paste Recipes for `<three-live>` and `<xr-live>`
+
+All 6 recipes below use features available in the repository today and work without external build steps.
+
+## Recipe 2: Spatial UI Card & Depth-Physics Ballpit (`<xr-live>`)
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  xr-mode="ar"
+  xr-depth="occlusion-physics"
+  xr-hands="gestures"
+  xr-simulator="living-room"
+  sound-feedback
+  camera-controls
+  style="width: 100%; height: 600px; display: block;">
+
+  <script type="text/three">
+    const palette = [0x38bdf8, 0xf43f5e, 0x22c55e, 0xeab308, 0xa855f7];
+    for (let i = 0; i < 12; i++) {
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08, 24, 24),
+        new THREE.MeshStandardMaterial({
+          color: palette[i % palette.length],
+          metalness: 0.2,
+          roughness: 0.25
+        })
+      );
+      ball.name = `ball-${i}`;
+      ball.position.set((i % 4 - 1.5) * 0.22, 1.3 + Math.floor(i / 4) * 0.22, -1.1);
+      ball.userData.xr = {
+        grab: '1-hand',
+        physics: 'dynamic',
+        restitution: 0.78
+      };
+      scene.add(ball);
+    }
+
+    const light = new THREE.DirectionalLight(0xffffff, 2.0);
+    light.position.set(1, 3, 2);
+    scene.add(light);
+  </script>
+
+  <div slot="spatial" data-position="0.55 1.25 -1.1" data-xr-traits="grab billboard">
+    <div style="padding: 16px; background: #0f172a; color: #f8fafc; border-radius: 14px; width: 220px;">
+      <h4 style="margin: 0 0 8px;">Physics Controls</h4>
+      <p style="margin: 0 0 12px; font-size: 13px;">Grab spheres or bounce them off real-world surfaces.</p>
+      <button onclick="document.querySelector('xr-live').transitionToVR({ durationMs: 400 })">
+        Toggle VR Environment
+      </button>
+    </div>
+  </div>
+</xr-live>
+```
+
+---
+
+## Recipe 3: Precision Manipulation Handles, Lazy Head-Follow HUD & Orbiting Satellites
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  xr-simulator="office"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+
+  <script type="text/three">
+    // Centerpiece with 4 corner scale handles + pedestal yaw rotation bar
+    const sculpture = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.22, 0.07, 64, 16),
+      new THREE.MeshStandardMaterial({ color: 0x6366f1, metalness: 0.7, roughness: 0.2 })
+    );
+    sculpture.name = 'sculpture';
+    sculpture.position.set(0, 0.9, -1.2);
+    sculpture.userData.xr = {
+      grab: '2-hand',
+      handles: { rotateAxis: 'y', minScale: 0.4, maxScale: 2.5 }
+    };
+    scene.add(sculpture);
+
+    // Satellite orbiting the named 'sculpture' node
+    const orbiter = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 24, 24),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7 })
+    );
+    orbiter.name = 'orbiter';
+    orbiter.userData.xr = {
+      orbit: { target: 'sculpture', radius: 0.45, speed: 1.2, height: 0.08, faceCenter: true }
+    };
+    scene.add(orbiter);
+
+    // Lazy head-follow status pill with 18-degree angular deadzone
+    const hudPill = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.08, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4 })
+    );
+    hudPill.name = 'hud-pill';
+    hudPill.userData.xr = {
+      follow: {
+        mode: 'head',
+        lazy: true,
+        distance: 1.1,
+        deadzoneDeg: 18,
+        stiffness: 6,
+        height: -0.22,
+        faceUser: true
+      }
+    };
+    scene.add(hudPill);
+  </script>
+</xr-live>
+```
+
+---
+
+## Recipe 4: Multimodal Gemini Live Assistant + Hold-to-Ask + World Understanding
+
+```html
+<script type="module">
+  import '/dist/xr-live-full.min.js';
+  import { connectGeminiLive } from '/dist/xr-live-blocks.min.js';
+
+  const xr = document.getElementById('gemini-xr');
+
+  xr.addEventListener('xr-transcription', (e) => {
+    console.log(`[${e.detail.speaker}] ${e.detail.text}`);
+  });
+
+  xr.addEventListener('xr-object-detected', (e) => {
+    console.log(`Located ${e.detail.label} at`, e.detail.position);
+  });
+
+  // Connect only after user gesture (never on page load):
+  document.getElementById('connect-btn').addEventListener('click', () => {
+    connectGeminiLive(xr, {
+      url: 'wss://your-proxy.example.com/gemini-live',
+      frameIntervalMs: 1000,
+      streamAudio: true,
+      playAudio: true,
+      detectObjects: true
+    });
+  });
+</script>
+
+<button id="connect-btn">Start Gemini Live Session</button>
+
+<xr-live
+  id="gemini-xr"
+  allow-client-scripts
+  world-understanding="planes reticle"
+  xr-depth="occlusion"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+  <script type="text/three">
+    const artifact = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.22, 0.4, 32),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.6, roughness: 0.3 })
+    );
+    artifact.name = 'turbine-core';
+    artifact.position.set(0, 1.0, -1.0);
+    artifact.userData.xr = {
+      grab: '1-hand',
+      holdToAsk: {
+        prompt: 'Explain the role of this turbine core and inspect its orientation.',
+        holdMs: 600
+      }
+    };
+    scene.add(artifact);
+  </script>
+</xr-live>
+```
+
+---
+
+## Recipe 5: 3D Spatial Paint, Depth Particles & Gaussian Splats
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  spatial-paint="#38bdf8"
+  xr-depth="occlusion"
+  xr-simulator="tabletop"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+
+  <script type="text/three">
+    // Depth-colliding snow emitter volume
+    const snowVolume = new THREE.Mesh(
+      new THREE.BoxGeometry(0.01, 0.01, 0.01),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    snowVolume.name = 'snow-emitter';
+    snowVolume.position.set(0, 1.4, -1.2);
+    snowVolume.userData.xr = {
+      particles: { preset: 'snow', count: 500, area: [2.5, 2.0, 2.5], speed: 0.9 }
+    };
+    scene.add(snowVolume);
+
+    // 3D Gaussian Splat node (.splat or .spz)
+    const splatAnchor = new THREE.Group();
+    splatAnchor.name = 'garden-splat';
+    splatAnchor.position.set(0, 0.8, -1.2);
+    splatAnchor.userData.xr = {
+      grab: '2-hand',
+      splatUrl: 'https://example.com/assets/bonsai.spz'
+    };
+    scene.add(splatAnchor);
+  </script>
+</xr-live>
+```
+
+---
+
+## Recipe 6: Native Android (Kotlin) & iOS/visionOS (Swift) Integration
+
+### Android (Google Filament + Jetpack XR SceneCore)
+```kotlin
+import com.google.threelive.ThreeLiveRuntimeSession
+import com.google.threelive.XRLiveSceneCoreHelper
+import com.google.threelive.filament.ThreeLiveFilament
+
+// 1. Install the Filament renderer once at startup
+ThreeLiveFilament.install()
+
+// 2. Compile procedural Three.js and step XR traits / handles / particles natively
+val session = ThreeLiveRuntimeSession.fromScript(scriptSource)
+session.stepFrame(dtSeconds = 1f / 60f)
+
+// 3. Or attach traits directly to an Android XR SceneCore entity from GLB bytes
+XRLiveSceneCoreHelper.attachTraitsFromGlb(xrSession, rootEntity, glbByteBuffer)
+```
+
+### iOS & visionOS (Apple RealityKit)
+```swift
+import ThreeLiveCompiler
+import RealityKit
+
+@MainActor
+func mountSpatialScene(script: String, in arView: ARView) async throws {
+    let entity = try await RealityKitHelper.loadEntity(from: script)
+    XRLiveRealityKit.installTraits(on: entity, in: arView)
+}
+```
+
+================================================================================
+SOURCE: skills/three-live-authoring/references/debugging-and-csp.md
+================================================================================
+
+# Debugging, Sandboxing & CSP Guide (`<three-live>` & `<xr-live>`)
+
+## 1. Why Nothing Renders (Top 4 Causes)
+
+1. **Missing `allow-client-scripts` attribute:**
+   - **Symptom:** `<three-live>` or `<xr-live>` with an inline `<script type="text/three">` stays blank and dispatches an `error` event with `CLIENT_SCRIPTS_DISABLED_ERROR`.
+   - **Fix:** Add `allow-client-scripts` to the element (`<three-live allow-client-scripts ...>`) or set `ThreeLiveElement.allowClientScripts = true` before connecting.
+2. **Bundler moved the Worker engine asset (`sandboxEngineSrc`):**
+   - **Symptom:** When bundling with Vite, Webpack, or Rollup instead of loading `/dist/three-live.min.js` via `<script>`, the sandbox Worker cannot auto-detect the IIFE bundle URL and fails closed.
+   - **Fix:** Explicitly point `ThreeLiveElement.sandboxEngineSrc` at the IIFE `.min.js` bundle:
+     ```js
+     import { ThreeLiveElement } from 'three-live';
+     ThreeLiveElement.sandboxEngineSrc =
+       new URL('three-live/dist/three-live.min.js', import.meta.url).href;
+     ```
+3. **Strict Host CSP (`require-trusted-types-for 'script'` or blocked `blob:` Workers):**
+   - **Symptom:** The host page's Content Security Policy blocks Worker creation or script evaluation.
+   - **Fix:** Set `sandbox="iframe"` on the element and configure `ThreeLiveElement.sandboxIframeSrc` to point at `three-live-sandbox.html`, which runs inside an opaque-origin `<iframe sandbox="allow-scripts">`.
+4. **Calling `new THREE.GLTFLoader()` or `fetch()` inside `<script type="text/three">`:**
+   - **Symptom:** External model does not appear because `fetch` and `XMLHttpRequest` are permanently revoked inside the sandbox Worker.
+   - **Fix:** Use `<three-live src="/path/to/model.glb">` or `<xr-anchor src="/path/to/model.glb">`.
+
+## 3. Enforced Sandbox Quotas
+
+Every procedural compilation (`toCanvas3D()`, `toGLB()`, `toUSDZ()`) runs `SceneQuotaValidator` with these defaults:
+- **Max Script Size:** `1,048,576` bytes (`1 MiB`)
+- **Max Meshes:** `1,000`
+- **Max Vertices:** `100,000`
+- **Max Indices:** `300,000`
+- **Max Textures:** `16` (max dimension `2048×2048`)
+- **Execution Watchdog:** `3,000 ms` wall-clock timeout (`250 ms` CPU ceiling inside Rust Boa compiler)
+- **Max Concurrent Sandbox Workers:** `32`
+
+================================================================================
+SOURCE: docs/three-live.md
+================================================================================
+
+# `<three-live>` Reference Guide
+
+`<three-live>` is a lightweight WebGL2 3D viewer, procedural Three.js JIT
+compiler, and `<model-viewer>` drop-in replacement with universal Augmented
+Reality handoff (iOS Quick Look, Android Scene Viewer, and WebXR).
+
+For interactive 6DoF WebXR spatial computing, declarative spatial traits
+(`grab`, `scale`, `billboard`, `anchor`), spatial HTML cards (`<div
+slot="spatial">`), depth/physics, and 25-joint hand tracking, see
+**[`docs/xr-live.md`](xr-live.md)**. See **[`README.md`](../README.md)** for JS
+bundles and entry points.
+
+--------------------------------------------------------------------------------
+
+## Quickstart
+
+```html
+<script type="module" src="/dist/three-live.min.js"></script>
+
+<three-live
+  src="/models/chair.glb"
+  poster="/images/chair_poster.webp"
+  camera-controls
+  camera-orbit="30deg 20deg 3m"
+  selected-mesh="cushion"
+  ar
+  ar-modes="quick-look scene-viewer webxr"
+  auto-rotate
+  style="width: 100%; height: 500px; display: block;">
+</three-live>
+
+<script>
+  const viewer = document.querySelector('three-live');
+
+  // Listen for mesh part selection
+  viewer.addEventListener('meshclick', (e) => {
+    console.log('Selected part:', e.detail.meshName);
+  });
+
+  // Reset camera view
+  viewer.resetCamera();
+</script>
+```
+
+--------------------------------------------------------------------------------
+
+## Observed Attributes
+
+| Attribute | Type | Bundle | Description |
+| :--------------------- | :--------- | :------------------- | :------------------ |
+| `src` | `string` | `three-live-viewer`+ | URL or path to binary `.glb` model. |
+| `ios-src` | `string` | `three-live-viewer`+ | Optional URL or path to Apple `.usdz` model for iOS Quick Look (auto-transcoded from GLB if omitted). |
+| `poster` | `string` | `three-live-viewer`+ | URL to a placeholder image shown before 3D rendering initializes. |
+| `scale` | `string` | `three-live-viewer`+ | Uniform or per-axis scale multiplier `"x y z"` (e.g. `"2 2 2"`). |
+| `camera-orbit` | `string` (str/JSON) | `three-live-viewer`+ | Initial camera orbit angles and distance\ 20deg 3m"` or `{"theta"\ "phi"\ "zoom"\ |
+| `camera-target` | `string` | `three-live-viewer`+ | Orbit center coordinate `"x y z"` (e.g. `"0m 1.5m 0m"`, defaults to model bounding center). |
+| `min-camera-orbit` | `string` | `three-live-viewer`+ | Lower bounds for camera orbit\ `"theta phi radius"` (e.g. `"-45deg 0deg 1m"` or `"auto 0deg auto"`). |
+| `max-camera-orbit` | `string` | `three-live-viewer`+ | Upper bounds for camera orbit (e.g. `"auto 90deg auto"` prevents orbiting beneath the ground plane). |
+| `field-of-view` | `string` | `three-live-viewer`+ | Vertical field of view angle (e.g. `"45deg"`, clamps between `10deg` and `90deg`). |
+| `selected-mesh` | `string` | `three-live-viewer`+ | Name of the sub-mesh to highlight. |
+| `camera-controls` | `boolean` | `three-live-viewer`+ | Enables interactive orbit/pan/zoom camera controls (disabled by default unless `camera-controls` is present, matching `<model-viewer>`). |
+| `ar` | `boolean` | `three-live-viewer`+ | Enables the augmented reality launcher button. |
+| `ar-modes` | `string` | `three-live-viewer`+ | Space-delimited AR modes\ `quick-look`, `scene-viewer`, `webxr`. |
+| `ar-scale` | `string` | `three-live-viewer`+ | Controls whether the model can be scaled in AR\ `"auto"` (default) or `"fixed"`. |
+| `ar-placement` | `string` | `three-live-viewer`+ | Controls AR surface placement mode\ `"floor"` (default) or `"wall"`. |
+| `script-src` | `string` | `three-live`+ | URL or path to a server-generated procedural Three.js scene script. |
+| `sandbox` | `string` | `three-live`+ | Mandatory sandbox mode (`"worker"` or `"iframe"`). Default\ `"worker"`. |
+| `allow-client-scripts` | `boolean` | `three-live`+ | Explicit opt-in allowing client-modified script strings via `executeScript()` or inline `<script>`. |
+| `exposure` | `number` | `three-live-viewer`+ | Exposure / lighting multiplier for ambient/environment light intensity (default\ |
+| `environment-image` | `string` | `three-live-extras` | Equirectangular `.hdr`/`.pic` radiance map or LDR environment image for ambient reflections and SH irradiance. |
+| `skybox-image` | `string` | `three-live-extras` | Visible background equirectangular skybox image URL rendered behind the 3D scene. |
+| `shadow-intensity` | `number` | `three-live-extras` | Ground contact shadow opacity from `0.0` (off) to `1.0` (default\ `0.7`). |
+| `shadow-softness` | `number` | `three-live-extras` | Radial Gaussian blur falloff of contact shadow from `0.0` (hard) to `1.0` (soft). |
+| `tone-mapping` | `string` | `three-live-viewer`+ | Tone mapping mode: `"neutral"` (default, Khronos PBR Neutral for commerce), `"reinhard"`, or `"none"`. |
+| `autoplay` | `boolean` | `three-live-viewer`+ | Automatically starts keyframe animation playback on model load. |
+| `animation-name` | `string` | `three-live-viewer`+ | Name of specific glTF animation clip to play (defaults to first clip). |
+| `auto-rotate` | `boolean` | `three-live-viewer`+ | Automatically rotates the camera around the model. |
+
+--------------------------------------------------------------------------------
+
+## `<model-viewer>` Drop-in Imperative API
+
+`<three-live>` provides full drop-in compatibility for `<model-viewer>`
+JavaScript configurators, hotspot managers, and AR launchers:
+
+-   **Camera & Screenshot:** `viewer.getCameraOrbit()`,
+    `viewer.getCameraTarget()`, `viewer.getFieldOfView()`,
+    `viewer.jumpCameraToGoal()`, `viewer.toDataURL()`, `await viewer.toBlob()`
+-   **AR Status & Activation:** `viewer.canActivateAR` (boolean getter), `await
+    viewer.activateAR()`
+-   **Surface Raycasting:** `viewer.positionAndNormalFromPoint(pixelX, pixelY)`
+    returns `{ position: { x, y, z, toString() }, normal: { x, y, z, toString()
+    } } | null`
+-   **Live Material Editing (`viewer.model.materials`):**
+
+    ```js
+    const mat = viewer.model.getMaterialByName('Leather') || viewer.model.materials[0];
+    mat.pbrMetallicRoughness.setBaseColorFactor([0.8, 0.2, 0.1, 1.0]);
+    mat.pbrMetallicRoughness.setRoughnessFactor(0.35);
+    ```
+
+--------------------------------------------------------------------------------
+
+## DOM Events
+
+| Event | Detail Payload | Description |
+| :-------------- | :------------------------- | :---------------------------- |
+| `load` | `{ model: GLBData }` | Fired when the 3D model or procedural scene finishes loading. |
+| `error` | `{ error: Error }` | Fired if model loading or script execution fails. |
+| `camera-change` | `{ theta, phi, distance }` | Fired whenever the camera orbit changes. |
+| `ar-status` | `{ status: 'session-started' \ | 'not-presenting' \ | 'failed', error? }` | Fired when AR session status transitions (`<model-viewer>` standard). |
+| `meshclick` | `{ meshName, hitPoint, normal, distance }` | Fired when a user clicks or taps a sub-mesh. |
+
+--------------------------------------------------------------------------------
+
+## Custom AR Button Overlay (`slot="ar-button"` / `activateAR()`)
+
+Provide a child element with `slot="ar-button"` to replace the default AR button
+overlay with your own custom styled button. `<three-live>` automatically hides
+its built-in button, manages visibility when `ar` is enabled, and triggers
+`activateAR()` on click:
+
+```html
+<three-live src="/models/chair.glb" camera-controls ar style="width: 100%; height: 500px;">
+  <button slot="ar-button" class="custom-ar-btn">
+    ✨ View in Your Space
+  </button>
+</three-live>
+```
+
+--------------------------------------------------------------------------------
+
+## Visual Extensions & Plugins
+
+### 3D Hotspots & Annotations (`three-live/extras`)
+
+Import `three-live/extras` (or use `three-live-full.min.js`) to attach
+interactive HTML buttons or callouts pinned to 3D surface coordinates. Hotspots
+automatically orbit with the camera and support surface normal occlusion
+culling:
+
+```html
+<script type="module" src="/dist/three-live-full.min.js"></script>
+
+<three-live src="/models/astronaut.glb" camera-controls camera-target="0 1.2 0" style="width: 100%; height: 500px; display: block;">
+  <button slot="hotspot-visor" data-position="0 1.5 0.3" data-normal="0 0 1" class="hotspot">
+    Gold-coated Visor
+  </button>
+  <div slot="hotspot-pack" data-position="0 1.3 -0.4" data-normal="0 0 -1" class="hotspot">
+    Life Support Unit
+  </div>
+</three-live>
+```
+
+Update a hotspot dynamically at runtime using `viewer.updateHotspot({ name,
+position, normal })`.
+
+### PBR Rendering & Lighting Extensions
+
+-   **Core WebGL2 PBR (`three-live-viewer`+):**
+    -   **Screen-Space Derivative Normal Maps:** Perturbs normals via GLSL
+        `dFdx`/`dFdy` without requiring glTF vertex tangents.
+    -   **Khronos PBR Neutral Tone Mapping:** Accurate color fidelity for
+        e-commerce products without chalky highlight desaturation.
+-   **PBR Next Materials, HDRI & Contact Shadows (`three-live/extras`):**
+    -   **glTF PBR Next Extensions:** Shader support for Clearcoat
+        (`KHR_materials_clearcoat`), Transmission
+        (`KHR_materials_transmission`), Dispersion (`KHR_materials_dispersion`),
+        Volume Attenuation (`KHR_materials_volume`), Iridescence
+        (`KHR_materials_iridescence`), and Sheen (`KHR_materials_sheen`).
+    -   **HDRI Radiance Maps & Spherical Harmonics:** Set
+        `environment-image="/env/studio.hdr"` to parse Radiance `.hdr` RGBE
+        textures, prefilter GGX specular mipmaps, and project 9-coefficient
+        Spherical Harmonics diffuse irradiance.
+    -   **Analytical Ground Contact Shadows:** Set `shadow-intensity="0.7"` and
+        `shadow-softness="0.5"` for soft ground ambient occlusion without shadow
+        map pass overhead.
+
+### Animations: Rigid-Body TRS & Skeletal/Morph Plugins
+
+-   **Rigid-Body Keyframe Animations (`three-live-viewer`+):** Node translation,
+    rotation, and scale (`TRS`) keyframe tracks are built into all bundles
+    (`el.availableAnimations`, `el.play()`, `el.pause()`).
+-   **GPU Skeletal Skinning, Morph Targets & Cross-Fading
+    (`three-live/animation`):** Import `three-live/animation` (or use
+    `three-live-full.min.js`) to enable 64-joint GPU vertex skinning
+    (`JOINTS_0`/`WEIGHTS_0`), morph target blending (`weights`), and smooth clip
+    cross-fading (`el.crossFadeTo('Walk', 0.3)`).
+
+### Declarative `KHR_interactivity` Behavior Graphs (`userData.interactivity`)
+
+Inside `<script type="text/three">`, any `THREE.Mesh` or `THREE.Group` can attach
+declarative `userData.interactivity` triggers (`onSelect`, `onHoverIn`,
+`onHoverOut`, `onStart`, `onReceive`) that compile into standard Khronos
+`KHR_interactivity` bytecode embedded inside exported `.glb` files and executed
+by the `three-live/extras` VM on Web, Android, and iOS:
+
+```html
+<three-live allow-client-scripts camera-controls style="width: 100%; height: 480px; display: block;">
+  <script type="text/three">
+    const button = new THREE.Mesh(
+      new THREE.BoxGeometry(0.8, 0.3, 0.8),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.4, roughness: 0.3 })
+    );
+    button.name = ' interactive-box';
+    button.userData.interactivity = {
+      onSelect: [
+        {
+          action: 'toggleTransform',
+          property: 'translation',
+          from: [0, 0, 0],
+          to: [0, 0.4, 0],
+          duration: 0.35
+        },
+        {
+          action: 'cycleMaterialColor',
+          colors: [
+            [0.22, 0.74, 0.97, 1.0],
+            [0.13, 0.77, 0.37, 1.0],
+            [0.96, 0.25, 0.37, 1.0]
+          ],
+          duration: 0.25
+        }
+      ]
+    };
+    scene.add(button);
+  </script>
+</three-live>
+```
+
+Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` / `onReceive[eventName]`:
+- `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' | 'rotation' | 'scale', from?: number[], to: number[], duration?: number }`
+- `interpolate`: `{ action: 'interpolate', target?: string, property: 'translation' | 'rotation' | 'scale' | 'baseColorFactor' | 'metallicFactor' | 'roughnessFactor' | 'emissiveFactor', to: number | number[], duration?: number }`
+- `setProperty`: `{ action: 'setProperty', target?: string, property: string, value: unknown }`
+- `toggleVisibility`: `{ action: 'toggleVisibility', target?: string }`
+- `cycleMaterialColor`: `{ action: 'cycleMaterialColor', colors: Array<[number, number, number, number?]>, duration?: number }`
+- `playAnimation` / `stopAnimation`: `{ action: 'playAnimation', animation?: number }` / `{ action: 'stopAnimation' }`
+- `sendEvent`: `{ action: 'sendEvent', event: string, values?: Record<string, unknown> }` (dispatches `interactivityEvent` on the host element).
+
+### Pluggable Mesh & Texture Decoders
+
+Heavy decompression runtimes (Draco WASM, Meshopt, KTX2) are not bundled by
+default. Register external decoders on demand:
+
+```javascript
+import { ThreeLiveElement } from 'three-live';
+
+ThreeLiveElement.registerDecoder('draco', myDracoDecoder);
+```
+
+--------------------------------------------------------------------------------
+
+## Procedural Scene Scripting (`three-author`)
+
+`<three-live>` supports two procedural scene compilation workflows:
+
+1.  **Server-Generated Scene Scripts (Default — `script-src` /
+    `loadScriptFromSrc(url)`):** The client passes a script URL directly to the
+    sandbox (`<three-live script-src="https://.../scene.js">`). The sandbox
+    Worker loads and compiles the script directly via `importScripts` without
+    requiring `'unsafe-eval'` or `new Function()`.
+2.  **Client-Modified Scene Scripts (Opt-In — `allow-client-scripts` /
+    `ThreeLiveElement.allowClientScripts = true`):** For interactive code
+    editors or client-modified scripts (`el.executeScript(code)` or inline
+    `<script type="text/three">`), explicitly opt in via the
+    `allow-client-scripts` attribute or `ThreeLiveElement.allowClientScripts =
+    true`:
+
+```html
+<three-live
+  allow-client-scripts
+  camera-controls
+  style="width: 100%; height: 500px; display: block;">
+  <script type="text/three">
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x4285f4 });
+    const mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+  </script>
+</three-live>
+```
+
+### Security & Sandboxing Architecture
+
+Three-Live operates under a **fail-closed** security model for untrusted or
+AI-generated script execution:
+
+-   **Isolated Web Worker (default, `sandbox="worker"`):** Scripts run in a
+    dedicated Worker with no DOM access. Before any author code runs, the worker
+    revokes its own ambient authority — `fetch`, `XMLHttpRequest`, `WebSocket`,
+    `EventSource`, `importScripts`, `navigator` (and therefore `sendBeacon`),
+    `indexedDB`, `caches`, `Worker`, `SharedWorker`, `BroadcastChannel`,
+    `SharedArrayBuffer` and `Atomics` are all made permanently `undefined`. The
+    channel back to the host is captured in a closure and `self.postMessage` is
+    replaced with a throwing stub, so a script cannot forge a result message.
+-   **Execution watchdog:** A script that exceeds
+    `SECURITY_3D_SANDBOX_TIMEOUT_MS` (3 s) has its worker terminated and raises
+    an `error` event. At most `SECURITY_3D_MAX_CONCURRENT_TASKS` (32) sandbox
+    workers may be alive at once.
+-   **Quota enforcement:** `Scene.toCanvas3D()`, `toGLB()` and `toUSDZ()` all
+    run `SceneQuotaValidator`, so no serialization path can skip the vertex,
+    index, mesh and texture ceilings. Scripts larger than
+    `SECURITY_3D_MAX_SCRIPT_BYTES` (1 MiB) are rejected before execution.
+-   **Fail-Closed Guarantee & Mandatory Sandboxing:** Sandboxing is strictly
+    required for all live procedural compilation and cannot be bypassed.
+    `sandbox="none"` and `sandbox="unsafe-host-realm"` are prohibited and
+    rejected with a `SecurityError`. If Web Workers or the sandbox iframe are
+    unavailable or blocked by Content Security Policy (CSP), Three-Live **fails
+    closed**: it halts execution, emits an `error` event, and throws rather than
+    evaluating code in the host realm.
+-   **Opaque-Origin Iframe + Worker Isolation (`sandbox="iframe"`):** For hosts
+    enforcing strict CSP (`require-trusted-types-for 'script'`, no
+    `'unsafe-eval'` on the host document), set `sandbox="iframe"` or configure
+    `ThreeLiveElement.sandboxIframeSrc` to point at `three-live-sandbox.html`.
+    Three-Live mounts a hidden `<iframe sandbox="allow-scripts">` (omitting
+    `allow-same-origin` so the iframe and its Worker run in a unique `null`
+    opaque origin) with its own `connect-src 'none'` CSP, completely isolating
+    script evaluation from the host page's origin, cookies, storage, and CSP.
+
+#### Pointing the sandbox at the engine
+
+The worker loads the Three-Live runtime by URL. When the library is included via
+a classic `<script src="three-live.min.js">` tag this is auto-detected. If you
+bundle Three-Live with webpack, Vite or Rollup, set it explicitly:
+
+```js
+import {ThreeLiveElement} from 'three-live';
+
+ThreeLiveElement.sandboxEngineSrc =
+    new URL('three-live/dist/three-live.min.js', import.meta.url).href;
+
+// Optional: enable opaque-origin <iframe sandbox="allow-scripts"> isolation
+// across all <three-live> elements on strict-CSP pages:
+ThreeLiveElement.sandboxIframeSrc =
+    new URL('three-live/dist/three-live-sandbox.html', import.meta.url).href;
+```
+
+The URL must point at an **IIFE** build (`*.min.js`), be same-origin or
+CORS-enabled, and be permitted by your CSP `script-src`. If it cannot be
+resolved, sandboxed execution fails closed rather than falling back to the host
+realm. This mirrors how Monaco, PDF.js and Tesseract.js require their worker
+assets to be located.
+
+### Supported Procedural Scripting Subset
+
+-   **Math & Core:** `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`,
+    `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`.
+-   **Primitives & Geometries:** `BoxGeometry`, `PlaneGeometry`,
+    `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`,
+    `TorusKnotGeometry`, `BufferGeometry`, `BufferAttribute`.
+-   **Materials:** `MeshStandardMaterial`, `MeshBasicMaterial`,
+    `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` (mapped
+    to glTF PBR metallic-roughness properties).
+-   **Scene Graph:** `Scene`, `Group`, `Mesh`, `Object3D` (`position`,
+    `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`).
+-   **Lights & Cameras:** `AmbientLight`, `DirectionalLight`, `PointLight`,
+    `Camera`, `PerspectiveCamera`.
+-   **Permissive LLM Fallbacks & Warnings:** Unsupported Three.js shaders
+    (`ShaderMaterial`, `RawShaderMaterial`), polyhedra/extended geometries
+    (`IcosahedronGeometry`, `OctahedronGeometry`, `CapsuleGeometry`,
+    `RingGeometry`, `CircleGeometry`), lights (`SpotLight`, `HemisphereLight`,
+    `RectAreaLight`), and headless browser globals (`requestAnimationFrame`,
+    `window`, `document`) gracefully degrade to standard PBR/primitive
+    equivalents without crashing the 3D/XR scene. All fallback events emit a
+    deduplicated warning and can be inspected via `THREE.getAuthorWarnings()`.
+-   **Scene Quotas:** Max **1,000 meshes**, **100,000 vertices**, **300,000
+    indices**, **16 textures** (max 2048×2048), and a **5-second** wall-clock
+    execution watchdog.
+
+================================================================================
+SOURCE: docs/xr-live.md
+================================================================================
+
+# `<xr-live>` Spatial Computing & XR Blocks Guide
+
+`<xr-live>` extends `<three-live>` into a full spatial computing runtime for
+**WebXR (Android XR, Meta Quest, Apple Vision Pro)**, **Mobile Web AR**, and
+**Native Android XR (`SceneCore` / `Filament`) & iOS/visionOS (`RealityKit`)**.
+
+It brings declarative spatial traits (`userData.xr`), the 7 **XR Blocks**
+plugins (`head-follow`, `manipulation-handles`, `world-understanding`,
+`gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), interactive
+HTML/CSS spatial cards (`<div slot="spatial">`), real-world depth occlusion &
+heightfield physics, 25-joint hand gesture recognition, a desktop 6DoF
+simulator, WebMCP browser AI tools, and zero-webview native mobile AR/XR
+bridges.
+
+For standard 3D viewing, `<model-viewer>` drop-in compatibility,
+`KHR_interactivity`, and PBR materials, see
+**[`docs/three-live.md`](three-live.md)**. For end-to-end recipes, see
+**[`docs/cookbook.md`](cookbook.md)**.
+
+--------------------------------------------------------------------------------
+
+## Quickstart
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  xr-mode="ar"
+  xr-depth="occlusion-physics"
+  xr-hands="gestures"
+  xr-simulator="living-room"
+  world-understanding="planes reticle"
+  spatial-paint="#38bdf8"
+  sound-feedback
+  camera-controls
+  style="width: 100%; height: 600px; display: block;">
+
+  <!-- Procedural 3D nodes with canonical userData.xr traits -->
+  <script type="text/three">
+    const sculpture = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.18, 0.06, 64, 16),
+      new THREE.MeshStandardMaterial({ color: 0x6366f1, metalness: 0.7, roughness: 0.2 })
+    );
+    sculpture.name = 'sculpture';
+    sculpture.position.set(0, 1.0, -1.1);
+    sculpture.userData.xr = {
+      grab: '2-hand',
+      handles: { rotateAxis: 'y', minScale: 0.4, maxScale: 2.5 },
+      holdToAsk: { prompt: 'Describe this sculpture.', holdMs: 600 }
+    };
+    scene.add(sculpture);
+  </script>
+
+  <!-- Live HTML/CSS spatial UI card rendered inside the 3D/XR scene -->
+  <div slot="spatial" data-position="0.45 1.1 -1.1" data-xr-traits="grab billboard">
+    <div style="padding: 16px; background: #0f172a; color: #f8fafc; border-radius: 16px; width: 240px;">
+      <h3>Spatial Control Card</h3>
+      <p>Pinch to grab, drag corner handles to scale, or pinch in empty space to paint.</p>
+      <button id="buy-btn">Inspect in AR</button>
+    </div>
+  </div>
+</xr-live>
+```
+
+--------------------------------------------------------------------------------
+
+## Observed Attributes (`<xr-live>` & `<xr-anchor>`)
+
+`<xr-live>` inherits all
+[`<three-live>` attributes](three-live.md#observed-attributes) plus the
+following spatial attributes:
+
+| Element | Attribute | Type / Values | Default | Description |
+| :---------- | :-------------------- | :---------------------------------------------------- | :------ | :---------- |
+| `<xr-live>` | `xr-mode` | `'ar' \| 'vr' \| 'inline' \| 'auto'` | `'auto'` | Target WebXR session mode (`ar` requests `immersive-ar`; `vr` requests `immersive-vr`). |
+| `<xr-live>` | `xr-depth` | `'occlusion' \| 'occlusion-physics' \| 'mesh' \| 'none'` | `'none'` | Enables WebXR `depth-sensing`, PBR depth occlusion, and analytical heightfield physics. |
+| `<xr-live>` | `xr-hands` | `'gestures' \| 'joints' \| 'pinch' \| 'none'` | `'none'` | Enables 25-joint `XRHand` tracking (`hand-tracking`) and gesture classification. |
+| `<xr-live>` | `xr-simulator` | `'living-room' \| 'office' \| 'tabletop' \| 'none'` | `'none'` | Enables desktop 6DoF keyboard/mouse simulator (`WASD` + `Q`/`E` + mouse look + virtual hands). |
+| `<xr-live>` | `xr-profile` | `'quest3' \| 'android-xr' \| 'visionos' \| 'auto'` | `'auto'` | Target spatial hardware profile hint. |
+| `<xr-live>` | `sound-feedback` | `boolean` | `false` | Plays procedural Web Audio earcons (`grab`, `release`, `bounce`, `hover`) and mobile haptics. |
+| `<xr-live>` | `world-understanding` | `'' \| 'planes' \| 'planes reticle' \| 'false'` | — | Enables `xr-live-world-understanding` plane/mesh detection and gaze surface reticle. |
+| `<xr-live>` | `spatial-paint` | `'' \| '#rrggbb' \| 'false'` | — | Enables `xr-live-spatial-paint`; pinching in empty space extrudes 3D Catmull-Rom tube strokes. |
+| `<xr-live>` | `webmcp` | `boolean` | `false` | Registers spatial AI tools (`inspect_xr_scene`, `place_xr_object_at_gaze`, `capture_xr_view`) on `navigator.modelContext`. |
+| `<xr-live>` | `webmcp-allow-depth` | `boolean` | `false` | Opt-in gate required before `capture_xr_view` exposes the 8×8 metric `depthGridMeters` array. |
+| `<xr-live>` | `webmcp-omit-pose` | `boolean` | `false` | Omits `headPosition` from `inspect_xr_scene` responses. |
+| `<xr-anchor>` | `surface` | `'floor' \| 'wall' \| 'table' \| 'ceiling'` | `'floor'` | Target semantic surface for declarative child placement. |
+| `<xr-anchor>` | `magnetic` | `boolean` | `false` | Continuously snaps child anchor to the nearest matching surface plane. |
+
+--------------------------------------------------------------------------------
+
+## Canonical `userData.xr` Spatial Traits
+
+Defined in [`three-live/src/xr-trait-schema.ts`](../three-live/src/xr-trait-schema.ts), `mesh.userData.xr` traits are normalized, clamped to identical ranges, and exported into `.glb` (`nodes[i].extras.xr` + `nodes[i].extensions.ANDROID_xr_scenecore`) and `.usdz` (`customData = {dictionary xr = {...}}`) so scenes behave identically on Web, Android, and iOS/visionOS:
+
+| Trait Key | Type / Options | Description |
+| :------------------- | :----------------------------------------------------------------------------------------------- | :---------- |
+| **`grab`** | `'1-hand' \| '2-hand' \| true` | 6DoF single-hand grab/rotate (`'1-hand'`) or two-hand grab + pinch-scale/twist (`'2-hand'`). Legacy `grabbable: true` is also accepted. |
+| **`scale`** | `{ min?: number, max?: number } \| true` | Two-handed pinch scaling clamped to `[min, max]` (defaults to `{ min: 0.05, max: 5 }`). |
+| **`billboard`** | `'capsule' \| 'cylindrical' \| 'spherical' \| true` | Orients node toward the viewer (`'capsule'` and `'cylindrical'` rotate around Y; `'spherical'` faces camera in 3D). |
+| **`follow`** | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values apply an eager spring follow; object values activate XR Blocks lazy head/hand follow with angular deadzone (`deadzoneDeg`, default `15°`) and critically damped spring (`stiffness`, default `6`). |
+| **`anchor`** | `'floor' \| 'wall' \| 'table' \| 'horizontal' \| 'vertical'` | Pins the node to a detected real-world plane or simulator surface. |
+| **`physics`** | `'dynamic' \| 'static'` | Steps rigid-body gravity, restitution bounce (`userData.xr.restitution`), sphere-to-sphere collisions, and depth heightfield collisions. |
+| **`orbit`** | `{ target: [x,y,z] \| string, radius?: number, speed?: number, height?: number, phase?: number, faceCenter?: boolean }` | Orbits around a 3D world point or another mesh's `name` at `speed` rad/s. |
+| **`handles`** | `{ rotateAxis?: 'y' \| 'none', minScale?: number, maxScale?: number } \| true` | Adds 4 top-corner uniform scale handles and a bottom pedestal yaw-rotation bar; emits `xr-handles-change`. |
+| **`particles`** | `{ preset: 'rain' \| 'snow' \| 'sparks' \| 'confetti', count?: number, area?: number \| [x,y,z], speed?: number }` | Turns the node into a particle emitter volume (`count` up to `2,000`) that collides with floor and WebXR depth surfaces. |
+| **`holdToAsk`** | `{ prompt?: string, holdMs?: number } \| true` | Press-and-hold on the mesh starts speech recognition and sends a contextual prompt to Gemini Live; emits `xr-hold-to-ask`. |
+| **`worldUnderstanding`** | `{ planes?: boolean, meshes?: boolean, reticle?: boolean, objects?: boolean }` | Opts the scene into WebXR plane/mesh detection and the gaze surface reticle (`__xr_reticle__`). |
+| **`splatUrl`** | `string` (`https://` or relative `.splat` / `.spz` URL) | Loads and back-to-front depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2/v3, up to `1,000,000` splats). |
+| **`audio`** | `string` **or** `{ src: string, refDistance?: number, loop?: boolean }` | Attaches a 3D PannerNode HRTF audio source to the mesh. |
+| **`pointerEvents`** | `'none'` | Excludes the mesh from raycast picking so rays pass through it. |
+
+--------------------------------------------------------------------------------
+
+## XR Blocks Plugin Suite (`xr-live-blocks.min.js` / `xr-live-full.min.js`)
+
+All 7 XR Blocks plugins are included automatically in `xr-live-full.min.js` (or can be loaded modularly via `xr-live-blocks.min.js` or `xr-live/plugins`):
+
+1. **`head-follow` (`xr-live-head-follow`):**
+   - Implements `FollowHead` lazy HUD behavior (angular deadzone + critically damped spring `stepCriticallyDampedSpring`) and `Orbit` satellite motion (`userData.xr.orbit`).
+2. **`manipulation-handles` (`xr-live-manipulation-handles`):**
+   - Attaches 4 top-corner uniform-scale handles and a bottom pedestal yaw-rotation bar to any mesh with `userData.xr.handles`. Dispatches `xr-handles-change` (`{ mesh, scale, yawDeg }`).
+3. **`world-understanding` (`xr-live-world-understanding`):**
+   - Tracks WebXR `detectedPlanes` (`MAX_TRACKED_PLANES = 64`) and `detectedMeshes`, updates a surface-normal gaze reticle (`__xr_reticle__`), provides `XRTapeMeasure`, and unprojects 2D bounding boxes (`[ymin, xmin, ymax, xmax]`) into 3D world space via `detectObjects(element, detections)`, dispatching `xr-object-detected`.
+4. **`gemini-live` (`xr-live-gemini-live`):**
+   - Streams viewport frames and 16 kHz PCM microphone audio to a Gemini Live `wss://` endpoint (`connectGeminiLive(element, options)`), plays 24 kHz PCM model audio with barge-in cancellation (`xr-gemini-interrupted`), emits live `xr-transcription` (`{ speaker, text, isFinal }`), answers `report_objects` tool calls with 3D unprojection, and wires `userData.xr.holdToAsk` press-and-hold queries (`xr-hold-to-ask-listening`, `xr-hold-to-ask`).
+5. **`spatial-paint` (`xr-live-spatial-paint`):**
+   - Enabled via the `spatial-paint` attribute (e.g. `spatial-paint="#ff3366"`). Pinching in empty space smooths input points with a uniform Catmull-Rom spline and extrudes twist-free parallel-transport tubes (`TubeStrokeBuilder`), emitting `xr-paint-stroke` (`{ index, points, lengthMeters }`). Supports programmatic `undo()` and `clear()` via `getSpatialPaintController(element)`.
+6. **`depth-particles` (`xr-live-depth-particles`):**
+   - Simulates `rain`, `snow`, `sparks`, and `confetti` emitters (`userData.xr.particles`, up to `MAX_EMITTERS = 8` and `2,000` particles/emitter) with deterministic PRNG and real-world WebXR depth collision (`isOccludedByDepth`).
+7. **`splat-loader` (`xr-live-splat-loader`):**
+   - Streams `.splat` (32-byte records) and Niantic `.spz` (v2/v3, raw or gzipped) 3D Gaussian Splat files for any node with `userData.xr.splatUrl`, sorting splats back-to-front with a 16-bit counting sort each frame.
+
+--------------------------------------------------------------------------------
+
+## Spatial DOM Cards (`<div slot="spatial">`)
+
+Any child element with `slot="spatial"` is automatically projected into 3D space
+as an interactive textured quad inside WebXR and inline 3D views:
+
+-   **Sanitized SVG `<foreignObject>` Rasterization:** Renders live HTML/CSS
+    into a crisp GPU texture with automatic XSS hardening (strips dangerous
+    tags/handlers, blocks `javascript:`/`data:text/html` URIs, escapes XML
+    entities).
+-   **3D Raycast Hit-Testing:** Controller rays, hand pinch rays, and pointer
+    clicks automatically compute UV intersection coordinates and dispatch
+    synthetic `click`, `pointerdown`, `pointermove`, and `pointerup` events to
+    the underlying DOM elements (e.g., `<button>`).
+-   **Trait Support:** Add `data-xr-traits="grab billboard"` and
+    `data-position="x y z"` directly on `<div slot="spatial">`.
+
+--------------------------------------------------------------------------------
+
+## Imperative Methods & DOM Events (`<xr-live>`)
+
+### Imperative Methods
+- `await element.enterSpatialAR(sourceOverride?, forceFallback?)`: Launches WebXR `immersive-ar`, iOS Quick Look (`.usdz`), or Android Scene Viewer (`intent://`).
+- `element.transitionToVR({ color?: [r, g, b], durationMs?: number })`: Smoothly fades the viewport background from transparent AR passthrough to an opaque VR environment.
+- `element.transitionToAR({ durationMs?: number })`: Smoothly fades back to transparent AR passthrough.
+- `await element.captureViewFrame({ format?, quality?, includeDepth? })`: Captures the current rendered viewport (`dataUrl`, `base64`), camera `viewMatrix` / `projectionMatrix`, `headPosition`, and optional 8×8 `depthGridMeters`.
+- `element.stepSpatialFrame(dtSeconds)`: Steps all spatial subsystems (automatically called during WebXR and simulator frames).
+
+### Spatial DOM Events
+| Event | `event.detail` Payload | Description |
+| :------------------------ | :----------------------------------------------------------------------- | :---------- |
+| `xr-select-start` / `move` / `end` | `{ hand: 'left' \| 'right' \| 'screen', pivotPosition, quaternion, rayOrigin, rayDirection, hit }` | Fired on controller trigger, hand pinch, or screen touch ray. |
+| `xr-handles-change` | `{ mesh, scale: number, yawDeg: number }` | Fired when a `userData.xr.handles` corner scale or yaw bar is dragged. |
+| `xr-object-detected` | `{ label: string, position: [number, number, number], distanceMeters: number, source: 'plane' \| 'depth' \| 'fallback' }` | Fired for each 2D detection unprojected into 3D by `world-understanding`. |
+| `xr-transcription` | `{ speaker: 'user' \| 'model', text: string, isFinal: boolean }` | Fired as Gemini Live user/model speech transcripts arrive. |
+| `xr-hold-to-ask-listening` | `{ mesh: string }` | Fired when a press-and-hold on a `holdToAsk` mesh begins listening. |
+| `xr-hold-to-ask` | `{ mesh: string, transcript: string, prompt: string }` | Fired when a `holdToAsk` voice/text query is dispatched to Gemini Live. |
+| `xr-gemini-interrupted` | `{}` | Fired when user speech barges in and cancels Gemini Live audio playback. |
+| `xr-paint-stroke` | `{ index: number, points: number, lengthMeters: number }` | Fired when a 3D `spatial-paint` tube stroke completes. |
+| `xr-webmcp-capture` | `{}` | Fired when a WebMCP agent invokes `capture_xr_view` (sets `data-xr-webmcp-indicator="active"`). |
+
+--------------------------------------------------------------------------------
+
+## Native Mobile Spatial Bridges (No WebViews Required)
+
+`xr-live` compiles scenes into self-contained `.glb` and `.usdz` binaries with
+embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
+`customData.xr`), allowing native Android and iOS/visionOS apps to run full
+6DoF spatial experiences natively:
+
+### Android (`mobile/android/src/main/java/com/google/threelive/`)
+
+-   **[`XRLiveRuntimeSession.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveRuntimeSession.kt) & [`XRBlocksFeatures.kt`](../mobile/android/src/main/java/com/google/threelive/XRBlocksFeatures.kt):**
+    Executes lazy head-follow springs, orbits, manipulation handles, Catmull-Rom
+    spatial paint tubes, depth-colliding particles, Gaussian splat sorting, and
+    `KHR_interactivity` behavior graphs natively on Google Filament.
+-   **[`XRLiveSceneCoreHelper.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt):**
+    Jetpack XR SceneCore integration for Android XR headsets and phones,
+    attaching `MovableComponent`, `ResizableComponent`, `Anchor`, and billboard
+    updates directly from compiled `.glb` bytes.
+-   **[`XRGeminiLiveController.kt`](../mobile/android/src/main/java/com/google/threelive/gemini/XRGeminiLiveController.kt):**
+    Native Kotlin WebSocket + PCM audio streaming client for Gemini Live.
+
+### iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`)
+
+-   **[`XRLiveRealityKit.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRLiveRealityKit.swift) & [`XRBlocksRealityKitFeatures.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRBlocksRealityKitFeatures.swift):**
+    Native Swift + RealityKit runtime supporting all `userData.xr` traits,
+    manipulation handles, spatial paint tubes, particle emitters, Gaussian
+    splats, `KHR_interactivity`, and `XRGeminiLiveController.swift`.

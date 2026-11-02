@@ -868,6 +868,9 @@ if (args.includes('--test-three-live') || args.includes('--test-core')) {
   buildThreeLive();
   buildXRLive();
   stampDemoSizes();
+  if (fs.existsSync(path.join(ROOT_DIR, 'scripts', 'build_llms_txt.js'))) {
+    require('./build_llms_txt').generateLlmsFiles();
+  }
   reportSizes();
   console.log(
       '=== Successfully built all three-live and xr-live JS/TS packages! ===');

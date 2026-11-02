@@ -203,6 +203,56 @@ position, normal })`.
     (`JOINTS_0`/`WEIGHTS_0`), morph target blending (`weights`), and smooth clip
     cross-fading (`el.crossFadeTo('Walk', 0.3)`).
 
+### Declarative `KHR_interactivity` Behavior Graphs (`userData.interactivity`)
+
+Inside `<script type="text/three">`, any `THREE.Mesh` or `THREE.Group` can attach
+declarative `userData.interactivity` triggers (`onSelect`, `onHoverIn`,
+`onHoverOut`, `onStart`, `onReceive`) that compile into standard Khronos
+`KHR_interactivity` bytecode embedded inside exported `.glb` files and executed
+by the `three-live/extras` VM on Web, Android, and iOS:
+
+```html
+<three-live allow-client-scripts camera-controls style="width: 100%; height: 480px; display: block;">
+  <script type="text/three">
+    const button = new THREE.Mesh(
+      new THREE.BoxGeometry(0.8, 0.3, 0.8),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.4, roughness: 0.3 })
+    );
+    button.name = ' interactive-box';
+    button.userData.interactivity = {
+      onSelect: [
+        {
+          action: 'toggleTransform',
+          property: 'translation',
+          from: [0, 0, 0],
+          to: [0, 0.4, 0],
+          duration: 0.35
+        },
+        {
+          action: 'cycleMaterialColor',
+          colors: [
+            [0.22, 0.74, 0.97, 1.0],
+            [0.13, 0.77, 0.37, 1.0],
+            [0.96, 0.25, 0.37, 1.0]
+          ],
+          duration: 0.25
+        }
+      ]
+    };
+    scene.add(button);
+  </script>
+</three-live>
+```
+
+Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` / `onReceive[eventName]`:
+- `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' | 'rotation' | 'scale', from?: number[], to: number[], duration?: number }`
+- `interpolate`: `{ action: 'interpolate', target?: string, property: 'translation' | 'rotation' | 'scale' | 'baseColorFactor' | 'metallicFactor' | 'roughnessFactor' | 'emissiveFactor', to: number | number[], duration?: number }`
+- `setProperty`: `{ action: 'setProperty', target?: string, property: string, value: unknown }`
+- `toggleVisibility`: `{ action: 'toggleVisibility', target?: string }`
+- `cycleMaterialColor`: `{ action: 'cycleMaterialColor', colors: Array<[number, number, number, number?]>, duration?: number }`
+- `playAnimation` / `stopAnimation`: `{ action: 'playAnimation', animation?: number }` / `{ action: 'stopAnimation' }`
+- `sendEvent`: `{ action: 'sendEvent', event: string, values?: Record<string, unknown> }` (dispatches `interactivityEvent` on the host element).
+
 ### Pluggable Mesh & Texture Decoders
 
 Heavy decompression runtimes (Draco WASM, Meshopt, KTX2) are not bundled by

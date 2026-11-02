@@ -175,11 +175,15 @@ Every bundle targets `es2020`, strips full license blocks
 
 ## Documentation Guide (Humans & LLMs)
 
-| Guide                                          | Audience | Contents           |
-| :--------------------------------------------- | :------- | :----------------- |
-| **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
-| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & Native Mobile Spatial guide: declarative traits (`grab`, `scale`, `billboard`, `anchor`), spatial DOM cards (`<div slot="spatial">`), depth/physics, 25-joint hand tracking, desktop simulator, and Android XR / RealityKit bridges. |
-| **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, strict `THREE.*` allowlist, scene quotas, and zero-hallucination few-shot templates. |
+| Guide | Audience | Contents |
+| :--------------------------------------------- | :------- | :------- |
+| **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, `KHR_interactivity` authoring, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
+| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & XR Blocks guide: canonical `userData.xr` traits, all 7 XR Blocks plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`), `<div slot="spatial">` cards, depth/physics, 25-joint hands, WebMCP, and native Android/iOS bridges. |
+| **[`docs/cookbook.md`](docs/cookbook.md)** | All Developers | Copy-pasteable recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, and native mobile sessions. |
+| **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, canonical `userData.xr` & `userData.interactivity` schemas, strict `THREE.*` allowlist, scene quotas, and few-shot templates. |
+| **[`AGENTS.md`](AGENTS.md)** | Coding Agents | Repository rules, 3-target cross-platform parity contract, build/test commands, bundle budgets, and security invariants. |
+| **[`skills/`](skills/)** | Agent Skills | Progressive-disclosure `SKILL.md` skills for authoring scenes ([`three-live-authoring`](skills/three-live-authoring/SKILL.md)) and developing plugins ([`xr-live-plugin-dev`](skills/xr-live-plugin-dev/SKILL.md)). |
+| **[`llms.txt`](llms.txt) / [`llms-full.txt`](llms-full.txt)** | LLM Context Feeds | Single-file concise index (`llms.txt`) and complete concatenated reference (`llms-full.txt`) for LLM context windows. |
 | **[`CHANGELOG.md`](CHANGELOG.md)** | All Users | Release notes and architectural summary for the Developer Preview release. |
 
 ---

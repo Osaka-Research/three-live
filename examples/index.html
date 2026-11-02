@@ -76,6 +76,37 @@ limitations under the License.
     }
     h2 { margin: 0 0 8px; font-size: 18px; }
     p { margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+    .llm-bar {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #1e293b;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .llm-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .llm-links a {
+      color: #38bdf8;
+      text-decoration: none;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .llm-links a:hover {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: #38bdf8;
+    }
     @media (max-width: 640px) {
       body {
         padding: 16px;
@@ -116,6 +147,15 @@ limitations under the License.
         <h2>&lt;xr-live&gt; Spatial Playground</h2>
         <p>Ballpit Lab rigid-body &amp; depth physics, Spatial UI <code>&lt;div slot="spatial"&gt;</code> cards, 6DoF traits, AR&harr;VR transitions, and Gemini 8&times;8 depth capture.</p>
       </a>
+    </div>
+    <div class="llm-bar">
+      <span>LLM &amp; Coding Agent Context Feeds:</span>
+      <div class="llm-links">
+        <a href="./llms.txt">/llms.txt</a>
+        <a href="./llms-full.txt">/llms-full.txt</a>
+        <a href="https://github.com/google/three-live/blob/main/docs/cookbook.md" target="_blank" rel="noopener">Cookbook</a>
+        <a href="https://github.com/google/three-live/blob/main/skills/three-live-authoring/SKILL.md" target="_blank" rel="noopener">SKILL.md</a>
+      </div>
     </div>
   </div>
 </body>

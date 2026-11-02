@@ -60,7 +60,6 @@ mobile/examples/ios_swiftui/Info.plist
 # Android SDK location (machine-specific).
 local.properties
 
-# Google3-internal scripts (also excluded in copy.bara.sky)
-examples/deploy_x20.sh
-scripts/sync_from_github.sh
-three-live/run_test.sh
+# Local planning / parity notes (never committed to GitHub).
+docs/xr-blocks-parity.md
+docs/*-plan.md
