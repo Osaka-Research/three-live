@@ -84,6 +84,10 @@ constructor(
     fun onGazeDwell(nodeIndex: Int, action: String, point: DoubleArray) {}
 
     fun onExplodeChange(factor: Double, source: String) {}
+
+    fun onAnchorsRestored(count: Int, source: String) {}
+
+    fun onTeleport(from: DoubleArray, to: DoubleArray, yawDeg: Double) {}
   }
 
   var listener: Listener? = null
@@ -124,6 +128,46 @@ constructor(
   /** Current spring-smoothed assembly explosion factor in `[0..1]`. */
   val explodeFactor: Double
     get() = currentExplodeFactor
+
+  /**
+   * Optional persistence namespace (`<xr-live persistent-anchors="room-a">`). When non-blank,
+   * manipulated/persisted node transforms are stored under `xr-live:anchors:<namespace>`.
+   */
+  var persistentAnchorsNamespace: String? = null
+
+  /** Default in-memory key-value map used when [anchorStoreGet] / [anchorStoreSet] are unset. */
+  val anchorStorage: MutableMap<String, String> = LinkedHashMap()
+
+  /** Optional host storage reader (e.g. `SharedPreferences::getString`). */
+  var anchorStoreGet: ((key: String) -> String?)? = null
+
+  /** Optional host storage writer (`value == null` removes the key). */
+  var anchorStoreSet: ((key: String, value: String?) -> Unit)? = null
+
+  /** Enables room-scale teleportation and snap-turn (`<xr-live locomotion>`). */
+  var locomotionEnabled: Boolean = false
+
+  /** Discrete yaw step in degrees (`15..90`) for thumbstick snap-turn. */
+  var snapTurnDeg: Double = 30.0
+
+  /** Enables the `120ms` peripheral comfort vignette during teleports and snap-turns. */
+  var comfortVignetteEnabled: Boolean = true
+
+  /** Current accumulated rig translation offset `[x, y, z]` in meters from locomotion. */
+  val rigOffset: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0)
+
+  /** Current accumulated rig yaw angle in degrees from snap-turns. */
+  var rigYawDeg: Double = 0.0
+    private set
+
+  /** Normalized `[0..1]` peripheral comfort vignette opacity for the current frame. */
+  val comfortVignetteIntensity: Double
+    get() =
+      if (!comfortVignetteEnabled || vignetteRemainingMs <= 0.0) {
+        0.0
+      } else {
+        (vignetteRemainingMs / SpatialLocomotion.COMFORT_VIGNETTE_MS).coerceIn(0.0, 1.0)
+      }
 
   private val session = binding.session
   private val scene = binding.scene
@@ -205,6 +249,9 @@ constructor(
   )
 
   private val explodeTraits = HashMap<Int, XRExplodeTrait>()
+  private val anchorPersistTraits = HashMap<Int, XRAnchorPersistTrait>()
+  private val navigableTraits = HashMap<Int, String>()
+  private val grabbableNodes = HashSet<Int>()
   private val restParts = ArrayList<RestPart>()
   private var restCaptured: Boolean = false
   private var assemblyCenter: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0)
@@ -215,6 +262,14 @@ constructor(
   private var explodeLeaderMeshId: Int = -1
   private var sectionGizmoMeshId: Int = -1
   private var lastSectionGizmoRadius: Double = -1.0
+  private var teleportArcMeshId: Int = -1
+  private var teleportArcValidColor: Boolean? = null
+  private var teleportRingMeshId: Int = -1
+  private var teleportRingValidColor: Boolean? = null
+  private var pendingTeleportPoint: DoubleArray? = null
+  private var pendingTeleportValid: Boolean = false
+  private var snapTurnLatched: Boolean = false
+  private var vignetteRemainingMs: Double = 0.0
   private val invWorld = DoubleArray(16)
   private var ownedExecutor = false
   private val executor: Executor =
@@ -241,6 +296,9 @@ constructor(
       t.snapSocket?.let { socketTraits[node] = it }
       t.gaze?.let { gazeTraits[node] = it }
       t.explode?.let { explodeTraits[node] = it }
+      t.anchorPersist?.let { anchorPersistTraits[node] = it }
+      t.navigable?.let { navigableTraits[node] = it }
+      if (t.grabbable || t.handles != null) grabbableNodes.add(node)
       if (t.pointerEvents == "none") pointerNoneNodes.add(node)
       t.splatUrl?.let { raw ->
         val resolved = SplatParser.resolveSplatUrl(raw, baseUrl, allowRemoteSplats)
@@ -342,6 +400,10 @@ constructor(
     explodeLeaderMeshId = -1
     if (sectionGizmoMeshId >= 0) renderer.removeDynamicMesh(sectionGizmoMeshId)
     sectionGizmoMeshId = -1
+    if (teleportArcMeshId >= 0) renderer.removeDynamicMesh(teleportArcMeshId)
+    teleportArcMeshId = -1
+    if (teleportRingMeshId >= 0) renderer.removeDynamicMesh(teleportRingMeshId)
+    teleportRingMeshId = -1
     for (h in handles) for (id in h.meshIds) renderer.removeDynamicMesh(id)
     for (e in emitters) renderer.removeDynamicMesh(e.meshId)
     for (s in strokes) renderer.removeDynamicMesh(s.meshId)
@@ -352,6 +414,9 @@ constructor(
     activeSocketByNode.clear()
     gazeTraits.clear()
     explodeTraits.clear()
+    anchorPersistTraits.clear()
+    navigableTraits.clear()
+    grabbableNodes.clear()
     restParts.clear()
     pointerNoneNodes.clear()
     handles.clear()
@@ -417,6 +482,9 @@ constructor(
       val t = session.nodeTransform(h.node) ?: return
       val q = t.rotation
       val yaw = XRSpatialMath.yawFromQuat(q[0].toDouble(), q[1].toDouble(), q[2].toDouble(), q[3].toDouble())
+      if (!persistentAnchorsNamespace.isNullOrBlank() || anchorPersistTraits.containsKey(h.node)) {
+        savePersistedAnchors()
+      }
       listener?.onHandlesChange(scene.nodeNames.getOrNull(h.node) ?: "", t.scale[0].toDouble(), Math.toDegrees(yaw))
       return
     }
@@ -448,7 +516,11 @@ constructor(
 
   private fun frame(dt: Double, cameraWorld: FloatArray) {
     if (disposed) return
-    pulsePhase += dt.coerceIn(0.0, 0.1) * 5.0
+    val clampedDt = dt.coerceIn(0.0, 0.1)
+    pulsePhase += clampedDt * 5.0
+    if (vignetteRemainingMs > 0.0) {
+      vignetteRemainingMs = Math.max(0.0, vignetteRemainingMs - clampedDt * 1000.0)
+    }
     stepExplodedView(dt)
     for (h in handles) placeHandles(h)
     for (e in emitters) stepEmitter(e, dt, cameraWorld)
@@ -1134,6 +1206,300 @@ constructor(
     }
   }
 
+  // ---- Persistent anchors ----------------------------------------------------------------------
+
+  private fun readAnchorStore(key: String): String? =
+    anchorStoreGet?.invoke(key) ?: anchorStorage[key]
+
+  private fun writeAnchorStore(key: String, value: String?) {
+    val writer = anchorStoreSet
+    if (writer != null) {
+      writer(key, value)
+    } else if (value == null) {
+      anchorStorage.remove(key)
+    } else {
+      anchorStorage[key] = value
+    }
+  }
+
+  private fun resolveStorageKey(): String? {
+    val raw = persistentAnchorsNamespace?.trim()
+    if (raw != null && (raw.equals("false", ignoreCase = true) || raw.equals("none", ignoreCase = true))) {
+      return null
+    }
+    val ns =
+      if (raw.isNullOrEmpty() || raw.equals("true", ignoreCase = true)) {
+        if (anchorPersistTraits.isNotEmpty() || raw != null) "default" else return null
+      } else {
+        XRLiveSceneCoreHelper.safeAnchorId(raw) ?: return null
+      }
+    return PersistentAnchors.ANCHOR_STORAGE_PREFIX + ns
+  }
+
+  private fun resolveNodePersistKey(node: Int): String? {
+    val trait = anchorPersistTraits[node]
+    if (trait != null) {
+      if (!trait.persist) return null
+      if (trait.id != null) return trait.id
+    } else if (persistentAnchorsNamespace.isNullOrBlank() || node !in grabbableNodes) {
+      return null
+    }
+    return XRLiveSceneCoreHelper.safeAnchorId(scene.nodeNames.getOrNull(node)) ?: "node_$node"
+  }
+
+  private fun collectPersistedPoses(): Map<String, PersistentAnchors.PersistedPose> {
+    val poses = LinkedHashMap<String, PersistentAnchors.PersistedPose>()
+    for (node in 0 until scene.nodeCount) {
+      if (poses.size >= PersistentAnchors.MAX_PERSISTED_NODES) break
+      val key = resolveNodePersistKey(node) ?: continue
+      val t = session.nodeTransform(node) ?: continue
+      val clean =
+        PersistentAnchors.sanitizePose(
+          doubleArrayOf(t.translation[0].toDouble(), t.translation[1].toDouble(), t.translation[2].toDouble()),
+          doubleArrayOf(
+            t.rotation[0].toDouble(),
+            t.rotation[1].toDouble(),
+            t.rotation[2].toDouble(),
+            t.rotation[3].toDouble(),
+          ),
+          doubleArrayOf(t.scale[0].toDouble(), t.scale[1].toDouble(), t.scale[2].toDouble()),
+        ) ?: continue
+      poses[key] = clean
+    }
+    return poses
+  }
+
+  private fun applyPersistedPoses(poses: Map<String, PersistentAnchors.PersistedPose>): Int {
+    var applied = 0
+    for (node in 0 until scene.nodeCount) {
+      val explicitId = anchorPersistTraits[node]?.id
+      val fallbackKey = XRLiveSceneCoreHelper.safeAnchorId(scene.nodeNames.getOrNull(node)) ?: "node_$node"
+      val pose = (if (explicitId != null) poses[explicitId] else null) ?: poses[fallbackKey] ?: continue
+      val p = FloatArray(3) { pose.p[it].toFloat() }
+      val q = FloatArray(4) { pose.q[it].toFloat() }
+      val s = FloatArray(3) { pose.s[it].toFloat() }
+      session.setNodeTransform(node, p, q, s)
+      renderer.setNodeTransform(node, p, q, s)
+      applied++
+    }
+    return applied
+  }
+
+  /** Saves current persisted/manipulable node transforms to the active namespace store. */
+  fun savePersistedAnchors(): Int {
+    if (disposed) return 0
+    val storageKey = resolveStorageKey() ?: return 0
+    val poses = collectPersistedPoses()
+    writeAnchorStore(storageKey, PersistentAnchors.serializePayload(poses))
+    return poses.size
+  }
+
+  /**
+   * Restores persisted node transforms from an optional `#xr-state=` [urlHash] (highest priority)
+   * or the active namespace store, firing [Listener.onAnchorsRestored] when at least one pose
+   * applies.
+   */
+  @JvmOverloads
+  fun restorePersistedAnchors(urlHash: String? = null): Int {
+    if (disposed) return 0
+    val hashToken = PersistentAnchors.extractHashToken(urlHash)
+    if (hashToken != null) {
+      val fromHash = PersistentAnchors.decodeState(hashToken)
+      if (fromHash != null && fromHash.isNotEmpty()) {
+        val count = applyPersistedPoses(fromHash)
+        if (count > 0) listener?.onAnchorsRestored(count, "url-hash")
+        return count
+      }
+    }
+    val storageKey = resolveStorageKey() ?: return 0
+    val raw = readAnchorStore(storageKey) ?: return 0
+    val fromStore = PersistentAnchors.deserializePayload(raw) ?: return 0
+    val count = applyPersistedPoses(fromStore)
+    if (count > 0) listener?.onAnchorsRestored(count, "storage")
+    return count
+  }
+
+  /** Exports all persisted/grabbable node transforms as a base64url `#xr-state=` token. */
+  fun exportAnchorState(): String = PersistentAnchors.encodeState(collectPersistedPoses())
+
+  /** Imports and applies a base64url `#xr-state=` token, returning the number of restored nodes. */
+  @JvmOverloads
+  fun importAnchorState(token: String, source: String = "url-hash"): Int {
+    if (disposed) return 0
+    val decoded = PersistentAnchors.decodeState(token) ?: return 0
+    val count = applyPersistedPoses(decoded)
+    if (count > 0) {
+      resolveStorageKey()?.let { writeAnchorStore(it, PersistentAnchors.serializePayload(decoded)) }
+      listener?.onAnchorsRestored(count, source)
+    }
+    return count
+  }
+
+  /** Clears persisted anchor data for the active namespace. */
+  fun clearPersistedAnchors() {
+    resolveStorageKey()?.let { writeAnchorStore(it, null) }
+  }
+
+  // ---- Spatial locomotion ----------------------------------------------------------------------
+
+  /**
+   * Evaluates a ballistic parabolic teleport arc from `(origin, direction)`, updating the 3D arc
+   * ribbon and landing target ring visuals.
+   */
+  fun aimTeleport(origin: DoubleArray, direction: DoubleArray): SpatialLocomotion.TeleportArcHit {
+    val samples = SpatialLocomotion.sampleParabola(origin, direction)
+    val fy = XRSpatialMath.clampNum(floorY ?: 0.0, -100.0, 100.0, 0.0)
+    val hasExplicitWalkable = navigableTraits.values.any { it == "walkable" }
+    val visited = ArrayList<DoubleArray>(samples.size)
+    visited.add(samples[0])
+    var hitResult: SpatialLocomotion.TeleportArcHit? = null
+
+    for (i in 0 until samples.size - 1) {
+      val a = samples[i]
+      val b = samples[i + 1]
+      val dx = b[0] - a[0]
+      val dy = b[1] - a[1]
+      val dz = b[2] - a[2]
+      val segLen = XRSpatialMath.len3(dx, dy, dz)
+      if (segLen < 1e-5) continue
+      val segDir = doubleArrayOf(dx / segLen, dy / segLen, dz / segLen)
+
+      val rayHit = raycastGazeNode(a, segDir, segLen + 1e-4)
+      if (rayHit != null) {
+        val (hitNode, hitPt, hitNormal) = rayHit
+        visited.add(hitPt)
+        val nav = navigableTraits[hitNode]
+        val slopeOk = hitNormal[1] > SpatialLocomotion.MIN_WALKABLE_NORMAL_Y
+        val navOk = if (hasExplicitWalkable) nav == "walkable" else nav != "blocked"
+        hitResult =
+          SpatialLocomotion.TeleportArcHit(
+            valid = slopeOk && navOk,
+            point = hitPt,
+            normal = hitNormal,
+            points = visited,
+            hitNodeIndex = hitNode,
+          )
+        break
+      }
+
+      if (!hasExplicitWalkable && a[1] >= fy && b[1] <= fy && a[1] != b[1]) {
+        val u = (a[1] - fy) / (a[1] - b[1])
+        val groundPt = doubleArrayOf(a[0] + dx * u, fy, a[2] + dz * u)
+        visited.add(groundPt)
+        hitResult =
+          SpatialLocomotion.TeleportArcHit(
+            valid = true,
+            point = groundPt,
+            normal = doubleArrayOf(0.0, 1.0, 0.0),
+            points = visited,
+            hitNodeIndex = -1,
+          )
+        break
+      }
+
+      visited.add(b)
+    }
+
+    val resolved =
+      hitResult
+        ?: SpatialLocomotion.TeleportArcHit(
+          valid = false,
+          point = visited.last().copyOf(),
+          normal = doubleArrayOf(0.0, 1.0, 0.0),
+          points = visited,
+          hitNodeIndex = -1,
+        )
+
+    pendingTeleportPoint = resolved.point.copyOf()
+    pendingTeleportValid = resolved.valid
+
+    if (!disposed) {
+      val color = if (resolved.valid) MEASURE_COLOR else INVALID_TELEPORT_COLOR
+      val arcGeo = SpatialLocomotion.buildArcGeometry(resolved.points)
+      if (teleportArcMeshId < 0 || teleportArcValidColor != resolved.valid) {
+        if (teleportArcMeshId >= 0) renderer.removeDynamicMesh(teleportArcMeshId)
+        teleportArcMeshId = renderer.addDynamicMesh(arcGeo.positions, arcGeo.normals, arcGeo.indices, color)
+        teleportArcValidColor = resolved.valid
+      } else {
+        renderer.updateDynamicMesh(teleportArcMeshId, arcGeo.positions, arcGeo.normals, arcGeo.indices)
+      }
+      identityMatrix()
+      renderer.setDynamicMeshTransform(teleportArcMeshId, matrix)
+
+      val ringGeo = MagneticSnap.buildSnapRingGeometry(0.18, 0.018)
+      if (teleportRingMeshId < 0 || teleportRingValidColor != resolved.valid) {
+        if (teleportRingMeshId >= 0) renderer.removeDynamicMesh(teleportRingMeshId)
+        teleportRingMeshId = renderer.addDynamicMesh(ringGeo.positions, ringGeo.normals, ringGeo.indices, color)
+        teleportRingValidColor = resolved.valid
+      }
+      val ringPos =
+        doubleArrayOf(
+          resolved.point[0] + resolved.normal[0] * 0.004,
+          resolved.point[1] + resolved.normal[1] * 0.004,
+          resolved.point[2] + resolved.normal[2] * 0.004,
+        )
+      val ringQuat = GazeDwell.quatFromUnitVectors(doubleArrayOf(0.0, 1.0, 0.0), resolved.normal)
+      val dMat = XRSpatialMath.mat4FromTRS(ringPos, ringQuat, doubleArrayOf(1.0, 1.0, 1.0))
+      for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
+      renderer.setDynamicMeshTransform(teleportRingMeshId, matrix)
+    }
+
+    return resolved
+  }
+
+  /** Cancels any active teleport preview and hides the arc and landing ring. */
+  fun cancelTeleport() {
+    pendingTeleportPoint = null
+    pendingTeleportValid = false
+    if (teleportArcMeshId >= 0) {
+      zeroMatrix()
+      renderer.setDynamicMeshTransform(teleportArcMeshId, matrix)
+    }
+    if (teleportRingMeshId >= 0) {
+      zeroMatrix()
+      renderer.setDynamicMeshTransform(teleportRingMeshId, matrix)
+    }
+  }
+
+  /**
+   * Commits the currently aimed teleport if valid, updating [rigOffset], triggering the comfort
+   * vignette, and firing [Listener.onTeleport].
+   */
+  fun commitTeleport(): Boolean {
+    if (disposed) return false
+    val target = pendingTeleportPoint
+    val valid = pendingTeleportValid
+    cancelTeleport()
+    if (!valid || target == null) return false
+    val from = rigOffset.copyOf()
+    target.copyInto(rigOffset, 0, 0, 3)
+    if (comfortVignetteEnabled) {
+      vignetteRemainingMs = SpatialLocomotion.COMFORT_VIGNETTE_MS
+    }
+    listener?.onTeleport(from, rigOffset.copyOf(), rigYawDeg)
+    return true
+  }
+
+  /**
+   * Applies horizontal thumbstick deflection [axisX] (`-1..1`) using hysteresis-guarded discrete
+   * snap-turns, returning the applied yaw delta in degrees (`0.0` when latched or below threshold).
+   */
+  fun applySnapTurnAxis(axisX: Double): Double {
+    if (disposed) return 0.0
+    val step = SpatialLocomotion.evaluateSnapTurn(axisX, snapTurnLatched, snapTurnDeg)
+    snapTurnLatched = step.latched
+    if (step.deltaYawDeg != 0.0) {
+      var next = (rigYawDeg + step.deltaYawDeg) % 360.0
+      if (next > 180.0) next -= 360.0
+      if (next <= -180.0) next += 360.0
+      rigYawDeg = next
+      if (comfortVignetteEnabled) {
+        vignetteRemainingMs = SpatialLocomotion.COMFORT_VIGNETTE_MS
+      }
+    }
+    return step.deltaYawDeg
+  }
+
   private fun layoutOf(h: HandleNode): ManipulationHandles.Layout? {
     val b = scene.meshBounds.getOrNull(scene.nodeMesh[h.node]) ?: return null
     if (!session.nodeWorldMatrix(h.node, world)) return null
@@ -1293,6 +1659,7 @@ constructor(
 
     private val HANDLE_COLOR = floatArrayOf(0.95f, 0.95f, 1f, 0.9f)
     private val MEASURE_COLOR = floatArrayOf(0.22f, 0.74f, 0.97f, 1f)
+    private val INVALID_TELEPORT_COLOR = floatArrayOf(0.94f, 0.27f, 0.27f, 0.92f)
     private val GAZE_RETICLE_COLOR = floatArrayOf(0.22f, 0.74f, 0.97f, 0.92f)
     private val EXPLODE_LEADER_COLOR = floatArrayOf(0.58f, 0.64f, 0.72f, 0.85f)
     private val LABEL_COLOR = floatArrayOf(1f, 1f, 1f, 1f)

@@ -60,6 +60,11 @@
       ((_ nodeIndex: Int, _ action: String, _ point: SIMD3<Float>) -> Void)?
     /// `{factor, source}` when explosion factor changes (`explodechange`).
     public var onExplodeChange: ((_ factor: Float, _ source: String) -> Void)?
+    /// `{count, source}` when persisted anchors restore (`anchorsrestored`).
+    public var onAnchorsRestored: ((_ count: Int, _ source: String) -> Void)?
+    /// `{from, to, yawDeg}` when a spatial teleport commits (`xrteleport`).
+    public var onTeleport:
+      ((_ from: SIMD3<Float>, _ to: SIMD3<Float>, _ yawDeg: Float) -> Void)?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
@@ -84,6 +89,27 @@
     public var sectionPlaneSpec: String = "none"
     /// Current spring-smoothed assembly explosion factor in `[0..1]`.
     public var explodeFactor: Float { currentExplodeFactor }
+    /// Persistence namespace (`<xr-live persistent-anchors="room-a">`).
+    public var persistentAnchorsNamespace: String?
+    /// Optional custom key-value reader (defaults to `UserDefaults.standard` when unset).
+    public var anchorStoreGet: ((_ key: String) -> String?)?
+    /// Optional custom key-value writer (`value == nil` removes the key; defaults to `UserDefaults.standard`).
+    public var anchorStoreSet: ((_ key: String, _ value: String?) -> Void)?
+    /// Enables room-scale teleportation and snap-turn (`<xr-live locomotion>`).
+    public var locomotionEnabled: Bool = false
+    /// Discrete yaw step in degrees (`15..90`) for thumbstick snap-turn.
+    public var snapTurnDeg: Float = 30
+    /// Enables the `120ms` peripheral comfort vignette during teleports and snap-turns.
+    public var comfortVignetteEnabled: Bool = true
+    /// Current accumulated rig translation offset in meters from locomotion.
+    public private(set) var rigOffset: SIMD3<Float> = .zero
+    /// Current accumulated rig yaw angle in degrees from snap-turns.
+    public private(set) var rigYawDeg: Float = 0
+    /// Normalized `[0..1]` peripheral comfort vignette opacity for the current frame.
+    public var comfortVignetteIntensity: Float {
+      guard comfortVignetteEnabled, vignetteRemainingMs > 0 else { return 0 }
+      return max(0, min(1, vignetteRemainingMs / SpatialLocomotion.comfortVignetteMs))
+    }
     /// Camera world transform for camera-facing particles (defaults to the live head pose).
     public var cameraTransformProvider: (() -> simd_float4x4?)?
 
@@ -210,6 +236,9 @@
     }
 
     private var explodeTraits: [Int: XRLiveExplode] = [:]
+    private var anchorPersistTraits: [Int: XRLiveAnchorPersist] = [:]
+    private var navigableTraits: [Int: String] = [:]
+    private var grabbableNodes: Set<Int> = []
     private var restParts: [RestPart] = []
     private var restCaptured: Bool = false
     private var assemblyCenter: SIMD3<Float> = .zero
@@ -220,6 +249,13 @@
     private var explodeLeaderEntity: ModelEntity?
     private var sectionGizmoEntity: ModelEntity?
     private var lastSectionGizmoRadius: Float = -1
+    private var teleportArcEntity: ModelEntity?
+    private var teleportRingEntity: ModelEntity?
+    private var teleportRingValidState: Bool?
+    private var pendingTeleportPoint: SIMD3<Float>?
+    private var pendingTeleportValid: Bool = false
+    private var snapTurnLatched: Bool = false
+    private var vignetteRemainingMs: Float = 0
     private var gaussianTexture: TextureResource?
     private var customSplatMaterial: RealityKit.Material?
     private var customSplatMaterialChecked = false
@@ -344,6 +380,15 @@
         if let ex = traits.explode, ex.enabled {
           explodeTraits[i] = ex
         }
+        if let ap = traits.anchorPersist {
+          anchorPersistTraits[i] = ap
+        }
+        if let nav = traits.navigable {
+          navigableTraits[i] = nav
+        }
+        if traits.grabbable || traits.handles != nil {
+          grabbableNodes.insert(i)
+        }
         if traits.pointerEventsNone {
           pointerNoneNodes.insert(i)
         }
@@ -400,6 +445,10 @@
       explodeLeaderEntity = nil
       sectionGizmoEntity?.removeFromParent()
       sectionGizmoEntity = nil
+      teleportArcEntity?.removeFromParent()
+      teleportArcEntity = nil
+      teleportRingEntity?.removeFromParent()
+      teleportRingEntity = nil
       container.removeFromParent()
       handles.removeAll()
       emitters.removeAll()
@@ -413,6 +462,9 @@
       activeSocketByNode.removeAll()
       gazeTraits.removeAll()
       explodeTraits.removeAll()
+      anchorPersistTraits.removeAll()
+      navigableTraits.removeAll()
+      grabbableNodes.removeAll()
       restParts.removeAll()
       pointerNoneNodes.removeAll()
     }
@@ -495,6 +547,11 @@
         drag = nil
         if let t = live.session.nodeTransform(at: active.node) {
           let yaw = XRSpatialMath.yawFromQuat(t.rotation) * 180 / .pi
+          if !(persistentAnchorsNamespace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || anchorPersistTraits[active.node] != nil
+          {
+            _ = savePersistedAnchors()
+          }
           onHandlesChange?(live.session.nodeName(at: active.node) ?? "", t.scale.x, yaw)
         }
         return
@@ -531,6 +588,9 @@
     public func step(dt: TimeInterval) {
       let dtClamped = Float(max(0, min(0.1, dt.isFinite ? dt : 0)))
       pulsePhase += dtClamped * 5.0
+      if vignetteRemainingMs > 0 {
+        vignetteRemainingMs = max(0, vignetteRemainingMs - dtClamped * 1000.0)
+      }
       stepExplodedView(dt: dt)
       for h in handles { place(h) }
       stepContactShadows()
@@ -1232,6 +1292,288 @@
       } else {
         sectionGizmoEntity?.isEnabled = false
       }
+    }
+
+    // MARK: Persistent Anchors
+
+    private func readAnchorStore(_ key: String) -> String? {
+      if let reader = anchorStoreGet { return reader(key) }
+      return UserDefaults.standard.string(forKey: key)
+    }
+
+    private func writeAnchorStore(_ key: String, _ value: String?) {
+      if let writer = anchorStoreSet {
+        writer(key, value)
+      } else if let v = value {
+        UserDefaults.standard.set(v, forKey: key)
+      } else {
+        UserDefaults.standard.removeObject(forKey: key)
+      }
+    }
+
+    private func resolveStorageKey() -> String? {
+      let raw = persistentAnchorsNamespace?.trimmingCharacters(in: .whitespacesAndNewlines)
+      if let r = raw?.lowercased(), r == "false" || r == "none" { return nil }
+      let ns: String
+      if raw == nil || raw!.isEmpty || raw!.lowercased() == "true" {
+        guard !anchorPersistTraits.isEmpty || raw != nil else { return nil }
+        ns = "default"
+      } else {
+        guard let clean = XRLiveTraitParser.safeAnchorId(raw) else { return nil }
+        ns = clean
+      }
+      return PersistentAnchors.anchorStoragePrefix + ns
+    }
+
+    private func resolveNodePersistKey(_ node: Int) -> String? {
+      if let trait = anchorPersistTraits[node] {
+        guard trait.persist else { return nil }
+        if let id = trait.id { return id }
+      } else {
+        let hasNs =
+          !(persistentAnchorsNamespace ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+          .isEmpty
+        guard hasNs, grabbableNodes.contains(node) else { return nil }
+      }
+      return XRLiveTraitParser.safeAnchorId(live.session.nodeName(at: node)) ?? "node_\(node)"
+    }
+
+    private func collectPersistedPoses() -> [String: PersistentAnchors.PersistedPose] {
+      var poses: [String: PersistentAnchors.PersistedPose] = [:]
+      let session = live.session
+      for node in 0..<session.nodeCount {
+        if poses.count >= PersistentAnchors.maxPersistedNodes { break }
+        guard let key = resolveNodePersistKey(node),
+          let t = session.nodeTransform(at: node),
+          let clean = PersistentAnchors.sanitizePose(
+            p: t.translation, q: t.rotation, s: t.scale)
+        else { continue }
+        poses[key] = clean
+      }
+      return poses
+    }
+
+    private func applyPersistedPoses(_ poses: [String: PersistentAnchors.PersistedPose]) -> Int {
+      var applied = 0
+      let session = live.session
+      for node in 0..<session.nodeCount {
+        let explicitId = anchorPersistTraits[node]?.id
+        let fallbackKey =
+          XRLiveTraitParser.safeAnchorId(session.nodeName(at: node)) ?? "node_\(node)"
+        let pose = (explicitId != nil ? poses[explicitId!] : nil) ?? poses[fallbackKey]
+        guard let p = pose else { continue }
+        live.setNodeTransform(
+          node, XRNodeTransform(translation: p.p, rotation: p.q, scale: p.s))
+        applied += 1
+      }
+      return applied
+    }
+
+    /// Saves current persisted/manipulable node transforms to the active namespace store.
+    @discardableResult
+    public func savePersistedAnchors() -> Int {
+      guard let storageKey = resolveStorageKey() else { return 0 }
+      let poses = collectPersistedPoses()
+      writeAnchorStore(storageKey, PersistentAnchors.serializePayload(poses))
+      return poses.count
+    }
+
+    /// Restores persisted node transforms from an optional `#xr-state=` `urlHash` (highest
+    /// priority) or the active namespace store, firing `onAnchorsRestored`.
+    @discardableResult
+    public func restorePersistedAnchors(urlHash: String? = nil) -> Int {
+      if let token = PersistentAnchors.extractHashToken(urlHash),
+        let fromHash = PersistentAnchors.decodeState(token), !fromHash.isEmpty
+      {
+        let count = applyPersistedPoses(fromHash)
+        if count > 0 { onAnchorsRestored?(count, "url-hash") }
+        return count
+      }
+      guard let storageKey = resolveStorageKey(),
+        let raw = readAnchorStore(storageKey),
+        let fromStore = PersistentAnchors.deserializePayload(raw)
+      else { return 0 }
+      let count = applyPersistedPoses(fromStore)
+      if count > 0 { onAnchorsRestored?(count, "storage") }
+      return count
+    }
+
+    /// Exports all persisted/grabbable node transforms as a base64url `#xr-state=` token.
+    public func exportAnchorState() -> String {
+      PersistentAnchors.encodeState(collectPersistedPoses())
+    }
+
+    /// Imports and applies a base64url `#xr-state=` token, returning the number of restored nodes.
+    @discardableResult
+    public func importAnchorState(_ token: String, source: String = "url-hash") -> Int {
+      guard let decoded = PersistentAnchors.decodeState(token) else { return 0 }
+      let count = applyPersistedPoses(decoded)
+      if count > 0 {
+        if let storageKey = resolveStorageKey() {
+          writeAnchorStore(storageKey, PersistentAnchors.serializePayload(decoded))
+        }
+        onAnchorsRestored?(count, source)
+      }
+      return count
+    }
+
+    /// Clears persisted anchor data for the active namespace.
+    public func clearPersistedAnchors() {
+      if let storageKey = resolveStorageKey() {
+        writeAnchorStore(storageKey, nil)
+      }
+    }
+
+    // MARK: Spatial Locomotion
+
+    /// Evaluates a ballistic parabolic teleport arc from `(origin, direction)`, updating the 3D
+    /// arc ribbon and landing target ring RealityKit entities.
+    public func aimTeleport(
+      origin: SIMD3<Float>,
+      direction: SIMD3<Float>
+    ) -> SpatialLocomotion.TeleportArcHit {
+      let samples = SpatialLocomotion.sampleParabola(origin: origin, direction: direction)
+      let fy = Float(XRJSON.clampNum(Double(floorY ?? 0), -100, 100, 0))
+      let hasExplicitWalkable = navigableTraits.values.contains("walkable")
+      var visited: [SIMD3<Float>] = [samples[0]]
+      var hitResult: SpatialLocomotion.TeleportArcHit?
+
+      for i in 0..<(samples.count - 1) {
+        let a = samples[i]
+        let b = samples[i + 1]
+        let delta = b - a
+        let segLen = simd_length(delta)
+        if segLen < 1e-5 { continue }
+        let segDir = delta / segLen
+
+        if let rayHit = raycastGazeNode(origin: a, dir: segDir, maxDist: segLen + 1e-4) {
+          visited.append(rayHit.point)
+          let nav = navigableTraits[rayHit.node]
+          let slopeOk = rayHit.normal.y > SpatialLocomotion.minWalkableNormalY
+          let navOk = hasExplicitWalkable ? (nav == "walkable") : (nav != "blocked")
+          hitResult = SpatialLocomotion.TeleportArcHit(
+            valid: slopeOk && navOk,
+            point: rayHit.point,
+            normal: rayHit.normal,
+            points: visited,
+            hitNodeIndex: rayHit.node
+          )
+          break
+        }
+
+        if !hasExplicitWalkable && a.y >= fy && b.y <= fy && a.y != b.y {
+          let u = (a.y - fy) / (a.y - b.y)
+          let groundPt = SIMD3<Float>(a.x + delta.x * u, fy, a.z + delta.z * u)
+          visited.append(groundPt)
+          hitResult = SpatialLocomotion.TeleportArcHit(
+            valid: true,
+            point: groundPt,
+            normal: SIMD3<Float>(0, 1, 0),
+            points: visited,
+            hitNodeIndex: -1
+          )
+          break
+        }
+
+        visited.append(b)
+      }
+
+      let resolved =
+        hitResult
+        ?? SpatialLocomotion.TeleportArcHit(
+          valid: false,
+          point: visited.last ?? origin,
+          normal: SIMD3<Float>(0, 1, 0),
+          points: visited,
+          hitNodeIndex: -1
+        )
+
+      pendingTeleportPoint = resolved.point
+      pendingTeleportValid = resolved.valid
+
+      let matColor =
+        resolved.valid
+        ? Self.parseHexRgba("#38bdf8", alpha: 0.9)
+        : Self.parseHexRgba("#f43f5e", alpha: 0.9)
+      let mat = Self.material(matColor)
+      let arcGeo = SpatialLocomotion.buildArcGeometry(resolved.points)
+      if let aMesh = Self.mesh(arcGeo) {
+        if let existing = teleportArcEntity {
+          existing.model = ModelComponent(mesh: aMesh, materials: [mat])
+        } else {
+          let ae = ModelEntity(mesh: aMesh, materials: [mat])
+          container.addChild(ae)
+          teleportArcEntity = ae
+        }
+        teleportArcEntity?.isEnabled = true
+        teleportArcEntity?.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+      }
+
+      if teleportRingEntity == nil || teleportRingValidState != resolved.valid {
+        teleportRingEntity?.removeFromParent()
+        let rGeo = MagneticSnap.buildSnapRingGeometry(majorRadius: 0.18, tubeRadius: 0.016)
+        if let rMesh = Self.mesh(rGeo) {
+          let re = ModelEntity(mesh: rMesh, materials: [mat])
+          container.addChild(re)
+          teleportRingEntity = re
+          teleportRingValidState = resolved.valid
+        }
+      }
+      if let re = teleportRingEntity {
+        re.isEnabled = true
+        let ringPos = resolved.point + resolved.normal * 0.006
+        let ringQuat = GazeDwell.quatFromUnitVectors(
+          from: SIMD3<Float>(0, 1, 0), to: resolved.normal)
+        re.setTransformMatrix(
+          XRSpatialMath.compose(
+            translation: ringPos, rotation: ringQuat, scale: SIMD3<Float>(1, 1, 1)),
+          relativeTo: nil)
+      }
+
+      return resolved
+    }
+
+    /// Cancels any active teleport preview and hides the arc and landing ring entities.
+    public func cancelTeleport() {
+      pendingTeleportPoint = nil
+      pendingTeleportValid = false
+      teleportArcEntity?.isEnabled = false
+      teleportRingEntity?.isEnabled = false
+    }
+
+    /// Commits the currently aimed teleport if valid, updating `rigOffset` and firing `onTeleport`.
+    @discardableResult
+    public func commitTeleport() -> Bool {
+      let target = pendingTeleportPoint
+      let valid = pendingTeleportValid
+      cancelTeleport()
+      guard valid, let dst = target else { return false }
+      let from = rigOffset
+      rigOffset = dst
+      if comfortVignetteEnabled {
+        vignetteRemainingMs = SpatialLocomotion.comfortVignetteMs
+      }
+      onTeleport?(from, rigOffset, rigYawDeg)
+      return true
+    }
+
+    /// Applies horizontal thumbstick deflection (`-1..1`) using hysteresis-guarded discrete
+    /// snap-turns, returning the applied yaw delta in degrees (`0` when latched or below threshold).
+    @discardableResult
+    public func applySnapTurnAxis(_ axisX: Float) -> Float {
+      let step = SpatialLocomotion.evaluateSnapTurn(
+        axisX: axisX, wasLatched: snapTurnLatched, snapTurnDeg: snapTurnDeg)
+      snapTurnLatched = step.latched
+      if step.deltaYawDeg != 0 {
+        var next = (rigYawDeg + step.deltaYawDeg).truncatingRemainder(dividingBy: 360)
+        if next > 180 { next -= 360 }
+        if next <= -180 { next += 360 }
+        rigYawDeg = next
+        if comfortVignetteEnabled {
+          vignetteRemainingMs = SpatialLocomotion.comfortVignetteMs
+        }
+      }
+      return step.deltaYawDeg
     }
 
     private func stepContactShadows() {

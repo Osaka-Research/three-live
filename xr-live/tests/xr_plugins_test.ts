@@ -117,6 +117,28 @@ import {
   XRExplodedViewController,
 } from '../src/plugins/exploded-view';
 import {
+  decodeAnchorState,
+  deserializeAnchorPayload,
+  encodeAnchorState,
+  extractHashAnchorToken,
+  injectHashAnchorToken,
+  MAX_HASH_BYTES,
+  parseAnchorPersist,
+  safeAnchorId,
+  sanitizePersistedPose,
+  XRPersistentAnchorsController,
+  type StorageLike,
+  type UrlHashAdapter,
+} from '../src/plugins/persistent-anchors';
+import {
+  buildTeleportArcGeometry,
+  evaluateSnapTurn,
+  evaluateTeleportArc,
+  parseNavigable,
+  sampleTeleportParabola,
+  XRSpatialLocomotionController,
+} from '../src/plugins/spatial-locomotion';
+import {
   catmullRom,
   paintPointFor,
   parseHexColor,
@@ -187,7 +209,7 @@ function meshAt(name: string, pos: [number, number, number], xr: Record<string, 
 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
-  assert(xrSpatialPlugins.length === 11, 'exports eleven plugins');
+  assert(xrSpatialPlugins.length === 13, 'exports thirteen plugins');
   assert(
     xrLiveFull.xrSpatialPlugins === xrSpatialPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
     'xr-live-full includes the spatial plugins',
@@ -205,6 +227,8 @@ function testRegistration(): void {
     'xr-live-magnetic-snap',
     'xr-live-gaze-dwell',
     'xr-live-exploded-view',
+    'xr-live-persistent-anchors',
+    'xr-live-spatial-locomotion',
   ]) {
     assert(names.includes(n), `registers ${n}`);
   }
@@ -1192,6 +1216,306 @@ function testExplodedView(): void {
   assert(viewer.meshes.length === 2, 'exploded-view dispose removes leader lines and section gizmo');
 }
 
+async function testPersistentAnchors(): Promise<void> {
+  console.log('\n⚓ persistent-anchors');
+  // Canonical schema backward compatibility + security checks.
+  const legacyAnchor = normalizeXRTraits({anchor: 'floor'})!;
+  assert(
+    legacyAnchor.anchor === 'floor' && legacyAnchor.anchorPersist === undefined,
+    'string anchor shorthand preserves backward-compatible NormalizedXRTraits',
+  );
+  const objAnchor = normalizeXRTraits({
+    anchor: {target: 'floor', id: 'desk-lamp', persist: true},
+    navigable: true,
+  })!;
+  assert(
+    objAnchor.anchor === 'floor' &&
+      objAnchor.anchorPersist?.id === 'desk-lamp' &&
+      objAnchor.anchorPersist?.persist === true &&
+      objAnchor.navigable === 'walkable',
+    'object anchor normalizes target + anchorPersist and navigable: true -> walkable',
+  );
+  const usdLines = buildUsdXRLines(
+    {anchor: {target: 'floor', id: 'desk-lamp', persist: true}, navigable: true},
+    (s) => s,
+  );
+  assert(
+    usdLines.some((l) => l.includes('bool anchorPersist = true')) &&
+      usdLines.some((l) => l.includes('string anchorId = "desk-lamp"')) &&
+      usdLines.some((l) => l.includes('string navigable = "walkable"')),
+    'USDZ metadata emits anchorPersist, anchorId, and navigable',
+  );
+  assert(
+    safeAnchorId('__proto__') === undefined &&
+      safeAnchorId('constructor') === undefined &&
+      safeAnchorId('bad\x00id') === undefined &&
+      parseAnchorPersist({persist: false, id: 'lamp'}) === null,
+    'safeAnchorId rejects prototype-pollution keys and control chars',
+  );
+
+  // Sanitization & URL-hash codec.
+  assert(
+    sanitizePersistedPose({p: [NaN, 0, 0], q: [0, 0, 0, 1], s: [1, 1, 1]}) === null &&
+      sanitizePersistedPose({p: [0, 0, 0], q: [0, 0, 0, 0], s: [1, 1, 1]}) === null,
+    'sanitizePersistedPose rejects NaN and zero-length quaternions',
+  );
+  const clamped = sanitizePersistedPose({
+    p: [5000, -5000, 1.23456],
+    q: [0, 2, 0, 0],
+    s: [0, 9999, 1],
+  })!;
+  assert(
+    clamped.p[0] === 1000 &&
+      clamped.p[1] === -1000 &&
+      near(clamped.q[1], 1, 1e-4) &&
+      clamped.s[0] === 0.001 &&
+      clamped.s[1] === 1000,
+    'sanitizePersistedPose clamps bounds and normalizes quaternion',
+  );
+  assert(
+    decodeAnchorState('a'.repeat(MAX_HASH_BYTES + 10)) === null &&
+      decodeAnchorState('!!!not_base64!!!') === null &&
+      deserializeAnchorPayload('{"version":1,"nodes":{"lamp":{"p":["x",0,0],"q":[0,0,0,1],"s":[1,1,1]}}}') === null,
+    'decodeAnchorState rejects oversized, invalid base64url, and non-numeric poses',
+  );
+  const poisoned = deserializeAnchorPayload(
+    '{"version":1,"nodes":{"__proto__":{"p":[1,2,3],"q":[0,0,0,1],"s":[1,1,1]},"lamp":{"p":[1,2,3],"q":[0,0,0,1],"s":[1,1,1]}}}',
+  )!;
+  assert(
+    !poisoned.has('__proto__') && poisoned.get('lamp')?.p[0] === 1,
+    'deserializeAnchorPayload strips __proto__ keys without prototype pollution',
+  );
+
+  const injected = injectHashAnchorToken('#tab=ar&foo=1', 'tok_123');
+  assert(
+    injected === '#tab=ar&foo=1&xr-state=tok_123' &&
+      extractHashAnchorToken(injected) === 'tok_123' &&
+      injectHashAnchorToken(injected, null) === '#tab=ar&foo=1',
+    'URL hash helper injects, extracts, and strips xr-state while preserving sibling params',
+  );
+
+  // Storage + URL-hash controller round-trip.
+  const storeMap = new Map<string, string>();
+  const fakeStorage: StorageLike = {
+    getItem: (k) => storeMap.get(k) ?? null,
+    setItem: (k, v) => {
+      storeMap.set(k, v);
+    },
+    removeItem: (k) => {
+      storeMap.delete(k);
+    },
+  };
+  let currentHash = '';
+  const fakeUrl: UrlHashAdapter = {
+    getPathname: () => '/room',
+    getHash: () => currentHash,
+    setHash: (h) => {
+      currentHash = h;
+    },
+  };
+
+  const restoredEvents: Array<{count: number; source: string}> = [];
+  const makeHost = (urlHashEnabled: boolean) => ({
+    hasAttribute: (n: string) =>
+      n === 'persistent-anchors' || (urlHashEnabled && n === 'persist-url-hash'),
+    getAttribute: (n: string) => (n === 'persistent-anchors' ? 'living-room' : null),
+    dispatchEvent: (ev: {type?: string; detail?: {count: number; source: string}}) => {
+      if (ev.type === 'anchorsrestored' && ev.detail) restoredEvents.push(ev.detail);
+      return true;
+    },
+  });
+
+  const lamp = meshAt('Lamp', [1.25, 0.8, -1.5], {
+    grab: true,
+    anchor: {target: 'table', id: 'desk-lamp', persist: true},
+  });
+  mat4FromRotationTranslationScale(lamp.transform, quatFromYaw(Math.PI / 4), [1.25, 0.8, -1.5], [1.4, 1.4, 1.4]);
+  const ctrl1 = new XRPersistentAnchorsController(fakeStorage, fakeUrl);
+  const viewer1 = {meshes: [lamp]};
+  const token = ctrl1.save(viewer1, makeHost(true));
+  assert(
+    token.length > 10 &&
+      storeMap.has('xr-live:anchors:living-room') &&
+      extractHashAnchorToken(currentHash) === token,
+    'save() writes namespaced localStorage entry and #xr-state URL hash',
+  );
+
+  // Restore into a fresh scene from URL hash first, then from storage when hash is cleared.
+  const lampFresh = meshAt('Lamp', [0, 0, 0], {
+    grab: true,
+    anchor: {target: 'table', id: 'desk-lamp', persist: true},
+  });
+  const ctrl2 = new XRPersistentAnchorsController(fakeStorage, fakeUrl);
+  const resHash = ctrl2.restore({meshes: [lampFresh]}, makeHost(true));
+  assert(
+    resHash.count === 1 &&
+      resHash.source === 'url-hash' &&
+      near(extractPosition(lampFresh.transform)[0], 1.25, 1e-3) &&
+      near(extractScale(lampFresh.transform)[0], 1.4, 1e-3),
+    'restore() prioritizes #xr-state URL hash and restores exact TRS',
+  );
+
+  currentHash = '';
+  const lampFromStore = meshAt('Lamp', [0, 0, 0], {
+    grab: true,
+    anchor: {target: 'table', id: 'desk-lamp', persist: true},
+  });
+  const ctrl3 = new XRPersistentAnchorsController(fakeStorage, fakeUrl);
+  const resStore = ctrl3.restore({meshes: [lampFromStore]}, makeHost(false));
+  assert(
+    resStore.count === 1 &&
+      resStore.source === 'storage' &&
+      near(extractPosition(lampFromStore.transform)[2], -1.5, 1e-3) &&
+      restoredEvents.length === 2,
+    'restore() falls back to namespaced storage and dispatches anchorsrestored',
+  );
+
+  // WebXR restorePersistentAnchor mock.
+  let restoredUuid = '';
+  const mockAnchor = {anchorSpace: {}, delete: () => {}};
+  const mockSession = {
+    persistentAnchors: ['uuid-lamp-1'],
+    restorePersistentAnchor: async (uuid: string) => {
+      restoredUuid = uuid;
+      return mockAnchor;
+    },
+  };
+  const anchorMatrix = mat4Create();
+  mat4FromRotationTranslationScale(anchorMatrix, [0, 0, 0, 1], [2.5, 0.4, -0.9], [1, 1, 1]);
+  const mockFrame = {
+    getPose: (space: unknown) => (space === mockAnchor.anchorSpace ? {transform: {matrix: anchorMatrix}} : null),
+  };
+  const posesWithUuid = decodeAnchorState(token)!;
+  const existingLamp = posesWithUuid.get('desk-lamp')!;
+  posesWithUuid.set('desk-lamp', {...existingLamp, xrAnchorUuid: 'uuid-lamp-1'});
+  const tokenWithUuid = encodeAnchorState(posesWithUuid);
+  const lampXr = meshAt('Lamp', [0, 0, 0], {
+    anchor: {target: 'floor', id: 'desk-lamp', persist: true},
+  });
+  const viewerXr = {meshes: [lampXr]};
+  const ctrlXr = new XRPersistentAnchorsController(fakeStorage, fakeUrl);
+  ctrlXr.importAnchorState(tokenWithUuid, viewerXr, makeHost(false));
+  ctrlXr.update(viewerXr, makeHost(false), {session: mockSession, frame: mockFrame, refSpace: {}});
+  await Promise.resolve();
+  await Promise.resolve();
+  ctrlXr.update(viewerXr, makeHost(false), {session: mockSession, frame: mockFrame, refSpace: {}});
+  assert(
+    restoredUuid === 'uuid-lamp-1' && near(extractPosition(lampXr.transform)[0], 2.5, 1e-3),
+    'WebXR restorePersistentAnchor rebinds saved UUID and tracks live anchorSpace pose',
+  );
+
+  ctrl1.clearPersistedAnchors(makeHost(true));
+  assert(!storeMap.has('xr-live:anchors:living-room'), 'clearPersistedAnchors removes storage key');
+}
+
+function testSpatialLocomotion(): void {
+  console.log('\n🚀 spatial-locomotion');
+  assert(
+    parseNavigable(true) === 'walkable' &&
+      parseNavigable('blocked') === 'blocked' &&
+      parseNavigable(false) === 'blocked',
+    'parseNavigable normalizes boolean and string modes',
+  );
+  const parabola = sampleTeleportParabola([0, 1.5, 0], [0, 0, -1], 6, -9.8, 20, 0.08);
+  assert(
+    parabola.length === 21 &&
+      parabola[20][2] < -9 &&
+      parabola[20][1] < parabola[0][1],
+    'sampleTeleportParabola produces ballistic downward arc',
+  );
+  const arcGeo = buildTeleportArcGeometry(parabola.slice(0, 5), 0.015);
+  assert(
+    arcGeo.positions.length === 4 * 8 * 3 && arcGeo.indices.length === 4 * 12,
+    'buildTeleportArcGeometry generates double-sided ribbon quads',
+  );
+
+  // Walkable platform vs blocked obstacle vs steep wall (> 45°).
+  const platform = meshAt('Platform', [0, 0.5, -2.5], {navigable: true});
+  mat4FromRotationTranslationScale(platform.transform, [0, 0, 0, 1], [0, 0.25, -2.5], [3, 0.5, 3]);
+  const obstacle = meshAt('Lava', [3, 0.25, -2.5], {navigable: 'blocked'});
+  mat4FromRotationTranslationScale(obstacle.transform, [0, 0, 0, 1], [3, 0.25, -2.5], [2, 0.5, 2]);
+  const steepWall = meshAt('Wall', [-3, 1.5, -2.0], {navigable: true});
+  mat4FromRotationTranslationScale(steepWall.transform, [0, 0, 0, 1], [-3, 1.5, -2.0], [1, 3, 0.4]);
+
+  const viewer = {
+    meshes: [platform, obstacle, steepWall] as unknown[],
+    modelRootMatrix: mat4Create(),
+  };
+
+  const validHit = evaluateTeleportArc(viewer, [0, 1.6, 0], [0, -0.25, -1]);
+  assert(
+    validHit.valid &&
+      validHit.hitMesh === platform &&
+      near(validHit.point[1], 0.5, 0.05),
+    'parabolic teleport lands on elevated navigable: true platform top surface',
+  );
+
+  const blockedHit = evaluateTeleportArc(viewer, [3, 1.6, 0], [0, -0.35, -1]);
+  assert(
+    !blockedHit.valid && blockedHit.hitMesh === obstacle,
+    'teleport rejects navigable: blocked surfaces',
+  );
+
+  const wallHit = evaluateTeleportArc(viewer, [-3, 1.6, 0], [0, 0, -1]);
+  assert(
+    !wallHit.valid && wallHit.hitMesh === steepWall,
+    'teleport rejects vertical/steep surfaces with normal.y <= 0.7',
+  );
+
+  // Snap-turn hysteresis (`0.65` trigger, `0.25` reset).
+  const st1 = evaluateSnapTurn(0.8, false, 30);
+  const st2 = evaluateSnapTurn(0.5, st1.latched, 30);
+  const st3 = evaluateSnapTurn(0.1, st2.latched, 30);
+  const st4 = evaluateSnapTurn(-0.75, st3.latched, 30);
+  assert(
+    st1.deltaYawDeg === -30 &&
+      st1.latched &&
+      st2.deltaYawDeg === 0 &&
+      st2.latched &&
+      st3.deltaYawDeg === 0 &&
+      !st3.latched &&
+      st4.deltaYawDeg === 30,
+    'snap-turn enforces 0.65 trigger and 0.25 reset hysteresis without repeat-firing',
+  );
+
+  // Controller aim -> commit -> comfort vignette -> dispose.
+  const teleports: Array<{from: number[]; to: number[]; yawDeg: number}> = [];
+  const host = {
+    hasAttribute: (n: string) => n === 'locomotion',
+    getAttribute: (n: string) => (n === 'locomotion' ? 'teleport snap-turn' : null),
+    dispatchEvent: (ev: {type?: string; detail?: {from: number[]; to: number[]; yawDeg: number}}) => {
+      if (ev.type === 'xrteleport' && ev.detail) teleports.push(ev.detail);
+      return true;
+    },
+  };
+  const ctrl = new XRSpatialLocomotionController();
+  const aimed = ctrl.aimTeleport(viewer, [0, 1.6, 0], [0, -0.25, -1]);
+  assert(aimed.valid && viewer.meshes.length === 5, 'aimTeleport attaches arc ribbon and landing ring');
+  const committed = ctrl.commitTeleport(viewer, host);
+  assert(
+    committed &&
+      teleports.length === 1 &&
+      near(ctrl.position[1], 0.5, 0.05) &&
+      ctrl.vignetteIntensity > 0.9,
+    'commitTeleport updates rig position, triggers comfort vignette, and emits xrteleport',
+  );
+  ctrl.step(viewer, 0.15, host);
+  assert(ctrl.vignetteIntensity === 0, 'comfort vignette fades to 0 after 120ms');
+
+  // Second consecutive hop in WebXR reference space (after modelRootMatrix was shifted by hop 1).
+  const farPlatform = meshAt('FarPlatform', [0, 0.25, -5.0], {navigable: true});
+  mat4FromRotationTranslationScale(farPlatform.transform, [0, 0, 0, 1], [0, 0.25, -5.0], [3, 0.5, 2]);
+  viewer.meshes.push(farPlatform);
+  const hop2 = ctrl.aimTeleport(viewer, [0, 1.1, 0], [0, -0.05, -1]);
+  assert(
+    hop2.valid && hop2.hitMesh === farPlatform && ctrl.commitTeleport(viewer, host) && near(ctrl.position[2], -4.7, 0.5),
+    'second consecutive teleport unprojects shifted modelRootMatrix back into scene space',
+  );
+
+  ctrl.dispose(viewer);
+  assert(viewer.meshes.length === 4, 'spatial-locomotion dispose removes arc and ring meshes');
+}
+
 function testGoldenParity(): void {
   console.log('\n🏆 Cross-platform golden parity');
   // tslint:disable-next-line:no-require-imports
@@ -1420,6 +1744,8 @@ async function main(): Promise<void> {
   testMagneticSnap();
   testGazeDwell();
   testExplodedView();
+  await testPersistentAnchors();
+  testSpatialLocomotion();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

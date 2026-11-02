@@ -1540,4 +1540,55 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(sec.normal.z, -1, accuracy: 1e-5)
     XCTAssertEqual(sec.constant, -0.2, accuracy: 1e-5)
   }
+
+  func testPersistentAnchorsAndSpatialLocomotionParity() throws {
+    let legacy = try XCTUnwrap(XRLiveTraitParser.normalize(["anchor": "floor"]))
+    XCTAssertEqual(legacy.anchor, "floor")
+    XCTAssertNil(legacy.anchorPersist)
+
+    let persisted = try XCTUnwrap(
+      XRLiveTraitParser.normalize([
+        "anchor": ["target": "floor", "id": "desk-lamp", "persist": true],
+        "navigable": true,
+      ]))
+    XCTAssertEqual(persisted.anchor, "floor")
+    XCTAssertEqual(persisted.anchorPersist?.id, "desk-lamp")
+    XCTAssertEqual(persisted.anchorPersist?.persist, true)
+    XCTAssertEqual(persisted.navigable, "walkable")
+    XCTAssertNil(XRLiveTraitParser.safeAnchorId("__proto__"))
+    XCTAssertNil(
+      PersistentAnchors.sanitizePose(
+        p: SIMD3<Float>(.nan, 0, 0),
+        q: XRSpatialMath.identityQuat,
+        s: SIMD3<Float>(1, 1, 1)
+      ))
+
+    let pose = try XCTUnwrap(
+      PersistentAnchors.sanitizePose(
+        p: SIMD3<Float>(1.25, 0.8, -1.5),
+        q: XRSpatialMath.quatFromYaw(.pi / 4),
+        s: SIMD3<Float>(1.4, 1.4, 1.4)
+      ))
+    let token = PersistentAnchors.encodeState(["desk-lamp": pose], updatedAt: 1000)
+    let injected = PersistentAnchors.injectHashToken(existingHash: "#tab=ar", token: token)
+    XCTAssertEqual(PersistentAnchors.extractHashToken(injected), token)
+    let decoded = try XCTUnwrap(PersistentAnchors.decodeState(token))
+    XCTAssertEqual(decoded["desk-lamp"]?.p.x ?? 0, 1.25, accuracy: 1e-4)
+
+    let arcPts = SpatialLocomotion.sampleParabola(
+      origin: SIMD3<Float>(0, 1.6, 0), direction: SIMD3<Float>(0, 0, -1))
+    XCTAssertEqual(arcPts.count, 21)
+    XCTAssertLessThan(arcPts[20].y, arcPts[0].y)
+    let arcGeo = SpatialLocomotion.buildArcGeometry(Array(arcPts.prefix(5)))
+    XCTAssertEqual(arcGeo.indices.count, 4 * 12)
+
+    let st1 = SpatialLocomotion.evaluateSnapTurn(axisX: 0.8, wasLatched: false, snapTurnDeg: 30)
+    let st2 = SpatialLocomotion.evaluateSnapTurn(axisX: 0.5, wasLatched: st1.latched, snapTurnDeg: 30)
+    let st3 = SpatialLocomotion.evaluateSnapTurn(axisX: 0.1, wasLatched: st2.latched, snapTurnDeg: 30)
+    let st4 = SpatialLocomotion.evaluateSnapTurn(axisX: -0.8, wasLatched: st3.latched, snapTurnDeg: 30)
+    XCTAssertEqual(st1.deltaYawDeg, -30)
+    XCTAssertEqual(st2.deltaYawDeg, 0)
+    XCTAssertFalse(st3.latched)
+    XCTAssertEqual(st4.deltaYawDeg, 30)
+  }
 }

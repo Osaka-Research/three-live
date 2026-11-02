@@ -32,6 +32,8 @@
  * | `magnetic-snap`        | `magnetic-snap` attr / `userData.xr.snapTo`   |
  * | `gaze-dwell`           | `gaze-dwell` attr / `userData.xr.gaze`        |
  * | `exploded-view`        | `explode` / `section-plane` attr / `userData.xr.explode` |
+ * | `persistent-anchors`   | `persistent-anchors` / `persist-url-hash` attr / `userData.xr.anchor.persist` |
+ * | `spatial-locomotion`   | `locomotion` attr / `userData.xr.navigable`   |
  *
  * To register only a subset, import the individual modules and call
  * `registerPlugin()` yourself instead of importing this entry point.
@@ -46,6 +48,8 @@ import {geminiLivePlugin} from './gemini-live';
 import {headFollowPlugin} from './head-follow';
 import {magneticSnapPlugin} from './magnetic-snap';
 import {manipulationHandlesPlugin} from './manipulation-handles';
+import {persistentAnchorsPlugin} from './persistent-anchors';
+import {spatialLocomotionPlugin} from './spatial-locomotion';
 import {spatialMeasurePlugin} from './spatial-measure';
 import {spatialPaintPlugin} from './spatial-paint';
 import {splatLoaderPlugin} from './splat-loader';
@@ -64,6 +68,8 @@ export const xrSpatialPlugins = [
   magneticSnapPlugin,
   gazeDwellPlugin,
   explodedViewPlugin,
+  persistentAnchorsPlugin,
+  spatialLocomotionPlugin,
 ] as const;
 
 for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
@@ -86,6 +92,8 @@ export * from './gemini-live';
 export * from './head-follow';
 export * from './magnetic-snap';
 export * from './manipulation-handles';
+export * from './persistent-anchors';
+export * from './spatial-locomotion';
 export * from './spatial-measure';
 export * from './spatial-paint';
 export * from './splat-loader';
@@ -94,9 +102,11 @@ export {
   buildXRSceneCoreExtension,
   flattenXRTraitsForUsd,
   normalizeXRTraits,
+  parseAnchorPersist,
   parseDimensions,
   parseExplode,
   parseGaze,
+  parseNavigable,
   parseSnapSocket,
   parseSnapTo,
   parseSpatialAudio,

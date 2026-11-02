@@ -439,6 +439,48 @@ export function parseExplode(raw: unknown): ExplodeOptions | null {
   };
 }
 
+const FORBIDDEN_ANCHOR_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Sanitizes an `anchor.id` or persistence key, rejecting prototype-pollution keys and control chars. */
+export function safeAnchorId(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim().slice(0, 128);
+  if (
+    !trimmed ||
+    FORBIDDEN_ANCHOR_IDS.has(trimmed) ||
+    /[\x00-\x1f\x7f]/.test(trimmed)
+  ) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+/** Normalized persistence metadata for `anchor: {id, persist}` (`persistent-anchors`). */
+export interface AnchorPersistOptions {
+  readonly id?: string;
+  readonly persist: boolean;
+}
+
+/** Parses object-valued `anchor` persistence metadata, returning `null` for plain plane anchors. */
+export function parseAnchorPersist(raw: unknown): AnchorPersistOptions | null {
+  const r = asRecord(raw);
+  if (!r) return null;
+  if (r['persist'] === false) return null;
+  const id = safeAnchorId(r['id']);
+  if (r['persist'] !== true && !id) return null;
+  return id ? {id, persist: true} : {persist: true};
+}
+
+/** Normalized locomotion surface mode (`spatial-locomotion`). */
+export type NavigableMode = 'walkable' | 'blocked';
+
+/** Parses a `navigable` trait (`true | false | 'walkable' | 'blocked'`). */
+export function parseNavigable(raw: unknown): NavigableMode | null {
+  if (raw === true || raw === 'walkable') return 'walkable';
+  if (raw === false || raw === 'blocked') return 'blocked';
+  return null;
+}
+
 /** Canonical, fully-normalized trait set for one node. */
 export interface NormalizedXRTraits {
   grab?: '1-hand' | '2-hand';
@@ -450,7 +492,8 @@ export interface NormalizedXRTraits {
   billboard?: 'capsule' | 'cylindrical' | 'spherical';
   /** Eager spring follow (string) or lazy follow (object). */
   follow?: 'head' | 'hand-left' | 'hand-right' | LazyFollowOptions;
-  anchor?: 'horizontal' | 'vertical' | 'floor' | 'wall' | 'table';
+  anchor?: 'horizontal' | 'vertical' | 'floor' | 'wall' | 'ceiling' | 'table';
+  anchorPersist?: AnchorPersistOptions;
   physics?: 'dynamic' | 'static';
   orbit?: OrbitOptions;
   handles?: HandlesOptions;
@@ -465,10 +508,11 @@ export interface NormalizedXRTraits {
   snapSocket?: SnapSocketOptions;
   gaze?: GazeOptions;
   explode?: ExplodeOptions;
+  navigable?: NavigableMode;
   pointerEvents?: 'none';
 }
 
-const ANCHORS = new Set(['horizontal', 'vertical', 'floor', 'wall', 'table']);
+const ANCHORS = new Set(['horizontal', 'vertical', 'floor', 'wall', 'ceiling', 'table']);
 const BILLBOARDS = new Set(['capsule', 'cylindrical', 'spherical']);
 
 /**
@@ -519,6 +563,18 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   const anchor = r['anchor'];
   if (typeof anchor === 'string' && ANCHORS.has(anchor)) {
     out.anchor = anchor as NormalizedXRTraits['anchor'];
+  } else {
+    const anchorObj = asRecord(anchor);
+    const target = anchorObj?.['target'];
+    if (typeof target === 'string' && ANCHORS.has(target)) {
+      out.anchor = target as NormalizedXRTraits['anchor'];
+    }
+    const persist = parseAnchorPersist(anchor) ?? parseAnchorPersist(r['anchorPersist']);
+    if (persist) out.anchorPersist = persist;
+  }
+  if (!out.anchorPersist) {
+    const persistExplicit = parseAnchorPersist(r['anchorPersist']);
+    if (persistExplicit) out.anchorPersist = persistExplicit;
   }
   if (r['physics'] === 'dynamic' || r['physics'] === 'static') out.physics = r['physics'];
 
@@ -548,6 +604,8 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (gaze) out.gaze = gaze;
   const explode = parseExplode(r['explode']);
   if (explode) out.explode = explode;
+  const navigable = parseNavigable(r['navigable']);
+  if (navigable) out.navigable = navigable;
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
 
   return Object.keys(out).length > 0 ? out : null;
@@ -584,11 +642,18 @@ export function buildXRSceneCoreExtension(
       faceUser: n.follow.faceUser,
     };
   }
-  if (n.anchor) {
-    comp['anchor'] = {
-      planeType: n.anchor === 'vertical' || n.anchor === 'wall' ? 'VERTICAL' : 'HORIZONTAL',
-      semanticType: n.anchor.toUpperCase(),
-    };
+  if (n.anchor || n.anchorPersist) {
+    const anchorComp: Record<string, unknown> = {};
+    if (n.anchor) {
+      anchorComp['planeType'] =
+        n.anchor === 'vertical' || n.anchor === 'wall' ? 'VERTICAL' : 'HORIZONTAL';
+      anchorComp['semanticType'] = n.anchor.toUpperCase();
+    }
+    if (n.anchorPersist) {
+      anchorComp['persist'] = n.anchorPersist.persist;
+      if (n.anchorPersist.id) anchorComp['id'] = n.anchorPersist.id;
+    }
+    comp['anchor'] = anchorComp;
   }
   if (n.physics) comp['rigidbody'] = {type: n.physics};
   if (n.orbit) comp['orbit'] = {...n.orbit};
@@ -611,6 +676,7 @@ export function buildXRSceneCoreExtension(
       direction: n.explode.direction ? [...n.explode.direction] : null,
     };
   }
+  if (n.navigable) comp['navigable'] = {mode: n.navigable};
   return comp;
 }
 
@@ -643,6 +709,10 @@ export function flattenXRTraitsForUsd(
     put('follow', {...n.follow, mode: undefined});
   }
   if (n.anchor) out['anchor'] = n.anchor;
+  if (n.anchorPersist) {
+    out['anchorPersist'] = n.anchorPersist.persist;
+    if (n.anchorPersist.id) out['anchorId'] = n.anchorPersist.id;
+  }
   if (n.physics) out['physics'] = n.physics;
   if (n.orbit) put('orbit', n.orbit);
   if (n.handles) {
@@ -668,6 +738,7 @@ export function flattenXRTraitsForUsd(
   if (n.snapSocket) put('snapSocket', n.snapSocket);
   if (n.gaze) put('gaze', n.gaze);
   if (n.explode) put('explode', n.explode);
+  if (n.navigable) out['navigable'] = n.navigable;
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
   return out;
 }
@@ -684,7 +755,11 @@ export function upgradeGltfNodeXR(
 ): void {
   const normalized = normalizeXRTraits(rawXR);
   if (!normalized) return;
-  node.extras = {...node.extras, xr: {...node.extras?.xr, ...normalized}};
+  const mergedXR: Record<string, unknown> = {...node.extras?.xr, ...normalized};
+  if (normalized.anchor === undefined && typeof mergedXR['anchor'] === 'object') {
+    delete mergedXR['anchor'];
+  }
+  node.extras = {...node.extras, xr: mergedXR};
   node.extensions = {
     ...node.extensions,
     MOZ_hubs_components: buildHubsExtension(normalized),

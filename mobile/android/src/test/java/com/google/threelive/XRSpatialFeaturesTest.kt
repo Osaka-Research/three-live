@@ -21,6 +21,7 @@ import java.nio.ByteOrder
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -433,6 +434,99 @@ class XRSpatialFeaturesTest {
     assertEquals(0.4f, b.session.nodeTransform(1)!!.translation[0], 1e-3f)
     f.dispose()
     assertTrue(r.meshes.isEmpty())
+  }
+
+  @Test
+  fun persistentAnchorsAndSpatialLocomotion() {
+    val sceneJson =
+      """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0,1,2]}],
+      "nodes":[
+        {"name":"Lamp","mesh":0,"translation":[0,0,-2],"extras":{"xr":{"grab":true,"anchor":{"target":"floor","id":"desk-lamp","persist":true}}}},
+        {"name":"Platform","mesh":1,"translation":[0,0.25,-2.5],"scale":[3,0.5,3],"extras":{"xr":{"navigable":true}}},
+        {"name":"Lava","mesh":1,"translation":[3,0.25,-2.5],"scale":[2,0.5,2],"extras":{"xr":{"navigable":"blocked"}}}
+      ],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]},{"primitives":[{"attributes":{"POSITION":0}}]}],
+      "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-0.5,-0.5,-0.5],"max":[0.5,0.5,0.5]}]}"""
+
+    val store = HashMap<String, String>()
+    val r1 = FakeRenderer()
+    val b1 = ThreeLiveRuntimeBinding(r1, glbOf(sceneJson))
+    val f1 = XRSpatialFeatures(b1, r1)
+    f1.persistentAnchorsNamespace = "studio-a"
+    f1.anchorStoreGet = { store[it] }
+    f1.anchorStoreSet = { k, v -> if (v == null) store.remove(k) else store[k] = v }
+
+    // Legacy string anchor remains intact alongside object anchorPersist + navigable.
+    val parsedTraits = XRLiveSceneCoreHelper.extractNodeTraits(glbOf(sceneJson))
+    val lampTraits = parsedTraits.first { it.nodeIndex == 0 }
+    assertEquals("floor", lampTraits.anchor)
+    assertEquals("desk-lamp", lampTraits.anchorPersist?.id)
+    assertEquals("walkable", parsedTraits.first { it.nodeIndex == 1 }.navigable)
+    assertEquals("blocked", parsedTraits.first { it.nodeIndex == 2 }.navigable)
+    assertNull(XRLiveSceneCoreHelper.safeAnchorId("__proto__"))
+    assertNull(PersistentAnchors.sanitizePose(doubleArrayOf(Double.NaN, 0.0, 0.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0), doubleArrayOf(1.0, 1.0, 1.0)))
+
+    b1.session.setNodeTransform(0, floatArrayOf(1.25f, 0.8f, -1.5f), floatArrayOf(0f, 0f, 0f, 1f), floatArrayOf(1.3f, 1.3f, 1.3f))
+    assertEquals(1, f1.savePersistedAnchors())
+    val hashToken = f1.exportAnchorState()
+    assertTrue(hashToken.isNotEmpty())
+    f1.dispose()
+
+    // Fresh session restores from storage and from #xr-state= URL hash.
+    val r2 = FakeRenderer()
+    val b2 = ThreeLiveRuntimeBinding(r2, glbOf(sceneJson))
+    val f2 = XRSpatialFeatures(b2, r2)
+    val events = ArrayList<String>()
+    f2.listener =
+      object : XRSpatialFeatures.Listener {
+        override fun onAnchorsRestored(count: Int, source: String) {
+          events.add("restored:$count:$source")
+        }
+
+        override fun onTeleport(from: DoubleArray, to: DoubleArray, yawDeg: Double) {
+          events.add("teleport:${Math.round(to[1] * 100) / 100.0}:$yawDeg")
+        }
+      }
+    f2.persistentAnchorsNamespace = "studio-a"
+    f2.anchorStoreGet = { store[it] }
+    f2.anchorStoreSet = { k, v -> if (v == null) store.remove(k) else store[k] = v }
+    assertEquals(1, f2.restorePersistedAnchors())
+    assertEquals(1.25f, b2.session.nodeTransform(0)!!.translation[0], 1e-3f)
+    assertEquals(1.3f, b2.session.nodeTransform(0)!!.scale[0], 1e-3f)
+    assertTrue(events.contains("restored:1:storage"))
+
+    b2.session.setNodeTransform(0, floatArrayOf(0f, 0f, 0f), null, null)
+    assertEquals(1, f2.restorePersistedAnchors("#tab=xr&xr-state=$hashToken"))
+    assertEquals(1.25f, b2.session.nodeTransform(0)!!.translation[0], 1e-3f)
+    assertTrue(events.contains("restored:1:url-hash"))
+
+    // Spatial locomotion: walkable platform landing, blocked surface rejection, snap-turn hysteresis.
+    f2.locomotionEnabled = true
+    val validArc = f2.aimTeleport(doubleArrayOf(0.0, 1.6, 0.0), doubleArrayOf(0.0, -0.25, -1.0))
+    assertTrue(validArc.valid)
+    assertEquals(1, validArc.hitNodeIndex)
+    assertEquals(0.5, validArc.point[1], 0.05)
+    assertTrue(f2.commitTeleport())
+    assertEquals(0.5, f2.rigOffset[1], 0.05)
+    assertTrue(f2.comfortVignetteIntensity > 0.9)
+    assertTrue(events.contains("teleport:0.5:0.0"))
+
+    val blockedArc = f2.aimTeleport(doubleArrayOf(3.0, 1.6, 0.0), doubleArrayOf(0.0, -0.35, -1.0))
+    assertTrue(!blockedArc.valid)
+    assertTrue(!f2.commitTeleport())
+
+    assertEquals(-30.0, f2.applySnapTurnAxis(0.8), 1e-5)
+    assertEquals(0.0, f2.applySnapTurnAxis(0.5), 1e-5)
+    assertEquals(0.0, f2.applySnapTurnAxis(0.1), 1e-5)
+    assertEquals(30.0, f2.applySnapTurnAxis(-0.8), 1e-5)
+
+    repeat(2) { r2.listener!!.onFrame(0.08, IDENTITY) }
+    assertEquals(0.0, f2.comfortVignetteIntensity, 1e-5)
+
+    f2.clearPersistedAnchors()
+    assertTrue(store.isEmpty())
+    f2.dispose()
+    assertTrue(r2.meshes.isEmpty())
   }
 
   private class Mesh(var positions: FloatArray, var indices: IntArray)

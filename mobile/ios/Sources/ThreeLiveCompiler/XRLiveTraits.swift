@@ -518,6 +518,17 @@ public struct XRLiveExplode: Codable, Sendable, Equatable {
   }
 }
 
+/// Normalized `anchor` persistence metadata (`persistent-anchors`).
+public struct XRLiveAnchorPersist: Codable, Sendable, Equatable {
+  public var id: String?
+  public var persist: Bool
+
+  public init(id: String? = nil, persist: Bool = true) {
+    self.id = XRLiveTraitParser.safeAnchorId(id)
+    self.persist = persist
+  }
+}
+
 /// Canonical, fully-normalized trait set for one glTF node (`NormalizedXRTraits` in TS).
 public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   /// `"1-hand"` or `"2-hand"`.
@@ -547,6 +558,9 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var snapSocket: XRLiveSnapSocket?
   public var gaze: XRLiveGaze?
   public var explode: XRLiveExplode?
+  public var anchorPersist: XRLiveAnchorPersist?
+  /// `"walkable"` or `"blocked"` when authored via `navigable`.
+  public var navigable: String?
   /// `true` when `pointerEvents: "none"` (node is not pickable).
   public var pointerEventsNone: Bool
 
@@ -560,7 +574,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && anchor == nil && physics == nil && orbit == nil && handles == nil && particles == nil
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
       && audio == nil && dimensions == nil && snapTo == nil && snapSocket == nil
-      && gaze == nil && explode == nil
+      && gaze == nil && explode == nil && anchorPersist == nil && navigable == nil
       && !pointerEventsNone
   }
 }
@@ -570,7 +584,10 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
 /// Parses authored or compiled `extras.xr` dictionaries into canonical traits, applying the
 /// same clamps as `normalizeXRTraits()` in `xr-trait-schema.ts`.
 public enum XRLiveTraitParser {
-  private static let anchors: Set<String> = ["horizontal", "vertical", "floor", "wall", "table"]
+  private static let anchors: Set<String> = [
+    "horizontal", "vertical", "floor", "wall", "ceiling", "table",
+  ]
+  private static let forbiddenAnchorIds: Set<String> = ["__proto__", "constructor", "prototype"]
   private static let billboards: Set<String> = ["capsule", "cylindrical", "spherical"]
 
   /// Parses an object-valued `follow` trait. Returns `nil` for strings, missing values and
@@ -773,6 +790,35 @@ public enum XRLiveTraitParser {
     )
   }
 
+  /// Sanitizes an `anchor.id` or persistence key, rejecting prototype-pollution keys and control chars.
+  public static func safeAnchorId(_ raw: Any?) -> String? {
+    guard let s0 = XRJSON.string(raw)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !s0.isEmpty
+    else { return nil }
+    let s = s0.count > 128 ? String(s0.prefix(128)) : s0
+    if forbiddenAnchorIds.contains(s) { return nil }
+    for scalar in s.unicodeScalars {
+      if scalar.value <= 0x1F || scalar.value == 0x7F { return nil }
+    }
+    return s
+  }
+
+  /// Parses object-valued `anchor` persistence metadata.
+  public static func parseAnchorPersist(_ raw: Any?) -> XRLiveAnchorPersist? {
+    guard let r = XRJSON.object(raw) else { return nil }
+    if XRJSON.bool(r["persist"]) == false { return nil }
+    let id = safeAnchorId(r["id"])
+    if XRJSON.bool(r["persist"]) != true && id == nil { return nil }
+    return XRLiveAnchorPersist(id: id, persist: true)
+  }
+
+  /// Parses a `navigable` trait (`true | false | "walkable" | "blocked"`).
+  public static func parseNavigable(_ raw: Any?) -> String? {
+    if let b = XRJSON.bool(raw) { return b ? "walkable" : "blocked" }
+    if let s = XRJSON.string(raw), s == "walkable" || s == "blocked" { return s }
+    return nil
+  }
+
   /// Normalizes an authored or compiled `extras.xr` bag. Accepts legacy aliases
   /// (`grabbable`, `scalable`, `traits: ["grab", ...]`). Returns `nil` when no recognized
   /// trait is present or `raw` is not a dictionary.
@@ -822,7 +868,13 @@ public enum XRLiveTraitParser {
 
     if let anchor = XRJSON.string(r["anchor"]), anchors.contains(anchor) {
       out.anchor = anchor
+    } else if let anchorObj = XRJSON.object(r["anchor"]),
+      let target = XRJSON.string(anchorObj["target"]), anchors.contains(target)
+    {
+      out.anchor = target
     }
+    out.anchorPersist =
+      parseAnchorPersist(r["anchor"]) ?? parseAnchorPersist(r["anchorPersist"])
     if let physics = XRJSON.string(r["physics"]), physics == "dynamic" || physics == "static" {
       out.physics = physics
     }
@@ -840,6 +892,7 @@ public enum XRLiveTraitParser {
     out.snapSocket = parseSnapSocket(r["snapSocket"])
     out.gaze = parseGaze(r["gaze"])
     out.explode = parseExplode(r["explode"])
+    out.navigable = parseNavigable(r["navigable"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
 
     return out.isEmpty ? nil : out
@@ -862,9 +915,16 @@ public enum XRLiveTraitParser {
     }
     var r: [String: Any] = [:]
     for key in [
-      "grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "pointerEvents",
+      "grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "navigable",
+      "pointerEvents",
     ] {
       if let v = d[key] { r[key] = v }
+    }
+    if d["anchorPersist"] != nil || d["anchorId"] != nil {
+      var ap: [String: Any] = [:]
+      if let p = d["anchorPersist"] { ap["persist"] = p }
+      if let id = d["anchorId"] { ap["id"] = id }
+      r["anchorPersist"] = ap
     }
     if let s = gather("scale") { r["scale"] = s }
     if var f = gather("follow"), XRJSON.bool(f["lazy"]) == true {

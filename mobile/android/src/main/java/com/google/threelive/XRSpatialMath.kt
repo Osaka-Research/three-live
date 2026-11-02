@@ -362,6 +362,20 @@ object XRSpatialMath {
   internal fun dist3(a: DoubleArray, b: DoubleArray): Double = len3(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
   internal fun dot3(a: DoubleArray, b: DoubleArray): Double = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+  internal fun cross3(
+    a: DoubleArray,
+    b: DoubleArray,
+    out: DoubleArray = DoubleArray(3),
+  ): DoubleArray {
+    val cx = a[1] * b[2] - a[2] * b[1]
+    val cy = a[2] * b[0] - a[0] * b[2]
+    val cz = a[0] * b[1] - a[1] * b[0]
+    out[0] = cx
+    out[1] = cy
+    out[2] = cz
+    return out
+  }
 }
 
 /** Per-axis state of a critically damped spring (mutable, allocation-free stepping). */

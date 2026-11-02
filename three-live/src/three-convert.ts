@@ -60,7 +60,25 @@ export interface XRMeshTraits {
         faceUser?: boolean;
         snapOnStart?: boolean;
       };
-  anchor?: 'horizontal' | 'vertical' | 'floor' | 'wall' | 'table';
+  anchor?:
+    | 'horizontal'
+    | 'vertical'
+    | 'floor'
+    | 'wall'
+    | 'ceiling'
+    | 'table'
+    | {
+        target?:
+          | 'horizontal'
+          | 'vertical'
+          | 'floor'
+          | 'wall'
+          | 'ceiling'
+          | 'table'
+          | 'none';
+        id?: string;
+        persist?: boolean;
+      };
   physics?: 'dynamic' | 'static' | 'none';
   stereo?: 'sbs' | 'ou' | 'mono';
   audio?: string | {src: string; refDistance?: number; loop?: boolean};
@@ -146,6 +164,8 @@ export interface XRMeshTraits {
         layer?: number;
         leaderLine?: boolean;
       };
+  /** Marks a mesh as walkable or blocked for parabolic teleportation (`spatial-locomotion`). */
+  navigable?: boolean | 'walkable' | 'blocked';
   [key: string]: any;
 }
 

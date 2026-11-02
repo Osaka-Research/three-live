@@ -119,6 +119,12 @@ data class XRExplodeTrait(
   val leaderLine: Boolean = true,
 )
 
+/** Normalized `anchor` persistence metadata (`persistent-anchors`). */
+data class XRAnchorPersistTrait(
+  val id: String? = null,
+  val persist: Boolean = true,
+)
+
 /** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
   /** `head`, `hand-left` or `hand-right`. */
@@ -174,6 +180,9 @@ data class XRLiveNodeTraits(
   val snapSocket: XRSnapSocketTrait? = null,
   val gaze: XRGazeTrait? = null,
   val explode: XRExplodeTrait? = null,
+  val anchorPersist: XRAnchorPersistTrait? = null,
+  /** `"walkable"` or `"blocked"` when authored via `navigable`. */
+  val navigable: String? = null,
   /** `"none"` when the node must not receive pointer events. */
   val pointerEvents: String? = null,
 ) {
@@ -251,6 +260,8 @@ interface SceneCoreComponentApplier<EntityT> {
   fun onAttachGaze(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachExplode(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachNavigable(entity: EntityT, node: XRLiveNodeTraits) {}
 }
 
 /**
@@ -272,7 +283,8 @@ object XRLiveSceneCoreHelper {
   /** Maximum characters of a hold-to-ask prompt (mirrors `MAX_PROMPT_CHARS`). */
   const val MAX_PROMPT_CHARS = 4000
 
-  private val ANCHORS = setOf("horizontal", "vertical", "floor", "wall", "table")
+  private val ANCHORS = setOf("horizontal", "vertical", "floor", "wall", "ceiling", "table")
+  private val FORBIDDEN_ANCHOR_IDS = setOf("__proto__", "constructor", "prototype")
   private val BILLBOARDS = setOf("capsule", "cylindrical", "spherical")
   private val DIM_UNITS = setOf("m", "cm", "mm", "in", "ft-in", "auto")
   private val ALL_AXES = listOf("x", "y", "z")
@@ -372,7 +384,7 @@ object XRLiveSceneCoreHelper {
     if (trait.grabbable) {
       applier.onAttachMovable(entity, trait)
     }
-    if (!trait.anchor.isNullOrEmpty() && trait.anchor != "none") {
+    if (!trait.anchor.isNullOrEmpty() && trait.anchor != "none" || trait.anchorPersist != null) {
       applier.onAttachAnchor(entity, trait)
     }
     if (!trait.billboard.isNullOrEmpty() && trait.billboard != "false") {
@@ -395,6 +407,7 @@ object XRLiveSceneCoreHelper {
     if (trait.snapSocket != null) applier.onAttachSnapSocket(entity, trait)
     if (trait.gaze != null) applier.onAttachGaze(entity, trait)
     if (trait.explode != null) applier.onAttachExplode(entity, trait)
+    if (trait.navigable != null) applier.onAttachNavigable(entity, trait)
   }
 
   /**
@@ -710,6 +723,35 @@ object XRLiveSceneCoreHelper {
     )
   }
 
+  /** Sanitizes an `anchor.id` or persistence key. */
+  @JvmStatic
+  fun safeAnchorId(raw: Any?): String? {
+    val s = (raw as? String)?.trim()?.let { if (it.length > 128) it.substring(0, 128) else it } ?: return null
+    if (s.isEmpty() || s in FORBIDDEN_ANCHOR_IDS) return null
+    for (c in s) if (c.code <= 0x1F || c.code == 0x7F) return null
+    return s
+  }
+
+  /** Port of `parseAnchorPersist()`. */
+  @JvmStatic
+  fun parseAnchorPersist(raw: Any?): XRAnchorPersistTrait? {
+    val r = MiniJson.asMap(raw) ?: return null
+    if (r["persist"] == false) return null
+    val id = safeAnchorId(r["id"])
+    if (r["persist"] != true && id == null) return null
+    return XRAnchorPersistTrait(id = id, persist = true)
+  }
+
+  /** Port of `parseNavigable()`. */
+  @JvmStatic
+  fun parseNavigable(raw: Any?): String? {
+    if (raw == true || raw == "walkable") return "walkable"
+    if (raw == false || raw == "blocked") return "blocked"
+    val m = MiniJson.asMap(raw)?.get("mode")
+    if (m == "walkable" || m == "blocked") return m as String
+    return null
+  }
+
   /** JavaScript `Math.round` (half rounds toward +infinity). */
   private fun jsRound(v: Double): Double = Math.floor(v + 0.5)
 
@@ -799,15 +841,21 @@ object XRLiveSceneCoreHelper {
 
     // anchor
     val anchorRaw = xr["anchor"]
+    val anchorObj = MiniJson.asMap(anchorRaw)
     val scAnchor = MiniJson.asMap(sc["anchor"])
     val anchor =
       when {
         anchorRaw is String && anchorRaw in ANCHORS -> anchorRaw
+        anchorObj != null -> (anchorObj["target"] as? String)?.takeIf { it in ANCHORS }
         scAnchor != null ->
           (scAnchor["semanticType"] as? String)?.lowercase()?.takeIf { it in ANCHORS }
             ?: (scAnchor["planeType"] as? String)?.lowercase()?.takeIf { it in ANCHORS }
         else -> null
       }
+    val anchorPersist =
+      parseAnchorPersist(anchorRaw)
+        ?: parseAnchorPersist(xr["anchorPersist"])
+        ?: parseAnchorPersist(scAnchor)
 
     // physics
     val ph = xr["physics"] ?: MiniJson.asMap(sc["rigidbody"])?.get("type")
@@ -849,6 +897,8 @@ object XRLiveSceneCoreHelper {
       snapSocket = parseSnapSocket(xr["snapSocket"] ?: sc["snapSocket"]),
       gaze = parseGaze(xr["gaze"] ?: sc["gaze"]),
       explode = parseExplode(xr["explode"] ?: sc["explode"]),
+      anchorPersist = anchorPersist,
+      navigable = parseNavigable(xr["navigable"] ?: sc["navigable"]),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,
     )
   }

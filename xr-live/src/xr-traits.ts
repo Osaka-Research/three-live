@@ -568,17 +568,21 @@ export class XRTraitSystem {
       }
 
       // Plane surface anchoring ('floor', 'table', 'horizontal')
-      if (traits.anchor && !traits.physics) {
+      const anchorTarget =
+        typeof traits.anchor === 'string'
+          ? traits.anchor
+          : (traits.anchor as {target?: string} | null)?.target;
+      if (anchorTarget && !traits.physics) {
         const bottomOffset = computeMeshBottomOffset(mesh, scl);
-        if (traits.anchor === 'floor') {
+        if (anchorTarget === 'floor') {
           const restY = floorY + bottomOffset;
           if (Math.abs(pos[1] - restY) > 1e-3) {
             pos[1] = restY;
             modified = true;
           }
         } else if (
-          traits.anchor === 'table' ||
-          traits.anchor === 'horizontal'
+          anchorTarget === 'table' ||
+          anchorTarget === 'horizontal'
         ) {
           const basePlaneY =
             Math.abs(pos[1] - bottomOffset - tableY) < 0.45 ? tableY : floorY;
