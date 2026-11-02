@@ -28,10 +28,10 @@ limitations under the License.
 
 LLMs excel at generating Three.js code. Three-Live compiles it on-device in a sandbox and renders natively with Google Filament and Scene Viewer on Android, Apple RealityKit and Quick Look on iOS, and WebGL2 and WebXR on Web.
 
-> **Live Interactive Playgrounds (No Build Required):**
-> - **[Playground Hub](https://google.github.io/three-live/)** — Launch either studio in your desktop or mobile browser
-> - **[`<three-live>` 3D & AR Studio](https://google.github.io/three-live/three/)** — Procedural Three.js editor, PBR inspector, and 1-tap USDZ / GLB / AR export (`< 54 KB gz`)
-> - **[`<xr-live>` Spatial Computing Studio](https://google.github.io/three-live/xr/)** — 6DoF WebXR, spatial HTML `<div slot="spatial">` cards, depth physics, hand tracking, and 14 spatial plugins (`< 66 KB gz` core / `< 133 KB gz` full)
+> **Live interactive playgrounds (no build required):**
+> * **[Playground hub](https://google.github.io/three-live/)** — Launch either studio in your desktop, mobile, or headset browser.
+> * **[`<three-live>` 3D and AR studio](https://google.github.io/three-live/three/)** — Procedural Three.js editor, PBR inspector, and 1-tap USDZ, GLB, and AR export (`< 54 KB gz`).
+> * **[`<xr-live>` spatial computing studio](https://google.github.io/three-live/xr/)** — 6DoF WebXR, spatial HTML `<div slot="spatial">` cards, depth physics, hand tracking, and 14 spatial plugins (`< 66 KB gz` core, `< 133 KB gz` full).
 
 ---
 
@@ -56,10 +56,10 @@ Three-Live solves this by compiling the same Three.js script on-device and runni
 ### Small core bundles with optional plugins for advanced features
 
 Three-Live keeps its web footprint small so you can drop 3D or XR into a page without shipping unused code:
-* **Compact core:** The 3D viewer (`three-live-viewer.min.js`) is `< 25.5 KB gz` (`< 54 KB gz` with the live Three.js compiler), and the WebXR viewer (`xr-live-viewer.min.js`) is `< 45 KB gz` (`< 65 KB gz` with the live Three.js compiler).
-* **Optional spatial plugins (`~2–4 KB gz` each):** Each advanced spatial capability in `<xr-live>` is a standalone, zero-dependency plugin (`< 23.5 KB gz` for all seven combined). You can import and register only the plugins your app needs, or load the full suite. Every plugin also has a matching native implementation in the Android and iOS SDKs.
+* **Compact core:** The 3D viewer (`three-live-viewer.min.js`) is `< 25.5 KB gz` (`< 54 KB gz` with the live Three.js compiler), and the WebXR viewer (`xr-live-viewer.min.js`) is `< 46 KB gz` (`< 66 KB gz` with the live Three.js compiler).
+* **Optional spatial plugins (`~2–5 KB gz` each):** Each advanced spatial capability in `<xr-live>` is a standalone, zero-dependency plugin (`< 52 KB gz` for all 14 combined). You can import and register only the plugins your app needs, or load the full suite. Every plugin also has a matching native implementation in the Android and iOS SDKs.
 
-The following table lists the seven modular spatial plugins:
+The following table lists the 14 modular spatial plugins:
 
 | Plugin | Attribute or `userData.xr` trait | What it adds across WebXR, Android Filament, and iOS RealityKit |
 | :--- | :--- | :--- |
@@ -70,6 +70,13 @@ The following table lists the seven modular spatial plugins:
 | **`spatial-paint`** | `spatial-paint="#38bdf8"` | Pinch-to-paint 3D Catmull-Rom spline strokes extruded as twist-free parallel-transport tubes with `undo()` and `clear()`. |
 | **`depth-particles`** | `xr.particles` | GPU-friendly `rain`, `snow`, `sparks`, and `confetti` emitters (up to 2,000 particles per emitter) that collide with floors and real-world depth maps. |
 | **`splat-loader`** | `xr.splatUrl` | Streams `.splat` and Niantic `.spz` (v2 and v3) 3D Gaussian Splats (up to 1,000,000 splats) with per-frame 16-bit counting sort. |
+| **`spatial-measure`** | `spatial-measure="bounds\|tape\|all"`, `xr.dimensions` | Live `W × H × D` bounding-box dimension callout bars with 3D vector-glyph labels (`m`, `cm`, `mm`, `in`, `ft-in`) and point-to-point AR tape measure. |
+| **`magnetic-snap`** | `magnetic-snap`, `xr.snapTo`, `xr.snapSocket` | Magnetic socket snapping with `1.25×` breakaway hysteresis and pulsing preview rings, plus Cartesian grid, yaw angle, and surface snapping. |
+| **`gaze-dwell`** | `gaze-dwell`, `xr.gaze` | Hands-free eye and head gaze raycasting with EMA smoothing, `1.5°` micro-saccade grace cone, and radial dwell progress ring (`select` or `ask`). |
+| **`exploded-view`** | `explode="0..1"`, `section-plane`, `xr.explode` | Multi-part CAD assembly explosion with staggered layers, dashed leader lines, two-hand spread gesture, and GPU cross-section slicer. |
+| **`persistent-anchors`** | `persistent-anchors`, `persist-url-hash`, `xr.anchor.persist` | Three-tier pose persistence across reloads and sessions via shareable `#xr-state=<base64url>` URLs, `localStorage`, and native anchors. |
+| **`spatial-locomotion`** | `locomotion="teleport snap-turn"`, `xr.navigable` | Ballistic parabolic teleport arc with walkable and blocked surface validation, thumbstick snap-turn or smooth glide, and a `120ms` FOV comfort vignette. |
+| **`shared-room`** | `shared-room="<id>\|wss://..."`, `xr.sync` | Zero-dependency multi-user co-presence (`20 Hz` quantized avatars and laser rays, optimistic grab locks with deterministic tie-breaking, synced explode and paint). |
 
 ### Safe execution for live, AI-generated Three.js
 
@@ -83,12 +90,12 @@ The following table compares `<three-live>` with `<xr-live>`:
 
 | Capability | `<three-live>` | `<xr-live>` (extends `<three-live>`) |
 | :---------------------- | :---------------------- | :----------------------- |
-| **Primary Use Case** | 3D product viewers, procedural scenes, 1-tap AR handoff | Interactive 6DoF WebXR, spatial UI cards, depth/physics, hand tracking |
-| **Procedural `<script type="text/three">`** | Yes (sandboxed Web Worker JIT compiler) | Yes (inherits full `three-author` JIT compiler + `userData.xrTraits`) |
-| **Mobile AR / XR** | Universal AR handoff (Quick Look, Scene Viewer, WebXR) | Native Android XR (`SceneCore`), iOS/visionOS (`RealityKit`), & WebXR |
-| **Spatial Interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`) + 25-joint hands + `KHR_interactivity` |
-| **Spatial HTML UI** | 2D screen-space overlay hotspots (`slot="hotspot-*"`) | True 3D textured & raycastable HTML cards (`<div slot="spatial">`) |
-| **Default Bundle Budget** | **`< 54 KB gz`** (`three-live.min.js`) | **`< 66 KB gz`** (`xr-live.min.js`) / **`< 133 KB gz`** (`xr-live-full.min.js`) |
+| **Primary use case** | 3D product viewers, procedural scenes, and 1-tap AR handoff | Interactive 6DoF WebXR, native mobile XR, spatial UI cards, depth physics, and hand tracking |
+| **Procedural `<script type="text/three">`** | Yes (sandboxed Web Worker or `<iframe>` JIT compiler) | Yes (inherits `three-author` JIT compiler plus `userData.xr` traits) |
+| **Mobile AR and XR** | Universal AR handoff (`AR Quick Look`, `Scene Viewer`, WebXR) | Native Android (`Filament` and `SceneCore`), native iOS and visionOS (`RealityKit`), and WebXR |
+| **Spatial interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`), 14 spatial plugins, 25-joint hands, and `KHR_interactivity` |
+| **Spatial HTML UI** | 2D screen-space overlay hotspots (`slot="hotspot-*"`) | 3D textured and raycastable HTML cards (`<div slot="spatial">`) |
+| **Default bundle budget** | **`< 25.5 KB gz`** (viewer), **`< 54 KB gz`** (`three-live.min.js`) | **`< 46 KB gz`** (viewer), **`< 66 KB gz`** (`xr-live.min.js`), **`< 133 KB gz`** (`xr-live-full.min.js`) |
 
 ---
 
@@ -137,15 +144,15 @@ The following table compares `<three-live>` with `<xr-live>`:
 
 ### Register optional plugins for advanced features
 
-If you use a bundler and only need specific spatial plugins on top of the `< 65 KB gz` `<xr-live>` core, import and register just those plugins:
+If you use a bundler and only need specific spatial plugins on top of the `< 66 KB gz` `<xr-live>` core, import and register just those plugins:
 
 ```ts
 import { XRLiveElement } from 'three-live/xr-live';
-import { manipulationHandlesPlugin } from 'xr-live/src/plugins/manipulation-handles';
-import { headFollowPlugin } from 'xr-live/src/plugins/head-follow';
+import { spatialMeasurePlugin } from 'xr-live/src/plugins/spatial-measure';
+import { magneticSnapPlugin } from 'xr-live/src/plugins/magnetic-snap';
 
-XRLiveElement.registerPlugin(manipulationHandlesPlugin);
-XRLiveElement.registerPlugin(headFollowPlugin);
+XRLiveElement.registerPlugin(spatialMeasurePlugin);
+XRLiveElement.registerPlugin(magneticSnapPlugin);
 ```
 
 ### Run natively on Android with Google Filament and Jetpack XR SceneCore
@@ -160,7 +167,7 @@ val holder = FilamentHelper.loadModelZeroCopy(script) { buffer ->
     assetLoader.createAssetFromBinary(buffer)
 }
 
-// Drive live KHR_interactivity graphs, head-follow springs, and orbits on each frame
+// Drive live KHR_interactivity graphs, head-follow springs, orbits, and spatial features on each frame
 val runtime = XRLiveRuntimeSession.fromGlb(holder.byteBuffer)
 runtime.step(dtSeconds = 1.0 / 60.0)
 
@@ -200,57 +207,9 @@ $ three-live-cli convert scene.js -o output.glb
 
 Three-Live is in **Developer Preview (Alpha)**. It is an experimental open-source library exploring AI-driven procedural 3D and spatial computing across Web, Android, and Apple platforms.
 
--   **Web (CDN / Prebuilt Release / Source):**
-    -   **Hosted ES Module (`<script>`):**
-        ```html
-        <script type="module" src="https://google.github.io/three-live/dist/three-live.min.js"></script>
-        ```
-    -   **Prebuilt Bundle Archive:** Download `three-live-web-dist.zip` from **[GitHub Releases](https://github.com/google/three-live/releases)**.
-    -   **From Source:** `git clone https://github.com/google/three-live.git && cd three-live && npm install && npm run build` *(public `npm` registry publishing is planned for a future release)*.
--   **iOS, macOS & visionOS (Swift Package Manager):**
-    ```swift
-    .package(url: "https://github.com/google/three-live.git", from: "1.0.0")
-    ```
-    *(Automatically resolves the prebuilt, checksum-pinned `ThreeLiveCompiler.xcframework.zip` from GitHub Releases—no local Rust or Node.js toolchain required).*
--   **Android (Prebuilt Release AAR / Source):**
-    -   **Prebuilt AAR:** Download `three-live-compiler-release.aar` (includes `arm64-v8a`, `armeabi-v7a`, and `x86_64` JNI `.so` libraries) from **[GitHub Releases](https://github.com/google/three-live/releases)** into `app/libs/` and add `implementation(files("libs/three-live-compiler-release.aar"))`.
-    -   **From Source:** Run `make android` (or `bash scripts/build_android_aar.sh`).
--   **Rust CLI (`three-live-cli`) & Crate:**
-    -   **Prebuilt Binaries:** Download standalone binaries for macOS (`arm64` / `x86_64`), Linux (`x86_64` / `aarch64`), and Windows (`x86_64.exe`) from **[GitHub Releases](https://github.com/google/three-live/releases)**.
-    -   **From Source:** Run `make rust` (`npm run build && cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli`).
-
-### JS Bundles & Enforced Size Budgets (`es2020`, `SPDX-License-Identifier: Apache-2.0`)
-
-Every bundle targets `es2020`, strips full license blocks
-(`--legal-comments=none`), and emits a single 4-line SPDX header:
-
-| Family | Bundle File | Enforced Budget (`.min.js.gz`) | Included Capabilities |
-| :--------------- | :-------------------------------- | :------------: | :-------------------------- |
-| **`three-live`** | **`three-live-viewer.min.js`** | **`< 25.5 KB gz`** | Lean `.glb`/`.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, AR packager. |
-|  | **`three-live.min.js`** | **`< 54 KB gz`** | Standard `<three-live>` + **`three-author`** (`<script type="text/three">`, `KHR_interactivity` compiler) + AR packager. |
-|  | **`three-live-extras.min.js`** | **`< 17 KB gz`** | Add-on plugin: `KHR_interactivity` VM, PBR Next extensions, HDRI/SH irradiance, dynamic contact shadows, 3D hotspots. |
-|  | **`three-live-animation.min.js`** | **`< 6.5 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading. |
-|  | **`three-live-full.min.js`** | **`< 69 KB gz`** | All-in-one 3D bundle (`three-live` + `extras` + `animation`, all 9 plugins auto-registered). |
-| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 46 KB gz`** | Lean `.glb`/`.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, mobile AR bridge. |
-|  | **`xr-live.min.js`** | **`< 66 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ/GLB compiler. |
-|  | **`xr-live-extras.min.js`** | **`< 10 KB gz`** | Add-on plugin: Deep XR (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, WebMCP tools. |
-|  | **`xr-live-full.min.js`** | **`< 133 KB gz`** | All-in-one 3D & XR bundle (`three-live-full` + `xr-live` + `xr-live-extras` + all 14 spatial plugins). |
-|  | **`xr-live-plugins.min.js`** | **`< 52 KB gz`** | Add-on plugin: All 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`). |
-
---------------------------------------------------------------------------------
-
-## Documentation Guide (Humans & LLMs)
-
-| Guide | Audience | Contents |
-| :--------------------------------------------- | :------- | :------- |
-| **[`docs/three-live.md`](docs/three-live.md)** | Web & Mobile Devs | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JS API, DOM events, `KHR_interactivity` authoring, 3D hotspots, PBR Next & HDRI, animations, and sandboxing. |
-| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial & XR Devs | Complete `<xr-live>` & spatial plugins guide: canonical `userData.xr` traits, all 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`), `<div slot="spatial">` cards, depth/physics, 25-joint hands, WebMCP, and native Android/iOS bridges. |
-| **[`docs/cookbook.md`](docs/cookbook.md)** | All Developers | Copy-pasteable recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, CAD exploded views & measurements, magnetic snapping & persistent anchors, and multi-user co-presence. |
-| **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs & Agents | Copy-paste system prompt snippet, canonical `userData.xr` & `userData.interactivity` schemas, strict `THREE.*` allowlist, scene quotas, and few-shot templates. |
-| **[`AGENTS.md`](AGENTS.md)** | Coding Agents | Repository rules, 3-target cross-platform parity contract, build/test commands, bundle budgets, and security invariants. |
-| **[`skills/`](skills/)** | Agent Skills | Progressive-disclosure `SKILL.md` skills for authoring scenes ([`three-live-authoring`](skills/three-live-authoring/SKILL.md)) and developing plugins ([`xr-live-plugin-dev`](skills/xr-live-plugin-dev/SKILL.md)). |
-| **[`llms.txt`](llms.txt) / [`llms-full.txt`](llms-full.txt)** | LLM Context Feeds | Single-file concise index (`llms.txt`) and complete concatenated reference (`llms-full.txt`) for LLM context windows. |
-| **[`CHANGELOG.md`](CHANGELOG.md)** | All Users | Release notes and architectural summary for the Developer Preview release. |
+* **Prebuilt distributions:** Standalone web JavaScript bundles (`three-live-web-dist.zip`), the Apple XCFramework (`ThreeLiveCompiler.xcframework.zip`), the Android release AAR (`three-live-compiler-release.aar`), and native `three-live-cli` binaries for macOS, Linux, and Windows are published on **[GitHub Releases](https://github.com/google/three-live/releases)**.
+* **Package registries:** Direct consumption through **Swift Package Manager**, **GitHub Releases**, and the **GitHub Pages CDN** works today (see [Install packages and bundles](#install-packages-and-bundles)). Publishing to public package registries (`npm`, `Crates.io`, and Maven) is planned for a future release.
+* **Release notes:** See [`CHANGELOG.md`](CHANGELOG.md) for release history and architectural notes.
 
 ---
 
@@ -288,11 +247,11 @@ Every bundle targets `es2020`, strips full license blocks (`--legal-comments=non
 |  | **`three-live-extras.min.js`** | **`< 17 KB gz`** | Add-on plugin: `KHR_interactivity` VM, PBR Next extensions, HDRI and SH irradiance, dynamic contact shadows, and 3D hotspots. |
 |  | **`three-live-animation.min.js`** | **`< 6.5 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, and animation cross-fading. |
 |  | **`three-live-full.min.js`** | **`< 69 KB gz`** | All-in-one 3D bundle (`three-live` + `extras` + `animation`, all nine plugins auto-registered). |
-| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 45 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
-|  | **`xr-live.min.js`** | **`< 65 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ and GLB compiler. |
-|  | **`xr-live-extras.min.js`** | **`< 9.5 KB gz`** | Add-on plugin: Deep XR (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
-|  | **`xr-live-plugins.min.js`** | **`< 23.5 KB gz`** | Add-on plugin bundle registering all seven spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`). |
-|  | **`xr-live-full.min.js`** | **`< 104 KB gz`** | All-in-one 3D and XR bundle (`three-live-full` + `xr-live` + `xr-live-extras` + all seven spatial plugins). |
+| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 46 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
+|  | **`xr-live.min.js`** | **`< 66 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ and GLB compiler. |
+|  | **`xr-live-extras.min.js`** | **`< 10 KB gz`** | Add-on plugin: Deep XR (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
+|  | **`xr-live-plugins.min.js`** | **`< 52 KB gz`** | Add-on plugin bundle registering all 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`). |
+|  | **`xr-live-full.min.js`** | **`< 133 KB gz`** | All-in-one 3D and XR bundle (`three-live-full` + `xr-live` + `xr-live-extras` + all 14 spatial plugins). |
 
 ---
 
@@ -303,8 +262,8 @@ The following guides cover the web components, spatial plugins, native SDKs, and
 | Guide | Audience | Contents |
 | :--------------------------------------------- | :------- | :------- |
 | **[`docs/three-live.md`](docs/three-live.md)** | Web and mobile developers | Complete `<three-live>` reference: attributes, `<model-viewer>` drop-in JavaScript API, DOM events, `KHR_interactivity` authoring, 3D hotspots, PBR Next and HDRI, animations, and sandboxing. |
-| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial and XR developers | Complete `<xr-live>` and spatial plugins guide: why native bridges matter, optional plugin registration, canonical `userData.xr` traits, all seven spatial plugins, `<div slot="spatial">` cards, depth and physics, 25-joint hands, WebMCP, and native Android and iOS runtimes. |
-| **[`docs/cookbook.md`](docs/cookbook.md)** | All developers | Copy-pasteable recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, and native mobile sessions. |
+| **[`docs/xr-live.md`](docs/xr-live.md)** | Spatial and XR developers | Complete `<xr-live>` and spatial plugins guide: why native bridges matter, optional plugin registration, canonical `userData.xr` traits, all 14 spatial plugins, `<div slot="spatial">` cards, depth and physics, 25-joint hands, WebMCP, and native Android and iOS runtimes. |
+| **[`docs/cookbook.md`](docs/cookbook.md)** | All developers | Copy-pasteable recipes for e-commerce configurators, precision manipulation handles, Gemini Live spatial assistants, 3D spatial paint, CAD exploded views and measurements, magnetic snapping and persistent anchors, and multi-user co-presence. |
 | **[`docs/llm-guide.md`](docs/llm-guide.md)** | LLMs and agents | Copy-paste system prompt snippet, canonical `userData.xr` and `userData.interactivity` schemas, strict `THREE.*` allowlist, scene quotas, and few-shot templates. |
 | **[`AGENTS.md`](AGENTS.md)** | Coding agents | Repository rules, three-target cross-platform parity contract, build and test commands, bundle budgets, and security invariants. |
 | **[`skills/`](skills/)** | Agent skills | Progressive-disclosure `SKILL.md` skills for authoring scenes ([`three-live-authoring`](skills/three-live-authoring/SKILL.md)) and developing plugins ([`xr-live-plugin-dev`](skills/xr-live-plugin-dev/SKILL.md)). |
@@ -336,7 +295,7 @@ The repository is organized into the following directories:
 three-live/
 ├── Makefile               # Unified web, Rust, iOS (Xcode), and Android Studio build targets
 ├── three-live/            # Core 3D and AR engine and <three-live> Web Component
-├── xr-live/               # Spatial computing and Deep XR SDK, <xr-live>, and seven spatial plugins
+├── xr-live/               # Spatial computing and Deep XR SDK, <xr-live>, and 14 spatial plugins
 ├── mobile/                # Native Android (Kotlin, Filament, SceneCore) and iOS (Swift, RealityKit) SDKs
 ├── compiler/              # In-process Rust procedural Three.js to GLB and USDZ compiler and CLI
 ├── docs/                  # Reference documentation for <three-live>, <xr-live>, and LLMs
