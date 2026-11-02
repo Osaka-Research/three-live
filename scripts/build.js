@@ -772,8 +772,8 @@ function reportSizes() {
     {name: 'xr-live-viewer.min.js', budgetKb: '45'},
     {name: 'xr-live.min.js', budgetKb: '65'},
     {name: 'xr-live-extras.min.js', budgetKb: '9.5'},
-    {name: 'xr-live-full.min.js', budgetKb: '112'},
-    {name: 'xr-live-plugins.min.js', budgetKb: '33'},
+    {name: 'xr-live-full.min.js', budgetKb: '120'},
+    {name: 'xr-live-plugins.min.js', budgetKb: '41'},
   ];
   const failures = [];
   for (const f of files) {

@@ -318,3 +318,5 @@ public enum MagneticSnap {
     return XRGeneratedGeometry(positions: positions, normals: normals, indices: indices)
   }
 }
+
+// MARK: - Gaze Dwell

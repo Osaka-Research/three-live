@@ -358,6 +358,83 @@ class XRSpatialFeaturesTest {
     f.dispose()
   }
 
+  @Test
+  fun gazeDwellAndExplodedViewBehaveIdenticallyToWeb() {
+    assertEquals(0.0, GazeDwell.computeDwellProgress(140.0, 1000.0, 150.0), 1e-6)
+    assertEquals(0.5, GazeDwell.computeDwellProgress(575.0, 1000.0, 150.0), 1e-6)
+    assertEquals(1.0, GazeDwell.computeDwellProgress(1200.0, 1000.0, 150.0), 1e-6)
+
+    val r = FakeRenderer()
+    val glb =
+      glbOf(
+        """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0,1]}],
+          "nodes":[
+            {"name":"LeftBtn","mesh":0,"translation":[-0.4,1.6,-1.5],"extras":{"xr":{"gaze":{"dwellMs":400,"action":"select"},"explode":{"layer":1,"distance":0.5}}}},
+            {"name":"RightCore","mesh":0,"translation":[0.4,1.6,-1.5],"extras":{"xr":{"explode":{"layer":2,"distance":0.5}}}}
+          ],
+          "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+          "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-0.15,-0.15,-0.15],"max":[0.15,0.15,0.15]}]}"""
+      )
+    val b = ThreeLiveRuntimeBinding(r, glb)
+    val f = XRSpatialFeatures(b, r)
+    val events = ArrayList<String>()
+    f.listener =
+      object : XRSpatialFeatures.Listener {
+        override fun onGazeEnter(nodeIndex: Int, point: DoubleArray, normal: DoubleArray) {
+          events.add("enter:$nodeIndex")
+        }
+
+        override fun onGazeLeave(nodeIndex: Int) {
+          events.add("leave:$nodeIndex")
+        }
+
+        override fun onGazeDwell(nodeIndex: Int, action: String, point: DoubleArray) {
+          events.add("dwell:$nodeIndex:$action")
+        }
+
+        override fun onExplodeChange(factor: Double, source: String) {
+          events.add("explode:$factor:$source")
+        }
+      }
+
+    // Aim head/eye ray at LeftBtn (-0.4, 1.6, -1.5) from (0, 1.6, 0).
+    val aim = doubleArrayOf(-0.4, 0.0, -1.5)
+    for (i in 0 until 6) {
+      f.stepGazeDwell(doubleArrayOf(0.0, 1.6, 0.0), aim, 0.1)
+    }
+    assertTrue(events.contains("enter:0"))
+    assertTrue(events.contains("dwell:0:select"))
+    // Look away -> emits leave:0.
+    for (i in 0 until 6) {
+      f.stepGazeDwell(doubleArrayOf(0.0, 1.6, 0.0), doubleArrayOf(0.0, 0.0, 1.0), 0.05)
+    }
+    assertTrue(events.contains("leave:0"))
+
+    // Exploded view: layer 1 peels ahead of layer 2, reaching exploded positions and restoring rest at 0.
+    assertTrue(ExplodedView.computeLayerFactor(0.4, 1, 2) > ExplodedView.computeLayerFactor(0.4, 2, 2))
+    val sec = ExplodedView.parseSectionPlane("-z:0.2")
+    assertTrue(sec.enabled)
+    assertEquals(-0.2, sec.constant, 1e-6)
+
+    f.sectionPlaneSpec = "interactive"
+    f.setExplode(1.0, "slider")
+    for (i in 0 until 60) {
+      r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    }
+    assertTrue(b.session.nodeTransform(0)!!.translation[0] < -0.9f)
+    assertTrue(b.session.nodeTransform(1)!!.translation[0] > 0.9f)
+    assertTrue(events.contains("explode:1.0:slider"))
+
+    f.setExplode(0.0, "api")
+    for (i in 0 until 80) {
+      r.listener!!.onFrame(1.0 / 60, IDENTITY)
+    }
+    assertEquals(-0.4f, b.session.nodeTransform(0)!!.translation[0], 1e-3f)
+    assertEquals(0.4f, b.session.nodeTransform(1)!!.translation[0], 1e-3f)
+    f.dispose()
+    assertTrue(r.meshes.isEmpty())
+  }
+
   private class Mesh(var positions: FloatArray, var indices: IntArray)
 
   private class FakeRenderer : ThreeLiveSceneRenderer {

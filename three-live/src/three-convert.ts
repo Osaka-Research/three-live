@@ -127,6 +127,25 @@ export interface XRMeshTraits {
         alignRotation?: boolean;
         highlightColor?: string;
       };
+  /** Hands-free gaze reticle & dwell selection (`gaze-dwell`). */
+  gaze?:
+    | boolean
+    | {
+        enabled?: boolean;
+        dwellMs?: number;
+        repeat?: boolean;
+        action?: 'select' | 'ask';
+      };
+  /** Multi-part exploded-view displacement & leader line (`exploded-view`). */
+  explode?:
+    | boolean
+    | {
+        enabled?: boolean;
+        direction?: [number, number, number] | null;
+        distance?: number;
+        layer?: number;
+        leaderLine?: boolean;
+      };
   [key: string]: any;
 }
 

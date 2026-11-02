@@ -25,6 +25,8 @@ import {
   mat4FromRotationTranslationScale,
   mat4Invert,
   mat4Multiply,
+  type RayHit,
+  rayIntersectsTriangle,
 } from '../../../three-live/src/math';
 import {clampNum, isFiniteVec3} from '../../../three-live/src/xr-trait-schema';
 import {
@@ -245,6 +247,21 @@ export function meshWorldMatrix(viewer: PluginViewer | undefined, mesh: any): Fl
   const out = mat4Create();
   mat4Multiply(out, rootMatrix(viewer), mesh.transform);
   return out;
+}
+
+/** Writes a local-space TRS directly into `mesh.transform`. */
+export function setLocalTRS(
+  // tslint:disable-next-line:no-any Mesh records are heterogeneous GPU structs.
+  mesh: any,
+  quat: readonly number[],
+  pos: readonly number[],
+  scale: readonly number[],
+): void {
+  if (!(mesh?.transform instanceof Float32Array)) return;
+  mat4FromRotationTranslationScale(mesh.transform, quat as Quat, pos as Vec3, scale as Vec3);
+  if (mesh.worldMatrix instanceof Float32Array) {
+    mesh.worldMatrix.set(mesh.transform);
+  }
 }
 
 /**
@@ -627,4 +644,153 @@ export function reattachDynamicMesh(
   });
   viewer.meshes.push(mesh);
   applyWorldMatrix(viewer, mesh);
+}
+
+/** Returns a unit quaternion rotating unit vector `from` onto unit vector `to`. */
+export function quatFromUnitVectors(from: readonly number[], to: readonly number[]): Quat {
+  const f = vNorm(from, [0, 0, 1]);
+  const t = vNorm(to, [0, 0, 1]);
+  const dot = vDot(f, t);
+  if (dot < -0.999999) {
+    let axis = vCross([1, 0, 0], f);
+    if (vLen(axis) < 1e-5) axis = vCross([0, 1, 0], f);
+    const n = vNorm(axis, [0, 1, 0]);
+    return [n[0], n[1], n[2], 0];
+  }
+  const c = vCross(f, t);
+  const w = 1 + dot;
+  const len = Math.hypot(c[0], c[1], c[2], w) || 1;
+  return [c[0] / len, c[1] / len, c[2] / len, w / len];
+}
+
+/** World-space scene mesh raycast hit returned by {@link raycastSceneMeshes}. */
+export interface SceneRaycastHit {
+  // tslint:disable-next-line:no-any Mesh records are heterogeneous GPU structs.
+  readonly mesh: any;
+  readonly meshIndex: number;
+  readonly distance: number;
+  readonly point: Vec3;
+  readonly normal: Vec3;
+}
+
+/**
+ * Raycasts CPU-backed GPU meshes in `viewer.meshes` from world `origin` along
+ * unit `direction` without pulling in `XRInputManager`.
+ */
+export function raycastSceneMeshes(
+  viewer: PluginViewer | undefined,
+  origin: readonly number[],
+  direction: readonly number[],
+  maxDistance = 50,
+  // tslint:disable-next-line:no-any Mesh filter callback.
+  filter?: (mesh: any, index: number) => boolean,
+): SceneRaycastHit | null {
+  const meshes = viewer?.meshes;
+  const dir = normalizeRayDir(direction);
+  if (!Array.isArray(meshes) || !dir || !origin.every(Number.isFinite)) return null;
+
+  const invModel = mat4Create();
+  const normMat = new Float32Array(9);
+  let best: SceneRaycastHit | null = null;
+  let bestDist = Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance : 50;
+
+  for (let i = 0; i < meshes.length; i++) {
+    const mesh = meshes[i];
+    if (!mesh || mesh.visible === false || mesh.isPluginMesh) continue;
+    const pe = mesh.extras?.xr?.pointerEvents ?? mesh.userData?.xr?.pointerEvents;
+    if (pe === 'none' && !filter) continue;
+    if (filter && !filter(mesh, i)) continue;
+
+    const worldMat = meshWorldMatrix(viewer, mesh);
+    if (!mat4Invert(invModel, worldMat)) continue;
+
+    const lo = transformPoint(invModel, origin);
+    const ldRaw: Vec3 = [
+      invModel[0] * dir[0] + invModel[4] * dir[1] + invModel[8] * dir[2],
+      invModel[1] * dir[0] + invModel[5] * dir[1] + invModel[9] * dir[2],
+      invModel[2] * dir[0] + invModel[6] * dir[1] + invModel[10] * dir[2],
+    ];
+    const ldLen = vLen(ldRaw);
+    if (ldLen < 1e-8) continue;
+    const ld = vScale(ldRaw, 1 / ldLen);
+
+    // Quick local-space AABB slab reject before triangle loop.
+    const lb = computeLocalBounds(mesh);
+    let tMin = 0;
+    let tMax = Infinity;
+    let slabMiss = false;
+    for (let a = 0; a < 3; a++) {
+      if (Math.abs(ld[a]) < 1e-8) {
+        if (lo[a] < lb.min[a] - 1e-4 || lo[a] > lb.max[a] + 1e-4) {
+          slabMiss = true;
+          break;
+        }
+      } else {
+        const invD = 1 / ld[a];
+        let t1 = (lb.min[a] - lo[a]) * invD;
+        let t2 = (lb.max[a] - lo[a]) * invD;
+        if (t1 > t2) {
+          const tmp = t1;
+          t1 = t2;
+          t2 = tmp;
+        }
+        if (t1 > tMin) tMin = t1;
+        if (t2 < tMax) tMax = t2;
+        if (tMin > tMax) {
+          slabMiss = true;
+          break;
+        }
+      }
+    }
+    if (slabMiss) continue;
+
+    const outHit: RayHit = {distance: Infinity, point: [0, 0, 0], normal: [0, 1, 0]};
+    for (const prim of mesh.primitives ?? []) {
+      const pos: ArrayLike<number> | undefined = prim?.positions;
+      if (!pos) continue;
+      const idx: ArrayLike<number> | undefined = prim?.indices;
+      const triCount = idx ? Math.floor(idx.length / 3) : Math.floor(pos.length / 9);
+      for (let t = 0; t < triCount; t++) {
+        const i0 = idx ? idx[t * 3] : t * 3;
+        const i1 = idx ? idx[t * 3 + 1] : t * 3 + 1;
+        const i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
+        rayIntersectsTriangle(
+          lo[0], lo[1], lo[2],
+          ld[0], ld[1], ld[2],
+          pos[i0 * 3], pos[i0 * 3 + 1], pos[i0 * 3 + 2],
+          pos[i1 * 3], pos[i1 * 3 + 1], pos[i1 * 3 + 2],
+          pos[i2 * 3], pos[i2 * 3 + 1], pos[i2 * 3 + 2],
+          outHit,
+          1e-5,
+        );
+      }
+    }
+    if (!Number.isFinite(outHit.distance)) continue;
+
+    const wp = transformPoint(worldMat, outHit.point);
+    const dist = vLen(vSub(wp, origin));
+    if (dist >= bestDist) continue;
+
+    mat3NormalFromMat4(normMat, worldMat);
+    const ln = outHit.normal;
+    let wn = vNorm(
+      [
+        normMat[0] * ln[0] + normMat[3] * ln[1] + normMat[6] * ln[2],
+        normMat[1] * ln[0] + normMat[4] * ln[1] + normMat[7] * ln[2],
+        normMat[2] * ln[0] + normMat[5] * ln[1] + normMat[8] * ln[2],
+      ],
+      [0, 1, 0],
+    );
+    if (vDot(wn, dir) > 0) wn = vScale(wn, -1);
+
+    bestDist = dist;
+    best = {
+      mesh,
+      meshIndex: i,
+      distance: dist,
+      point: wp,
+      normal: wn,
+    };
+  }
+  return best;
 }

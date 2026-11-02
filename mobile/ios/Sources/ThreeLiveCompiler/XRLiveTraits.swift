@@ -467,6 +467,57 @@ public struct XRLiveSnapSocket: Codable, Sendable, Equatable {
   }
 }
 
+/// Normalized `gaze` options (`gaze-dwell`).
+public struct XRLiveGaze: Codable, Sendable, Equatable {
+  public var enabled: Bool
+  /// Dwell duration in milliseconds (`250..10000`).
+  public var dwellMs: Int
+  public var repeatDwell: Bool
+  /// `"select"` or `"ask"`.
+  public var action: String
+
+  public init(
+    enabled: Bool = true,
+    dwellMs: Int = 1200,
+    repeatDwell: Bool = false,
+    action: String = "select"
+  ) {
+    self.enabled = enabled
+    self.dwellMs = Int(XRJSON.clampNum(Double(dwellMs), 250, 10000, 1200).rounded())
+    self.repeatDwell = repeatDwell
+    self.action = action == "ask" ? "ask" : "select"
+  }
+}
+
+/// Normalized `explode` options (`exploded-view`).
+public struct XRLiveExplode: Codable, Sendable, Equatable {
+  public var enabled: Bool
+  /// Unit displacement direction in local/parent space, or `nil` for automatic radial/axial direction.
+  public var direction: SIMD3<Float>?
+  public var distance: Float
+  public var layer: Int
+  public var leaderLine: Bool
+
+  public init(
+    enabled: Bool = true,
+    direction: SIMD3<Float>? = nil,
+    distance: Float = 0.35,
+    layer: Int = 1,
+    leaderLine: Bool = true
+  ) {
+    self.enabled = enabled
+    if let d = direction, d.x.isFinite, d.y.isFinite, d.z.isFinite {
+      let len = simd_length(d)
+      self.direction = len > 1e-6 ? d / len : nil
+    } else {
+      self.direction = nil
+    }
+    self.distance = Float(XRJSON.clampNum(Double(distance), 0, 10, 0.35))
+    self.layer = Int(XRJSON.clampNum(Double(layer), 1, 10, 1).rounded())
+    self.leaderLine = leaderLine
+  }
+}
+
 /// Canonical, fully-normalized trait set for one glTF node (`NormalizedXRTraits` in TS).
 public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   /// `"1-hand"` or `"2-hand"`.
@@ -494,6 +545,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var dimensions: XRLiveDimensions?
   public var snapTo: XRLiveSnapTo?
   public var snapSocket: XRLiveSnapSocket?
+  public var gaze: XRLiveGaze?
+  public var explode: XRLiveExplode?
   /// `true` when `pointerEvents: "none"` (node is not pickable).
   public var pointerEventsNone: Bool
 
@@ -507,6 +560,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && anchor == nil && physics == nil && orbit == nil && handles == nil && particles == nil
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
       && audio == nil && dimensions == nil && snapTo == nil && snapSocket == nil
+      && gaze == nil && explode == nil
       && !pointerEventsNone
   }
 }
@@ -684,6 +738,41 @@ public enum XRLiveTraitParser {
     )
   }
 
+  /// Parses a `gaze` trait (`true` or an object).
+  public static func parseGaze(_ raw: Any?) -> XRLiveGaze? {
+    guard XRJSON.truthy(raw) else { return nil }
+    let r = XRJSON.object(raw)
+    if let r = r, XRJSON.bool(r["enabled"]) == false { return nil }
+    let act = XRJSON.string(r?["action"]) == "ask" ? "ask" : "select"
+    return XRLiveGaze(
+      enabled: true,
+      dwellMs: Int(XRJSON.clampNum(r?["dwellMs"], 250, 10000, 1200).rounded()),
+      repeatDwell: XRJSON.bool(r?["repeat"]) == true,
+      action: act
+    )
+  }
+
+  /// Parses an `explode` trait (`true` or an object).
+  public static func parseExplode(_ raw: Any?) -> XRLiveExplode? {
+    guard XRJSON.truthy(raw) else { return nil }
+    let r = XRJSON.object(raw)
+    if let r = r, XRJSON.bool(r["enabled"]) == false { return nil }
+    var dir: SIMD3<Float>?
+    if let v = XRJSON.finiteVec3(r?["direction"]) {
+      let len = sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+      if len > 1e-8 {
+        dir = SIMD3<Float>(Float(v.x / len), Float(v.y / len), Float(v.z / len))
+      }
+    }
+    return XRLiveExplode(
+      enabled: true,
+      direction: dir,
+      distance: Float(XRJSON.clampNum(r?["distance"], 0, 10, 0.35)),
+      layer: Int(XRJSON.clampNum(r?["layer"], 1, 10, 1).rounded()),
+      leaderLine: XRJSON.bool(r?["leaderLine"]) != false
+    )
+  }
+
   /// Normalizes an authored or compiled `extras.xr` bag. Accepts legacy aliases
   /// (`grabbable`, `scalable`, `traits: ["grab", ...]`). Returns `nil` when no recognized
   /// trait is present or `raw` is not a dictionary.
@@ -749,6 +838,8 @@ public enum XRLiveTraitParser {
     out.dimensions = parseDimensions(r["dimensions"])
     out.snapTo = parseSnapTo(r["snapTo"])
     out.snapSocket = parseSnapSocket(r["snapSocket"])
+    out.gaze = parseGaze(r["gaze"])
+    out.explode = parseExplode(r["explode"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
 
     return out.isEmpty ? nil : out
@@ -803,6 +894,16 @@ public enum XRLiveTraitParser {
       r["snapTo"] = snap
     }
     if let sock = gather("snapSocket") { r["snapSocket"] = sock }
+    if let gz = gather("gaze") {
+      r["gaze"] = gz
+    } else if let gz = d["gaze"] {
+      r["gaze"] = gz
+    }
+    if let ex = gather("explode") {
+      r["explode"] = ex
+    } else if let ex = d["explode"] {
+      r["explode"] = ex
+    }
     return normalize(r)
   }
 

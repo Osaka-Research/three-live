@@ -100,6 +100,25 @@ data class XRSnapSocketTrait(
   val highlightColor: String = "#22c55e",
 )
 
+/** Normalized `gaze` trait (`gaze-dwell`). */
+data class XRGazeTrait(
+  val enabled: Boolean = true,
+  val dwellMs: Int = 1200,
+  val repeat: Boolean = false,
+  /** `"select"` or `"ask"`. */
+  val action: String = "select",
+)
+
+/** Normalized `explode` trait (`exploded-view`). */
+data class XRExplodeTrait(
+  val enabled: Boolean = true,
+  /** Unit direction `(x, y, z)` in node/parent space, or `null` for automatic radial/axial direction. */
+  val direction: List<Double>? = null,
+  val distance: Double = 0.35,
+  val layer: Int = 1,
+  val leaderLine: Boolean = true,
+)
+
 /** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
   /** `head`, `hand-left` or `hand-right`. */
@@ -153,6 +172,8 @@ data class XRLiveNodeTraits(
   val dimensions: XRDimensionsTrait? = null,
   val snapTo: XRSnapToTrait? = null,
   val snapSocket: XRSnapSocketTrait? = null,
+  val gaze: XRGazeTrait? = null,
+  val explode: XRExplodeTrait? = null,
   /** `"none"` when the node must not receive pointer events. */
   val pointerEvents: String? = null,
 ) {
@@ -226,6 +247,10 @@ interface SceneCoreComponentApplier<EntityT> {
   fun onAttachSnapTo(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachSnapSocket(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachGaze(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachExplode(entity: EntityT, node: XRLiveNodeTraits) {}
 }
 
 /**
@@ -368,6 +393,8 @@ object XRLiveSceneCoreHelper {
     if (trait.dimensions != null) applier.onAttachDimensions(entity, trait)
     if (trait.snapTo != null) applier.onAttachSnapTo(entity, trait)
     if (trait.snapSocket != null) applier.onAttachSnapSocket(entity, trait)
+    if (trait.gaze != null) applier.onAttachGaze(entity, trait)
+    if (trait.explode != null) applier.onAttachExplode(entity, trait)
   }
 
   /**
@@ -645,6 +672,44 @@ object XRLiveSceneCoreHelper {
     )
   }
 
+  /** Port of `parseGaze()`. */
+  @JvmStatic
+  fun parseGaze(raw: Any?): XRGazeTrait? {
+    if (!truthy(raw)) return null
+    val r = MiniJson.asMap(raw)
+    if (r != null && r["enabled"] == false) return null
+    val act = r?.get("action")
+    return XRGazeTrait(
+      enabled = true,
+      dwellMs = jsRound(clampNum(r?.get("dwellMs"), 250.0, 10000.0, 1200.0)).toInt(),
+      repeat = r?.get("repeat") == true,
+      action = if (act == "ask") "ask" else "select",
+    )
+  }
+
+  /** Port of `parseExplode()`. */
+  @JvmStatic
+  fun parseExplode(raw: Any?): XRExplodeTrait? {
+    if (!truthy(raw)) return null
+    val r = MiniJson.asMap(raw)
+    if (r != null && r["enabled"] == false) return null
+    val rawDir = finiteVec3(r?.get("direction"))
+    var direction: List<Double>? = null
+    if (rawDir != null) {
+      val len = Math.sqrt(rawDir[0] * rawDir[0] + rawDir[1] * rawDir[1] + rawDir[2] * rawDir[2])
+      if (len > 1e-8) {
+        direction = listOf(rawDir[0] / len, rawDir[1] / len, rawDir[2] / len)
+      }
+    }
+    return XRExplodeTrait(
+      enabled = true,
+      direction = direction,
+      distance = clampNum(r?.get("distance"), 0.0, 10.0, 0.35),
+      layer = jsRound(clampNum(r?.get("layer"), 1.0, 10.0, 1.0)).toInt(),
+      leaderLine = r?.get("leaderLine") != false,
+    )
+  }
+
   /** JavaScript `Math.round` (half rounds toward +infinity). */
   private fun jsRound(v: Double): Double = Math.floor(v + 0.5)
 
@@ -782,6 +847,8 @@ object XRLiveSceneCoreHelper {
       dimensions = parseDimensions(xr["dimensions"] ?: sc["dimensions"]),
       snapTo = parseSnapTo(xr["snapTo"] ?: sc["snapTo"]),
       snapSocket = parseSnapSocket(xr["snapSocket"] ?: sc["snapSocket"]),
+      gaze = parseGaze(xr["gaze"] ?: sc["gaze"]),
+      explode = parseExplode(xr["explode"] ?: sc["explode"]),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,
     )
   }

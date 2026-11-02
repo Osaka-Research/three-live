@@ -76,6 +76,14 @@ constructor(
     ) {}
 
     fun onUnsnap(nodeIndex: Int, socketNodeIndex: Int?) {}
+
+    fun onGazeEnter(nodeIndex: Int, point: DoubleArray, normal: DoubleArray) {}
+
+    fun onGazeLeave(nodeIndex: Int) {}
+
+    fun onGazeDwell(nodeIndex: Int, action: String, point: DoubleArray) {}
+
+    fun onExplodeChange(factor: Double, source: String) {}
   }
 
   var listener: Listener? = null
@@ -97,6 +105,25 @@ constructor(
 
   /** Currently selected node index (used by `dimensions.showOnSelect`). */
   var selectedNodeIndex: Int = -1
+
+  /** Gaze-dwell activation mode: `"off"`, `"on"`, or `"auto"` (active when [stepGazeDwell] `autoEnabled` is `true`). */
+  var gazeDwellMode: String = "off"
+
+  /** Default dwell duration in milliseconds (`250..10000`) when not overridden by a node's `gaze` trait. */
+  var defaultDwellMs: Int = 1200
+
+  /** Explosion layout mode: `"radial"`, `"axial-x"`, `"axial-y"`, `"axial-z"`, or `"hierarchical"`. */
+  var explodeMode: String = "radial"
+
+  /** Multiplier (`0..10`) applied to exploded part travel distances. */
+  var explodeScale: Double = 1.5
+
+  /** Cross-section cut plane specification (`"none"`, `"x:0.2"`, `"y:0.0"`, `"-z:0.1"`, `"interactive"`). */
+  var sectionPlaneSpec: String = "none"
+
+  /** Current spring-smoothed assembly explosion factor in `[0..1]`. */
+  val explodeFactor: Double
+    get() = currentExplodeFactor
 
   private val session = binding.session
   private val scene = binding.scene
@@ -157,6 +184,38 @@ constructor(
   private var previewRingMeshId: Int = -1
   private var previewRingRadius: Double = 0.0
   private var pulsePhase: Double = 0.0
+  private val gazeTraits = HashMap<Int, XRGazeTrait>()
+  private val pointerNoneNodes = HashSet<Int>()
+  private var smoothedGazeDir: DoubleArray? = null
+  private var activeGazeNode: Int = -1
+  private var gazeElapsedMs: Double = 0.0
+  private var gazeCompleted: Boolean = false
+  private var lastGazeHitPoint: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0)
+  private var lastGazeHitNormal: DoubleArray = doubleArrayOf(0.0, 0.0, 1.0)
+  private var gazeReticleMeshId: Int = -1
+  private var lastReticleProgressBucket: Int = -1
+
+  private class RestPart(
+    val node: Int,
+    val restPos: DoubleArray,
+    val restRot: FloatArray,
+    val restScale: FloatArray,
+    val restWorldCenter: DoubleArray,
+    val depth: Int,
+  )
+
+  private val explodeTraits = HashMap<Int, XRExplodeTrait>()
+  private val restParts = ArrayList<RestPart>()
+  private var restCaptured: Boolean = false
+  private var assemblyCenter: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0)
+  private var assemblyRadius: Double = 0.5
+  private var targetExplodeFactor: Double = 0.0
+  private var currentExplodeFactor: Double = 0.0
+  private var wasExploded: Boolean = false
+  private var explodeLeaderMeshId: Int = -1
+  private var sectionGizmoMeshId: Int = -1
+  private var lastSectionGizmoRadius: Double = -1.0
+  private val invWorld = DoubleArray(16)
   private var ownedExecutor = false
   private val executor: Executor =
     backgroundExecutor
@@ -180,6 +239,9 @@ constructor(
       t.dimensions?.let { dimensionVisuals[node] = DimensionVisual(node, it) }
       t.snapTo?.let { snapTraits[node] = it }
       t.snapSocket?.let { socketTraits[node] = it }
+      t.gaze?.let { gazeTraits[node] = it }
+      t.explode?.let { explodeTraits[node] = it }
+      if (t.pointerEvents == "none") pointerNoneNodes.add(node)
       t.splatUrl?.let { raw ->
         val resolved = SplatParser.resolveSplatUrl(raw, baseUrl, allowRemoteSplats)
         if (resolved != null) {
@@ -274,6 +336,12 @@ constructor(
     }
     if (previewRingMeshId >= 0) renderer.removeDynamicMesh(previewRingMeshId)
     previewRingMeshId = -1
+    if (gazeReticleMeshId >= 0) renderer.removeDynamicMesh(gazeReticleMeshId)
+    gazeReticleMeshId = -1
+    if (explodeLeaderMeshId >= 0) renderer.removeDynamicMesh(explodeLeaderMeshId)
+    explodeLeaderMeshId = -1
+    if (sectionGizmoMeshId >= 0) renderer.removeDynamicMesh(sectionGizmoMeshId)
+    sectionGizmoMeshId = -1
     for (h in handles) for (id in h.meshIds) renderer.removeDynamicMesh(id)
     for (e in emitters) renderer.removeDynamicMesh(e.meshId)
     for (s in strokes) renderer.removeDynamicMesh(s.meshId)
@@ -282,6 +350,10 @@ constructor(
     snapTraits.clear()
     socketTraits.clear()
     activeSocketByNode.clear()
+    gazeTraits.clear()
+    explodeTraits.clear()
+    restParts.clear()
+    pointerNoneNodes.clear()
     handles.clear()
     emitters.clear()
     strokes.clear()
@@ -377,6 +449,7 @@ constructor(
   private fun frame(dt: Double, cameraWorld: FloatArray) {
     if (disposed) return
     pulsePhase += dt.coerceIn(0.0, 0.1) * 5.0
+    stepExplodedView(dt)
     for (h in handles) placeHandles(h)
     for (e in emitters) stepEmitter(e, dt, cameraWorld)
     for (sc in splats) stepSplat(sc, dt, cameraWorld)
@@ -679,6 +752,388 @@ constructor(
     return ev
   }
 
+  private fun isNodeGazeEligible(nodeIndex: Int): Boolean {
+    if (nodeIndex in pointerNoneNodes || !session.isEffectivelyVisible(nodeIndex)) return false
+    if (gazeTraits.containsKey(nodeIndex)) return true
+    val t = session.traits.firstOrNull { it.nodeIndex == nodeIndex } ?: return false
+    return t.grabbable || t.holdToAsk != null
+  }
+
+  private fun raycastGazeNode(
+    origin: DoubleArray,
+    dir: DoubleArray,
+    maxDist: Double = 25.0,
+  ): Triple<Int, DoubleArray, DoubleArray>? {
+    var bestNode = -1
+    var bestT = maxDist
+    var bestPoint = doubleArrayOf(0.0, 0.0, 0.0)
+    var bestNormal = doubleArrayOf(0.0, 0.0, 1.0)
+    for (node in 0 until scene.nodeCount) {
+      val b = scene.meshBounds.getOrNull(scene.nodeMesh[node]) ?: continue
+      if (node in pointerNoneNodes || !session.isEffectivelyVisible(node)) continue
+      if (!session.nodeWorldMatrix(node, world)) continue
+      if (!XRSpatialMath.mat4Invert(world, invWorld)) continue
+      val lo = XRSpatialMath.transformPoint(invWorld, origin[0], origin[1], origin[2], DoubleArray(3))
+      val farWorld = doubleArrayOf(origin[0] + dir[0], origin[1] + dir[1], origin[2] + dir[2])
+      val lf = XRSpatialMath.transformPoint(invWorld, farWorld[0], farWorld[1], farWorld[2], DoubleArray(3))
+      val ld = doubleArrayOf(lf[0] - lo[0], lf[1] - lo[1], lf[2] - lo[2])
+      var tMin = 0.0
+      var tMax = Double.POSITIVE_INFINITY
+      var hitAxis = 0
+      var hitSign = -1.0
+      var miss = false
+      for (k in 0 until 3) {
+        if (Math.abs(ld[k]) < 1e-9) {
+          if (lo[k] < b[k] || lo[k] > b[3 + k]) {
+            miss = true
+            break
+          }
+        } else {
+          val inv = 1.0 / ld[k]
+          var t1 = (b[k] - lo[k]) * inv
+          var t2 = (b[3 + k] - lo[k]) * inv
+          var sign = -1.0
+          if (t1 > t2) {
+            val tmp = t1
+            t1 = t2
+            t2 = tmp
+            sign = 1.0
+          }
+          if (t1 > tMin) {
+            tMin = t1
+            hitAxis = k
+            hitSign = sign
+          }
+          if (t2 < tMax) tMax = t2
+          if (tMin > tMax) {
+            miss = true
+            break
+          }
+        }
+      }
+      if (miss || tMax < 1e-4) continue
+      val tLocal = if (tMin >= 1e-4) tMin else tMax
+      val lp = doubleArrayOf(lo[0] + ld[0] * tLocal, lo[1] + ld[1] * tLocal, lo[2] + ld[2] * tLocal)
+      val wp = XRSpatialMath.transformPoint(world, lp[0], lp[1], lp[2], DoubleArray(3))
+      val dist = XRSpatialMath.dist3(origin, wp)
+      if (dist >= bestT) continue
+      val ln = doubleArrayOf(0.0, 0.0, 0.0)
+      ln[hitAxis] = hitSign
+      val wnRaw =
+        doubleArrayOf(
+          invWorld[0] * ln[0] + invWorld[1] * ln[1] + invWorld[2] * ln[2],
+          invWorld[4] * ln[0] + invWorld[5] * ln[1] + invWorld[6] * ln[2],
+          invWorld[8] * ln[0] + invWorld[9] * ln[1] + invWorld[10] * ln[2],
+        )
+      var wn = XRSpatialMath.normalizeRayDir(wnRaw) ?: doubleArrayOf(-dir[0], -dir[1], -dir[2])
+      if (XRSpatialMath.dot3(wn, dir) > 0.0) {
+        wn = doubleArrayOf(-wn[0], -wn[1], -wn[2])
+      }
+      bestNode = node
+      bestT = dist
+      bestPoint = wp
+      bestNormal = wn
+    }
+    return if (bestNode >= 0) Triple(bestNode, bestPoint, bestNormal) else null
+  }
+
+  /**
+   * Steps `gaze-dwell` for the current eye/head ray, updating the constant-angular-size surface
+   * reticle and firing [Listener.onGazeEnter], [Listener.onGazeLeave], and [Listener.onGazeDwell].
+   */
+  @JvmOverloads
+  fun stepGazeDwell(
+    origin: DoubleArray,
+    rawDirection: DoubleArray,
+    dtSeconds: Double,
+    autoEnabled: Boolean = false,
+  ) {
+    if (disposed) return
+    val active =
+      when (gazeDwellMode) {
+        "on", "true" -> true
+        "auto" -> autoEnabled
+        else -> gazeTraits.isNotEmpty()
+      }
+    if (!active) {
+      clearActiveGaze()
+      return
+    }
+    val dir = GazeDwell.smoothDirection(smoothedGazeDir, rawDirection)
+    smoothedGazeDir = dir
+    val hit = raycastGazeNode(origin, dir)
+    var candidateNode = if (hit != null && isNodeGazeEligible(hit.first)) hit.first else -1
+    var hitPoint = hit?.second ?: doubleArrayOf(0.0, 0.0, 0.0)
+    var hitNormal = hit?.third ?: doubleArrayOf(0.0, 0.0, 1.0)
+
+    if (candidateNode != activeGazeNode && activeGazeNode >= 0 && session.isEffectivelyVisible(activeGazeNode)) {
+      val toPrev =
+        doubleArrayOf(
+          lastGazeHitPoint[0] - origin[0],
+          lastGazeHitPoint[1] - origin[1],
+          lastGazeHitPoint[2] - origin[2],
+        )
+      if (XRSpatialMath.len3(toPrev[0], toPrev[1], toPrev[2]) > 1e-4 &&
+        GazeDwell.angleBetweenDeg(dir, toPrev) <= GazeDwell.GRACE_CONE_DEG
+      ) {
+        candidateNode = activeGazeNode
+        hitPoint = lastGazeHitPoint
+        hitNormal = lastGazeHitNormal
+      }
+    }
+
+    if (candidateNode < 0) {
+      clearActiveGaze()
+      return
+    }
+
+    if (candidateNode != activeGazeNode) {
+      if (activeGazeNode >= 0) listener?.onGazeLeave(activeGazeNode)
+      activeGazeNode = candidateNode
+      gazeElapsedMs = 0.0
+      gazeCompleted = false
+      lastGazeHitPoint = hitPoint.copyOf()
+      lastGazeHitNormal = hitNormal.copyOf()
+      listener?.onGazeEnter(candidateNode, hitPoint.copyOf(), hitNormal.copyOf())
+    } else {
+      lastGazeHitPoint = hitPoint.copyOf()
+      lastGazeHitNormal = hitNormal.copyOf()
+    }
+
+    val trait = gazeTraits[candidateNode]
+    val dwellMs = (trait?.dwellMs ?: defaultDwellMs).coerceIn(250, 10000).toDouble()
+    val repeat = trait?.repeat == true
+    val action = trait?.action ?: if (session.traits.firstOrNull { it.nodeIndex == candidateNode }?.holdToAsk != null) "ask" else "select"
+    val dtMs = dtSeconds.coerceIn(0.0, 0.1) * 1000.0
+    var progress = 0.0
+
+    if (!gazeCompleted) {
+      gazeElapsedMs += dtMs
+      progress = GazeDwell.computeDwellProgress(gazeElapsedMs, dwellMs)
+      if (progress >= 1.0) {
+        listener?.onGazeDwell(candidateNode, action, lastGazeHitPoint.copyOf())
+        if (action == "select") {
+          session.dispatchSelect(candidateNode)
+        }
+        if (repeat) {
+          gazeElapsedMs = 0.0
+          progress = 0.0
+        } else {
+          gazeCompleted = true
+          progress = 0.0
+        }
+      }
+    }
+
+    val bucket = Math.round(progress * 24.0).toInt()
+    if (gazeReticleMeshId < 0 || bucket != lastReticleProgressBucket) {
+      lastReticleProgressBucket = bucket
+      val geo = GazeDwell.buildReticleGeometry(bucket / 24.0, 24)
+      if (gazeReticleMeshId < 0) {
+        gazeReticleMeshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, GAZE_RETICLE_COLOR)
+      } else {
+        renderer.updateDynamicMesh(gazeReticleMeshId, geo.positions, geo.normals, geo.indices)
+      }
+    }
+    if (gazeReticleMeshId >= 0) {
+      val dist = Math.max(0.15, XRSpatialMath.dist3(origin, lastGazeHitPoint))
+      val outerR = Math.max(0.004, GazeDwell.RETICLE_ANGULAR_SCALE * dist)
+      val offsetPos =
+        doubleArrayOf(
+          lastGazeHitPoint[0] + lastGazeHitNormal[0] * 0.003,
+          lastGazeHitPoint[1] + lastGazeHitNormal[1] * 0.003,
+          lastGazeHitPoint[2] + lastGazeHitNormal[2] * 0.003,
+        )
+      val q = GazeDwell.quatFromUnitVectors(doubleArrayOf(0.0, 0.0, 1.0), lastGazeHitNormal)
+      val dMat = XRSpatialMath.mat4FromTRS(offsetPos, q, doubleArrayOf(outerR, outerR, outerR))
+      for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
+      renderer.setDynamicMeshTransform(gazeReticleMeshId, matrix)
+    }
+  }
+
+  private fun clearActiveGaze() {
+    if (activeGazeNode >= 0) {
+      val prev = activeGazeNode
+      activeGazeNode = -1
+      gazeElapsedMs = 0.0
+      gazeCompleted = false
+      listener?.onGazeLeave(prev)
+    }
+    if (gazeReticleMeshId >= 0) {
+      zeroMatrix()
+      renderer.setDynamicMeshTransform(gazeReticleMeshId, matrix)
+    }
+  }
+
+  /**
+   * Sets the target explosion factor in `[0..1]` and notifies [Listener.onExplodeChange] when
+   * changed.
+   */
+  @JvmOverloads
+  fun setExplode(factor: Double, source: String = "api") {
+    val clamped = XRSpatialMath.clampNum(factor, 0.0, 1.0, 0.0)
+    if (Math.abs(clamped - targetExplodeFactor) <= 1e-4) return
+    targetExplodeFactor = clamped
+    listener?.onExplodeChange(clamped, source)
+  }
+
+  private fun ensureRestAssemblyCaptured() {
+    if (restCaptured) return
+    restCaptured = true
+    restParts.clear()
+    var minX = Double.POSITIVE_INFINITY
+    var minY = Double.POSITIVE_INFINITY
+    var minZ = Double.POSITIVE_INFINITY
+    var maxX = Double.NEGATIVE_INFINITY
+    var maxY = Double.NEGATIVE_INFINITY
+    var maxZ = Double.NEGATIVE_INFINITY
+
+    for (node in 0 until scene.nodeCount) {
+      val b = scene.meshBounds.getOrNull(scene.nodeMesh[node]) ?: continue
+      val t = session.nodeTransform(node) ?: continue
+      if (!session.nodeWorldMatrix(node, world)) continue
+      val wb = SpatialMeasure.computeWorldBounds(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world)
+      minX = minOf(minX, wb.min[0])
+      minY = minOf(minY, wb.min[1])
+      minZ = minOf(minZ, wb.min[2])
+      maxX = maxOf(maxX, wb.max[0])
+      maxY = maxOf(maxY, wb.max[1])
+      maxZ = maxOf(maxZ, wb.max[2])
+      var depth = 1
+      var p = scene.parents.getOrElse(node) { -1 }
+      while (p >= 0 && depth < 32) {
+        depth++
+        p = scene.parents.getOrElse(p) { -1 }
+      }
+      restParts.add(
+        RestPart(
+          node = node,
+          restPos = doubleArrayOf(t.translation[0].toDouble(), t.translation[1].toDouble(), t.translation[2].toDouble()),
+          restRot = t.rotation.copyOf(),
+          restScale = t.scale.copyOf(),
+          restWorldCenter = wb.center.copyOf(),
+          depth = depth,
+        )
+      )
+    }
+    if (minX.isFinite()) {
+      assemblyCenter = doubleArrayOf((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+      assemblyRadius = Math.max(0.05, XRSpatialMath.len3(maxX - minX, maxY - minY, maxZ - minZ) * 0.5)
+    }
+  }
+
+  /** Steps `exploded-view` spring smoothing, node offsets, dashed leader lines, and section gizmo. */
+  fun stepExplodedView(dt: Double) {
+    if (disposed) return
+    val sec = ExplodedView.parseSectionPlane(sectionPlaneSpec, assemblyCenter)
+    if (targetExplodeFactor <= 1e-5 && currentExplodeFactor <= 1e-5 && !sec.enabled) {
+      if (explodeLeaderMeshId >= 0) {
+        zeroMatrix()
+        renderer.setDynamicMeshTransform(explodeLeaderMeshId, matrix)
+      }
+      if (sectionGizmoMeshId >= 0) {
+        zeroMatrix()
+        renderer.setDynamicMeshTransform(sectionGizmoMeshId, matrix)
+      }
+      return
+    }
+    ensureRestAssemblyCaptured()
+    val alpha = 1.0 - Math.exp(-12.0 * dt.coerceIn(0.0, 0.1))
+    currentExplodeFactor += (targetExplodeFactor - currentExplodeFactor) * alpha
+    if (Math.abs(targetExplodeFactor - currentExplodeFactor) < 1e-4) {
+      currentExplodeFactor = targetExplodeFactor
+    }
+
+    var maxLayer = 1
+    for (tr in explodeTraits.values) maxLayer = maxOf(maxLayer, tr.layer)
+    val explicitOnly = explodeTraits.isNotEmpty()
+    val leaderSegs = ArrayList<Pair<DoubleArray, DoubleArray>>()
+    val isNowExploded = currentExplodeFactor > 1e-5 || targetExplodeFactor > 0.0
+
+    if (isNowExploded || wasExploded) {
+      if (isNowExploded && !wasExploded) {
+        restCaptured = false
+        ensureRestAssemblyCaptured()
+      }
+      for ((idx, part) in restParts.withIndex()) {
+        val tr = explodeTraits[part.node]
+        if (explicitOnly && tr == null) continue
+        val offset =
+          ExplodedView.computeNodeOffset(
+            restPosition = part.restWorldCenter,
+            assemblyCenter = assemblyCenter,
+            assemblyRadius = assemblyRadius,
+            factor = currentExplodeFactor,
+            mode = explodeMode,
+            explodeScale = explodeScale,
+            trait = tr,
+            maxLayer = maxLayer,
+            nodeIndex = idx,
+            nodeCount = restParts.size,
+            hierarchyDepth = part.depth,
+          )
+        val nextPos =
+          floatArrayOf(
+            (part.restPos[0] + offset[0]).toFloat(),
+            (part.restPos[1] + offset[1]).toFloat(),
+            (part.restPos[2] + offset[2]).toFloat(),
+          )
+        session.setNodeTransform(part.node, nextPos, part.restRot, part.restScale)
+        renderer.setNodeTransform(part.node, nextPos, part.restRot, part.restScale)
+        if (currentExplodeFactor > 0.02 && (tr?.leaderLine != false) && session.nodeWorldMatrix(part.node, world)) {
+          val b = scene.meshBounds.getOrNull(scene.nodeMesh[part.node])
+          if (b != null) {
+            val curWb = SpatialMeasure.computeWorldBounds(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world)
+            if (XRSpatialMath.dist3(part.restWorldCenter, curWb.center) > 0.01 && leaderSegs.size < 512) {
+              leaderSegs.addAll(SpatialMeasure.buildDashedSegments(part.restWorldCenter, curWb.center))
+            }
+          }
+        }
+      }
+      wasExploded = isNowExploded
+    }
+
+    if (leaderSegs.isEmpty()) {
+      if (explodeLeaderMeshId >= 0) {
+        zeroMatrix()
+        renderer.setDynamicMeshTransform(explodeLeaderMeshId, matrix)
+      }
+    } else {
+      val geo = SpatialMeasure.buildSegmentBarsGeometry(leaderSegs, 0.0014)
+      if (explodeLeaderMeshId < 0) {
+        explodeLeaderMeshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, EXPLODE_LEADER_COLOR)
+      } else {
+        renderer.updateDynamicMesh(explodeLeaderMeshId, geo.positions, geo.normals, geo.indices)
+      }
+      identityMatrix()
+      renderer.setDynamicMeshTransform(explodeLeaderMeshId, matrix)
+    }
+
+    if (sec.enabled) {
+      val halfExt = Math.max(0.15, assemblyRadius * 1.15)
+      if (sectionGizmoMeshId < 0 || Math.abs(halfExt - lastSectionGizmoRadius) > 1e-3) {
+        if (sectionGizmoMeshId >= 0) renderer.removeDynamicMesh(sectionGizmoMeshId)
+        val gGeo = ExplodedView.buildSectionGizmoGeometry(halfExt)
+        sectionGizmoMeshId = renderer.addDynamicMesh(gGeo.positions, gGeo.normals, gGeo.indices, MEASURE_COLOR)
+        lastSectionGizmoRadius = halfExt
+      }
+      val d = sec.constant - XRSpatialMath.dot3(assemblyCenter, sec.normal)
+      val planeCenter =
+        doubleArrayOf(
+          assemblyCenter[0] + sec.normal[0] * d,
+          assemblyCenter[1] + sec.normal[1] * d,
+          assemblyCenter[2] + sec.normal[2] * d,
+        )
+      val q = GazeDwell.quatFromUnitVectors(doubleArrayOf(0.0, 0.0, 1.0), sec.normal)
+      val dMat = XRSpatialMath.mat4FromTRS(planeCenter, q, doubleArrayOf(1.0, 1.0, 1.0))
+      for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
+      renderer.setDynamicMeshTransform(sectionGizmoMeshId, matrix)
+    } else if (sectionGizmoMeshId >= 0) {
+      zeroMatrix()
+      renderer.setDynamicMeshTransform(sectionGizmoMeshId, matrix)
+    }
+  }
+
   private fun layoutOf(h: HandleNode): ManipulationHandles.Layout? {
     val b = scene.meshBounds.getOrNull(scene.nodeMesh[h.node]) ?: return null
     if (!session.nodeWorldMatrix(h.node, world)) return null
@@ -838,6 +1293,8 @@ constructor(
 
     private val HANDLE_COLOR = floatArrayOf(0.95f, 0.95f, 1f, 0.9f)
     private val MEASURE_COLOR = floatArrayOf(0.22f, 0.74f, 0.97f, 1f)
+    private val GAZE_RETICLE_COLOR = floatArrayOf(0.22f, 0.74f, 0.97f, 0.92f)
+    private val EXPLODE_LEADER_COLOR = floatArrayOf(0.58f, 0.64f, 0.72f, 0.85f)
     private val LABEL_COLOR = floatArrayOf(1f, 1f, 1f, 1f)
     private val PARTICLE_DEFAULT_COLOR = floatArrayOf(0.8f, 0.9f, 1f, 1f)
     private val PARTICLE_COLORS =

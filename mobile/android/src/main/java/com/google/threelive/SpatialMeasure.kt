@@ -27,7 +27,10 @@ object SpatialMeasure {
   const val MAX_DIMENSION_LABELS: Int = 32
   private const val METERS_PER_INCH = 0.0254
 
-  data class WorldBounds(val min: DoubleArray, val max: DoubleArray, val size: DoubleArray)
+  data class WorldBounds(val min: DoubleArray, val max: DoubleArray, val size: DoubleArray) {
+    val center: DoubleArray
+      get() = doubleArrayOf((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5)
+  }
 
   data class Callout(
     val axis: String,
@@ -359,5 +362,40 @@ object SpatialMeasure {
       }
     }
     return MeshGeometry(positions, normals, indices)
+  }
+
+  /** Subdivides `[start, end]` into alternating dash segments for leader lines. */
+  @JvmStatic
+  @JvmOverloads
+  fun buildDashedSegments(
+    start: DoubleArray,
+    end: DoubleArray,
+    dashLength: Double = 0.025,
+    gapLength: Double = 0.015,
+  ): List<Pair<DoubleArray, DoubleArray>> {
+    val total = XRSpatialMath.dist3(start, end)
+    if (total <= 1e-4) return emptyList()
+    val dash = Math.max(0.004, dashLength)
+    val gap = Math.max(0.002, gapLength)
+    val stride = dash + gap
+    val out = ArrayList<Pair<DoubleArray, DoubleArray>>()
+    var d = 0.0
+    while (d < total && out.size < 128) {
+      val t0 = d / total
+      val t1 = Math.min(1.0, (d + dash) / total)
+      val p0 = doubleArrayOf(
+        start[0] + (end[0] - start[0]) * t0,
+        start[1] + (end[1] - start[1]) * t0,
+        start[2] + (end[2] - start[2]) * t0,
+      )
+      val p1 = doubleArrayOf(
+        start[0] + (end[0] - start[0]) * t1,
+        start[1] + (end[1] - start[1]) * t1,
+        start[2] + (end[2] - start[2]) * t1,
+      )
+      if (XRSpatialMath.dist3(p0, p1) > 1e-4) out.add(p0 to p1)
+      d += stride
+    }
+    return out
   }
 }

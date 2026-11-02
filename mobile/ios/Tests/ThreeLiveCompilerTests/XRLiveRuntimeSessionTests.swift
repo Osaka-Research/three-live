@@ -1465,13 +1465,21 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         "dimensionsEnabled": true,
         "dimensionsUnit": "cm",
         "dimensionsAxes": "xz",
-        "snapGrid": [0.05, 0.05, 0.05],
-        "snapAngleDeg": 15,
-        "snapSocketTagValue": "dock",
+        "snapToGrid": [0.05, 0.05, 0.05],
+        "snapToAngleDeg": 15,
+        "snapSocketTag": "dock",
+        "gazeDwellMs": 850,
+        "gazeAction": "ask",
+        "explodeDirection": [0.0, 3.0, 4.0],
+        "explodeLayer": 2,
       ]))
     XCTAssertEqual(usd.dimensions?.axes, ["x", "z"])
     XCTAssertEqual(usd.snapTo?.angleDeg ?? 0, 15, accuracy: 1e-5)
     XCTAssertEqual(usd.snapSocket?.tag, "dock")
+    XCTAssertEqual(usd.gaze?.dwellMs, 850)
+    XCTAssertEqual(usd.gaze?.action, "ask")
+    XCTAssertEqual(usd.explode?.layer, 2)
+    XCTAssertEqual(usd.explode?.direction?.z ?? 0, 0.8, accuracy: 1e-5)
 
     let q38 = XRSpatialMath.quatFromYaw(38 * .pi / 180)
     let q45 = MagneticSnap.quantizeQuaternionAngle(q38, angleDeg: 45)
@@ -1500,5 +1508,36 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertTrue(
       s.setNodeWorldPose(1, position: SIMD3<Float>(2.5, 1, -1), rotation: XRSpatialMath.identityQuat))
     XCTAssertEqual(translation(s, 1).x, 1.5, accuracy: 1e-4)
+  }
+
+  func testGazeDwellAndExplodedViewMathParity() throws {
+    XCTAssertEqual(GazeDwell.computeDwellProgress(elapsedMs: 140, dwellMs: 1000, graceMs: 150), 0, accuracy: 1e-5)
+    XCTAssertEqual(GazeDwell.computeDwellProgress(elapsedMs: 575, dwellMs: 1000, graceMs: 150), 0.5, accuracy: 1e-5)
+    XCTAssertEqual(GazeDwell.computeDwellProgress(elapsedMs: 1200, dwellMs: 1000, graceMs: 150), 1, accuracy: 1e-5)
+
+    let ret0 = GazeDwell.buildReticleGeometry(progress: 0)
+    let retHalf = GazeDwell.buildReticleGeometry(progress: 0.5)
+    XCTAssertTrue(retHalf.indices.count > ret0.indices.count)
+    XCTAssertEqual(retHalf.indices.count % 12, 0)
+
+    XCTAssertGreaterThan(
+      ExplodedView.computeLayerFactor(factor: 0.4, layer: 1, maxLayer: 3),
+      ExplodedView.computeLayerFactor(factor: 0.4, layer: 3, maxLayer: 3)
+    )
+    let off = ExplodedView.computeNodeOffset(
+      restPosition: SIMD3<Float>(-0.4, 0, 0),
+      assemblyCenter: .zero,
+      assemblyRadius: 0.4,
+      factor: 1.0,
+      mode: "radial",
+      explodeScale: 1.5,
+      trait: XRLiveExplode(distance: 0.5, layer: 1)
+    )
+    XCTAssertEqual(off.x, -0.75, accuracy: 1e-4)
+
+    let sec = ExplodedView.parseSectionPlane("-z:0.2")
+    XCTAssertTrue(sec.enabled)
+    XCTAssertEqual(sec.normal.z, -1, accuracy: 1e-5)
+    XCTAssertEqual(sec.constant, -0.2, accuracy: 1e-5)
   }
 }

@@ -121,6 +121,12 @@ export class XRLiveElement extends ThreeLiveElement {
       'magnetic-snap',
       'snap-grid',
       'snap-angle',
+      'gaze-dwell',
+      'dwell-time',
+      'explode',
+      'explode-mode',
+      'explode-scale',
+      'section-plane',
     ];
   }
 

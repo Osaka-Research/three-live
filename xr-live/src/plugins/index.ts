@@ -30,6 +30,8 @@
  * | `splat-loader`         | `userData.xr.splatUrl`                        |
  * | `spatial-measure`      | `spatial-measure` attr / `userData.xr.dimensions` |
  * | `magnetic-snap`        | `magnetic-snap` attr / `userData.xr.snapTo`   |
+ * | `gaze-dwell`           | `gaze-dwell` attr / `userData.xr.gaze`        |
+ * | `exploded-view`        | `explode` / `section-plane` attr / `userData.xr.explode` |
  *
  * To register only a subset, import the individual modules and call
  * `registerPlugin()` yourself instead of importing this entry point.
@@ -38,6 +40,8 @@
 import {registerPlugin} from '../../../three-live/src/plugin';
 import {registerXRTraitSerializer} from '../../../three-live/src/xr-trait-schema';
 import {depthParticlesPlugin} from './depth-particles';
+import {explodedViewPlugin} from './exploded-view';
+import {gazeDwellPlugin} from './gaze-dwell';
 import {geminiLivePlugin} from './gemini-live';
 import {headFollowPlugin} from './head-follow';
 import {magneticSnapPlugin} from './magnetic-snap';
@@ -58,6 +62,8 @@ export const xrSpatialPlugins = [
   splatLoaderPlugin,
   spatialMeasurePlugin,
   magneticSnapPlugin,
+  gazeDwellPlugin,
+  explodedViewPlugin,
 ] as const;
 
 for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
@@ -74,6 +80,8 @@ if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'fun
 }
 
 export * from './depth-particles';
+export * from './exploded-view';
+export * from './gaze-dwell';
 export * from './gemini-live';
 export * from './head-follow';
 export * from './magnetic-snap';
@@ -87,6 +95,8 @@ export {
   flattenXRTraitsForUsd,
   normalizeXRTraits,
   parseDimensions,
+  parseExplode,
+  parseGaze,
   parseSnapSocket,
   parseSnapTo,
   parseSpatialAudio,

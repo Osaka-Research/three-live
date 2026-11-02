@@ -362,9 +362,9 @@ uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclu
 uniform float uNormalScale,uOcclusionStrength,uXrRawValueToMeters;
 uniform mat4 uXrDepthUVTransform;
 uniform vec2 uViewportSize;
-uniform vec4 uViewport;
+uniform vec4 uViewport,uSectionPlane;
 uniform vec3 uCameraFwd;
-uniform int uToneMapping,uNumDirLights,uNumPointLights;
+uniform int uToneMapping,uNumDirLights,uNumPointLights,uSectionEnabled;
 uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2];
 out vec4 fragColor;
 
@@ -433,6 +433,7 @@ return color;
 }
 
 void main(){
+if(uSectionEnabled==1&&dot(vWorldPos,uSectionPlane.xyz)>uSectionPlane.w)discard;
 vec4 base=uBaseColor;
 if(uHasTexture==1)base*=texture(uBaseColorTexture,vUV);
 if(length(vNormal)<1e-4&&uHasTexture==1){
@@ -629,6 +630,8 @@ const RENDER_UNIFORMS = [
   'uViewportSize',
   'uViewport',
   'uCameraFwd',
+  'uSectionPlane',
+  'uSectionEnabled',
 ] as const;
 
 interface PrimitiveGpu {
@@ -3354,6 +3357,7 @@ export class ThreeView {
           }
 
           this.bindLights(u);
+          if (u.uSectionEnabled) gl.uniform1i(u.uSectionEnabled, 0);
 
           for (const plugin of registeredPlugins) {
             plugin.onBeforeDrawPrimitive?.(

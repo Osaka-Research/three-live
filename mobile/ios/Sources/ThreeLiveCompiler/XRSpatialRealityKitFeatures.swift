@@ -50,6 +50,16 @@
       )?
     /// `{nodeIndex, socketNodeIndex}` when a snapped node breaks away (`xrunsnap`).
     public var onUnsnap: ((_ nodeIndex: Int, _ socketNodeIndex: Int?) -> Void)?
+    /// `{nodeIndex, point, normal}` when gaze enters a node (`gazeenter`).
+    public var onGazeEnter:
+      ((_ nodeIndex: Int, _ point: SIMD3<Float>, _ normal: SIMD3<Float>) -> Void)?
+    /// `{nodeIndex}` when gaze leaves a node (`gazeleave`).
+    public var onGazeLeave: ((_ nodeIndex: Int) -> Void)?
+    /// `{nodeIndex, action, point}` when gaze dwell completes (`gazedwell`).
+    public var onGazeDwell:
+      ((_ nodeIndex: Int, _ action: String, _ point: SIMD3<Float>) -> Void)?
+    /// `{factor, source}` when explosion factor changes (`explodechange`).
+    public var onExplodeChange: ((_ factor: Float, _ source: String) -> Void)?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
@@ -62,6 +72,18 @@
     public var measureUnit: String = "auto"
     /// Currently selected node index (used by `dimensions.showOnSelect`).
     public var selectedNodeIndex: Int = -1
+    /// Gaze-dwell activation mode (`"off"`, `"on"`, `"auto"`).
+    public var gazeDwellMode: String = "off"
+    /// Default dwell duration in milliseconds (`250..10000`).
+    public var defaultDwellMs: Int = 1200
+    /// Explosion layout mode (`"radial"`, `"axial-x"`, `"axial-y"`, `"axial-z"`, `"hierarchical"`).
+    public var explodeMode: String = "radial"
+    /// Multiplier (`0..10`) applied to exploded part travel distances.
+    public var explodeScale: Float = 1.5
+    /// Cross-section cut plane specification (`"none"`, `"x:0.2"`, `"y:0.0"`, `"-z:0.1"`, `"interactive"`).
+    public var sectionPlaneSpec: String = "none"
+    /// Current spring-smoothed assembly explosion factor in `[0..1]`.
+    public var explodeFactor: Float { currentExplodeFactor }
     /// Camera world transform for camera-facing particles (defaults to the live head pose).
     public var cameraTransformProvider: (() -> simd_float4x4?)?
 
@@ -169,6 +191,35 @@
     private var previewRingRadius: Float = 0
     private var previewRingColor: String = ""
     private var pulsePhase: Float = 0
+    private var gazeTraits: [Int: XRLiveGaze] = [:]
+    private var pointerNoneNodes: Set<Int> = []
+    private var smoothedGazeDir: SIMD3<Float>?
+    private var activeGazeNode: Int = -1
+    private var gazeElapsedMs: Float = 0
+    private var gazeCompleted: Bool = false
+    private var lastGazeHitPoint: SIMD3<Float> = .zero
+    private var lastGazeHitNormal: SIMD3<Float> = SIMD3<Float>(0, 0, 1)
+    private var gazeReticleEntity: ModelEntity?
+    private var lastReticleBucket: Int = -1
+
+    private struct RestPart {
+      let node: Int
+      let restTransform: XRNodeTransform
+      let restWorldCenter: SIMD3<Float>
+      let depth: Int
+    }
+
+    private var explodeTraits: [Int: XRLiveExplode] = [:]
+    private var restParts: [RestPart] = []
+    private var restCaptured: Bool = false
+    private var assemblyCenter: SIMD3<Float> = .zero
+    private var assemblyRadius: Float = 0.5
+    private var targetExplodeFactor: Float = 0
+    private var currentExplodeFactor: Float = 0
+    private var wasExploded: Bool = false
+    private var explodeLeaderEntity: ModelEntity?
+    private var sectionGizmoEntity: ModelEntity?
+    private var lastSectionGizmoRadius: Float = -1
     private var gaussianTexture: TextureResource?
     private var customSplatMaterial: RealityKit.Material?
     private var customSplatMaterialChecked = false
@@ -287,6 +338,15 @@
         if let ss = traits.snapSocket {
           socketTraits[i] = ss
         }
+        if let gz = traits.gaze, gz.enabled {
+          gazeTraits[i] = gz
+        }
+        if let ex = traits.explode, ex.enabled {
+          explodeTraits[i] = ex
+        }
+        if traits.pointerEventsNone {
+          pointerNoneNodes.insert(i)
+        }
       }
       for h in handles { place(h) }
       stepContactShadows()
@@ -334,6 +394,12 @@
       clearMeasurements()
       previewRingEntity?.removeFromParent()
       previewRingEntity = nil
+      gazeReticleEntity?.removeFromParent()
+      gazeReticleEntity = nil
+      explodeLeaderEntity?.removeFromParent()
+      explodeLeaderEntity = nil
+      sectionGizmoEntity?.removeFromParent()
+      sectionGizmoEntity = nil
       container.removeFromParent()
       handles.removeAll()
       emitters.removeAll()
@@ -345,6 +411,10 @@
       snapTraits.removeAll()
       socketTraits.removeAll()
       activeSocketByNode.removeAll()
+      gazeTraits.removeAll()
+      explodeTraits.removeAll()
+      restParts.removeAll()
+      pointerNoneNodes.removeAll()
     }
 
     // MARK: Pointer input (world-space rays)
@@ -461,6 +531,7 @@
     public func step(dt: TimeInterval) {
       let dtClamped = Float(max(0, min(0.1, dt.isFinite ? dt : 0)))
       pulsePhase += dtClamped * 5.0
+      stepExplodedView(dt: dt)
       for h in handles { place(h) }
       stepContactShadows()
       let camera: simd_float4x4
@@ -592,7 +663,7 @@
           continue
         }
         let wb = SpatialMeasure.computeWorldBounds(
-          localMin: lb.min, localMax: lb.max, world: session.worldMatrix(of: node))
+          localMin: lb.min, localMax: lb.max, worldMatrix: session.worldMatrix(of: node))
         let unit = (cfg.unit == "auto" && measureUnit != "auto") ? measureUnit : cfg.unit
         let key =
           "\(Int((wb.min.x * 1000).rounded())),\(Int((wb.min.y * 1000).rounded())),\(Int((wb.min.z * 1000).rounded()))|"
@@ -803,6 +874,364 @@
         previewRingEntity?.isEnabled = false
       }
       return ev
+    }
+
+    // MARK: Gaze Dwell & Exploded View
+
+    private func isNodeGazeEligible(_ nodeIndex: Int) -> Bool {
+      guard !pointerNoneNodes.contains(nodeIndex), live.session.isEffectivelyVisible(nodeIndex)
+      else { return false }
+      if gazeTraits[nodeIndex] != nil { return true }
+      guard let t = live.session.traits(at: nodeIndex) else { return false }
+      return t.grabbable || t.holdToAsk != nil
+    }
+
+    private func raycastGazeNode(
+      origin: SIMD3<Float>,
+      dir: SIMD3<Float>,
+      maxDist: Float = 25.0
+    ) -> (node: Int, point: SIMD3<Float>, normal: SIMD3<Float>)? {
+      let session = live.session
+      var bestNode = -1
+      var bestT = maxDist
+      var bestPoint = SIMD3<Float>.zero
+      var bestNormal = SIMD3<Float>(0, 0, 1)
+      for node in 0..<session.nodeCount {
+        guard !pointerNoneNodes.contains(node), session.isEffectivelyVisible(node),
+          let lb = resolvedNodeBounds(node)
+        else { continue }
+        let world = session.worldMatrix(of: node)
+        let det = world.determinant
+        guard det.isFinite, abs(det) > 1e-8 else { continue }
+        let inv = world.inverse
+        let lo4 = inv * SIMD4<Float>(origin.x, origin.y, origin.z, 1)
+        let lf4 = inv * SIMD4<Float>(origin.x + dir.x, origin.y + dir.y, origin.z + dir.z, 1)
+        let lo = SIMD3<Float>(lo4.x, lo4.y, lo4.z)
+        let ld = SIMD3<Float>(lf4.x - lo4.x, lf4.y - lo4.y, lf4.z - lo4.z)
+        var tMin: Float = 0
+        var tMax = Float.infinity
+        var hitAxis = 0
+        var hitSign: Float = -1
+        var miss = false
+        for k in 0..<3 {
+          if abs(ld[k]) < 1e-8 {
+            if lo[k] < lb.min[k] || lo[k] > lb.max[k] {
+              miss = true
+              break
+            }
+          } else {
+            let invD = 1 / ld[k]
+            var t1 = (lb.min[k] - lo[k]) * invD
+            var t2 = (lb.max[k] - lo[k]) * invD
+            var sign: Float = -1
+            if t1 > t2 {
+              swap(&t1, &t2)
+              sign = 1
+            }
+            if t1 > tMin {
+              tMin = t1
+              hitAxis = k
+              hitSign = sign
+            }
+            if t2 < tMax { tMax = t2 }
+            if tMin > tMax {
+              miss = true
+              break
+            }
+          }
+        }
+        if miss || tMax < 1e-4 { continue }
+        let tLocal = tMin >= 1e-4 ? tMin : tMax
+        let lp = lo + ld * tLocal
+        let wp4 = world * SIMD4<Float>(lp.x, lp.y, lp.z, 1)
+        let wp = SIMD3<Float>(wp4.x, wp4.y, wp4.z)
+        let dist = simd_length(wp - origin)
+        if dist >= bestT { continue }
+        var ln = SIMD3<Float>.zero
+        ln[hitAxis] = hitSign
+        let invT = inv.transpose
+        let wn4 = invT * SIMD4<Float>(ln.x, ln.y, ln.z, 0)
+        var wn = XRSpatialMath.normalize(
+          SIMD3<Float>(wn4.x, wn4.y, wn4.z), fallback: -dir)
+        if simd_dot(wn, dir) > 0 { wn = -wn }
+        bestNode = node
+        bestT = dist
+        bestPoint = wp
+        bestNormal = wn
+      }
+      return bestNode >= 0 ? (bestNode, bestPoint, bestNormal) : nil
+    }
+
+    /// Steps `gaze-dwell` for the current eye/head ray, updating the constant-angular-size reticle
+    /// and firing `onGazeEnter`, `onGazeLeave`, and `onGazeDwell`.
+    public func stepGazeDwell(
+      origin: SIMD3<Float>,
+      rawDirection: SIMD3<Float>,
+      dtSeconds: TimeInterval,
+      autoEnabled: Bool = false
+    ) {
+      let active: Bool
+      switch gazeDwellMode {
+      case "on", "true": active = true
+      case "auto": active = autoEnabled
+      default: active = !gazeTraits.isEmpty
+      }
+      guard active else {
+        clearActiveGaze()
+        return
+      }
+      let dir = GazeDwell.smoothDirection(prev: smoothedGazeDir, raw: rawDirection)
+      smoothedGazeDir = dir
+      let hit = raycastGazeNode(origin: origin, dir: dir)
+      var candidateNode = (hit != nil && isNodeGazeEligible(hit!.node)) ? hit!.node : -1
+      var hitPoint = hit?.point ?? .zero
+      var hitNormal = hit?.normal ?? SIMD3<Float>(0, 0, 1)
+
+      if candidateNode != activeGazeNode && activeGazeNode >= 0
+        && live.session.isEffectivelyVisible(activeGazeNode)
+      {
+        let toPrev = lastGazeHitPoint - origin
+        if simd_length(toPrev) > 1e-4
+          && GazeDwell.angleBetweenDeg(dir, toPrev) <= GazeDwell.graceConeDeg
+        {
+          candidateNode = activeGazeNode
+          hitPoint = lastGazeHitPoint
+          hitNormal = lastGazeHitNormal
+        }
+      }
+
+      if candidateNode < 0 {
+        clearActiveGaze()
+        return
+      }
+
+      if candidateNode != activeGazeNode {
+        if activeGazeNode >= 0 { onGazeLeave?(activeGazeNode) }
+        activeGazeNode = candidateNode
+        gazeElapsedMs = 0
+        gazeCompleted = false
+        lastGazeHitPoint = hitPoint
+        lastGazeHitNormal = hitNormal
+        onGazeEnter?(candidateNode, hitPoint, hitNormal)
+      } else {
+        lastGazeHitPoint = hitPoint
+        lastGazeHitNormal = hitNormal
+      }
+
+      let trait = gazeTraits[candidateNode]
+      let dwellMs = Float(max(250, min(10000, trait?.dwellMs ?? defaultDwellMs)))
+      let repeatDwell = trait?.repeatDwell ?? false
+      let action =
+        trait?.action
+        ?? (live.session.traits(at: candidateNode)?.holdToAsk != nil ? "ask" : "select")
+      let dtMs = Float(max(0, min(0.1, dtSeconds.isFinite ? dtSeconds : 0))) * 1000
+      var progress: Float = 0
+
+      if !gazeCompleted {
+        gazeElapsedMs += dtMs
+        progress = GazeDwell.computeDwellProgress(elapsedMs: gazeElapsedMs, dwellMs: dwellMs)
+        if progress >= 1 {
+          onGazeDwell?(candidateNode, action, lastGazeHitPoint)
+          if action == "select" {
+            live.session.dispatchSelect(nodeIndex: candidateNode, hitPoint: lastGazeHitPoint)
+          }
+          if repeatDwell {
+            gazeElapsedMs = 0
+            progress = 0
+          } else {
+            gazeCompleted = true
+            progress = 0
+          }
+        }
+      }
+
+      let bucket = Int((progress * 24).rounded())
+      if gazeReticleEntity == nil || bucket != lastReticleBucket {
+        lastReticleBucket = bucket
+        let geo = GazeDwell.buildReticleGeometry(progress: Float(bucket) / 24, segments: 24)
+        if let rMesh = Self.mesh(geo) {
+          let mat = Self.material(Self.parseHexRgba("#38bdf8", alpha: 0.92))
+          if let existing = gazeReticleEntity {
+            existing.model = ModelComponent(mesh: rMesh, materials: [mat])
+          } else {
+            let re = ModelEntity(mesh: rMesh, materials: [mat])
+            container.addChild(re)
+            gazeReticleEntity = re
+          }
+        }
+      }
+      if let re = gazeReticleEntity {
+        re.isEnabled = true
+        let dist = max(0.15, simd_length(lastGazeHitPoint - origin))
+        let outerR = max(0.004, GazeDwell.reticleAngularScale * dist)
+        let offsetPos = lastGazeHitPoint + lastGazeHitNormal * 0.003
+        let q = GazeDwell.quatFromUnitVectors(from: SIMD3<Float>(0, 0, 1), to: lastGazeHitNormal)
+        re.setTransformMatrix(
+          XRSpatialMath.compose(
+            translation: offsetPos, rotation: q, scale: SIMD3<Float>(repeating: outerR)),
+          relativeTo: nil)
+      }
+    }
+
+    private func clearActiveGaze() {
+      if activeGazeNode >= 0 {
+        let prev = activeGazeNode
+        activeGazeNode = -1
+        gazeElapsedMs = 0
+        gazeCompleted = false
+        onGazeLeave?(prev)
+      }
+      gazeReticleEntity?.isEnabled = false
+    }
+
+    /// Sets the target explosion factor in `[0..1]` and notifies `onExplodeChange` when changed.
+    public func setExplode(_ factor: Float, source: String = "api") {
+      let clamped = Float(XRJSON.clampNum(Double(factor), 0, 1, 0))
+      if abs(clamped - targetExplodeFactor) <= 1e-4 { return }
+      targetExplodeFactor = clamped
+      onExplodeChange?(clamped, source)
+    }
+
+    private func ensureRestAssemblyCaptured() {
+      if restCaptured { return }
+      restCaptured = true
+      restParts.removeAll()
+      let session = live.session
+      var bMin = SIMD3<Float>(repeating: .infinity)
+      var bMax = SIMD3<Float>(repeating: -.infinity)
+      for node in 0..<session.nodeCount {
+        guard let lb = resolvedNodeBounds(node), let t = session.nodeTransform(at: node) else {
+          continue
+        }
+        let wb = SpatialMeasure.computeWorldBounds(
+          localMin: lb.min, localMax: lb.max, worldMatrix: session.worldMatrix(of: node))
+        bMin = simd_min(bMin, wb.min)
+        bMax = simd_max(bMax, wb.max)
+        var depth = 1
+        var p = session.parentIndex(of: node)
+        while let cur = p, depth < 32 {
+          depth += 1
+          p = session.parentIndex(of: cur)
+        }
+        restParts.append(
+          RestPart(
+            node: node, restTransform: t, restWorldCenter: wb.center, depth: depth))
+      }
+      if bMin.x.isFinite {
+        assemblyCenter = (bMin + bMax) * 0.5
+        assemblyRadius = max(0.05, simd_length(bMax - bMin) * 0.5)
+      }
+    }
+
+    /// Steps `exploded-view` spring smoothing, node offsets, dashed leader lines, and section gizmo.
+    public func stepExplodedView(dt: TimeInterval) {
+      let sec = ExplodedView.parseSectionPlane(sectionPlaneSpec, defaultCenter: assemblyCenter)
+      if targetExplodeFactor <= 1e-5 && currentExplodeFactor <= 1e-5 && !sec.enabled {
+        explodeLeaderEntity?.isEnabled = false
+        sectionGizmoEntity?.isEnabled = false
+        return
+      }
+      ensureRestAssemblyCaptured()
+      let dtClamped = Float(max(0, min(0.1, dt.isFinite ? dt : 0)))
+      let alpha = 1 - exp(-12 * dtClamped)
+      currentExplodeFactor += (targetExplodeFactor - currentExplodeFactor) * alpha
+      if abs(targetExplodeFactor - currentExplodeFactor) < 1e-4 {
+        currentExplodeFactor = targetExplodeFactor
+      }
+
+      var maxLayer = 1
+      for tr in explodeTraits.values { maxLayer = max(maxLayer, tr.layer) }
+      let explicitOnly = !explodeTraits.isEmpty
+      var leaderSegs: [(SIMD3<Float>, SIMD3<Float>)] = []
+      let isNowExploded = currentExplodeFactor > 1e-5 || targetExplodeFactor > 0
+
+      if isNowExploded || wasExploded {
+        if isNowExploded && !wasExploded {
+          restCaptured = false
+          ensureRestAssemblyCaptured()
+        }
+        for (idx, part) in restParts.enumerated() {
+          let tr = explodeTraits[part.node]
+          if explicitOnly && tr == nil { continue }
+          let offset = ExplodedView.computeNodeOffset(
+            restPosition: part.restWorldCenter,
+            assemblyCenter: assemblyCenter,
+            assemblyRadius: assemblyRadius,
+            factor: currentExplodeFactor,
+            mode: explodeMode,
+            explodeScale: explodeScale,
+            trait: tr,
+            maxLayer: maxLayer,
+            nodeIndex: idx,
+            nodeCount: restParts.count,
+            hierarchyDepth: part.depth
+          )
+          live.setNodeTransform(
+            part.node,
+            XRNodeTransform(
+              translation: part.restTransform.translation + offset,
+              rotation: part.restTransform.rotation,
+              scale: part.restTransform.scale
+            ))
+          if currentExplodeFactor > 0.02 && (tr?.leaderLine != false),
+            let lb = resolvedNodeBounds(part.node)
+          {
+            let curWb = SpatialMeasure.computeWorldBounds(
+              localMin: lb.min, localMax: lb.max, worldMatrix: live.session.worldMatrix(of: part.node))
+            if simd_length(curWb.center - part.restWorldCenter) > 0.01 && leaderSegs.count < 512 {
+              leaderSegs.append(
+                contentsOf: SpatialMeasure.buildDashedSegments(
+                  start: part.restWorldCenter, end: curWb.center))
+            }
+          }
+        }
+        wasExploded = isNowExploded
+      }
+
+      if leaderSegs.isEmpty {
+        explodeLeaderEntity?.isEnabled = false
+      } else {
+        let geo = SpatialMeasure.buildSegmentBarsGeometry(leaderSegs, halfThickness: 0.0014)
+        if let lMesh = Self.mesh(geo) {
+          let mat = Self.material(Self.parseHexRgba("#94a3b8", alpha: 0.85))
+          if let existing = explodeLeaderEntity {
+            existing.model = ModelComponent(mesh: lMesh, materials: [mat])
+          } else {
+            let le = ModelEntity(mesh: lMesh, materials: [mat])
+            container.addChild(le)
+            explodeLeaderEntity = le
+          }
+          explodeLeaderEntity?.isEnabled = true
+          explodeLeaderEntity?.setTransformMatrix(matrix_identity_float4x4, relativeTo: nil)
+        }
+      }
+
+      if sec.enabled {
+        let halfExt = max(0.15, assemblyRadius * 1.15)
+        if sectionGizmoEntity == nil || abs(halfExt - lastSectionGizmoRadius) > 1e-3 {
+          sectionGizmoEntity?.removeFromParent()
+          let gGeo = ExplodedView.buildSectionGizmoGeometry(halfExtent: halfExt)
+          if let gMesh = Self.mesh(gGeo) {
+            let mat = Self.material(Self.parseHexRgba("#38bdf8", alpha: 0.9))
+            let ge = ModelEntity(mesh: gMesh, materials: [mat])
+            container.addChild(ge)
+            sectionGizmoEntity = ge
+            lastSectionGizmoRadius = halfExt
+          }
+        }
+        if let ge = sectionGizmoEntity {
+          ge.isEnabled = true
+          let d = sec.constant - simd_dot(assemblyCenter, sec.normal)
+          let planeCenter = assemblyCenter + sec.normal * d
+          let q = GazeDwell.quatFromUnitVectors(from: SIMD3<Float>(0, 0, 1), to: sec.normal)
+          ge.setTransformMatrix(
+            XRSpatialMath.compose(
+              translation: planeCenter, rotation: q, scale: SIMD3<Float>(1, 1, 1)),
+            relativeTo: nil)
+        }
+      } else {
+        sectionGizmoEntity?.isEnabled = false
+      }
     }
 
     private func stepContactShadows() {

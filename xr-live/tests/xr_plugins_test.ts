@@ -98,6 +98,25 @@ import {
   XRSpatialMeasureController,
 } from '../src/plugins/spatial-measure';
 import {
+  angleBetweenDirectionsDeg,
+  buildGazeReticleGeometry,
+  computeDwellProgress,
+  parseGaze,
+  smoothGazeDirection,
+  XRGazeDwellController,
+} from '../src/plugins/gaze-dwell';
+import {
+  buildSectionGizmoGeometry,
+  computeExplodedNodeOffset,
+  computeLayerFactor,
+  computeTwoHandExplodeDelta,
+  explodedViewPlugin,
+  getExplodedViewController,
+  parseExplode,
+  parseSectionPlaneSpec,
+  XRExplodedViewController,
+} from '../src/plugins/exploded-view';
+import {
   catmullRom,
   paintPointFor,
   parseHexColor,
@@ -168,7 +187,7 @@ function meshAt(name: string, pos: [number, number, number], xr: Record<string, 
 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
-  assert(xrSpatialPlugins.length === 9, 'exports nine plugins');
+  assert(xrSpatialPlugins.length === 11, 'exports eleven plugins');
   assert(
     xrLiveFull.xrSpatialPlugins === xrSpatialPlugins && typeof xrLiveFull.connectGeminiLive === 'function',
     'xr-live-full includes the spatial plugins',
@@ -184,6 +203,8 @@ function testRegistration(): void {
     'xr-live-splat-loader',
     'xr-live-spatial-measure',
     'xr-live-magnetic-snap',
+    'xr-live-gaze-dwell',
+    'xr-live-exploded-view',
   ]) {
     assert(names.includes(n), `registers ${n}`);
   }
@@ -783,6 +804,38 @@ function testSchema(): void {
       p1Usd.includes('string snapSocketTag = "slot-a"'),
     'USD flattening emits dimensions, snapTo, and snapSocket entries',
   );
+
+  const p2 = normalizeXRTraits({
+    gaze: {dwellMs: 100, repeat: true, action: 'ask'},
+    explode: {direction: [0, 3, 4], distance: 50, layer: 19, leaderLine: false},
+  })!;
+  assert(
+    p2.gaze?.dwellMs === 250 && p2.gaze?.repeat === true && p2.gaze?.action === 'ask',
+    'gaze clamps dwellMs to [250, 10000] and preserves repeat + ask action',
+  );
+  assert(
+    near(p2.explode!.direction![1], 0.6) &&
+      near(p2.explode!.direction![2], 0.8) &&
+      p2.explode?.distance === 10 &&
+      p2.explode?.layer === 10 &&
+      p2.explode?.leaderLine === false,
+    'explode unit-normalizes direction and clamps distance [0, 10] and layer [1, 10]',
+  );
+  assert(
+    parseGaze({enabled: false}) === null && parseExplode({enabled: false}) === null,
+    'gaze and explode disabled by enabled: false',
+  );
+  const p2Usd = buildUsdXRLines(
+    {gaze: {dwellMs: 900, action: 'ask'}, explode: {direction: [1, 0, 0], distance: 0.4, layer: 2}},
+    (v) => String(v),
+  );
+  assert(
+    p2Usd.includes('double gazeDwellMs = 900') &&
+      p2Usd.includes('string gazeAction = "ask"') &&
+      p2Usd.includes('double3 explodeDirection = (1, 0, 0)') &&
+      p2Usd.includes('double explodeLayer = 2'),
+    'USD flattening emits gaze and explode entries',
+  );
 }
 
 function testSpatialMeasure(): void {
@@ -966,6 +1019,177 @@ function testMagneticSnap(): void {
   assert(emitted.some((e) => e.type === 'xrunsnap' && e.detail.socket === slot), 'xrunsnap event emitted on breakaway');
   ts.endGrab('right');
   snapCtrl.dispose(viewer);
+}
+
+function testGazeDwell(): void {
+  console.log('\n👁️ gaze-dwell');
+  const d0 = smoothGazeDirection(null, [0, 0, -2]);
+  assert(near(d0[2], -1), 'initial gaze direction normalizes');
+  const d1 = smoothGazeDirection([0, 0, -1], [1, 0, -1], 0.25);
+  assert(d1[0] > 0 && d1[0] < 0.3 && near(Math.hypot(d1[0], d1[1], d1[2]), 1), 'EMA smooths gaze ray');
+  assert(near(angleBetweenDirectionsDeg([0, 0, -1], [1, 0, 0]), 90), '90° angle between orthogonal rays');
+
+  assert(computeDwellProgress(140, 1000, 150) === 0, 'dwell progress stays 0 during 150ms grace delay');
+  assert(near(computeDwellProgress(575, 1000, 150), 0.5), 'dwell progress reaches 0.5 mid-dwell');
+  assert(computeDwellProgress(1200, 1000, 150) === 1, 'dwell progress clamps to 1 at completion');
+
+  const ret0 = buildGazeReticleGeometry(0, 24);
+  const retHalf = buildGazeReticleGeometry(0.5, 24);
+  assert(
+    retHalf.indices.length > ret0.indices.length && retHalf.indices.length % 12 === 0,
+    'progress arc appends double-sided ring quads to reticle',
+  );
+
+  const btn = meshAt('StartBtn', [0, 1.6, -1.5], {gaze: {dwellMs: 400, repeat: false, action: 'select'}});
+  let selectedMesh: unknown = null;
+  const events: string[] = [];
+  const host: Record<string, any> = {
+    hasAttribute: (k: string) => k === 'gaze-dwell',
+    getAttribute: (k: string) => (k === 'gaze-dwell' ? 'true' : null),
+    dispatchEvent: (ev: {type: string}) => {
+      events.push(ev.type);
+      return true;
+    },
+  };
+  const viewer: Record<string, any> = {
+    meshes: [btn],
+    container: host,
+    onMeshSelect: (m: unknown) => {
+      selectedMesh = m;
+    },
+  };
+  const ctrl = new XRGazeDwellController();
+  ctrl.step(viewer, 0.1, host, {origin: [0, 1.6, 0], direction: [0, 0, -1]});
+  assert(events.includes('gazeenter') && viewer.meshes.length === 2, 'gazeenter fired and reticle mesh attached');
+  // Micro-saccade within 1.5° grace cone (aiming past the mesh edge by 1.0° from last hit point)
+  // keeps dwell alive without gazeleave.
+  const rad1Deg = (1.0 * Math.PI) / 180;
+  ctrl.step(viewer, 0.1, host, {
+    origin: [0, 1.6, 0],
+    direction: [Math.sin(rad1Deg), 0, -Math.cos(rad1Deg)],
+  });
+  assert(!events.includes('gazeleave'), '1.0° micro-saccade stays within 1.5° grace cone');
+  for (let i = 0; i < 4; i++) {
+    ctrl.step(viewer, 0.1, host, {origin: [0, 1.6, 0], direction: [0, 0, -1]});
+  }
+  assert(
+    events.includes('gazedwell') && events.includes('meshclick') && selectedMesh === btn,
+    'dwell completion dispatches gazedwell, meshclick, and viewer.onMeshSelect',
+  );
+  const dwellCountAfterFirst = events.filter((e) => e === 'gazedwell').length;
+  ctrl.step(viewer, 0.1, host, {origin: [0, 1.6, 0], direction: [0, 0, -1]});
+  ctrl.step(viewer, 0.1, host, {origin: [0, 1.6, 0], direction: [0, 0, -1]});
+  assert(
+    events.filter((e) => e === 'gazedwell').length === dwellCountAfterFirst,
+    'repeat: false prevents re-firing while gaze remains on target',
+  );
+  for (let i = 0; i < 6; i++) {
+    ctrl.step(viewer, 0.05, host, {origin: [0, 1.6, 0], direction: [0, 0, 1]});
+  }
+  assert(events.includes('gazeleave'), 'looking away emits gazeleave');
+  ctrl.dispose(viewer);
+  assert(viewer.meshes.length === 1, 'gaze-dwell dispose removes reticle mesh');
+}
+
+function testExplodedView(): void {
+  console.log('\n💥 exploded-view');
+  assert(
+    computeLayerFactor(0, 1, 3) === 0 && computeLayerFactor(1, 3, 3) === 1,
+    'layer factor is exact 0 at t=0 and exact 1 at t=1',
+  );
+  assert(
+    computeLayerFactor(0.4, 1, 3) > computeLayerFactor(0.4, 3, 3),
+    'outer layer 1 peels away ahead of inner layer 3 at t=0.4',
+  );
+  assert(near(computeTwoHandExplodeDelta(0.2, 0.4, 0.4), 0.5), 'two-hand spread maps 20cm delta to +0.5');
+
+  const secX = parseSectionPlaneSpec('x:0.25');
+  const secNegZ = parseSectionPlaneSpec('-z:0.1');
+  const secInt = parseSectionPlaneSpec('interactive', [0.15, 0, 0]);
+  assert(
+    secX.enabled && near(secX.normal[0], 1) && near(secX.constant, 0.25),
+    'section-plane parses x:0.25',
+  );
+  assert(
+    secNegZ.enabled && near(secNegZ.normal[2], -1) && near(secNegZ.constant, -0.1),
+    'section-plane parses signed -z:0.1',
+  );
+  assert(
+    secInt.enabled && secInt.interactive && near(secInt.constant, 0.15),
+    'interactive section-plane centers on assembly X',
+  );
+  assert(buildSectionGizmoGeometry(0.3).positions.length > 0, 'section gizmo frame geometry builds');
+
+  const offZero = computeExplodedNodeOffset({
+    restPosition: [0.5, 0, 0],
+    assemblyCenter: [0, 0, 0],
+    assemblyRadius: 0.5,
+    factor: 0,
+  });
+  assert(offZero[0] === 0 && offZero[1] === 0 && offZero[2] === 0, 'zero explode factor yields zero offset');
+
+  const left = meshAt('LeftShell', [-0.4, 0, 0], {explode: {layer: 1, distance: 0.5}});
+  const right = meshAt('RightCore', [0.4, 0, 0], {explode: {layer: 2, distance: 0.5}});
+  const events: Array<{factor: number; source: string}> = [];
+  const host: Record<string, any> = {
+    hasAttribute: (k: string) => k === 'explode' || k === 'section-plane',
+    getAttribute: (k: string) => {
+      if (k === 'explode') return host._ex;
+      if (k === 'section-plane') return host._sec;
+      return null;
+    },
+    _ex: '1',
+    _sec: 'interactive',
+    dispatchEvent: (ev: {type: string; detail?: any}) => {
+      if (ev.type === 'explodechange' && ev.detail) events.push(ev.detail);
+      return true;
+    },
+  };
+  const viewer: Record<string, any> = {meshes: [left, right], container: host};
+  const ctrl = getExplodedViewController(host);
+  for (let i = 0; i < 60; i++) ctrl.update(viewer, 1 / 60, host);
+  assert(extractPosition(left.transform)[0] < -0.85, 'LeftShell explodes outward along -X');
+  assert(extractPosition(right.transform)[0] > 0.85, 'RightCore explodes outward along +X');
+  assert(viewer.meshes.length === 4, 'attaches dashed leader-line mesh and interactive section gizmo');
+
+  let uniformVal: unknown = null;
+  let enabledVal: unknown = null;
+  const fakeGl: Record<string, any> = {
+    getUniformLocation: (_p: unknown, name: string) => name,
+    uniform4f: (_l: unknown, x: number, y: number, z: number, w: number) => {
+      uniformVal = [x, y, z, w];
+    },
+    uniform1i: (_l: unknown, v: number) => {
+      enabledVal = v;
+    },
+  };
+  const fakeProg = {} as WebGLProgram;
+  explodedViewPlugin.onBeforeDrawScene!(viewer, fakeGl as unknown as WebGL2RenderingContext);
+  explodedViewPlugin.onBeforeDrawPrimitive!(
+    fakeGl as unknown as WebGL2RenderingContext,
+    fakeProg,
+    {},
+    left,
+  );
+  assert(enabledVal === 1 && Array.isArray(uniformVal), 'binds GPU cross-section uniforms for scene meshes');
+  explodedViewPlugin.onBeforeDrawPrimitive!(
+    fakeGl as unknown as WebGL2RenderingContext,
+    fakeProg,
+    {},
+    {isPluginMesh: true},
+  );
+  assert(enabledVal === 0, 'skips GPU cross-section clipping on plugin gizmo meshes');
+
+  ctrl.setExplode(0, host, 'api');
+  for (let i = 0; i < 80; i++) ctrl.update(viewer, 1 / 60, host);
+  assert(
+    near(extractPosition(left.transform)[0], -0.4, 1e-3) &&
+      near(extractPosition(right.transform)[0], 0.4, 1e-3) &&
+      events.some((e) => e.factor === 0 && e.source === 'api'),
+    'returning explode factor to 0 restores exact rest poses and emits explodechange',
+  );
+  ctrl.dispose(viewer);
+  assert(viewer.meshes.length === 2, 'exploded-view dispose removes leader lines and section gizmo');
 }
 
 function testGoldenParity(): void {
@@ -1194,6 +1418,8 @@ async function main(): Promise<void> {
   testSplats();
   testSpatialMeasure();
   testMagneticSnap();
+  testGazeDwell();
+  testExplodedView();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

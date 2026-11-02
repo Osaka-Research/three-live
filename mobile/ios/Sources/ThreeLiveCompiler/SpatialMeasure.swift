@@ -29,6 +29,7 @@ public enum SpatialMeasure {
     public var min: SIMD3<Float>
     public var max: SIMD3<Float>
     public var size: SIMD3<Float>
+    public var center: SIMD3<Float> { (min + max) * 0.5 }
   }
 
   public struct Callout: Sendable, Equatable {
@@ -302,6 +303,31 @@ public enum SpatialMeasure {
       }
     }
     return XRGeneratedGeometry(positions: positions, normals: normals, indices: indices)
+  }
+
+  /// Subdivides `[start, end]` into alternating dash segments for leader lines.
+  public static func buildDashedSegments(
+    start: SIMD3<Float>,
+    end: SIMD3<Float>,
+    dashLength: Float = 0.025,
+    gapLength: Float = 0.015
+  ) -> [(SIMD3<Float>, SIMD3<Float>)] {
+    let total = simd_length(end - start)
+    guard total > 1e-4 else { return [] }
+    let dash = max(0.004, dashLength)
+    let gap = max(0.002, gapLength)
+    let stride = dash + gap
+    var out: [(SIMD3<Float>, SIMD3<Float>)] = []
+    var d: Float = 0
+    while d < total && out.count < 128 {
+      let t0 = d / total
+      let t1 = min(1, (d + dash) / total)
+      let p0 = start + (end - start) * t0
+      let p1 = start + (end - start) * t1
+      if simd_length(p1 - p0) > 1e-4 { out.append((p0, p1)) }
+      d += stride
+    }
+    return out
   }
 }
 

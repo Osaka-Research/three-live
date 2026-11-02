@@ -383,6 +383,62 @@ export function parseSnapSocket(raw: unknown): SnapSocketOptions | null {
   };
 }
 
+/** Supported dwell completion actions (`gaze-dwell`). */
+export type GazeAction = 'select' | 'ask';
+
+/** Normalized `gaze` trait options (`gaze-dwell`). */
+export interface GazeOptions {
+  readonly enabled: boolean;
+  readonly dwellMs: number;
+  readonly repeat: boolean;
+  readonly action: GazeAction;
+}
+
+/** Parses a `gaze` trait (`true` or options), returning `null` when disabled. */
+export function parseGaze(raw: unknown): GazeOptions | null {
+  if (!raw) return null;
+  const r = asRecord(raw);
+  if (r && r['enabled'] === false) return null;
+  const act = r?.['action'];
+  return {
+    enabled: true,
+    dwellMs: Math.round(clampNum(r?.['dwellMs'], 250, 10000, 1200)),
+    repeat: r?.['repeat'] === true,
+    action: act === 'ask' ? 'ask' : 'select',
+  };
+}
+
+/** Normalized `explode` trait options (`exploded-view`). */
+export interface ExplodeOptions {
+  readonly enabled: boolean;
+  readonly direction: TraitVec3 | null;
+  readonly distance: number;
+  readonly layer: number;
+  readonly leaderLine: boolean;
+}
+
+/** Parses an `explode` trait (`true` or options), returning `null` when disabled. */
+export function parseExplode(raw: unknown): ExplodeOptions | null {
+  if (!raw) return null;
+  const r = asRecord(raw);
+  if (r && r['enabled'] === false) return null;
+  const rawDir = r?.['direction'];
+  let direction: TraitVec3 | null = null;
+  if (isFiniteVec3(rawDir)) {
+    const len = Math.hypot(rawDir[0], rawDir[1], rawDir[2]);
+    if (len > 1e-8) {
+      direction = [rawDir[0] / len, rawDir[1] / len, rawDir[2] / len];
+    }
+  }
+  return {
+    enabled: true,
+    direction,
+    distance: clampNum(r?.['distance'], 0, 10, 0.35),
+    layer: Math.round(clampNum(r?.['layer'], 1, 10, 1)),
+    leaderLine: r?.['leaderLine'] !== false,
+  };
+}
+
 /** Canonical, fully-normalized trait set for one node. */
 export interface NormalizedXRTraits {
   grab?: '1-hand' | '2-hand';
@@ -407,6 +463,8 @@ export interface NormalizedXRTraits {
   dimensions?: DimensionsOptions;
   snapTo?: SnapToOptions;
   snapSocket?: SnapSocketOptions;
+  gaze?: GazeOptions;
+  explode?: ExplodeOptions;
   pointerEvents?: 'none';
 }
 
@@ -486,6 +544,10 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (snapTo) out.snapTo = snapTo;
   const snapSocket = parseSnapSocket(r['snapSocket']);
   if (snapSocket) out.snapSocket = snapSocket;
+  const gaze = parseGaze(r['gaze']);
+  if (gaze) out.gaze = gaze;
+  const explode = parseExplode(r['explode']);
+  if (explode) out.explode = explode;
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
 
   return Object.keys(out).length > 0 ? out : null;
@@ -542,6 +604,13 @@ export function buildXRSceneCoreExtension(
     comp['snapTo'] = {...n.snapTo, grid: n.snapTo.grid ? [...n.snapTo.grid] : null};
   }
   if (n.snapSocket) comp['snapSocket'] = {...n.snapSocket};
+  if (n.gaze) comp['gaze'] = {...n.gaze};
+  if (n.explode) {
+    comp['explode'] = {
+      ...n.explode,
+      direction: n.explode.direction ? [...n.explode.direction] : null,
+    };
+  }
   return comp;
 }
 
@@ -597,6 +666,8 @@ export function flattenXRTraitsForUsd(
     put('snapTo', n.snapTo);
   }
   if (n.snapSocket) put('snapSocket', n.snapSocket);
+  if (n.gaze) put('gaze', n.gaze);
+  if (n.explode) put('explode', n.explode);
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
   return out;
 }
