@@ -942,6 +942,12 @@ function testSpatialMeasure(): void {
   host._sel = 'chair';
   ctrl.update(viewer, host);
   assert(viewer.meshes.length === 5, 'showOnSelect attaches 1 bar mesh + 3 axis labels when selected');
+  const hostDisabled = {
+    hasAttribute: (k: string) => k === 'spatial-measure',
+    getAttribute: (k: string) => (k === 'spatial-measure' ? 'none' : k === 'selected-mesh' ? 'chair' : null),
+  };
+  ctrl.update(viewer, hostDisabled);
+  assert(viewer.meshes.length === 1, 'spatial-measure="none" detaches per-node dimensions callouts');
   host._sel = null;
   ctrl.update(viewer, host);
   assert(viewer.meshes.length === 1, 'deselecting detaches callout meshes');

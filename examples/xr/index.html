@@ -2334,7 +2334,7 @@ return scene;`
 
     function syncStudioAttributes(enable) {
       if (enable) {
-        if (studioMeasureOn) xrEl.setAttribute('spatial-measure', 'bounds');
+        xrEl.setAttribute('spatial-measure', studioMeasureOn ? 'bounds' : 'none');
         xrEl.setAttribute('measure-unit', 'cm');
         xrEl.setAttribute('magnetic-snap', '');
         xrEl.setAttribute('gaze-dwell', '');
@@ -2408,8 +2408,7 @@ return scene;`
       const btn = document.getElementById('btn-studio-measure');
       btn.textContent = 'Dimensions: ' + (studioMeasureOn ? 'ON' : 'OFF');
       btn.classList.toggle('primary', studioMeasureOn);
-      if (studioMeasureOn) xrEl.setAttribute('spatial-measure', 'bounds');
-      else xrEl.removeAttribute('spatial-measure');
+      xrEl.setAttribute('spatial-measure', studioMeasureOn ? 'bounds' : 'none');
       setToast('Spatial dimension callouts: ' + (studioMeasureOn ? 'ON' : 'OFF'));
     }
 

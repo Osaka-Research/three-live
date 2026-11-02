@@ -501,6 +501,7 @@ export interface SpatialMeasureElementConfig {
   readonly boundsEnabled: boolean;
   readonly tapeEnabled: boolean;
   readonly defaultUnit: DimensionUnit;
+  readonly disabled?: boolean;
 }
 
 /** Parses `spatial-measure` and `measure-unit` attributes on `<xr-live>`. */
@@ -513,17 +514,20 @@ export function resolveSpatialMeasureConfig(element: any): SpatialMeasureElement
     rawUnit === 'm' || rawUnit === 'cm' || rawUnit === 'mm' || rawUnit === 'in' || rawUnit === 'ft-in'
       ? rawUnit
       : 'auto';
-  if (!hasAttr || rawMode === 'false' || rawMode === 'none') {
-    return {boundsEnabled: false, tapeEnabled: false, defaultUnit: unit};
+  if (hasAttr && (rawMode === 'false' || rawMode === 'none' || rawMode === 'off')) {
+    return {boundsEnabled: false, tapeEnabled: false, defaultUnit: unit, disabled: true};
+  }
+  if (!hasAttr) {
+    return {boundsEnabled: false, tapeEnabled: false, defaultUnit: unit, disabled: false};
   }
   if (rawMode === 'tape') {
-    return {boundsEnabled: false, tapeEnabled: true, defaultUnit: unit};
+    return {boundsEnabled: false, tapeEnabled: true, defaultUnit: unit, disabled: false};
   }
   if (rawMode === 'both' || rawMode === 'all') {
-    return {boundsEnabled: true, tapeEnabled: true, defaultUnit: unit};
+    return {boundsEnabled: true, tapeEnabled: true, defaultUnit: unit, disabled: false};
   }
   // `""`, `"bounds"`, or `"true"` enables bounding-box callouts.
-  return {boundsEnabled: true, tapeEnabled: false, defaultUnit: unit};
+  return {boundsEnabled: true, tapeEnabled: false, defaultUnit: unit, disabled: false};
 }
 
 function quantKey(v: readonly number[]): string {
@@ -693,6 +697,7 @@ export class XRSpatialMeasureController {
     let activeLabelCount = 0;
 
     for (const mesh of meshes) {
+      if (elemCfg.disabled) break;
       if (!mesh || mesh.isPluginMesh || mesh.visible === false) continue;
       if (typeof mesh.name === 'string' && mesh.name.startsWith('__xr_')) continue;
       const rawTraits = getMeshXRTraits(mesh);
