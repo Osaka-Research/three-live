@@ -921,9 +921,9 @@ async function runXRLiveTests() {
   depthMgr.configureSessionInit(sessionInitCfg, 'occlusion-physics');
   assert(
     Array.isArray(sessionInitCfg['depthSensing']?.usagePreference) &&
-      sessionInitCfg['depthSensing'].usagePreference.length === 1 &&
-      sessionInitCfg['depthSensing'].usagePreference[0] === 'cpu-optimized',
-    'Regression X3: XRDepthManager requests only cpu-optimized depth (preventing InvalidStateError on gpu-optimized Android sessions)',
+      sessionInitCfg['depthSensing'].usagePreference[0] === 'cpu-optimized' &&
+      sessionInitCfg['depthSensing'].usagePreference[1] === 'gpu-optimized',
+    'Regression X3: XRDepthManager prefers cpu-optimized depth and falls back to gpu-optimized for GPU-only headsets',
   );
 
   let unpackAlignmentSet: number | null = null;
@@ -1179,6 +1179,107 @@ async function runXRLiveTests() {
   assert(
     Math.abs(arBallPos[0]) < 1e-6 && Math.abs(arBallPos[1]) < 1e-6 && Math.abs(arBallPos[2] + 1) < 1e-6,
     'Regression X4: virtual room colliders are skipped while isAR is true',
+  );
+
+  // =========================================================================
+  // GPU-optimized depth (Quest 3-style texture-array, non-linear depth)
+  // =========================================================================
+  const gpuMgr = new XRDepthManager();
+  const gG = globalThis as any;
+  const origBinding = gG.XRWebGLBinding;
+  let bindingCtorCalls = 0;
+  const uaDepthTexture = {uaOwned: true};
+  const depthProjM = mat4Create();
+  depthProjM[0] = 2;
+  const depthInvM = mat4Create();
+  depthInvM[14] = -0.5;
+  gG.XRWebGLBinding = class {
+    constructor() {
+      bindingCtorCalls++;
+    }
+    getDepthInformation(view: any) {
+      return {
+        texture: uaDepthTexture,
+        textureType: 'texture-array',
+        imageIndex: view.eye === 'right' ? 1 : 0,
+        depthNear: 0.1,
+        depthFar: Infinity,
+        rawValueToMeters: 1,
+        projectionMatrix: depthProjM,
+        transform: {inverse: {matrix: depthInvM}},
+      };
+    }
+  };
+  const gpuSession = {depthUsage: 'gpu-optimized', depthDataFormat: 'float32'};
+  const gpuViewer: any = {
+    gl: {...mockGl},
+    xrDepthState: {enabled: false, texture: null, format: 0, rawValueToMeters: 0.001},
+  };
+  try {
+    const gpuRet = gpuMgr.updateFromXRFrame(gpuViewer, {session: gpuSession}, {eye: 'left'}, true);
+    const leftLayer = gpuViewer.xrDepthState.layer;
+    gpuMgr.updateFromXRFrame(gpuViewer, {session: gpuSession}, {eye: 'right'}, true);
+    const st = gpuViewer.xrDepthState;
+    assert(
+      gpuRet === null &&
+        st.enabled === true &&
+        st.texture === uaDepthTexture &&
+        st.textureType === 'texture-array' &&
+        leftLayer === 0 &&
+        st.layer === 1 &&
+        st.format === 1 &&
+        st.depthNear === 0.1 &&
+        st.depthFar === 1e5 &&
+        bindingCtorCalls === 1,
+      'GPU depth: binds the UA texture-array layer per eye, linearization planes, and reuses one XRWebGLBinding per session',
+    );
+    assert(
+      st.depthViewProj instanceof Float32Array &&
+        st.depthViewProj[0] === 2 &&
+        Math.abs(st.depthViewProj[14] + 0.5) < 1e-6,
+      'GPU depth: composes the depth camera world-to-clip matrix for reprojection',
+    );
+    assert(
+      gpuMgr.getLatestDepthInfo() === null && gpuMgr.sampleDepthAndNormal(0.5, 0.5) === null,
+      'GPU depth: CPU sampling stays unavailable so depth physics falls back to the virtual floor',
+    );
+    let deletedUaTexture = false;
+    gpuMgr.dispose({...mockGl, deleteTexture: (t: unknown) => {
+      if (t === uaDepthTexture) deletedUaTexture = true;
+    }} as any);
+    assert(!deletedUaTexture, 'GPU depth: dispose never deletes the UA-owned depth texture');
+
+    delete gG.XRWebGLBinding;
+    const noBindingViewer: any = {
+      gl: {...mockGl},
+      xrDepthState: {enabled: true, texture: uaDepthTexture},
+    };
+    new XRDepthManager().updateFromXRFrame(
+      noBindingViewer, {session: gpuSession}, {eye: 'left'}, true);
+    assert(
+      noBindingViewer.xrDepthState.enabled === false,
+      'GPU depth: disables occlusion when XRWebGLBinding is unavailable',
+    );
+  } finally {
+    if (origBinding === undefined) delete gG.XRWebGLBinding;
+    else gG.XRWebGLBinding = origBinding;
+  }
+
+  // CPU depth after a GPU session resets GPU-only state.
+  const cpuAfterGpuViewer: any = {
+    gl: {...mockGl, pixelStorei() {}, texParameteri() {}, texImage2D() {}},
+    xrDepthState: {
+      enabled: false, texture: null, textureType: 'texture-array', layer: 1,
+      depthNear: 0.1, depthFar: 1e5, depthViewProj: mat4Create(),
+    },
+  };
+  new XRDepthManager().updateFromXRFrame(cpuAfterGpuViewer, makeDepthFrame(), {eye: 'none'}, true);
+  assert(
+    cpuAfterGpuViewer.xrDepthState.enabled === true &&
+      cpuAfterGpuViewer.xrDepthState.textureType === 'texture' &&
+      cpuAfterGpuViewer.xrDepthState.depthFar === 0 &&
+      cpuAfterGpuViewer.xrDepthState.depthViewProj === null,
+    'CPU depth resets GPU-only texture-array, linearization, and reprojection state',
   );
 
   console.log(`\n🏆 xr-live Test Results: ${passed} Passed, ${failed} Failed.`);

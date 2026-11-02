@@ -361,6 +361,10 @@ uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOc
 uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap,uXrDepthEnabled,uXrDepthFormat;
 uniform float uNormalScale,uOcclusionStrength,uXrRawValueToMeters;
 uniform mat4 uXrDepthUVTransform;
+uniform highp sampler2DArray uXrDTA;
+uniform int uXrDL,uXrDR;
+uniform vec2 uXrNF;
+uniform mat4 uXrDVP;
 uniform vec2 uViewportSize;
 uniform vec4 uViewport,uSectionPlane;
 uniform vec3 uCameraFwd;
@@ -515,15 +519,17 @@ color=color*(vec3(1.0)-ccF)+getStudioRadiance(R,uClearcoat.y)*ccF*uEnvIntensity;
 color=applyToneMapping(color,uToneMapping);
 float outAlpha=base.a;
 if(uXrDepthEnabled==1){
-vec2 normViewUV=vec2((gl_FragCoord.x-uViewport.x)/max(uViewport.z,1.0),1.0-(gl_FragCoord.y-uViewport.y)/max(uViewport.w,1.0));
-vec2 depthUV=(uXrDepthUVTransform*vec4(normViewUV,0.0,1.0)).xy;
-if(depthUV.x>=0.0&&depthUV.x<=1.0&&depthUV.y>=0.0&&depthUV.y<=1.0){
-vec4 depthSample=texture(uXrDepthTex,depthUV);
-float rawDepth=uXrDepthFormat==1?depthSample.r:(depthSample.r*255.0+depthSample.a*65280.0);
-float realDepth=rawDepth*uXrRawValueToMeters;
-float virtDepth=dot(uCameraFwd,uCameraFwd)>0.5?dot(vWorldPos-uCameraPos,uCameraFwd):length(uCameraPos-vWorldPos);
-if(rawDepth>0.0&&(uXrDepthFormat==1||rawDepth<65500.0)&&realDepth>0.15&&realDepth<20.0&&virtDepth>realDepth+0.02){
-float occAlpha=1.0-smoothstep(0.0,0.035,virtDepth-realDepth-0.02);
+vec2 dUV;float vD;bool inV=true;vec2 nf=uXrNF;
+if(uXrDR==1){vec4 dc=uXrDVP*vec4(vWorldPos,1.0);inV=dc.w>0.0;dUV=dc.xy/max(dc.w,1e-4)*0.5+0.5;vD=dc.w;}
+else{dUV=(uXrDepthUVTransform*vec4((gl_FragCoord.x-uViewport.x)/max(uViewport.z,1.0),1.0-(gl_FragCoord.y-uViewport.y)/max(uViewport.w,1.0),0.0,1.0)).xy;
+vD=dot(uCameraFwd,uCameraFwd)>0.5?dot(vWorldPos-uCameraPos,uCameraFwd):length(uCameraPos-vWorldPos);}
+if(inV&&dUV.x>=0.0&&dUV.x<=1.0&&dUV.y>=0.0&&dUV.y<=1.0){
+vec4 ds=uXrDL>=0?texture(uXrDTA,vec3(dUV,float(uXrDL))):texture(uXrDepthTex,dUV);
+float rD=uXrDepthFormat==1?ds.r:(ds.r*255.0+ds.a*65280.0);
+bool nl=nf.y>nf.x;
+float realDepth=nl?2.0*nf.x*nf.y/max(nf.y+nf.x-(rD*2.0-1.0)*(nf.y-nf.x),1e-5):rD*uXrRawValueToMeters;
+if((nl?rD<1.0:(uXrDepthFormat==1||rD<65500.0))&&rD>0.0&&realDepth>0.15&&realDepth<20.0&&vD>realDepth+0.02){
+float occAlpha=1.0-smoothstep(0.0,0.035,vD-realDepth-0.02);
 outAlpha*=occAlpha;
 if(outAlpha<0.01)discard;
 }
@@ -627,6 +633,13 @@ const RENDER_UNIFORMS = [
   'uXrDepthFormat',
   'uXrRawValueToMeters',
   'uXrDepthUVTransform',
+  // GPU depth: array sampler, array layer (-1 = 2D texture), reproject flag,
+  // non-linear near/far planes, and depth-camera world-to-clip matrix.
+  'uXrDTA',
+  'uXrDL',
+  'uXrDR',
+  'uXrNF',
+  'uXrDVP',
   'uViewportSize',
   'uViewport',
   'uCameraFwd',
@@ -3039,6 +3052,22 @@ export class ThreeView {
     uvTransform: Float32Array;
     rawValueToMeters: number;
     format?: 0 | 1;
+    /** `'texture-array'` for per-eye GPU depth layers (e.g. Quest 3). */
+    textureType?: 'texture' | 'texture-array';
+    /** Array layer to sample when `textureType` is `'texture-array'`. */
+    layer?: number;
+    /**
+     * Near/far planes of non-linear (projected) GPU depth. When `depthFar >
+     * depthNear`, samples are linearized instead of scaled by
+     * `rawValueToMeters`.
+     */
+    depthNear?: number;
+    depthFar?: number;
+    /**
+     * World-to-clip matrix of the depth camera. When set, fragments are
+     * reprojected into the depth camera instead of using `uvTransform`.
+     */
+    depthViewProj?: Float32Array | null;
   } = {
     enabled: false,
     texture: null,
@@ -3322,13 +3351,26 @@ export class ThreeView {
               Math.max(1, vpH),
             );
           }
-          if (this.xrDepthState.enabled && this.xrDepthState.texture) {
-            gl.activeTexture(gl.TEXTURE5);
-            gl.bindTexture(gl.TEXTURE_2D, this.xrDepthState.texture);
+          // The array sampler must always sit on its own unit: two samplers of
+          // different types on the same unit fail every draw call.
+          if (u.uXrDTA) gl.uniform1i(u.uXrDTA, 7);
+          const ds = this.xrDepthState;
+          if (ds.enabled && ds.texture) {
+            const arr =
+              ds.textureType === 'texture-array' &&
+              (gl as any).TEXTURE_2D_ARRAY;
+            gl.activeTexture(gl.TEXTURE0 + (arr ? 7 : 5));
+            gl.bindTexture(arr || gl.TEXTURE_2D, ds.texture);
             if (u.uXrDepthTex) gl.uniform1i(u.uXrDepthTex, 5);
             if (u.uXrDepthEnabled) gl.uniform1i(u.uXrDepthEnabled, 1);
+            if (u.uXrDL) gl.uniform1i(u.uXrDL, arr ? ds.layer || 0 : -1);
+            if (u.uXrNF) gl.uniform2f(u.uXrNF, ds.depthNear || 0, ds.depthFar || 0);
+            if (u.uXrDR) gl.uniform1i(u.uXrDR, ds.depthViewProj ? 1 : 0);
+            if (u.uXrDVP && ds.depthViewProj) {
+              gl.uniformMatrix4fv(u.uXrDVP, false, ds.depthViewProj);
+            }
             if (u.uXrDepthFormat) {
-              gl.uniform1i(u.uXrDepthFormat, this.xrDepthState.format || 0);
+              gl.uniform1i(u.uXrDepthFormat, ds.format || 0);
             }
             if (u.uXrRawValueToMeters) {
               gl.uniform1f(

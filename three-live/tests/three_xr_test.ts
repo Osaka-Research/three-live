@@ -803,7 +803,7 @@ async function runXRTests() {
   // -------------------------------------------------------------------------
   const fsRender = shaderSources.find((s) => s.includes('uXrDepthTex')) || '';
   assert(
-    fsRender.includes('depthSample.r*255.0+depthSample.a*65280.0'),
+    fsRender.includes('ds.r*255.0+ds.a*65280.0'),
     'FS_RENDER unpacks normalized 16-bit luminance-alpha depth as low + high*256 bytes',
   );
   assert(
@@ -814,6 +814,16 @@ async function runXRTests() {
     fsRender.includes('dot(vWorldPos-uCameraPos,uCameraFwd)') &&
       fsRender.includes('uniform vec3 uCameraFwd;'),
     'FS_RENDER compares planar (view-Z) virtual depth against WebXR planar depth',
+  );
+  assert(
+    fsRender.includes('uniform highp sampler2DArray uXrDTA;') &&
+      fsRender.includes('texture(uXrDTA,vec3(dUV,float(uXrDL)))'),
+    'FS_RENDER samples per-eye GPU depth texture-array layers (Quest 3)',
+  );
+  assert(
+    fsRender.includes('uXrDVP*vec4(vWorldPos,1.0)') &&
+      fsRender.includes('2.0*nf.x*nf.y'),
+    'FS_RENDER reprojects into the depth camera and linearizes non-linear GPU depth',
   );
 
   const g9 = globalThis as any;

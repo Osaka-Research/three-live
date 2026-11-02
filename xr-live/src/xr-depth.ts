@@ -19,7 +19,7 @@
  * (`uXrDepthTex`), and exposes `getDepthAndNormalAtUV(u, v)` for heightfield physics.
  */
 
-import {mat4Create} from '../../three-live/src/math';
+import {mat4Create, mat4Multiply} from '../../three-live/src/math';
 
 export interface XRCPUDepthInfo {
   width: number;
@@ -35,6 +35,7 @@ export class XRDepthManager {
   private latestDepthInfo: XRCPUDepthInfo | null = null;
   private lastUploadFrame: unknown = null;
   private lastUploadEye = '';
+  private gpuBindings = new WeakMap<object, any>();
 
   /**
    * Configures WebXR `XRSessionInit` with `depth-sensing` preferences when `xr-depth` is active.
@@ -45,7 +46,10 @@ export class XRDepthManager {
     optional.add('depth-sensing');
     sessionInit.optionalFeatures = Array.from(optional);
     sessionInit.depthSensing = {
-      usagePreference: ['cpu-optimized'],
+      // CPU depth first: it powers both occlusion and depth physics, and is
+      // what Android ARCore provides. GPU-only devices (e.g. Quest 3) fall back
+      // to `gpu-optimized` for occlusion; depth physics is unavailable there.
+      usagePreference: ['cpu-optimized', 'gpu-optimized'],
       dataFormatPreference: ['luminance-alpha', 'float32'],
     };
   }
@@ -74,6 +78,9 @@ export class XRDepthManager {
   ): XRCPUDepthInfo | null {
     if (!viewer) return null;
     const session = frame?.session || (xrView as any)?.session;
+    if (enabled && frame && session?.depthUsage === 'gpu-optimized') {
+      return this.updateFromGPUDepth(viewer, session, xrView);
+    }
     if (
       !enabled ||
       !frame ||
@@ -196,6 +203,11 @@ export class XRDepthManager {
     if (viewer.xrDepthState) {
       viewer.xrDepthState.enabled = Boolean(this.depthTexture && uploadedOk);
       viewer.xrDepthState.texture = uploadedOk ? this.depthTexture : null;
+      viewer.xrDepthState.textureType = 'texture';
+      viewer.xrDepthState.layer = 0;
+      viewer.xrDepthState.depthNear = 0;
+      viewer.xrDepthState.depthFar = 0;
+      viewer.xrDepthState.depthViewProj = null;
       viewer.xrDepthState.format = isFloat32 ? 1 : 0;
       viewer.xrDepthState.rawValueToMeters =
         depthInfo.rawValueToMeters ?? (isFloat32 ? 1.0 : 0.001);
@@ -204,6 +216,86 @@ export class XRDepthManager {
     }
 
     return depthInfo;
+  }
+
+  /**
+   * GPU-optimized depth (e.g. Quest 3): binds the UA-owned depth texture for
+   * shader occlusion via `XRWebGLBinding.getDepthInformation()`. CPU sampling
+   * (and therefore depth physics) is unavailable, so `latestDepthInfo` stays
+   * null and physics falls back to the virtual floor.
+   */
+  private updateFromGPUDepth(
+    viewer: any,
+    session: any,
+    xrView: any,
+  ): XRCPUDepthInfo | null {
+    this.latestDepthInfo = null;
+    const gl = viewer.gl;
+    const BindingCtor = (globalThis as any).XRWebGLBinding;
+    if (!gl || typeof BindingCtor !== 'function') {
+      this.clearSessionDepth(viewer);
+      return null;
+    }
+    let binding = this.gpuBindings.get(session);
+    if (!binding) {
+      try {
+        binding = new BindingCtor(session, gl);
+      } catch {
+        this.clearSessionDepth(viewer);
+        return null;
+      }
+      this.gpuBindings.set(session, binding);
+    }
+    let info: any = null;
+    try {
+      info = binding.getDepthInformation?.(xrView) ?? null;
+    } catch {
+      info = null;
+    }
+    const st = viewer.xrDepthState;
+    if (!info?.texture || !st) {
+      this.clearSessionDepth(viewer);
+      return null;
+    }
+
+    const isFloat = session.depthDataFormat === 'float32';
+    st.enabled = true;
+    // UA-owned texture: never uploaded to or deleted by this manager.
+    st.texture = info.texture;
+    st.textureType =
+      info.textureType === 'texture-array' ? 'texture-array' : 'texture';
+    st.layer = Number.isInteger(info.imageIndex)
+      ? info.imageIndex
+      : xrView?.eye === 'right'
+        ? 1
+        : 0;
+    st.format = isFloat ? 1 : 0;
+    st.rawValueToMeters = info.rawValueToMeters ?? (isFloat ? 1.0 : 0.001);
+    st.uvTransform = info.normDepthBufferFromNormView?.matrix || mat4Create();
+
+    const near = Number(info.depthNear);
+    const far = Number(info.depthFar);
+    if (Number.isFinite(near) && near > 0 && far > near) {
+      st.depthNear = near;
+      st.depthFar = Number.isFinite(far) ? far : 1e5;
+    } else {
+      st.depthNear = 0;
+      st.depthFar = 0;
+    }
+
+    const depthProj = info.projectionMatrix as Float32Array | undefined;
+    const depthWorldToView = info.transform?.inverse?.matrix as
+      | Float32Array
+      | undefined;
+    if (depthProj?.length === 16 && depthWorldToView?.length === 16) {
+      const vp =
+        st.depthViewProj?.length === 16 ? st.depthViewProj : mat4Create();
+      mat4Multiply(vp, depthProj, depthWorldToView);
+      st.depthViewProj = vp;
+    } else {
+      st.depthViewProj = null;
+    }
+    return null;
   }
 
   public dispose(gl?: WebGL2RenderingContext | null): void {
