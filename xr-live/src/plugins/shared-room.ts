@@ -221,6 +221,31 @@ function generatePeerId(): string {
 export interface NodeSoftLock {
   readonly ownerPeerId: string;
   readonly leaseUntilMs: number;
+  /** When the current owner first acquired the lease (renewals keep it). */
+  readonly acquiredMs?: number;
+}
+
+/**
+ * Window in which two peers' `grab` messages for the same node count as
+ * simultaneous; the lexicographically lower `peerId` wins on every peer.
+ */
+export const GRAB_CONFLICT_WINDOW_MS = 500;
+
+/**
+ * Deterministic tie-break for near-simultaneous grabs: returns `true` when a
+ * `grab` from `senderPeerId` should take the node from the current owner.
+ * Every peer evaluates the same rule, so all converge on one owner.
+ */
+export function winsGrabConflict(
+  existing: NodeSoftLock | undefined,
+  senderPeerId: string,
+  grabState: 'grab' | 'move' | 'release',
+  atMs: number,
+): boolean {
+  if (!existing || grabState !== 'grab') return false;
+  if (existing.ownerPeerId === senderPeerId || atMs >= existing.leaseUntilMs) return false;
+  const acquired = existing.acquiredMs ?? existing.leaseUntilMs - SOFT_LOCK_TTL_MS;
+  return atMs - acquired <= GRAB_CONFLICT_WINDOW_MS && senderPeerId < existing.ownerPeerId;
 }
 
 /** Returns whether `candidatePeerId` may acquire or renew a soft-lock at `atMs`. */
@@ -684,6 +709,7 @@ export class XRSharedRoomController {
   private boundHost: any = null;
   private onHostExplode: ((ev: Event) => void) | null = null;
   private onHostPaintStroke: ((ev: Event) => void) | null = null;
+  private grabGuard: ((mesh: unknown) => boolean) | null = null;
 
   constructor(
     peerId = generatePeerId(),
@@ -809,9 +835,22 @@ export class XRSharedRoomController {
     };
     element.addEventListener('explodechange', this.onHostExplode);
     element.addEventListener('xr-paint-stroke', this.onHostPaintStroke);
+    // Refuse local grabs on nodes another peer currently holds, so two users
+    // never fight over (and jitter) the same object.
+    this.grabGuard = (mesh: unknown): boolean => {
+      if (!this.transport) return true;
+      const key = buildNodeKeyMaps(this.lastViewer?.meshes).keyOf.get(mesh);
+      const owner = key ? this.getNodeOwner(key) : null;
+      return !owner || owner === this.peerId;
+    };
+    element.traitSystem?.grabGuards?.add?.(this.grabGuard);
   }
 
   private unbindHostListeners(): void {
+    if (this.grabGuard) {
+      this.boundHost?.traitSystem?.grabGuards?.delete?.(this.grabGuard);
+      this.grabGuard = null;
+    }
     if (this.boundHost && typeof this.boundHost.removeEventListener === 'function') {
       if (this.onHostExplode) {
         this.boundHost.removeEventListener('explodechange', this.onHostExplode);
@@ -905,6 +944,7 @@ export class XRSharedRoomController {
       this.nodeLeases.set(nodeId, {
         ownerPeerId: this.peerId,
         leaseUntilMs: atMs + SOFT_LOCK_TTL_MS,
+        acquiredMs: existing?.ownerPeerId === this.peerId ? existing.acquiredMs ?? atMs : atMs,
       });
     }
 
@@ -1041,8 +1081,23 @@ export class XRSharedRoomController {
 
     if (msg.type === 'node') {
       const existing = this.nodeLeases.get(msg.nodeId);
-      if (!canAcquireNodeLease(existing, msg.peerId, atMs)) {
+      const takesOver = winsGrabConflict(existing, msg.peerId, msg.grabState, atMs);
+      if (!takesOver && !canAcquireNodeLease(existing, msg.peerId, atMs)) {
         return false;
+      }
+      const m =
+        viewer && Array.isArray(viewer.meshes)
+          ? buildNodeKeyMaps(viewer.meshes).meshOf.get(msg.nodeId)
+          : undefined;
+      if (takesOver && existing?.ownerPeerId === this.peerId && m) {
+        // We lost a simultaneous grab: drop our hold without broadcasting a
+        // release (which would clear the winner's lease on other peers).
+        element?.traitSystem?.releaseMesh?.(m);
+        this.heldMeshes.delete(m);
+        emitPluginEvent(element, 'peergrabconflict', {
+          peerId: msg.peerId,
+          nodeId: msg.nodeId,
+        });
       }
       if (msg.grabState === 'release') {
         this.nodeLeases.delete(msg.nodeId);
@@ -1050,10 +1105,11 @@ export class XRSharedRoomController {
         this.nodeLeases.set(msg.nodeId, {
           ownerPeerId: msg.peerId,
           leaseUntilMs: atMs + SOFT_LOCK_TTL_MS,
+          acquiredMs:
+            existing?.ownerPeerId === msg.peerId ? existing.acquiredMs ?? atMs : atMs,
         });
       }
       if (viewer && Array.isArray(viewer.meshes)) {
-        const m = buildNodeKeyMaps(viewer.meshes).meshOf.get(msg.nodeId);
         if (m && shouldSyncMesh(m)) {
           setLocalTRS(m, msg.q, msg.p, msg.s);
           emitPluginEvent(element, 'peersync', {

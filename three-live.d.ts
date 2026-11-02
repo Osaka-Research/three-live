@@ -314,6 +314,7 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
     e: CustomEvent<Pick<RemotePeerState, 'peerId' | 'name' | 'color'>>,
   ) => void;
   onpeersync?: (e: CustomEvent<{peerId: string; nodeId: string}>) => void;
+  onpeergrabconflict?: (e: CustomEvent<{peerId: string; nodeId: string}>) => void;
 }
 
 declare global {

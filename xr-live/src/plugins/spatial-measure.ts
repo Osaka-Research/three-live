@@ -519,10 +519,10 @@ export function resolveSpatialMeasureConfig(element: any): SpatialMeasureElement
   if (rawMode === 'tape') {
     return {boundsEnabled: false, tapeEnabled: true, defaultUnit: unit};
   }
-  if (rawMode === 'both') {
+  if (rawMode === 'both' || rawMode === 'all') {
     return {boundsEnabled: true, tapeEnabled: true, defaultUnit: unit};
   }
-  // `""` or `"bounds"` or `"true"` enables bounding-box callouts.
+  // `""`, `"bounds"`, or `"true"` enables bounding-box callouts.
   return {boundsEnabled: true, tapeEnabled: false, defaultUnit: unit};
 }
 

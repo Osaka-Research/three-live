@@ -280,6 +280,17 @@ export class XRTraitSystem {
   }
 
   /**
+   * Predicates consulted before a new grab starts; any `false` refuses it
+   * (e.g. `shared-room` refuses nodes another peer currently holds).
+   */
+  public readonly grabGuards = new Set<(mesh: any) => boolean>();
+
+  /** Force-releases every hand holding `mesh` (e.g. a peer won the node). */
+  public releaseMesh(mesh: unknown): boolean {
+    return this.activeGrabs.delete(mesh);
+  }
+
+  /**
    * Starts a 1-hand or 2-hand grab on a mesh with `userData.xr.grab`.
    */
   public startGrab(
@@ -290,6 +301,11 @@ export class XRTraitSystem {
     const traits = getMeshXRTraits(mesh);
     if (!traits?.grab && !(traits as {grabbable?: boolean} | undefined)?.grabbable) {
       return false;
+    }
+    if (!this.activeGrabs.has(mesh)) {
+      for (const guard of this.grabGuards) {
+        if (!guard(mesh)) return false;
+      }
     }
 
     const existing = this.activeGrabs.get(mesh);

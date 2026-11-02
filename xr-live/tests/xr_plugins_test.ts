@@ -211,7 +211,11 @@ function pose(pos: [number, number, number], yaw = 0): XRPose6DoF {
 
 import {measureFrameDt as auditMeasureFrameDt} from '../src/plugins/common';
 import {sectionPlaneToWorld as auditSectionPlaneToWorld} from '../src/plugins/exploded-view';
+import {XRTraitSystem as AuditTraitSystem} from '../src/xr-traits';
+import {resolveSpatialMeasureConfig as auditMeasureCfg} from '../src/plugins/spatial-measure';
+import {resolveMagneticSnapDefaults as auditSnapDefaults} from '../src/plugins/magnetic-snap';
 import {
+  winsGrabConflict as auditWinsGrabConflict,
   buildNodeKeyMaps as auditBuildNodeKeyMaps,
   hexColorToRgba as auditHexColorToRgba,
   XRSharedRoomController as AuditSharedRoomController,
@@ -2184,6 +2188,73 @@ async function testAuditRegressions(): Promise<void> {
       'shared-room sends head poses in scene space so differently placed AR peers align',
     );
     room.dispose(viewer as any);
+  }
+
+  // Documented attribute modes: spatial-measure="all", magnetic-snap="all|sockets".
+  {
+    const m = auditMeasureCfg(auditHost({'spatial-measure': 'all'}));
+    assert(m.boundsEnabled && m.tapeEnabled, 'spatial-measure="all" enables bounds callouts and tape measure');
+    const all = auditSnapDefaults(auditHost({'magnetic-snap': 'all'}));
+    const sockets = auditSnapDefaults(auditHost({'magnetic-snap': 'sockets'}));
+    assert(all.enabled && all.grid !== null && all.surface === 'any', 'magnetic-snap="all" enables grid and surface snapping');
+    assert(sockets.enabled && sockets.grid === null && sockets.surface === 'none', 'magnetic-snap="sockets" snaps to sockets only');
+  }
+
+  // shared-room: competing grabs.
+  {
+    assert(
+      auditWinsGrabConflict({ownerPeerId: 'peer-z', leaseUntilMs: 2100, acquiredMs: 100}, 'peer-a', 'grab', 300) &&
+        !auditWinsGrabConflict({ownerPeerId: 'peer-a', leaseUntilMs: 2100, acquiredMs: 100}, 'peer-z', 'grab', 300) &&
+        !auditWinsGrabConflict({ownerPeerId: 'peer-z', leaseUntilMs: 2900, acquiredMs: 100}, 'peer-a', 'grab', 900),
+      'simultaneous grabs resolve to the lower peerId only inside the conflict window',
+    );
+
+    let now = 1000;
+    const chair = meshAt('Chair', [0, 0, 0], {grab: true});
+    const traits = new AuditTraitSystem();
+    const host = auditHost({'shared-room': 'grab'});
+    host.traitSystem = traits;
+    const viewer: Record<string, any> = {meshes: [chair], container: host};
+    const sent: string[] = [];
+    const room = new AuditSharedRoomController('peer-m', () => now);
+    room.connect('grab', viewer as any, host, {send: (r: string) => void sent.push(r), close() {}});
+    const remoteGrab = (peerId: string, state = 'grab') =>
+      JSON.stringify({v: 1, type: 'node', peerId, nodeId: 'Chair', p: [0.2, 0, 0], q: [0, 0, 0, 1], s: [1, 1, 1], grabState: state});
+
+    // 1. A peer holds the chair: local grabs are refused until the lease ends.
+    room.handleRawMessage(remoteGrab('peer-x'), viewer as any, host, now);
+    const refused = !traits.startGrab(chair, 'right', pose([0, 0, 0]));
+    now += 2100;
+    const allowedAfterExpiry = traits.startGrab(chair, 'right', pose([0, 0, 0]));
+    assert(refused && allowedAfterExpiry, 'local grabs are refused while another peer holds the node');
+
+    // 2. We grab; a lower peerId grabs within the window: we yield, no release broadcast.
+    room.step(viewer as any, host, now); // broadcasts our 'grab', takes the lease
+    now += 100;
+    const sentBefore = sent.length;
+    room.handleRawMessage(remoteGrab('peer-a'), viewer as any, host, now);
+    room.step(viewer as any, host, now);
+    const releasedSent = sent
+      .slice(sentBefore)
+      .some((r) => r.includes('"type":"node"') && r.includes('"release"'));
+    assert(
+      !traits.isGrabbing(chair) && room.getNodeOwner('Chair', now) === 'peer-a' && !releasedSent &&
+        host.events.some((e: any) => e.type === 'peergrabconflict'),
+      'losing a simultaneous grab drops the local hold and follows the winner',
+    );
+
+    // 3. A higher peerId grabbing during our hold is ignored.
+    now += 3000;
+    traits.startGrab(chair, 'right', pose([0, 0, 0]));
+    room.step(viewer as any, host, now);
+    now += 100;
+    room.handleRawMessage(remoteGrab('peer-z'), viewer as any, host, now);
+    assert(
+      traits.isGrabbing(chair) && room.getNodeOwner('Chair', now) === 'peer-m',
+      'winning a simultaneous grab keeps the local hold',
+    );
+    room.dispose(viewer as any);
+    assert(traits.grabGuards.size === 0, 'shared-room removes its grab guard on dispose');
   }
 
   // measureFrameDt: first sample falls back; later samples are real time.

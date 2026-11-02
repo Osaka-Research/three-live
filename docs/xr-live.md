@@ -213,7 +213,7 @@ All 14 spatial plugins are included automatically in `xr-live-full.min.js` (or c
 13. **`spatial-locomotion` (`xr-live-spatial-locomotion`):**
     - Comfortable room-scale and architectural XR navigation (`locomotion="teleport snap-turn"` / `userData.xr.navigable`) with a ballistic parabolic teleport arc + cyan/red landing ring, hysteresis-guarded thumbstick snap-turns (`snap-turn-deg`, default `30°`), optional smooth glide, and a `120ms` peripheral FOV comfort vignette (`comfort-vignette`). Dispatches `xrteleport`.
 14. **`shared-room` (`xr-live-shared-room`):**
-    - Zero-dependency multi-user co-presence (`shared-room="<room-id>"` via same-origin `BroadcastChannel("xr-live:room:<id>")` or cross-device `wss://` relay, `MAX_PEERS = 16`, `MAX_PAYLOAD_BYTES = 16384`). Broadcasts `20 Hz` quantized head poses + tinted 3D peer visor pills & laser rays, enforces `2000ms` optimistic soft-lock ownership leases on grabbed nodes, and synchronizes `exploded-view` factors and `spatial-paint` 3D tube strokes (`MAX_REMOTE_STROKES = 64`). Dispatches `peerjoin`, `peerleave`, and `peersync`.
+    - Zero-dependency multi-user co-presence (`shared-room="<room-id>"` via same-origin `BroadcastChannel("xr-live:room:<id>")` or cross-device `wss://` relay, `MAX_PEERS = 16`, `MAX_PAYLOAD_BYTES = 16384`). Broadcasts `20 Hz` quantized head poses + tinted 3D peer visor pills & laser rays, enforces `2000ms` optimistic soft-lock ownership leases on grabbed nodes (local grabs on a node another peer holds are refused; near-simultaneous grabs resolve to the lowest `peerId` on every peer), and synchronizes `exploded-view` factors and `spatial-paint` 3D tube strokes (`MAX_REMOTE_STROKES = 64`). Dispatches `peerjoin`, `peerleave`, `peersync`, and `peergrabconflict`.
 
 ---
 
@@ -271,6 +271,7 @@ The `<xr-live>` element dispatches the custom events listed in the following tab
 | `anchorsrestored` | `{ count: number, source: 'xr-anchor' \| 'storage' \| 'url-hash' }` | Fired when `persistent-anchors` restores saved node poses. |
 | `xrteleport` | `{ from: [x,y,z], to: [x,y,z], yawDeg: number }` | Fired when `spatial-locomotion` teleports the viewer rig. |
 | `peerjoin` / `peerleave` | `{ peerId: string, name: string, color: string }` | Fired when a remote participant joins, disconnects, or times out of `shared-room`. |
+| `peergrabconflict` | `{ peerId: string, nodeId: string }` | Fired when a remote participant wins a near-simultaneous grab of the same node and the local hold is released. |
 | `peersync` | `{ peerId: string, nodeId: string }` | Fired when `shared-room` applies a remote node transform, explode factor (`__explode__`), or paint stroke (`paint:<id>`). |
 | `xr-webmcp-capture` | `{}` | Fired when a WebMCP agent invokes `capture_xr_view` (sets `data-xr-webmcp-indicator="active"`). |
 

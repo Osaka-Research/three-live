@@ -464,6 +464,19 @@ export function resolveMagneticSnapDefaults(element: any): MagneticSnapElementDe
       surface: 'any',
     };
   }
+  if (rawMode === 'sockets') {
+    // Socket snapping only: per-node `snapTo.socketTag` drives matches; no
+    // grid, angle, or surface quantization unless explicitly configured.
+    return {enabled: true, grid: gridAttr, angleDeg, surface: 'none'};
+  }
+  if (rawMode === 'all') {
+    return {
+      enabled: true,
+      grid: gridAttr ?? [0.1, 0.1, 0.1],
+      angleDeg,
+      surface: 'any',
+    };
+  }
   if (rawMode === 'grid') {
     return {
       enabled: true,

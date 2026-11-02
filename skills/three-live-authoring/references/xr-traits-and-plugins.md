@@ -289,5 +289,6 @@ When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-l
 | `anchorsrestored` | `persistent-anchors` | `{ count: number, source: 'xr-anchor' \| 'storage' \| 'url-hash' }` |
 | `xrteleport` | `spatial-locomotion` | `{ from: [x,y,z], to: [x,y,z], yawDeg: number }` |
 | `peerjoin` / `peerleave` | `shared-room` | `{ peerId: string, name: string, color: string }` |
+| `peergrabconflict` | `shared-room` | `{ peerId: string, nodeId: string }` |
 | `peersync` | `shared-room` | `{ peerId: string, nodeId: string }` |
 | `xr-webmcp-capture` | `xr-extras` (WebMCP) | Fired when `capture_xr_view` captures a frame (`data-xr-webmcp-indicator="active"`). |
