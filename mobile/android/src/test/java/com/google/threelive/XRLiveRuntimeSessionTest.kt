@@ -316,6 +316,34 @@ class XRLiveRuntimeSessionTest {
   // KHR_interactivity VM
   // =============================================================================================
 
+  @Test
+  fun grabGuardsRefuseNewGrabsButNotReleases() {
+    val (s, _) = session()
+    var allow = false
+    s.grabGuards.add { allow }
+    assertFalse(s.setNodeGrabbed(2, true))
+    assertFalse(s.isNodeGrabbed(2))
+    allow = true
+    assertTrue(s.setNodeGrabbed(2, true))
+    allow = false
+    assertTrue("releases are never refused", s.setNodeGrabbed(2, false))
+    assertFalse(s.isNodeGrabbed(2))
+  }
+
+  @Test
+  fun sharedRoomSimultaneousGrabTieBreakMatchesWeb() {
+    val lease = SharedRoom.NodeSoftLock("peer-z", leaseUntilMs = 2100L, acquiredMs = 100L)
+    assertTrue(SharedRoom.winsGrabConflict(lease, "peer-a", "grab", 300L))
+    assertFalse(SharedRoom.winsGrabConflict(lease, "peer-a", "move", 300L))
+    assertFalse(
+      SharedRoom.winsGrabConflict(lease.copy(ownerPeerId = "peer-a"), "peer-z", "grab", 300L)
+    )
+    assertFalse(
+      "outside the conflict window the holder keeps the node",
+      SharedRoom.winsGrabConflict(lease.copy(leaseUntilMs = 2900L), "peer-a", "grab", 900L),
+    )
+  }
+
   private class Recorder : XRLiveRuntimeSession.Listener {
     val transforms = ArrayList<Pair<Int, List<Float>>>()
     val visibility = ArrayList<Pair<Int, Boolean>>()

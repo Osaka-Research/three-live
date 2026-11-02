@@ -71,6 +71,8 @@
     public var onPeerLeave: ((_ peerId: String, _ name: String, _ color: String) -> Void)?
     /// `{peerId, nodeId}` when a remote state delta is applied (`peersync`).
     public var onPeerSync: ((_ peerId: String, _ nodeId: String) -> Void)?
+    /// A remote peer won a near-simultaneous grab of `nodeId`; the local hold was released.
+    public var onPeerGrabConflict: ((_ peerId: String, _ nodeId: String) -> Void)?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
@@ -460,6 +462,32 @@
       stepContactShadows()
     }
 
+    /// Whether the local user may grab `nodeIndex` now: `false` while another `shared-room` peer
+    /// holds an unexpired lease on it, so two users never fight over the same object.
+    public func canGrabNode(
+      _ nodeIndex: Int,
+      atMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) -> Bool {
+      guard roomSend != nil, nodeIndex >= 0, nodeIndex < live.session.nodeCount,
+        let owner = getNodeOwner(syncNodeKey(nodeIndex), atMs: atMs)
+      else { return true }
+      return owner == XRLiveTraitParser.safeAnchorId(localPeerId)
+    }
+
+    /// Starts a host grab of `nodeIndex` (marking it grabbed on the session) unless another
+    /// `shared-room` peer holds it. Returns `false` when refused; hosts should cancel the gesture.
+    @discardableResult
+    public func requestGrab(_ nodeIndex: Int) -> Bool {
+      guard canGrabNode(nodeIndex) else { return false }
+      live.session.setGrabbed(nodeIndex, true)
+      return true
+    }
+
+    /// Ends a host grab started with `requestGrab(_:)`.
+    public func endGrab(_ nodeIndex: Int) {
+      live.session.setGrabbed(nodeIndex, false)
+    }
+
     /// Number of nodes with handles.
     public var handleCount: Int { handles.count }
 
@@ -556,7 +584,7 @@
       -> Bool
     {
       let session = live.session
-      for h in handles {
+      for h in handles where canGrabNode(h.node) {
         guard let layout = handleLayout(for: h), let t = session.nodeTransform(at: h.node),
           let dir = ManipulationHandles.normalizeRay(direction),
           let hit = ManipulationHandles.pick(
@@ -1744,14 +1772,16 @@
         let cleanId = XRLiveTraitParser.safeAnchorId(localPeerId)
       else { return false }
       let nodeId = syncNodeKey(nodeIndex)
+      let existing = nodeLeases[nodeId]
       guard SharedRoom.canAcquireNodeLease(
-        existing: nodeLeases[nodeId], candidatePeerId: cleanId, atMs: atMs)
+        existing: existing, candidatePeerId: cleanId, atMs: atMs)
       else { return false }
       if grabState == "release" {
         nodeLeases.removeValue(forKey: nodeId)
       } else {
         nodeLeases[nodeId] = SharedRoom.NodeSoftLock(
-          ownerPeerId: cleanId, leaseUntilMs: atMs + SharedRoom.softLockTtlMs)
+          ownerPeerId: cleanId, leaseUntilMs: atMs + SharedRoom.softLockTtlMs,
+          acquiredMs: existing?.ownerPeerId == cleanId ? existing?.acquiredMs : atMs)
       }
       guard let t = session.nodeTransform(at: nodeIndex),
         let clean = PersistentAnchors.sanitizePose(p: t.translation, q: t.rotation, s: t.scale)
@@ -1864,14 +1894,30 @@
         return true
       case .node(let peerId, let nodeId, let p, let q, let s, let grabState):
         remotePeers[peerId]?.lastSeenMs = atMs
-        guard SharedRoom.canAcquireNodeLease(
-          existing: nodeLeases[nodeId], candidatePeerId: peerId, atMs: atMs)
+        let existing = nodeLeases[nodeId]
+        let takesOver = SharedRoom.winsGrabConflict(
+          existing: existing, senderPeerId: peerId, grabState: grabState, atMs: atMs)
+        guard
+          takesOver
+            || SharedRoom.canAcquireNodeLease(
+              existing: existing, candidatePeerId: peerId, atMs: atMs)
         else { return false }
+        if takesOver, let existing = existing, existing.ownerPeerId == selfId {
+          // We lost a simultaneous grab: drop the local hold. Our later release broadcast is
+          // refused by the winner's lease, so it can't clear the lease on other peers.
+          for node in 0..<live.session.nodeCount where syncNodeKey(node) == nodeId {
+            live.session.setGrabbed(node, false)
+            if drag?.node == node { drag = nil }
+            break
+          }
+          onPeerGrabConflict?(peerId, nodeId)
+        }
         if grabState == "release" {
           nodeLeases.removeValue(forKey: nodeId)
         } else {
           nodeLeases[nodeId] = SharedRoom.NodeSoftLock(
-            ownerPeerId: peerId, leaseUntilMs: atMs + SharedRoom.softLockTtlMs)
+            ownerPeerId: peerId, leaseUntilMs: atMs + SharedRoom.softLockTtlMs,
+            acquiredMs: existing?.ownerPeerId == peerId ? existing?.acquiredMs : atMs)
         }
         for node in 0..<live.session.nodeCount {
           if syncNodeKey(node) == nodeId && shouldSyncNode(node) {

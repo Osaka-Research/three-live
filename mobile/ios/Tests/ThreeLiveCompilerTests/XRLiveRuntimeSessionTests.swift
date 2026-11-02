@@ -1639,6 +1639,21 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertTrue(
       SharedRoom.canAcquireNodeLease(existing: lease, candidatePeerId: "peer-bob", atMs: 3000))
 
+    // Near-simultaneous grabs resolve to the lower peerId inside the window (matches web).
+    let held = SharedRoom.NodeSoftLock(ownerPeerId: "peer-z", leaseUntilMs: 2100, acquiredMs: 100)
+    XCTAssertTrue(
+      SharedRoom.winsGrabConflict(existing: held, senderPeerId: "peer-a", grabState: "grab", atMs: 300))
+    XCTAssertFalse(
+      SharedRoom.winsGrabConflict(existing: held, senderPeerId: "peer-a", grabState: "move", atMs: 300))
+    XCTAssertFalse(
+      SharedRoom.winsGrabConflict(
+        existing: SharedRoom.NodeSoftLock(ownerPeerId: "peer-a", leaseUntilMs: 2100, acquiredMs: 100),
+        senderPeerId: "peer-z", grabState: "grab", atMs: 300))
+    XCTAssertFalse(
+      SharedRoom.winsGrabConflict(
+        existing: SharedRoom.NodeSoftLock(ownerPeerId: "peer-z", leaseUntilMs: 2900, acquiredMs: 100),
+        senderPeerId: "peer-a", grabState: "grab", atMs: 900))
+
     let visor = SharedRoom.buildPeerVisorGeometry()
     XCTAssertFalse(visor.positions.isEmpty)
     XCTAssertEqual(visor.indices.count % 3, 0)

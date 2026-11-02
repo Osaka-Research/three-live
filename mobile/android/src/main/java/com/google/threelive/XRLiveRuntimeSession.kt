@@ -608,10 +608,26 @@ class XRLiveRuntimeSession(gltfJson: String) {
     flush()
   }
 
-  /** Marks a node as grabbed by the user; grabbed nodes skip follow / orbit stepping. */
-  fun setNodeGrabbed(nodeIndex: Int, isGrabbed: Boolean) {
-    if (nodeIndex in 0 until nodeCount) grabbed[nodeIndex] = isGrabbed
+  /**
+   * Predicates consulted before a node becomes grabbed; any `false` refuses the grab (e.g.
+   * `shared-room` refuses nodes another peer currently holds).
+   */
+  val grabGuards: MutableList<(Int) -> Boolean> = java.util.concurrent.CopyOnWriteArrayList()
+
+  /**
+   * Marks a node as grabbed by the user; grabbed nodes skip follow / orbit stepping. Returns
+   * `false` (and leaves the node ungrabbed) when a [grabGuards] predicate refuses the grab, so
+   * hosts should cancel their gesture in that case.
+   */
+  fun setNodeGrabbed(nodeIndex: Int, isGrabbed: Boolean): Boolean {
+    if (nodeIndex !in 0 until nodeCount) return false
+    if (isGrabbed && !grabbed[nodeIndex] && grabGuards.any { !it(nodeIndex) }) return false
+    grabbed[nodeIndex] = isGrabbed
+    return true
   }
+
+  /** Whether [nodeIndex] is currently marked grabbed. */
+  fun isNodeGrabbed(nodeIndex: Int): Boolean = nodeIndex in 0 until nodeCount && grabbed[nodeIndex]
 
   /** Returns a copy of the node's local transform, or `null` for an invalid index. */
   fun nodeTransform(nodeIndex: Int): NodeTransform? {

@@ -94,6 +94,9 @@ constructor(
     fun onPeerLeave(peerId: String, name: String, color: String) {}
 
     fun onPeerSync(peerId: String, nodeId: String) {}
+
+    /** A remote peer won a near-simultaneous grab of [nodeId]; the local hold was released. */
+    fun onPeerGrabConflict(peerId: String, nodeId: String) {}
   }
 
   var listener: Listener? = null
@@ -321,6 +324,9 @@ constructor(
       ?: Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-splat").apply { isDaemon = true } }
         .also { ownedExecutor = true }
   private var dragging: HandleNode? = null
+
+  /** Refuses local grabs on nodes another `shared-room` peer currently holds. */
+  private val grabGuard: (Int) -> Boolean = { node -> canGrabNode(node) }
   private var painting: Stroke? = null
   private var strokeCount = 0
   @Volatile private var disposed = false
@@ -387,6 +393,29 @@ constructor(
         }
       }
     binding.frameHandler = { dt, cameraWorld -> frame(dt, cameraWorld) }
+    session.grabGuards.add(grabGuard)
+  }
+
+  /**
+   * Whether the local user may grab [nodeIndex] now: `false` while another `shared-room` peer
+   * holds an unexpired lease on it, so two users never fight over the same object.
+   */
+  @JvmOverloads
+  fun canGrabNode(nodeIndex: Int, atMs: Long = System.currentTimeMillis()): Boolean {
+    if (roomSend == null || nodeIndex !in 0 until scene.nodeCount) return true
+    val owner = getNodeOwner(syncNodeKey(nodeIndex), atMs) ?: return true
+    return owner == XRLiveSceneCoreHelper.safeAnchorId(localPeerId)
+  }
+
+  /**
+   * Starts a host grab of [nodeIndex] (marking it grabbed on the session) unless another
+   * `shared-room` peer holds it. Returns `false` when refused; hosts should cancel the gesture.
+   */
+  fun requestGrab(nodeIndex: Int): Boolean = session.setNodeGrabbed(nodeIndex, true)
+
+  /** Ends a host grab started with [requestGrab]. */
+  fun endGrab(nodeIndex: Int) {
+    session.setNodeGrabbed(nodeIndex, false)
   }
 
   /** Number of nodes with handles (for tests and UIs). */
@@ -426,6 +455,7 @@ constructor(
   /** Removes every dynamic mesh and detaches from the binding. */
   fun dispose() {
     if (disposed) return
+    session.grabGuards.remove(grabGuard)
     val sender = roomSend
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId)
     if (sender != null && cleanId != null) {
@@ -489,6 +519,7 @@ constructor(
   private fun pointerDown(p: ThreeLivePointer): Boolean {
     if (disposed) return false
     for (h in handles) {
+      if (!canGrabNode(h.node)) continue
       val layout = layoutOf(h) ?: continue
       val t = session.nodeTransform(h.node) ?: continue
       val scale = DoubleArray(3) { t.scale[it].toDouble() }
@@ -1650,11 +1681,13 @@ constructor(
     val sender = roomSend ?: return false
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
     val nodeId = syncNodeKey(nodeIndex)
-    if (!SharedRoom.canAcquireNodeLease(nodeLeases[nodeId], cleanId, atMs)) return false
+    val existing = nodeLeases[nodeId]
+    if (!SharedRoom.canAcquireNodeLease(existing, cleanId, atMs)) return false
     if (grabState == "release") {
       nodeLeases.remove(nodeId)
     } else {
-      nodeLeases[nodeId] = SharedRoom.NodeSoftLock(cleanId, atMs + SharedRoom.SOFT_LOCK_TTL_MS)
+      val acquired = if (existing != null && existing.ownerPeerId == cleanId) existing.acquiredMs else atMs
+      nodeLeases[nodeId] = SharedRoom.NodeSoftLock(cleanId, atMs + SharedRoom.SOFT_LOCK_TTL_MS, acquired)
     }
     val t = session.nodeTransform(nodeIndex) ?: return false
     val clean =
@@ -1790,11 +1823,28 @@ constructor(
       }
       is SharedRoom.WireMessage.Node -> {
         remotePeers[msg.peerId]?.lastSeenMs = atMs
-        if (!SharedRoom.canAcquireNodeLease(nodeLeases[msg.nodeId], msg.peerId, atMs)) return false
+        val existing = nodeLeases[msg.nodeId]
+        val takesOver = SharedRoom.winsGrabConflict(existing, msg.peerId, msg.grabState, atMs)
+        if (!takesOver && !SharedRoom.canAcquireNodeLease(existing, msg.peerId, atMs)) return false
+        if (takesOver && existing?.ownerPeerId == selfId) {
+          // We lost a simultaneous grab: drop the local hold. Our later release broadcast is
+          // refused by the winner's lease, so it can't clear the lease on other peers.
+          for (node in 0 until scene.nodeCount) {
+            if (syncNodeKey(node) == msg.nodeId) {
+              session.setNodeGrabbed(node, false)
+              if (dragging?.node == node) dragging = null
+              break
+            }
+          }
+          listener?.onPeerGrabConflict(msg.peerId, msg.nodeId)
+        }
         if (msg.grabState == "release") {
           nodeLeases.remove(msg.nodeId)
         } else {
-          nodeLeases[msg.nodeId] = SharedRoom.NodeSoftLock(msg.peerId, atMs + SharedRoom.SOFT_LOCK_TTL_MS)
+          val acquired =
+            if (existing != null && existing.ownerPeerId == msg.peerId) existing.acquiredMs else atMs
+          nodeLeases[msg.nodeId] =
+            SharedRoom.NodeSoftLock(msg.peerId, atMs + SharedRoom.SOFT_LOCK_TTL_MS, acquired)
         }
         for (node in 0 until scene.nodeCount) {
           if (syncNodeKey(node) == msg.nodeId && shouldSyncNode(node)) {

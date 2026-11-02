@@ -289,7 +289,12 @@ The `<xr-live>` element dispatches the custom events listed in the following tab
     dimension callouts & tape measure, magnetic socket/grid snapping, gaze dwell,
     exploded-view assemblies & section clipping, persistent anchors, parabolic
     locomotion, multi-user room sync, and `KHR_interactivity` behavior graphs
-    natively on Google Filament.
+    natively on Google Filament. In a shared room, start host grabs with
+    `XRSpatialFeatures.requestGrab(node)` (or check the return value of
+    `XRLiveRuntimeSession.setNodeGrabbed(node, true)`) and cancel the gesture
+    when it returns `false`: another peer holds the node. Near-simultaneous grabs
+    resolve like the web (lowest peer ID wins) and report
+    `Listener.onPeerGrabConflict`.
 -   **[`XRLiveSceneCoreHelper.kt`](../mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt):**
     Jetpack XR SceneCore integration for Android XR headsets and phones,
     attaching `MovableComponent`, `ResizableComponent`, `Anchor`, and billboard
@@ -303,4 +308,7 @@ The `<xr-live>` element dispatches the custom events listed in the following tab
     Native Swift + RealityKit runtime supporting all 14 spatial plugin behaviors,
     `userData.xr` traits, manipulation handles, spatial paint tubes, particle
     emitters, Gaussian splats, `KHR_interactivity`, and
-    `XRGeminiLiveController.swift`.
+    `XRGeminiLiveController.swift`. In a shared room, start host grabs with
+    `XRSpatialRealityKitFeatures.requestGrab(_:)` and cancel the gesture when it
+    returns `false` (another peer holds the node); near-simultaneous grabs
+    resolve like the web and call `onPeerGrabConflict`.

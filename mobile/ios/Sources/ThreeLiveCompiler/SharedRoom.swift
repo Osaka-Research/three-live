@@ -36,11 +36,32 @@ public enum SharedRoom {
   public struct NodeSoftLock: Sendable, Equatable {
     public let ownerPeerId: String
     public let leaseUntilMs: Int64
+    /// When the current owner first took the lease (renewals keep it).
+    public let acquiredMs: Int64
 
-    public init(ownerPeerId: String, leaseUntilMs: Int64) {
+    public init(ownerPeerId: String, leaseUntilMs: Int64, acquiredMs: Int64? = nil) {
       self.ownerPeerId = ownerPeerId
       self.leaseUntilMs = leaseUntilMs
+      self.acquiredMs = acquiredMs ?? (leaseUntilMs - SharedRoom.softLockTtlMs)
     }
+  }
+
+  /// Window in which two peers' `grab` messages for the same node count as simultaneous; the
+  /// lexicographically lower peerId wins on every peer (matches web `GRAB_CONFLICT_WINDOW_MS`).
+  public static let grabConflictWindowMs: Int64 = 500
+
+  /// Deterministic tie-break for near-simultaneous grabs: returns `true` when a `grab` from
+  /// `senderPeerId` should take the node from the current owner. Mirrors web `winsGrabConflict`.
+  public static func winsGrabConflict(
+    existing: NodeSoftLock?,
+    senderPeerId: String,
+    grabState: String,
+    atMs: Int64
+  ) -> Bool {
+    guard let existing = existing, grabState == "grab" else { return false }
+    if existing.ownerPeerId == senderPeerId || atMs >= existing.leaseUntilMs { return false }
+    return atMs - existing.acquiredMs <= grabConflictWindowMs
+      && senderPeerId < existing.ownerPeerId
   }
 
   /// Validated `v: 1` room wire messages.

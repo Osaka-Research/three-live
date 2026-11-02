@@ -36,8 +36,38 @@ object SharedRoom {
 
   private val HEX_COLOR = Regex("^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
-  /** Optimistic soft-lock lease on a synchronized scene node. */
-  data class NodeSoftLock(val ownerPeerId: String, val leaseUntilMs: Long)
+  /**
+   * Optimistic soft-lock lease on a synchronized scene node. [acquiredMs] is when the current
+   * owner first took the lease (renewals keep it).
+   */
+  data class NodeSoftLock(
+    val ownerPeerId: String,
+    val leaseUntilMs: Long,
+    val acquiredMs: Long = leaseUntilMs - SOFT_LOCK_TTL_MS,
+  )
+
+  /**
+   * Window in which two peers' `grab` messages for the same node count as simultaneous; the
+   * lexicographically lower peerId wins on every peer (matches web `GRAB_CONFLICT_WINDOW_MS`).
+   */
+  const val GRAB_CONFLICT_WINDOW_MS: Long = 500L
+
+  /**
+   * Deterministic tie-break for near-simultaneous grabs: returns `true` when a `grab` from
+   * [senderPeerId] should take the node from the current owner. Mirrors web `winsGrabConflict`.
+   */
+  @JvmStatic
+  fun winsGrabConflict(
+    existing: NodeSoftLock?,
+    senderPeerId: String,
+    grabState: String,
+    atMs: Long,
+  ): Boolean {
+    if (existing == null || grabState != "grab") return false
+    if (existing.ownerPeerId == senderPeerId || atMs >= existing.leaseUntilMs) return false
+    return atMs - existing.acquiredMs <= GRAB_CONFLICT_WINDOW_MS &&
+      senderPeerId < existing.ownerPeerId
+  }
 
   /** Validated `v: 1` room wire messages. */
   sealed class WireMessage(open val peerId: String) {
