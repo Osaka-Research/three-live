@@ -363,6 +363,7 @@ uniform float uNormalScale,uOcclusionStrength,uXrRawValueToMeters;
 uniform mat4 uXrDepthUVTransform;
 uniform vec2 uViewportSize;
 uniform vec4 uViewport;
+uniform vec3 uCameraFwd;
 uniform int uToneMapping,uNumDirLights,uNumPointLights;
 uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2];
 out vec4 fragColor;
@@ -519,7 +520,7 @@ if(depthUV.x>=0.0&&depthUV.x<=1.0&&depthUV.y>=0.0&&depthUV.y<=1.0){
 vec4 depthSample=texture(uXrDepthTex,depthUV);
 float rawDepth=uXrDepthFormat==1?depthSample.r:(depthSample.r*255.0+depthSample.a*65280.0);
 float realDepth=rawDepth*uXrRawValueToMeters;
-float virtDepth=length(uCameraPos-vWorldPos);
+float virtDepth=dot(uCameraFwd,uCameraFwd)>0.5?dot(vWorldPos-uCameraPos,uCameraFwd):length(uCameraPos-vWorldPos);
 if(rawDepth>0.0&&(uXrDepthFormat==1||rawDepth<65500.0)&&realDepth>0.15&&realDepth<20.0&&virtDepth>realDepth+0.02){
 float occAlpha=1.0-smoothstep(0.0,0.035,virtDepth-realDepth-0.02);
 outAlpha*=occAlpha;
@@ -627,6 +628,7 @@ const RENDER_UNIFORMS = [
   'uXrDepthUVTransform',
   'uViewportSize',
   'uViewport',
+  'uCameraFwd',
 ] as const;
 
 interface PrimitiveGpu {
@@ -2825,10 +2827,26 @@ export class ThreeView {
         typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.updateTurntableMatrix();
       if (this.isVisible) {
-        this.resize();
-        this.syncCameraMatrices();
-        this.render();
+        try {
+          this.resize();
+          this.syncCameraMatrices();
+          this.render();
+        } catch (err) {
+          // Never let a post-session redraw abort WebXR session teardown.
+          this.reportRenderError(err);
+        }
       }
+    }
+  }
+
+  private renderErrorReported = false;
+
+  /** Logs the first per-frame render error once so failures stay debuggable. */
+  private reportRenderError(err: unknown): void {
+    if (this.renderErrorReported) return;
+    this.renderErrorReported = true;
+    if (typeof console !== 'undefined') {
+      console.warn('[three-live] render frame failed:', err);
     }
   }
 
@@ -2852,8 +2870,9 @@ export class ThreeView {
           this.resize();
           this.update(dt);
           this.render();
-        } catch (_) {
+        } catch (err) {
           // Keep animation loop alive across transient plugin/context errors.
+          this.reportRenderError(err);
         }
       }
       if (this.animFrameId !== null) {
@@ -3161,11 +3180,17 @@ export class ThreeView {
     }
 
     const vp = mat4Create();
-    mat4Multiply(
-      vp,
-      xrOverride?.projMatrix ?? this.projMatrix,
-      xrOverride?.viewMatrix ?? this.viewMatrix,
-    );
+    const activeView = xrOverride?.viewMatrix ?? this.viewMatrix;
+    mat4Multiply(vp, xrOverride?.projMatrix ?? this.projMatrix, activeView);
+    // World-space camera forward (-Z row of the view rotation). WebXR depth
+    // buffers store planar Z distance, so occlusion compares against planar
+    // virtual depth rather than radial distance (which over-occludes at the
+    // screen edges by 1/cos(angle)).
+    const camFwd: [number, number, number] = [
+      -activeView[2],
+      -activeView[6],
+      -activeView[10],
+    ];
 
     const toneMode =
       this.toneMapping === 'reinhard' ? 1 : this.toneMapping === 'none' ? 2 : 0;
@@ -3248,6 +3273,9 @@ export class ThreeView {
           gl.uniform1i(u.uToneMapping, toneMode);
           gl.uniform1f(u.uEnvIntensity, this.envIntensity);
           gl.uniform3f(u.uCameraPos, eyeX, eyeY, eyeZ);
+          if (u.uCameraFwd) {
+            gl.uniform3f(u.uCameraFwd, camFwd[0], camFwd[1], camFwd[2]);
+          }
           gl.uniform1f(u.uEmissive, isSelected ? 1.0 : 0.0);
           gl.uniformMatrix4fv(u.uMVP, false, this.mvpMatrix);
           gl.uniformMatrix4fv(u.uModel, false, this.modelMatrix);

@@ -170,7 +170,7 @@ export class XRHeightfieldPhysics {
             const u = (cx / cw) * 0.5 + 0.5;
             const v = 0.5 - (cy / cw) * 0.5;
             if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
-              const sample = depthManager.sampleDepthAndNormal(u, v);
+              const sample = depthManager.sampleDepthAndNormal(u, v, projMat);
               const worldRadius = body.radius * sRoot;
               if (
                 sample &&

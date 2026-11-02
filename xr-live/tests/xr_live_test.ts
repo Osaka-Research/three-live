@@ -1058,6 +1058,129 @@ async function runXRLiveTests() {
     'Regression X3: XRLiveElement.activateAR() delegates to enterSpatialAR()',
   );
 
+  // =========================================================================
+  // Regression X4: depth normals, per-frame upload reuse & AR camera physics
+  // =========================================================================
+  const normalMgr = new XRDepthManager();
+  const testProj = new Float32Array([
+    1.5, 0, 0, 0, 0, 2.0, 0, 0, 0, 0, -1, -1, 0, 0, -0.2, 0,
+  ]);
+  // Floor seen from above: real depth grows toward the top of the image (v -> 0).
+  normalMgr.setSyntheticDepthInfo({
+    width: 4,
+    height: 4,
+    getDepthInMeters: (_u: number, v: number) => 1.0 + (0.5 - v),
+  });
+  const floorN = normalMgr.sampleDepthAndNormal(0.5, 0.5, testProj);
+  assert(
+    floorN !== null && floorN.normal[1] > 0.5 && Math.abs(floorN.normal[0]) < 1e-6,
+    'Regression X4: sampleDepthAndNormal returns an upward (+Y) normal for a floor',
+  );
+  // Side wall on the right: real depth shrinks toward the right edge (u -> 1).
+  normalMgr.setSyntheticDepthInfo({
+    width: 4,
+    height: 4,
+    getDepthInMeters: (u: number) => 2.0 - u,
+  });
+  const wallN = normalMgr.sampleDepthAndNormal(0.5, 0.5, testProj);
+  assert(
+    wallN !== null && wallN.normal[0] < -0.3 && wallN.normal[2] > 0,
+    'Regression X4: sampleDepthAndNormal points a right-side wall normal back toward the camera (-X)',
+  );
+
+  let depthUploads = 0;
+  const reuseGl: any = {
+    ...mockGl,
+    pixelStorei() {},
+    texParameteri() {},
+    texImage2D() {
+      depthUploads++;
+    },
+  };
+  const reuseViewer: any = {
+    gl: reuseGl,
+    xrDepthState: {enabled: false, texture: null, format: 0, rawValueToMeters: 0.001},
+  };
+  const makeDepthFrame = () => ({
+    session: {depthUsage: 'cpu-optimized', depthDataFormat: 'luminance-alpha'},
+    getDepthInformation: () => ({
+      width: 8,
+      height: 8,
+      rawValueToMeters: 0.001,
+      data: new Uint16Array(64).fill(1000),
+    }),
+  });
+  const frameA = makeDepthFrame();
+  normalMgr.updateFromXRFrame(reuseViewer, frameA, {eye: 'none'}, true);
+  normalMgr.updateFromXRFrame(reuseViewer, frameA, {eye: 'none'}, true);
+  const uploadsSameFrame = depthUploads;
+  normalMgr.updateFromXRFrame(reuseViewer, frameA, {eye: 'right'}, true);
+  normalMgr.updateFromXRFrame(reuseViewer, makeDepthFrame(), {eye: 'none'}, true);
+  assert(
+    uploadsSameFrame === 1 && depthUploads === 3 && reuseViewer.xrDepthState.enabled,
+    'Regression X4: depth texture uploads once per frame/eye and re-uploads for new eyes and frames',
+  );
+  normalMgr.clearSessionDepth(reuseViewer);
+  normalMgr.updateFromXRFrame(reuseViewer, frameA, {eye: 'none'}, true);
+  assert(
+    depthUploads === 4,
+    'Regression X4: clearSessionDepth resets per-frame upload reuse',
+  );
+  normalMgr.dispose(reuseGl);
+
+  // Ball moving away from the camera into a real wall 1.0m ahead bounces back.
+  const camPhysics = new XRHeightfieldPhysics();
+  camPhysics.gravity = [0, 0, 0];
+  const wallMgr = new XRDepthManager();
+  wallMgr.setSyntheticDepthInfo({
+    width: 4,
+    height: 4,
+    getDepthInMeters: () => 1.0,
+  });
+  const wallBallTransform = mat4Create();
+  mat4FromRotationTranslationScale(
+    wallBallTransform,
+    [0, 0, 0, 1],
+    [0, 0, -0.95],
+    [1, 1, 1],
+  );
+  const wallBall = {
+    name: 'WallBall',
+    visible: true,
+    transform: wallBallTransform,
+    extras: {xr: {physics: 'dynamic'}},
+  };
+  camPhysics.setVelocity(wallBall, 0, 0, -1);
+  camPhysics.step([wallBall], 1 / 60, wallMgr, -10, undefined, undefined, {
+    modelRootMatrix: mat4Create(),
+    viewMatrix: mat4Create(),
+    projMatrix: testProj,
+    isAR: true,
+  });
+  assert(
+    camPhysics.getOrCreateBody(wallBall).velocity[2] > 0,
+    'Regression X4: AR camera-space depth collision reflects a ball off a real wall',
+  );
+
+  // Virtual room AABB colliders are ignored during AR sessions.
+  const arColliderPhysics = new XRHeightfieldPhysics();
+  arColliderPhysics.gravity = [0, 0, 0];
+  arColliderPhysics.colliders = [{min: [-0.05, -0.05, -1.05], max: [0.05, 0.05, -0.95]}];
+  const arBallTransform = mat4Create();
+  mat4FromRotationTranslationScale(arBallTransform, [0, 0, 0, 1], [0, 0, -1], [1, 1, 1]);
+  const arBall = {
+    name: 'ARBall',
+    visible: true,
+    transform: arBallTransform,
+    extras: {xr: {physics: 'dynamic'}},
+  };
+  arColliderPhysics.step([arBall], 1 / 60, undefined, -10, undefined, undefined, {isAR: true});
+  const arBallPos = extractPosition(arBall.transform);
+  assert(
+    Math.abs(arBallPos[0]) < 1e-6 && Math.abs(arBallPos[1]) < 1e-6 && Math.abs(arBallPos[2] + 1) < 1e-6,
+    'Regression X4: virtual room colliders are skipped while isAR is true',
+  );
+
   console.log(`\n🏆 xr-live Test Results: ${passed} Passed, ${failed} Failed.`);
   if (failed > 0) process.exit(1);
 }

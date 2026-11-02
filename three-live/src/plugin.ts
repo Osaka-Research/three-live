@@ -81,6 +81,13 @@ export interface ThreeLivePlugin {
   onDestroy?(gl: WebGL2RenderingContext, viewer: any): void;
 }
 
+/**
+ * Local-space Y of the `<xr-live>` scene that `WebXRSessionManager` pins to
+ * the detected AR surface. AR physics floors, table anchors, and contact
+ * shadows must all use this same height so objects rest on the real surface.
+ */
+export const XR_LIVE_AR_SURFACE_Y = -0.25;
+
 export interface SharedThreeLiveRegistry {
   plugins: ThreeLivePlugin[];
   decoders: Map<string, any>;

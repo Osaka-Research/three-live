@@ -685,6 +685,7 @@ async function runXRTests() {
   let rectW = 390;
   let rectH = 350;
   const viewportsCalled: Array<[number, number, number, number]> = [];
+  const shaderSources: string[] = [];
   const mockCanvas: any = {
     width: 390,
     height: 350,
@@ -721,7 +722,9 @@ async function runXRTests() {
     TEXTURE_WRAP_S: 0x2802,
     TEXTURE_WRAP_T: 0x2803,
     createShader: () => ({}),
-    shaderSource() {},
+    shaderSource: (_s: unknown, src: string) => {
+      shaderSources.push(src);
+    },
     compileShader() {},
     getShaderParameter: () => true,
     createProgram: () => ({}),
@@ -781,6 +784,72 @@ async function runXRTests() {
       viewportsCalled.some((v) => v[0] === 195 && v[2] === 195 && v[3] === 844),
     'ThreeView.setStereoSBS(true) renders left and right eye half-viewports for Stereo Side-by-Side mode',
   );
+  tv.setStereoSBS(false);
+
+  // -------------------------------------------------------------------------
+  // 9. WebXR depth occlusion shader & render-loop resilience
+  // -------------------------------------------------------------------------
+  const fsRender = shaderSources.find((s) => s.includes('uXrDepthTex')) || '';
+  assert(
+    fsRender.includes('depthSample.r*255.0+depthSample.a*65280.0'),
+    'FS_RENDER unpacks normalized 16-bit luminance-alpha depth as low + high*256 bytes',
+  );
+  assert(
+    fsRender.includes('1.0-(gl_FragCoord.y-uViewport.y)/max(uViewport.w,1.0)'),
+    'FS_RENDER flips gl_FragCoord.y into top-left WebXR normalized view coordinates per viewport',
+  );
+  assert(
+    fsRender.includes('dot(vWorldPos-uCameraPos,uCameraFwd)') &&
+      fsRender.includes('uniform vec3 uCameraFwd;'),
+    'FS_RENDER compares planar (view-Z) virtual depth against WebXR planar depth',
+  );
+
+  const g9 = globalThis as any;
+  const origRaf = g9.requestAnimationFrame;
+  const origCaf = g9.cancelAnimationFrame;
+  const origWarn = console.warn;
+  let rafCallback: ((t: number) => void) | null = null;
+  let rafRequests = 0;
+  let warnCount = 0;
+  g9.requestAnimationFrame = (cb: (t: number) => void) => {
+    rafCallback = cb;
+    rafRequests++;
+    return rafRequests;
+  };
+  g9.cancelAnimationFrame = () => {};
+  console.warn = () => {
+    warnCount++;
+  };
+  try {
+    (tv as any).render = () => {
+      throw new Error('transient GL error');
+    };
+    tv.start();
+    const requestsBefore = rafRequests;
+    (rafCallback as any)?.(16);
+    (rafCallback as any)?.(32);
+    assert(
+      rafRequests === requestsBefore + 2 && warnCount === 1,
+      'ThreeView render loop survives per-frame errors, keeps scheduling frames, and warns once',
+    );
+    tv.stop();
+
+    let sessionEndThrew = false;
+    try {
+      tv.setXRSessionActive(true);
+      tv.setXRSessionActive(false);
+    } catch {
+      sessionEndThrew = true;
+    }
+    assert(
+      !sessionEndThrew,
+      'ThreeView.setXRSessionActive(false) never throws when the post-session redraw fails',
+    );
+  } finally {
+    g9.requestAnimationFrame = origRaf;
+    g9.cancelAnimationFrame = origCaf;
+    console.warn = origWarn;
+  }
   tv.dispose();
 
   console.log(

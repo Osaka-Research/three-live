@@ -20,7 +20,7 @@
  * - In-Browser WebXR: WebGL2 immersive-ar session manager with surface hit-testing and reticle placement.
  */
 
-import {registeredPlugins} from './plugin';
+import {registeredPlugins, XR_LIVE_AR_SURFACE_Y} from './plugin';
 import {
   buildUSDZZip,
   calculateCRC32,
@@ -542,7 +542,7 @@ export class WebXRSessionManager {
             ? 0.12 / Math.max(rad, 0.001)
             : 1;
     const pivot: [number, number, number] = isXRLive
-      ? [0, -0.25, 0]
+      ? [0, XR_LIVE_AR_SURFACE_Y, 0]
       : [
           ctr[0] || 0,
           opts.arPlacement === 'wall' ? ctr[1] : (mn[1] ?? 0),

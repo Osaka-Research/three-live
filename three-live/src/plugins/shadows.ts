@@ -19,7 +19,7 @@
  * the underlying support surface (tabletop, floor, or scene bounds).
  */
 
-import type {ThreeLivePlugin} from '../plugin';
+import {type ThreeLivePlugin, XR_LIVE_AR_SURFACE_Y} from '../plugin';
 import type {ThreeView} from '../three-view';
 
 const VS_SHADOW = `#version 300 es
@@ -204,8 +204,9 @@ export const contactShadowPlugin: ThreeLivePlugin = {
         'xr-live';
     const defaultMinY = isXRLiveAR
       ? (viewer.modelRootMatrix
-          ? viewer.modelRootMatrix[5] * -0.25 + viewer.modelRootMatrix[13]
-          : -0.25) + 0.002
+          ? viewer.modelRootMatrix[5] * XR_LIVE_AR_SURFACE_Y +
+            viewer.modelRootMatrix[13]
+          : XR_LIVE_AR_SURFACE_Y) + 0.002
       : rawBoundsBox[1] - rawBoundsBox[4] + 0.002;
 
     for (const [wx, wz, whx, whz, minY] of casters) {

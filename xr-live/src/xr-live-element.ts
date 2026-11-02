@@ -30,6 +30,7 @@
 import {
   registerPlugin,
   type ThreeLivePlugin,
+  XR_LIVE_AR_SURFACE_Y,
 } from '../../three-live/src/plugin';
 import {webxrPlugin} from '../../three-live/src/plugins/webxr';
 import {ThreeLiveElement} from '../../three-live/src/three-live-element';
@@ -289,8 +290,12 @@ export class XRLiveElement extends ThreeLiveElement {
     const isARSession = Boolean(
       viewer.xrSessionActive && xrCameraContext?.isAR !== false,
     );
-    const activeFloorY = isARSession ? -0.25 : this.simulator.room.floorY;
-    const activeTableY = isARSession ? -0.25 : this.simulator.room.tableY;
+    const activeFloorY = isARSession
+      ? XR_LIVE_AR_SURFACE_Y
+      : this.simulator.room.floorY;
+    const activeTableY = isARSession
+      ? XR_LIVE_AR_SURFACE_Y
+      : this.simulator.room.tableY;
 
     // 3. Step declarative manipulation, capsule billboarding, follow springs, and plane anchors
     this.traitSystem.update(

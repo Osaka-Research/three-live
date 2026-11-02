@@ -30,8 +30,8 @@ This file provides high-signal context, architectural invariants, and authoring 
 | `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting) | `<three-live>` | `three-live-viewer.min.js` | `< 25.5 KB gz` |
 | Procedural `<script type="text/three">` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 54 KB gz` |
 | Full 3D viewer + PBR Next + HDRI + contact shadows + skeletal animation + hotspots | `<three-live>` | `three-live-full.min.js` | `< 69 KB gz` |
-| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 64 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 7 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 103 KB gz` |
+| 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 65 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 7 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 104 KB gz` |
 
 ---
 

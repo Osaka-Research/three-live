@@ -33,6 +33,8 @@ export interface XRCPUDepthInfo {
 export class XRDepthManager {
   private depthTexture: WebGLTexture | null = null;
   private latestDepthInfo: XRCPUDepthInfo | null = null;
+  private lastUploadFrame: unknown = null;
+  private lastUploadEye = '';
 
   /**
    * Configures WebXR `XRSessionInit` with `depth-sensing` preferences when `xr-depth` is active.
@@ -54,6 +56,8 @@ export class XRDepthManager {
    */
   public clearSessionDepth(viewer?: any): void {
     this.latestDepthInfo = null;
+    this.lastUploadFrame = null;
+    this.lastUploadEye = '';
     if (viewer?.xrDepthState) {
       viewer.xrDepthState.enabled = false;
     }
@@ -91,6 +95,22 @@ export class XRDepthManager {
       this.clearSessionDepth(viewer);
       return null;
     }
+
+    // `onXRFrame` (physics) and `onBeforeRenderXRView` (occlusion) both request
+    // depth for the same view every frame; reuse the texture already uploaded
+    // for this frame/eye instead of re-uploading identical bytes.
+    const eye = String(xrView?.eye ?? 'none');
+    if (
+      frame === this.lastUploadFrame &&
+      eye === this.lastUploadEye &&
+      viewer.xrDepthState?.enabled &&
+      viewer.xrDepthState.texture === this.depthTexture
+    ) {
+      this.latestDepthInfo = depthInfo;
+      return depthInfo;
+    }
+    this.lastUploadFrame = frame;
+    this.lastUploadEye = eye;
 
     this.latestDepthInfo = depthInfo;
     const gl = viewer.gl as WebGL2RenderingContext | undefined;
@@ -192,6 +212,8 @@ export class XRDepthManager {
     }
     this.depthTexture = null;
     this.latestDepthInfo = null;
+    this.lastUploadFrame = null;
+    this.lastUploadEye = '';
   }
 
   public setSyntheticDepthInfo(info: XRCPUDepthInfo | null): void {
@@ -203,12 +225,17 @@ export class XRDepthManager {
   }
 
   /**
-   * Samples real-world depth in meters and computes the surface normal via finite differences
-   * at normalized view coordinates `(u, v)` in `[0, 1]`.
+   * Samples real-world depth in meters and computes the view-space surface
+   * normal via finite differences at normalized view coordinates `(u, v)` in
+   * `[0, 1]` (origin top-left, `v` pointing down).
+   *
+   * Pass the view's `projMatrix` to convert image-space depth gradients into
+   * metric slopes; without it, gradients are treated as unit-scaled.
    */
   public sampleDepthAndNormal(
     u: number,
     v: number,
+    projMatrix?: ArrayLike<number> | null,
   ): {depthMeters: number; normal: [number, number, number]} | null {
     const info = this.latestDepthInfo;
     if (!info) return null;
@@ -253,13 +280,20 @@ export class XRDepthManager {
 
     const eps = 0.02;
     const dRight = getD(u + eps, v) || centerDepth;
-    const dUp = getD(u, v + eps) || centerDepth;
-    const dzdx = (dRight - centerDepth) / eps;
-    const dzdy = (dUp - centerDepth) / eps;
+    const dDown = getD(u, v + eps) || centerDepth;
+    const dzdu = (dRight - centerDepth) / eps;
+    const dzdv = (dDown - centerDepth) / eps;
 
-    // Surface normal pointing back toward camera (+Z) from depth finite differences
-    const nx = -dzdx;
-    const ny = -dzdy;
+    // A view-space surface point is P = (x, y, -d(x, y)), so the camera-facing
+    // normal is (∂d/∂x, ∂d/∂y, 1). Image `u` runs along view +X; image `v` runs
+    // along view -Y. One normalized unit spans 2d / P[0] meters horizontally
+    // and 2d / P[5] meters vertically at depth d.
+    const p0 = projMatrix ? Math.abs(Number(projMatrix[0])) || 0 : 0;
+    const p5 = projMatrix ? Math.abs(Number(projMatrix[5])) || 0 : 0;
+    const sx = p0 > 0 ? p0 / (2 * centerDepth) : 1;
+    const sy = p5 > 0 ? p5 / (2 * centerDepth) : 1;
+    const nx = dzdu * sx;
+    const ny = -dzdv * sy;
     const nz = 1.0;
     const len = Math.hypot(nx, ny, nz) || 1;
     return {
