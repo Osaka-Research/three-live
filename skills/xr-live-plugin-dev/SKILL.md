@@ -73,7 +73,7 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
    - `xr-live.min.js`: `< 66 KB gz`
    - `xr-live-extras.min.js`: `< 10 KB gz`
    - `xr-live-plugins.min.js`: `< 52 KB gz`
-   - `xr-live-full.min.js`: `< 132 KB gz`
+   - `xr-live-full.min.js`: `< 133 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
    ```bash
    node scripts/build.js --test

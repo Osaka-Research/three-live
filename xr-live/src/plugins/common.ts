@@ -124,6 +124,13 @@ export interface PluginViewer {
   projMatrix?: Float32Array;
   /** Root placement matrix applied to every mesh transform when drawing. */
   modelRootMatrix?: Float32Array;
+  /** True while an immersive WebXR session is rendering this viewer. */
+  xrSessionActive?: boolean;
+  /**
+   * Optional world-space rig transform `three-xr` pre-multiplies onto the AR
+   * placement each WebXR frame (owned by `spatial-locomotion`).
+   */
+  xrRigMatrix?: Float32Array | null;
 }
 
 const DEFAULT_HEAD: Vec3 = [0, 1.6, 0];
@@ -239,6 +246,33 @@ const IDENTITY = mat4Create();
 export function rootMatrix(viewer: PluginViewer | undefined): Float32Array {
   const m = viewer?.modelRootMatrix;
   return m && m.length === 16 ? m : IDENTITY;
+}
+
+/** Inverse of {@link rootMatrix} (world -> scene-local), or identity. */
+export function inverseRootMatrix(viewer: PluginViewer | undefined): Float32Array {
+  const root = rootMatrix(viewer);
+  const out = mat4Create();
+  if (root === IDENTITY || !mat4Invert(out, root)) return mat4Create();
+  return out;
+}
+
+const lastFrameTimes = new WeakMap<object, number>();
+
+/**
+ * Measures real elapsed seconds between successive calls for `key`, clamped to
+ * `[1/240, 0.1]`. WebXR frame rates vary (72/90/120 Hz), so timers such as
+ * dwell progress must not assume a fixed per-frame step.
+ */
+export function measureFrameDt(key: object, fallback = 1 / 72): number {
+  const now =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now();
+  const prev = lastFrameTimes.get(key);
+  lastFrameTimes.set(key, now);
+  if (prev === undefined) return fallback;
+  const dt = (now - prev) / 1000;
+  return Number.isFinite(dt) ? Math.min(0.1, Math.max(1 / 240, dt)) : fallback;
 }
 
 /** Returns `modelRootMatrix * mesh.transform` (the mesh's drawn world matrix). */

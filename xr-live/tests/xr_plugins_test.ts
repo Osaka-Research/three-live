@@ -144,6 +144,7 @@ import {
   canAcquireNodeLease,
   isAllowedRoomUrl,
   MAX_PAYLOAD_BYTES,
+  MAX_PAINT_MESSAGES_PER_SEC,
   MAX_REMOTE_STROKES,
   parseRoomTarget,
   parseSharedRoomMessage,
@@ -207,6 +208,19 @@ function pose(pos: [number, number, number], yaw = 0): XRPose6DoF {
   mat4FromRotationTranslationScale(m, q, pos, [1, 1, 1]);
   return {position: pos, quaternion: q, matrix: m};
 }
+
+import {measureFrameDt as auditMeasureFrameDt} from '../src/plugins/common';
+import {sectionPlaneToWorld as auditSectionPlaneToWorld} from '../src/plugins/exploded-view';
+import {
+  buildNodeKeyMaps as auditBuildNodeKeyMaps,
+  hexColorToRgba as auditHexColorToRgba,
+  XRSharedRoomController as AuditSharedRoomController,
+} from '../src/plugins/shared-room';
+import {XRPersistentAnchorsController as AuditPersistentAnchorsController} from '../src/plugins/persistent-anchors';
+import {
+  spatialLocomotionPlugin as auditLocomotionPlugin,
+  XRSpatialLocomotionController as AuditLocomotionController,
+} from '../src/plugins/spatial-locomotion';
 
 // tslint:disable-next-line:no-any Test mesh records.
 function meshAt(name: string, pos: [number, number, number], xr: Record<string, unknown>, scale = 1): any {
@@ -1926,11 +1940,26 @@ function testSharedRoom(): void {
   );
 
   for (let i = 0; i < MAX_REMOTE_STROKES + 4; i++) {
+    // Space strokes out so they stay under MAX_PAINT_MESSAGES_PER_SEC.
+    simNow += 1000 / MAX_PAINT_MESSAGES_PER_SEC + 1;
     ctrlA.broadcastPaintStroke(`bulk_${i}`, [[0, 0, 0], [0.05, 0.05, 0], [0.1, 0, 0]], '#38bdf8', 0.008);
   }
   const bobRemoteStrokes = viewerB.meshes.filter((m) => String((m as {name?: string}).name).startsWith('__xr_peer_stroke_'));
   assert(bobRemoteStrokes.length === MAX_REMOTE_STROKES, 'caps remote paint strokes at MAX_REMOTE_STROKES');
 
+  // A single peer flooding paint messages is rate-limited.
+  const strokesBeforeFlood = viewerB.meshes.filter((m) => String((m as {name?: string}).name).startsWith('__xr_peer_stroke_flood_')).length;
+  simNow += 2000;
+  for (let i = 0; i < MAX_PAINT_MESSAGES_PER_SEC * 3; i++) {
+    ctrlA.broadcastPaintStroke(`flood_${i}`, [[0, 0, 0], [0.05, 0.05, 0]], '#38bdf8', 0.008);
+  }
+  const floodAccepted =
+    viewerB.meshes.filter((m) => String((m as {name?: string}).name).startsWith('__xr_peer_stroke_flood_')).length -
+    strokesBeforeFlood;
+  assert(
+    floodAccepted === MAX_PAINT_MESSAGES_PER_SEC,
+    `rate-limits paint floods to MAX_PAINT_MESSAGES_PER_SEC per peer (accepted ${floodAccepted})`,
+  );
   // Stale peer timeout pruning (`PEER_TIMEOUT_MS`).
   const ctrlC = new XRSharedRoomController('peer-carol', () => simNow);
   const viewerC = {meshes: [] as unknown[], cameraPos: [0, 1.6, 0] as [number, number, number]};
@@ -1955,6 +1984,217 @@ function testSharedRoom(): void {
   );
 }
 
+// tslint:disable-next-line:no-any Minimal event-capturing host element.
+function auditHost(attrs: Record<string, string>): any {
+  const events: Array<{type: string; detail: any}> = [];
+  return {
+    events,
+    hasAttribute: (k: string) => k in attrs,
+    getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
+    dispatchEvent: (ev: {type: string; detail?: any}) => {
+      events.push({type: ev.type, detail: ev.detail});
+      return true;
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+}
+
+async function testAuditRegressions(): Promise<void> {
+  console.log('\n🔎 post-launch audit regressions');
+
+  // exploded-view: a skipped floor-anchored mesh must not trigger per-frame
+  // rest-pose re-capture (which baked offsets in and made parts fly away).
+  {
+    const part = meshAt('Part', [0.3, 0, 0], {});
+    const floor = meshAt('Floor', [0, -1, 0], {anchor: 'floor'});
+    const host = auditHost({explode: '1'});
+    const viewer: Record<string, any> = {meshes: [part, floor], container: host};
+    const ctrl = new XRExplodedViewController();
+    for (let i = 0; i < 90; i++) ctrl.update(viewer, 1 / 60, host);
+    const x90 = extractPosition(part.transform)[0];
+    for (let i = 0; i < 90; i++) ctrl.update(viewer, 1 / 60, host);
+    const x180 = extractPosition(part.transform)[0];
+    assert(
+      x90 > 0.3 && near(x90, x180, 1e-4),
+      `exploded parts settle instead of drifting when a floor anchor is skipped (${x90.toFixed(3)} vs ${x180.toFixed(3)})`,
+    );
+    const leader = viewer.meshes.find((m: any) => m?.name === '__xr_explode_leaders__');
+    assert(
+      leader && leader.worldMatrix === undefined,
+      'exploded-view leader lines are scene-space so they follow turntable/AR root changes',
+    );
+  }
+
+  // exploded-view: section planes are authored in scene space.
+  {
+    const root = mat4Create();
+    mat4FromRotationTranslationScale(root, [0, Math.sin(Math.PI / 4), 0, Math.cos(Math.PI / 4)], [1, 0, 0], [1, 1, 1]);
+    const world = auditSectionPlaneToWorld(parseSectionPlaneSpec('x:0.25'), root);
+    // +90° yaw maps scene +X to world -Z; scene point (0.25,0,0) -> world (1,0,-0.25).
+    assert(
+      near(world.normal[2], -1) && near(world.constant, 0.25),
+      'section plane follows the model root rotation and translation',
+    );
+  }
+
+  // magnetic-snap: wall surfaces snap the pivot onto the plane (no bottom lift).
+  {
+    const ev = evaluateMagneticSnap({
+      position: [0.9, 1, 0],
+      quaternion: [0, 0, 0, 1],
+      config: {grid: null, angleDeg: 0, surface: 'wall', socketTag: '', radius: 0.15},
+      planes: [{position: [1, 0, 0], normal: [-1, 0, 0], orientation: 'vertical'}],
+      bottomOffset: 0.2,
+    });
+    assert(near(ev.position[0], 1.0), `wall snap ignores floor bottom offset (x=${ev.position[0].toFixed(3)})`);
+  }
+
+  // magnetic-snap: never snap into own socket; one mesh per socket.
+  {
+    const self = meshAt('Peg', [0, 0, 0], {snapSocket: 'peg', snapTo: {socketTag: 'peg'}}, 0.1);
+    const a = meshAt('A', [1, 0, 0], {snapTo: {socketTag: 'hole'}}, 0.1);
+    const b = meshAt('B', [1.02, 0, 0], {snapTo: {socketTag: 'hole'}}, 0.1);
+    const hole = meshAt('Hole', [1.01, 0, 0], {snapSocket: 'hole'}, 0.1);
+    const grabbed = [self, a, b];
+    const host = auditHost({});
+    host.traitSystem = {
+      getGrabbedMeshes: () => grabbed,
+      getRawGrabPose: (m: any) => ({
+        position: m === self ? [0.05, 0, 0] : extractPosition(m.transform),
+        quaternion: [0, 0, 0, 1],
+      }),
+    };
+    const viewer: Record<string, any> = {meshes: [self, a, b, hole], container: host};
+    const ctrl = new XRMagneticSnapController();
+    ctrl.update(viewer, 1 / 60, host, []);
+    const socketSnaps = host.events.filter((e: any) => e.type === 'xrsnap' && e.detail?.mode === 'socket');
+    assert(
+      !socketSnaps.some((e: any) => e.detail.node === self),
+      'magnetic-snap never snaps a mesh into its own socket',
+    );
+    assert(
+      socketSnaps.filter((e: any) => e.detail.socket === hole).length === 1,
+      'magnetic-snap seats only one grabbed mesh per socket',
+    );
+  }
+
+  // gaze-dwell: opaque non-gaze geometry occludes gaze targets behind it.
+  {
+    const target = meshAt('Button', [0, 0, 0], {gaze: true}, 0.2);
+    const wall = meshAt('Wall', [0, 0, 1], {}, 0.4);
+    const host = auditHost({});
+    const viewer: Record<string, any> = {meshes: [target, wall], container: host};
+    const ctrl = new XRGazeDwellController();
+    const ray = {origin: [0, 0, 3] as [number, number, number], direction: [0, 0, -1] as [number, number, number]};
+    const blocked = ctrl.step(viewer, 1 / 60, host, ray, false);
+    wall.visible = false;
+    const clear = ctrl.step(viewer, 1 / 60, host, ray, false);
+    assert(blocked.target === null && clear.target === target, 'gaze rays are occluded by non-gaze geometry');
+  }
+
+  // persistent-anchors: only moved nodes are re-anchored; superseded
+  // persistent handles are deleted.
+  {
+    const g = globalThis as any;
+    const origRigid = g.XRRigidTransform;
+    g.XRRigidTransform = class {
+      constructor(public p: unknown, public o: unknown) {}
+    };
+    let created = 0;
+    const deleted: string[] = [];
+    const frame = {
+      createAnchor: async () => {
+        created++;
+        return {requestPersistentHandle: async () => `uuid-${created}`, delete() {}};
+      },
+    };
+    const session = {deletePersistentAnchor: async (u: string) => void deleted.push(u)};
+    const mesh = meshAt('Chair', [0, 0, 0], {grab: true});
+    const host = auditHost({'persistent-anchors': 'audit'});
+    const viewer: Record<string, any> = {meshes: [mesh], container: host};
+    const store = new Map<string, string>();
+    const ctrl = new AuditPersistentAnchorsController(
+      {getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v), removeItem: (k) => void store.delete(k)},
+      {getPathname: () => '/audit', getHash: () => '', setHash() {}},
+    );
+    const entries = ctrl.collectPersistableMeshes(viewer as any, host);
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    (ctrl as any).requestWebXRPersistentAnchors(viewer, entries, frame, {}, host, session);
+    await flush();
+    (ctrl as any).requestWebXRPersistentAnchors(viewer, entries, frame, {}, host, session);
+    await flush();
+    const afterStill = created;
+    mat4FromRotationTranslationScale(mesh.transform, [0, 0, 0, 1], [0.5, 0, 0], [1, 1, 1]);
+    (ctrl as any).requestWebXRPersistentAnchors(viewer, entries, frame, {}, host, session);
+    await flush();
+    assert(afterStill === 1 && created === 2, `XR anchors are re-created only for moved nodes (created=${created})`);
+    assert(deleted.includes('uuid-1'), 'superseded persistent anchor handles are deleted');
+    g.XRRigidTransform = origRigid;
+  }
+
+  // spatial-locomotion: WebXR teleports and snap-turns drive viewer.xrRigMatrix
+  // (modelRootMatrix is rewritten by the AR placement every frame).
+  {
+    const host = auditHost({locomotion: ''});
+    const view = mat4Create();
+    view[13] = -1.6; // head at world (0, 1.6, 0)
+    const viewer: Record<string, any> = {meshes: [], container: host, viewMatrix: view, modelRootMatrix: mat4Create()};
+    const ctrl = new AuditLocomotionController();
+    (ctrl as any).inXR = true;
+    const hit = ctrl.aimTeleport(viewer as any, [0, 1.6, 0], [0, 0.2, -1], 0);
+    const ok = ctrl.commitTeleport(viewer as any, host);
+    const rig = viewer.xrRigMatrix as Float32Array;
+    assert(
+      ok && hit.valid && rig && near(rig[12], -hit.point[0]) && near(rig[14], -hit.point[2]),
+      'WebXR teleport shifts the world rig so the landing point moves under the user',
+    );
+    ctrl.applySnapTurnAxis(viewer as any, 0.9, host);
+    const rig2 = viewer.xrRigMatrix as Float32Array;
+    assert(near(rig2[0], Math.cos(Math.PI / 6)), 'WebXR snap-turn rotates the world rig by the snap angle');
+    auditLocomotionPlugin.onXRSessionEnd?.(viewer);
+    assert(viewer.xrRigMatrix == null, 'locomotion rig resets when the WebXR session ends');
+  }
+
+  // shared-room: 3-digit colors, unique node keys, scene-space poses.
+  {
+    const c = auditHexColorToRgba('#f00');
+    assert(near(c[0], 1) && near(c[1], 0) && near(c[2], 0), 'shared-room expands #rgb peer colors');
+    const b1 = meshAt('Box', [0, 0, 0], {grab: true});
+    const b2 = meshAt('Box', [1, 0, 0], {grab: true});
+    const keys = auditBuildNodeKeyMaps([b1, b2]);
+    assert(keys.keyOf.get(b1) === 'Box' && keys.keyOf.get(b2) === 'Box#2', 'shared-room disambiguates same-named nodes');
+
+    const sent: string[] = [];
+    const root = mat4Create();
+    root[12] = 1; // model placed 1 m along +X
+    const view = mat4Create();
+    view[12] = -1;
+    view[13] = -1.6; // head at world (1, 1.6, 0)
+    const host = auditHost({'shared-room': 'audit'});
+    const viewer: Record<string, any> = {meshes: [], container: host, viewMatrix: view, modelRootMatrix: root};
+    const room = new AuditSharedRoomController('peer-audit', () => 0);
+    room.connect('audit', viewer as any, host, {send: (r: string) => void sent.push(r), close() {}});
+    room.broadcastPoseTick(viewer as any, host, 0, true);
+    const msg = JSON.parse(sent[sent.length - 1] ?? '{}');
+    assert(
+      Array.isArray(msg.headPos) && near(msg.headPos[0], 0) && near(msg.headPos[1], 1.6),
+      'shared-room sends head poses in scene space so differently placed AR peers align',
+    );
+    room.dispose(viewer as any);
+  }
+
+  // measureFrameDt: first sample falls back; later samples are real time.
+  {
+    const key = {};
+    assert(near(auditMeasureFrameDt(key, 0.02), 0.02), 'measureFrameDt returns the fallback on first call');
+    const dt = auditMeasureFrameDt(key, 0.02);
+    assert(dt >= 1 / 240 && dt <= 0.1, 'measureFrameDt clamps measured frame time');
+  }
+}
+
 async function main(): Promise<void> {
   console.log('🧪 Running spatial plugin unit tests...');
   testSchema();
@@ -1974,6 +2214,7 @@ async function main(): Promise<void> {
   await testPersistentAnchors();
   testSpatialLocomotion();
   testSharedRoom();
+  await testAuditRegressions();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

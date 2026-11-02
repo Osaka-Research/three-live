@@ -234,7 +234,8 @@ public enum MagneticSnap {
       let captureLimit = max(config.radius, 0.35)
       for p in planes where planeMatchesSurface(p, mode: config.surface) {
         let n = XRSpatialMath.normalize(p.normal, fallback: SIMD3<Float>(0, 1, 0))
-        let signed = simd_dot(nextPos - p.position, n) - bOff
+        // Only upward-facing support surfaces lift by the bottom offset.
+        let signed = simd_dot(nextPos - p.position, n) - (n.y > 0.7 ? bOff : 0)
         let absErr = abs(signed)
         if absErr <= captureLimit && absErr < bestErr {
           bestErr = absErr
@@ -243,7 +244,7 @@ public enum MagneticSnap {
       }
       if let bp = bestPlane {
         let n = XRSpatialMath.normalize(bp.normal, fallback: SIMD3<Float>(0, 1, 0))
-        let signed = simd_dot(nextPos - bp.position, n) - bOff
+        let signed = simd_dot(nextPos - bp.position, n) - (n.y > 0.7 ? bOff : 0)
         nextPos -= n * signed
         surfaceApplied = true
       } else if config.surface == "floor" || config.surface == "any" {

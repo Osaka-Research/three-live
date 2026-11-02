@@ -293,6 +293,7 @@ constructor(
 
   private val remotePeers = LinkedHashMap<String, RemotePeerVisual>()
   private val nodeLeases = HashMap<String, SharedRoom.NodeSoftLock>()
+  private val paintRate = HashMap<String, LongArray>()
   private val remoteStrokeMeshIds = ArrayList<Int>()
   private var lastPoseSentMs: Long = Long.MIN_VALUE / 2
   private val restParts = ArrayList<RestPart>()
@@ -806,6 +807,8 @@ constructor(
       if (sNode == nodeIndex || !session.isEffectivelyVisible(sNode)) continue
       if (!session.nodeWorldMatrix(sNode, world)) continue
       val id = "socket#$sNode"
+      // One node per socket: skip sockets another node is already seated in.
+      if (activeSocketByNode.any { (other, sid) -> other != nodeIndex && sid == id }) continue
       val q = XRSpatialMath.extractQuaternion(world)
       sockets.add(
         MagneticSnap.SocketCandidate(
@@ -1563,10 +1566,27 @@ constructor(
   private fun shouldSyncNode(node: Int): Boolean =
     syncTraits[node] ?: (node in grabbableNodes)
 
-  private fun syncNodeKey(node: Int): String =
+  private fun baseSyncNodeKey(node: Int): String =
     anchorPersistTraits[node]?.id
       ?: XRLiveSceneCoreHelper.safeAnchorId(scene.nodeNames.getOrNull(node))
       ?: "node_$node"
+
+  /**
+   * Unique sync key per mesh node: duplicate names get `#2`, `#3`, ... in node
+   * order, matching the web `buildNodeKeyMaps` so same-named nodes don't collide.
+   */
+  private fun syncNodeKey(node: Int): String {
+    val used = HashSet<String>()
+    for (n in 0 until scene.nodeCount) {
+      if (n != node && (scene.nodeMesh.getOrNull(n) ?: -1) < 0) continue
+      val base = baseSyncNodeKey(n)
+      var key = base
+      var suffix = 2
+      while (!used.add(key)) key = "$base#${suffix++}"
+      if (n == node) return key
+    }
+    return baseSyncNodeKey(node)
+  }
 
   /** Returns the current soft-lock owner for [nodeId] if unexpired at [atMs]. */
   fun getNodeOwner(nodeId: String, atMs: Long = System.currentTimeMillis()): String? {
@@ -1574,7 +1594,13 @@ constructor(
     return if (atMs < lease.leaseUntilMs) lease.ownerPeerId else null
   }
 
-  /** Broadcasts a rate-limited (`20 Hz`) local head + pointer ray pose tick. */
+  /**
+   * Broadcasts a rate-limited (`20 Hz`) local head + pointer ray pose tick.
+   *
+   * Pass poses in scene (model) space, the same space as node transforms: each
+   * device places the shared model independently, so world-space poses from
+   * different devices do not line up.
+   */
   @JvmOverloads
   fun broadcastPoseTick(
     headPos: DoubleArray,
@@ -1791,6 +1817,13 @@ constructor(
       }
       is SharedRoom.WireMessage.Paint -> {
         remotePeers[msg.peerId]?.lastSeenMs = atMs
+        // Each stroke allocates GPU buffers; drop floods from a single peer.
+        val bucket = paintRate[msg.peerId]
+        if (bucket == null || atMs - bucket[0] >= 1000L) {
+          paintRate[msg.peerId] = longArrayOf(atMs, 1L)
+        } else if (++bucket[1] > SharedRoom.MAX_PAINT_MESSAGES_PER_SEC) {
+          return false
+        }
         val builder = TubeStrokeBuilder(radius = msg.radius)
         for (pt in msg.points) builder.addPoint(pt[0], pt[1], pt[2])
         val geo = builder.build()
@@ -1825,6 +1858,7 @@ constructor(
 
   private fun removeRemotePeer(peerId: String): Boolean {
     val p = remotePeers.remove(peerId) ?: return false
+    paintRate.remove(peerId)
     if (p.visorMeshId >= 0) renderer.removeDynamicMesh(p.visorMeshId)
     if (p.laserMeshId >= 0) renderer.removeDynamicMesh(p.laserMeshId)
     val owned = nodeLeases.entries.filter { it.value.ownerPeerId == peerId }.map { it.key }

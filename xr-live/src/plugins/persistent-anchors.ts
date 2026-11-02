@@ -390,6 +390,7 @@ export class XRPersistentAnchorsController {
   private xrRestoredSession: unknown = null;
   private readonly liveXrAnchors = new Map<string, unknown>();
   private readonly xrUuids = new Map<string, string>();
+  private readonly anchoredPoseKeys = new Map<string, string>();
 
   constructor(storage?: StorageLike | null, urlAdapter?: UrlHashAdapter | null) {
     this.storageOverride = storage ?? null;
@@ -633,7 +634,7 @@ export class XRPersistentAnchorsController {
     if (typeof session?.deletePersistentAnchor === 'function') {
       for (const uuid of this.xrUuids.values()) {
         try {
-          session.deletePersistentAnchor(uuid);
+          Promise.resolve(session.deletePersistentAnchor(uuid)).catch(() => {});
         } catch {
           // Ignore unsupported / unknown handles.
         }
@@ -644,6 +645,7 @@ export class XRPersistentAnchorsController {
     }
     this.liveXrAnchors.clear();
     this.xrUuids.clear();
+    this.anchoredPoseKeys.clear();
   }
 
   /** Steps restoration on initial scene readiness and auto-saves on grab release. */
@@ -675,7 +677,14 @@ export class XRPersistentAnchorsController {
     const isNowGrabbed = grabbedCount > 0;
     if (this.wasAnyGrabbed && !isNowGrabbed) {
       if (xrCtx?.frame && xrCtx.refSpace) {
-        this.requestWebXRPersistentAnchors(viewer, entries, xrCtx.frame, xrCtx.refSpace, element);
+        this.requestWebXRPersistentAnchors(
+          viewer,
+          entries,
+          xrCtx.frame,
+          xrCtx.refSpace,
+          element,
+          xrCtx.session,
+        );
       }
       this.save(viewer, element);
     }
@@ -758,6 +767,8 @@ export class XRPersistentAnchorsController {
     refSpace: unknown,
     // tslint:disable-next-line:no-any Host element.
     element: any,
+    // tslint:disable-next-line:no-any WebXR session.
+    session?: any,
   ): void {
     if (typeof frame?.createAnchor !== 'function') return;
     // tslint:disable-next-line:no-any Global XRRigidTransform constructor.
@@ -768,6 +779,13 @@ export class XRPersistentAnchorsController {
       const wm = meshWorldMatrix(viewer, mesh);
       const pos = extractPosition(wm);
       const quat = extractQuaternion(wm);
+      // Only re-anchor nodes that actually moved: headsets cap persistent
+      // anchors, and every release used to re-anchor every node.
+      const poseKey = [...pos, ...quat].map((v) => Math.round(v * 1000)).join(',');
+      if (this.anchoredPoseKeys.get(key) === poseKey && this.liveXrAnchors.has(key)) {
+        continue;
+      }
+      this.anchoredPoseKeys.set(key, poseKey);
       try {
         const xform = new RigidTransformCtor(
           {x: pos[0], y: pos[1], z: pos[2], w: 1},
@@ -784,6 +802,15 @@ export class XRPersistentAnchorsController {
               const uuid = await anchor.requestPersistentHandle();
               const cleanUuid = safeAnchorId(uuid);
               if (cleanUuid) {
+                const oldUuid = this.xrUuids.get(key);
+                if (
+                  oldUuid &&
+                  oldUuid !== cleanUuid &&
+                  typeof session?.deletePersistentAnchor === 'function'
+                ) {
+                  // Release the superseded handle so stored anchors don't leak.
+                  Promise.resolve(session.deletePersistentAnchor(oldUuid)).catch(() => {});
+                }
                 this.xrUuids.set(key, cleanUuid);
                 this.save(viewer, element);
               }
@@ -846,9 +873,10 @@ export const persistentAnchorsPlugin: ThreeLivePlugin = {
     const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
     element.savePersistedAnchors = () => {
       const v = viewerOf();
-      return v ? ctrl.save(v, element) : 0;
+      return v ? ctrl.save(v, element) : '';
     };
-    element.clearPersistedAnchors = () => ctrl.clearPersistedAnchors(element);
+    element.clearPersistedAnchors = () =>
+      ctrl.clearPersistedAnchors(element, element.activeXRSession);
     element.exportAnchorState = () => ctrl.exportAnchorState(viewerOf(), element);
     element.importAnchorState = (token: string) =>
       ctrl.importAnchorState(token, viewerOf(), element);
@@ -861,7 +889,6 @@ export const persistentAnchorsPlugin: ThreeLivePlugin = {
     const bound: Array<[string, EventListener]> = [
       ['xrsnap', onSaveTrigger],
       ['xr-handles-change', onSaveTrigger],
-      ['xr-select-end', onSaveTrigger],
     ];
     for (const [name, fn] of bound) element.addEventListener(name, fn);
     listeners.set(element, bound);

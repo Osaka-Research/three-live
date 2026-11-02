@@ -27,6 +27,8 @@ public enum SharedRoom {
   public static let softLockTtlMs: Int64 = 2000
   public static let maxPeerNameChars = 32
   public static let maxRemoteStrokes = 64
+  /// Maximum remote paint strokes accepted per peer per second (GPU churn guard).
+  public static let maxPaintMessagesPerSec = 8
   public static let maxStrokeChunkPoints = 128
   public static let defaultPeerColor = "#38bdf8"
 

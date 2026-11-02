@@ -26,7 +26,10 @@ import {
   mat4FromRotationTranslationScale,
   mat4Multiply,
 } from '../../../three-live/src/math';
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  type ThreeLivePlugin,
+  XR_LIVE_AR_SURFACE_Y,
+} from '../../../three-live/src/plugin';
 import {
   clampNum,
   parseSnapSocket,
@@ -50,6 +53,7 @@ import {
   type DynamicGeometry,
   emitPluginEvent,
   isXRFrameFresh,
+  measureFrameDt,
   meshWorldMatrix,
   type PluginViewer,
   type Quat,
@@ -300,7 +304,10 @@ export function evaluateMagneticSnap(
     for (const p of planes) {
       if (!planeMatchesSurface(p, config.surface)) continue;
       const n = vNorm(p.normal, [0, 1, 0]);
-      const signed = vDot(vSub(nextPos, p.position), n) - bottomOffset;
+      // Only upward-facing support surfaces lift the object by its bottom
+      // offset; walls and ceilings snap the pivot onto the plane.
+      const lift = n[1] > 0.7 ? bottomOffset : 0;
+      const signed = vDot(vSub(nextPos, p.position), n) - lift;
       const absErr = Math.abs(signed);
       if (absErr <= captureLimit && absErr < bestPlaneErr) {
         bestPlaneErr = absErr;
@@ -309,7 +316,8 @@ export function evaluateMagneticSnap(
     }
     if (bestPlane) {
       const n = vNorm(bestPlane.normal, [0, 1, 0]);
-      const signed = vDot(vSub(nextPos, bestPlane.position), n) - bottomOffset;
+      const lift = n[1] > 0.7 ? bottomOffset : 0;
+      const signed = vDot(vSub(nextPos, bestPlane.position), n) - lift;
       nextPos = vSub(nextPos, vScale(n, signed));
       surfaceApplied = true;
     } else if (config.surface === 'floor' || config.surface === 'any') {
@@ -580,10 +588,14 @@ export class XRMagneticSnapController {
     const planes =
       planesOverride ??
       (element ? getWorldUnderstandingController(element).planes : []);
-    const floorY = Number.isFinite(element?.simulator?.room?.floorY)
-      ? element.simulator.room.floorY
-      : 0;
     const root = rootMatrix(viewer);
+    // In AR the virtual floor is the detected surface the scene is pinned to
+    // (`XR_LIVE_AR_SURFACE_Y` in scene space), not world y = 0.
+    const floorY = viewer.xrSessionActive
+      ? root[5] * XR_LIVE_AR_SURFACE_Y + root[13]
+      : Number.isFinite(element?.simulator?.room?.floorY)
+        ? element.simulator.room.floorY
+        : 0;
 
     const grabbedList: unknown[] =
       typeof traitSystem?.getGrabbedMeshes === 'function'
@@ -654,11 +666,20 @@ export class XRMagneticSnapController {
 
       const prev = this.activeStates.get(meshObj);
       const bottomOffset = computeMeshBottomOffset(mesh, worldScale);
+      // Never snap a mesh into its own socket, or into a socket another
+      // grabbed mesh is already seated in.
+      const occupied = new Set<string>();
+      for (const [other, st] of this.activeStates) {
+        if (other !== meshObj && st.matchedSocketId) occupied.add(st.matchedSocketId);
+      }
+      const availableSockets = sockets.filter(
+        (s) => s.node !== mesh && !occupied.has(s.id),
+      );
       const ev = evaluateMagneticSnap({
         position: rawWorldPos,
         quaternion: rawWorldQuat,
         config: cfg,
-        sockets,
+        sockets: availableSockets,
         planes,
         currentSocketId: prev?.matchedSocketId ?? null,
         bottomOffset,
@@ -840,7 +861,8 @@ export const magneticSnapPlugin: ThreeLivePlugin = {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;
-    getMagneticSnapController(host ?? v).update(v, 1 / 72, host);
+    const ctrl = getMagneticSnapController(host ?? v);
+    ctrl.update(v, measureFrameDt(ctrl), host);
   },
   onUpdate(viewer: PluginViewer, dt: number): void {
     if (isXRFrameFresh(viewer)) return;

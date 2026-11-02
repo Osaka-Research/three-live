@@ -28,6 +28,9 @@ object SharedRoom {
   const val SOFT_LOCK_TTL_MS: Long = 2000L
   const val MAX_PEER_NAME_CHARS: Int = 32
   const val MAX_REMOTE_STROKES: Int = 64
+
+  /** Maximum remote paint strokes accepted per peer per second (GPU churn guard). */
+  const val MAX_PAINT_MESSAGES_PER_SEC: Int = 8
   const val MAX_STROKE_CHUNK_POINTS: Int = 128
   const val DEFAULT_PEER_COLOR: String = "#38bdf8"
 

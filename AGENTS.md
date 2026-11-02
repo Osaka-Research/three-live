@@ -32,7 +32,7 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Full 3D viewer + PBR Next + HDRI + contact shadows + skeletal animation + hotspots | `<three-live>` | `three-live-full.min.js` | `< 69 KB gz` |
 | 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 66 KB gz` |
 | Add-on bundle with all 14 modular `<xr-live>` spatial plugins | `<xr-live>` | `xr-live-plugins.min.js` | `< 52 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 132 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 133 KB gz` |
 
 ---
 

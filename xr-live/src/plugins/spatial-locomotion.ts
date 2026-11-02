@@ -26,8 +26,12 @@
 import {
   mat4Create,
   mat4FromRotationTranslationScale,
+  mat4Multiply,
 } from '../../../three-live/src/math';
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  type ThreeLivePlugin,
+  XR_LIVE_AR_SURFACE_Y,
+} from '../../../three-live/src/plugin';
 import {
   clampNum,
   parseNavigable,
@@ -40,7 +44,9 @@ import {
   createDynamicMesh,
   type DynamicGeometry,
   emitPluginEvent,
+  inverseRootMatrix,
   isXRFrameFresh,
+  measureFrameDt,
   normalizeRayDir,
   type PluginViewer,
   quatFromUnitVectors,
@@ -49,6 +55,7 @@ import {
   removeDynamicMesh,
   resolveHeadPose,
   setWorldTRS,
+  transformPoint,
   updateDynamicMesh,
   vAdd,
   vCross,
@@ -431,6 +438,14 @@ export class XRSpatialLocomotionController {
   private ringValidState: boolean | null = null;
   // tslint:disable-next-line:no-any Optional DOM vignette overlay element.
   private vignetteEl: any = null;
+  /**
+   * World-space rig transform for immersive WebXR. `three-xr` pre-multiplies
+   * it onto the AR placement each frame (`viewer.xrRigMatrix`); writing
+   * `modelRootMatrix` directly is overwritten by the placement every frame.
+   */
+  private rigMatrix: Float32Array | null = null;
+  private inXR = false;
+  private lastWorldFloorY = 0;
 
   /** Current accumulated viewer rig foot position `[x, y, z]`. */
   get position(): Vec3 {
@@ -476,12 +491,59 @@ export class XRSpatialLocomotionController {
     const isSim = Boolean(
       element?.simulator?.active && Array.isArray(element.simulator.headPosition),
     );
+    if (this.inXR && !isSim) {
+      this.teleportXR(viewer, hit.point, element);
+      return true;
+    }
     const sceneTarget: Vec3 =
       !isSim && this.hasShiftedModelRoot
         ? this.worldToScenePoint(hit.point)
         : hit.point;
     this.teleportTo(viewer, sceneTarget, element);
     return true;
+  }
+
+  /** Pre-multiplies `m` onto the WebXR rig and publishes it to `three-xr`. */
+  private premultiplyRig(viewer: PluginViewer, m: Float32Array): void {
+    const next = mat4Create();
+    mat4Multiply(next, m, this.rigMatrix ?? mat4Create());
+    this.rigMatrix = next;
+    viewer.xrRigMatrix = next;
+  }
+
+  /**
+   * WebXR teleport: shifts the world so the landing point moves under the
+   * user's feet (head x/z, current floor height), then reports the landing
+   * point in scene space.
+   */
+  private teleportXR(
+    viewer: PluginViewer,
+    worldHit: readonly number[],
+    // tslint:disable-next-line:no-any Host element is `<xr-live>`.
+    element?: any,
+  ): void {
+    const cfg = resolveLocomotionConfig(element);
+    const from: Vec3 = [...this.rigPosition];
+    const to = transformPoint(inverseRootMatrix(viewer), worldHit);
+    const head = resolveHeadPose(viewer);
+    const t = mat4Create();
+    t[12] = head.position[0] - (worldHit[0] ?? 0);
+    t[13] = this.lastWorldFloorY - (worldHit[1] ?? 0);
+    t[14] = head.position[2] - (worldHit[2] ?? 0);
+    this.premultiplyRig(viewer, t);
+    this.rigPosition = to;
+    if (cfg.comfortVignette) {
+      this.vignetteRemainingMs = COMFORT_VIGNETTE_MS;
+      this.syncVignetteDom(viewer);
+    }
+    emitPluginEvent(element, 'xrteleport', {from, to: [...to], yawDeg: this.rigYawDeg});
+  }
+
+  /** Clears the WebXR rig when an immersive session ends. */
+  resetXRRig(viewer?: PluginViewer): void {
+    this.rigMatrix = null;
+    this.inXR = false;
+    if (viewer) viewer.xrRigMatrix = null;
   }
 
   private worldToScenePoint(worldPt: readonly number[]): Vec3 {
@@ -537,7 +599,29 @@ export class XRSpatialLocomotionController {
     this.snapLatched = res.latched;
     if (res.deltaYawDeg !== 0) {
       this.rigYawDeg = ((this.rigYawDeg + res.deltaYawDeg) % 360 + 540) % 360 - 180;
-      this.applyRigToHost(viewer, element, res.deltaYawDeg);
+      const isSim = Boolean(
+        element?.simulator?.active && Array.isArray(element.simulator.headPosition),
+      );
+      if (this.inXR && !isSim) {
+        // Turning the user by +delta rotates the world by -delta around the
+        // user's vertical axis.
+        const head = resolveHeadPose(viewer);
+        const a = (-res.deltaYawDeg * Math.PI) / 180;
+        const c = Math.cos(a);
+        const sn = Math.sin(a);
+        const hx = head.position[0];
+        const hz = head.position[2];
+        const r = mat4Create();
+        r[0] = c;
+        r[2] = -sn;
+        r[8] = sn;
+        r[10] = c;
+        r[12] = hx - (c * hx + sn * hz);
+        r[14] = hz - (-sn * hx + c * hz);
+        this.premultiplyRig(viewer, r);
+      } else {
+        this.applyRigToHost(viewer, element, res.deltaYawDeg);
+      }
       if (cfg.comfortVignette) {
         this.vignetteRemainingMs = COMFORT_VIGNETTE_MS * 0.75;
         this.syncVignetteDom(viewer);
@@ -568,6 +652,7 @@ export class XRSpatialLocomotionController {
     }
 
     if (xrCtx?.session) {
+      this.inXR = true;
       const head = resolveHeadPose(viewer);
       const headFwd = forwardFromMatrix(head.matrix);
       const stick = readXRThumbstick(
@@ -587,8 +672,15 @@ export class XRSpatialLocomotionController {
         const isSim = Boolean(
           element?.simulator?.active && Array.isArray(element.simulator.headPosition),
         );
+        // In WebXR the virtual floor is the scene surface the placement pins to
+        // the real floor, moved by the rig; the user's physical floor is that
+        // height with the rig's vertical shift removed.
+        const root = viewer.modelRootMatrix;
         const worldFloorY =
-          !isSim && this.hasShiftedModelRoot ? floorY - this.rigPosition[1] : floorY;
+          !isSim && root && root.length === 16
+            ? root[5] * XR_LIVE_AR_SURFACE_Y + root[13]
+            : floorY;
+        this.lastWorldFloorY = worldFloorY - (this.rigMatrix ? this.rigMatrix[13] : 0);
         if (stick && stick.axisY < -0.5) {
           this.aimTeleport(viewer, stick.rayOrigin, stick.rayDirection, worldFloorY);
         } else if (this.aimingTeleport && (!stick || stick.axisY >= -0.35)) {
@@ -613,7 +705,15 @@ export class XRSpatialLocomotionController {
           this.rigPosition[1],
           clampNum(this.rigPosition[2] + sceneDz * speed, -1000, 1000, 0),
         ];
-        this.applyRigToHost(viewer, element);
+        if (!isSim) {
+          // WebXR: glide by translating the world opposite to the motion.
+          const t = mat4Create();
+          t[12] = -flatWorldFwd[0] * speed;
+          t[14] = -flatWorldFwd[2] * speed;
+          this.premultiplyRig(viewer, t);
+        } else {
+          this.applyRigToHost(viewer, element);
+        }
         if (cfg.comfortVignette) {
           this.vignetteRemainingMs = Math.max(this.vignetteRemainingMs, 60);
           this.syncVignetteDom(viewer);
@@ -792,7 +892,8 @@ export const spatialLocomotionPlugin: ThreeLivePlugin = {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;
-    getSpatialLocomotionController(host ?? v).step(v, 1 / 72, host, {
+    const ctrl = getSpatialLocomotionController(host ?? v);
+    ctrl.step(v, measureFrameDt(ctrl), host, {
       session,
       frame,
       refSpace,
@@ -802,6 +903,11 @@ export const spatialLocomotionPlugin: ThreeLivePlugin = {
     if (isXRFrameFresh(viewer)) return;
     const host = viewer?.container;
     getSpatialLocomotionController(host ?? viewer).step(viewer, dt, host);
+  },
+  onXRSessionEnd(viewer: unknown): void {
+    const v = viewer as PluginViewer;
+    if (v && typeof v === 'object') v.xrRigMatrix = null;
+    controllers.get(v?.container ?? v)?.resetXRRig(v);
   },
   onDestroy(_gl: WebGL2RenderingContext, viewer: PluginViewer): void {
     const host = viewer?.container;

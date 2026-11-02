@@ -38,6 +38,7 @@ import {
   type DynamicGeometry,
   emitPluginEvent,
   isXRFrameFresh,
+  measureFrameDt,
   normalizeRayDir,
   type PluginViewer,
   quatFromUnitVectors,
@@ -394,11 +395,16 @@ export class XRGazeDwellController {
       : forwardFromMatrix(head.matrix);
     this.smoothedDir = smoothGazeDirection(this.smoothedDir, rawDir, GAZE_EMA_ALPHA);
 
-    const hit = raycastSceneMeshes(viewer, origin, this.smoothedDir, 30, (m) => {
+    // Raycast every pickable scene mesh so opaque non-gaze geometry occludes
+    // gaze targets behind it, then accept only a gaze-enabled nearest hit.
+    const rawHit = raycastSceneMeshes(viewer, origin, this.smoothedDir, 30, (m) => {
       const pe = m.extras?.xr?.pointerEvents ?? m.userData?.xr?.pointerEvents;
-      if (pe === 'none') return false;
-      return this.resolveMeshGazeOptions(m, elemCfg, autoEnabled) !== null;
+      return pe !== 'none';
     });
+    const hit =
+      rawHit && this.resolveMeshGazeOptions(rawHit.mesh, elemCfg, autoEnabled) !== null
+        ? rawHit
+        : null;
 
     // tslint:disable-next-line:no-any Chosen target mesh.
     let nextMesh: any = hit?.mesh ?? null;
@@ -657,7 +663,8 @@ export const gazeDwellPlugin: ThreeLivePlugin = {
     const host = v?.container;
     const {gazeRay, hasTrackedControllers} = resolveXRInputGaze(session, frame, refSpace);
     const autoEnabled = gazeRay !== null || !hasTrackedControllers;
-    getGazeDwellController(host ?? v).step(v, 1 / 72, host, gazeRay, autoEnabled);
+    const ctrl = getGazeDwellController(host ?? v);
+    ctrl.step(v, measureFrameDt(ctrl), host, gazeRay, autoEnabled);
   },
   onUpdate(viewer: PluginViewer, dt: number): void {
     if (isXRFrameFresh(viewer)) return;

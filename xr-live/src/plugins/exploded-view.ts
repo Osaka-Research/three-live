@@ -36,7 +36,6 @@ import {
   getMeshXRTraits,
 } from '../xr-traits';
 import {
-  applyWorldMatrix,
   cacheXRFrame,
   claimEvent,
   computeLocalBounds,
@@ -44,8 +43,9 @@ import {
   type DynamicGeometry,
   emitPluginEvent,
   isEventClaimed,
+  inverseRootMatrix,
   isXRFrameFresh,
-  meshWorldMatrix,
+  measureFrameDt,
   type PluginViewer,
   type Quat,
   quatFromUnitVectors,
@@ -258,6 +258,28 @@ export function parseSectionPlaneSpec(
   };
 }
 
+/**
+ * Transforms a scene-space section plane `dot(p, n) > c` into world space via
+ * the viewer root matrix (rigid rotation + translation + uniform scale).
+ */
+export function sectionPlaneToWorld(
+  plane: SectionPlaneState,
+  root: ArrayLike<number>,
+): SectionPlaneState {
+  if (!plane.enabled) return plane;
+  const n = vNorm(plane.normal, [1, 0, 0]);
+  const wn = vNorm(
+    [
+      root[0] * n[0] + root[4] * n[1] + root[8] * n[2],
+      root[1] * n[0] + root[5] * n[1] + root[9] * n[2],
+      root[2] * n[0] + root[6] * n[1] + root[10] * n[2],
+    ],
+    n,
+  );
+  const wp = transformPoint(root, vScale(n, plane.constant));
+  return {...plane, normal: wn, constant: vDot(wn, wp)};
+}
+
 /** Builds a 4-bar rectangular gizmo frame in the XY plane facing `+Z`. */
 export function buildSectionGizmoGeometry(halfExtent = 0.35): DynamicGeometry {
   const h = Math.max(0.05, halfExtent);
@@ -350,6 +372,7 @@ export function resolveExplodedViewConfig(element: any): ExplodedViewElementConf
 export class XRExplodedViewController {
   private parts: RestPartRecord[] = [];
   private capturedMeshSet = new Set<object>();
+  private consideredMeshSet = new Set<object>();
   private assemblyCenter: Vec3 = [0, 0, 0];
   private assemblyRadius = 0.5;
   private targetFactor = 0;
@@ -369,6 +392,12 @@ export class XRExplodedViewController {
     interactive: false,
   };
   private interactivePlaneOffset: number | null = null;
+  private worldSection: SectionPlaneState = {
+    enabled: false,
+    normal: [1, 0, 0],
+    constant: 0,
+    interactive: false,
+  };
 
   // Two-hand spread gesture & interactive section drag state.
   private readonly handPositions = new Map<string, Vec3>();
@@ -380,8 +409,17 @@ export class XRExplodedViewController {
     return this.currentFactor;
   }
 
-  /** Returns the active world-space section plane state. */
+  /**
+   * Returns the active section plane in world space (what the shader clips
+   * against). `section-plane` specs are authored in scene space so the cut
+   * follows the model through AR placement and turntable rotation.
+   */
   get sectionPlane(): SectionPlaneState {
+    return this.worldSection;
+  }
+
+  /** Returns the active section plane in scene (model) space. */
+  get sceneSectionPlane(): SectionPlaneState {
     return this.activeSection;
   }
 
@@ -417,14 +455,19 @@ export class XRExplodedViewController {
         !(typeof m.name === 'string' && m.name.startsWith('__xr_')),
     );
     if (
-      sceneMeshes.length === this.parts.length &&
-      sceneMeshes.every((m) => this.capturedMeshSet.has(m))
+      sceneMeshes.length === this.consideredMeshSet.size &&
+      sceneMeshes.every((m) => this.consideredMeshSet.has(m))
     ) {
       return;
     }
 
     this.parts = [];
     this.capturedMeshSet = new Set<object>();
+    // Every scene mesh seen in this capture, including skipped ones (explode:
+    // false, floor anchors). Comparing against `parts` alone would re-capture
+    // every frame whenever a mesh is skipped, baking exploded offsets into the
+    // rest pose so parts fly away.
+    this.consideredMeshSet = new Set<object>(sceneMeshes);
     const depthMap = computeNodeDepthMap(gltf ?? (viewer as {gltf?: unknown}).gltf);
     const min: Vec3 = [Infinity, Infinity, Infinity];
     const max: Vec3 = [-Infinity, -Infinity, -Infinity];
@@ -432,7 +475,11 @@ export class XRExplodedViewController {
     for (const m of sceneMeshes) {
       const traits = getMeshXRTraits(m);
       if (traits?.explode === false) continue;
-      if (traits?.anchor === 'floor' && !traits?.explode) continue;
+      const anchorTarget =
+        typeof traits?.anchor === 'string'
+          ? traits.anchor
+          : (traits?.anchor as {target?: string} | null | undefined)?.target;
+      if (anchorTarget === 'floor' && !traits?.explode) continue;
 
       const restLocalPos = extractPosition(m.transform);
       const restLocalQuat = extractQuaternion(m.transform);
@@ -490,13 +537,15 @@ export class XRExplodedViewController {
   ): boolean {
     if (!pivot || !pivot.every(Number.isFinite)) return false;
 
-    // Interactive section-plane drag when pinching near the cut gizmo.
+    // Interactive section-plane drag when pinching near the cut gizmo
+    // (plane math runs in scene space).
     if (this.activeSection.enabled && this.activeSection.interactive && !hasHitMesh) {
-      const signed = vDot(pivot, this.activeSection.normal) - this.activeSection.constant;
+      const local = transformPoint(inverseRootMatrix(viewer), pivot);
+      const signed = vDot(local, this.activeSection.normal) - this.activeSection.constant;
       if (Math.abs(signed) <= Math.max(0.12, this.assemblyRadius * 0.35)) {
         this.planeDrag = {
           hand,
-          startProj: vDot(pivot, this.activeSection.normal),
+          startProj: vDot(local, this.activeSection.normal),
           startConst: this.activeSection.constant,
         };
         return true;
@@ -528,11 +577,17 @@ export class XRExplodedViewController {
   }
 
   /** Updates active 2-hand spread or interactive section plane drag. */
-  // tslint:disable-next-line:no-any Host element.
-  handleSelectMove(element: any, hand: string, pivot: Vec3 | undefined): void {
+  handleSelectMove(
+    // tslint:disable-next-line:no-any Host element.
+    element: any,
+    hand: string,
+    pivot: Vec3 | undefined,
+    viewer?: PluginViewer,
+  ): void {
     if (!pivot || !pivot.every(Number.isFinite)) return;
     if (this.planeDrag && this.planeDrag.hand === hand) {
-      const proj = vDot(pivot, this.activeSection.normal);
+      const local = transformPoint(inverseRootMatrix(viewer), pivot);
+      const proj = vDot(local, this.activeSection.normal);
       this.interactivePlaneOffset = clampNum(
         this.planeDrag.startConst + (proj - this.planeDrag.startProj),
         -1000,
@@ -578,10 +633,7 @@ export class XRExplodedViewController {
       this.apiOverrideFactor !== null ? this.apiOverrideFactor : cfg.targetFactor;
     this.targetFactor = desiredTarget;
 
-    const sectionParsed = parseSectionPlaneSpec(
-      cfg.sectionSpec,
-      transformPoint(rootMatrix(viewer), this.assemblyCenter),
-    );
+    const sectionParsed = parseSectionPlaneSpec(cfg.sectionSpec, this.assemblyCenter);
     if (!sectionParsed.interactive) {
       this.interactivePlaneOffset = null;
     }
@@ -589,6 +641,7 @@ export class XRExplodedViewController {
       sectionParsed.interactive && this.interactivePlaneOffset !== null
         ? {...sectionParsed, constant: this.interactivePlaneOffset}
         : sectionParsed;
+    this.worldSection = sectionPlaneToWorld(this.activeSection, rootMatrix(viewer));
 
     const active =
       cfg.hasExplodeAttr ||
@@ -621,6 +674,7 @@ export class XRExplodedViewController {
         // grab/snap/physics adjustments are preserved as the assembly baseline.
         this.parts = [];
         this.capturedMeshSet.clear();
+        this.consideredMeshSet.clear();
         this.captureRestPoses(viewer);
       }
       let maxLayer = 1;
@@ -655,9 +709,11 @@ export class XRExplodedViewController {
 
         const showLeader = trait ? trait.leaderLine : true;
         if (this.currentFactor > 0.02 && showLeader && vLen(offset) > 0.008) {
-          const worldRest = transformPoint(root, part.restCenterLocal);
-          const worldExploded = transformPoint(root, vAdd(part.restCenterLocal, offset));
-          for (const seg of buildDashedSegments(worldRest, worldExploded, 0.022, 0.014, 32)) {
+          // Leader geometry lives in scene space (drawn through the root
+          // matrix) so it stays attached while the model turns or is placed.
+          const restPt = part.restCenterLocal;
+          const explodedPt = vAdd(part.restCenterLocal, offset);
+          for (const seg of buildDashedSegments(restPt, explodedPt, 0.022, 0.014, 32)) {
             leaderSegments.push(seg);
           }
         }
@@ -678,7 +734,6 @@ export class XRExplodedViewController {
             roughness: 0.35,
             alphaBlend: true,
             pickable: false,
-            worldSpace: true,
           },
         );
         this.lastLeaderKey = key;
@@ -693,7 +748,6 @@ export class XRExplodedViewController {
           );
           this.lastLeaderKey = key;
         }
-        applyWorldMatrix(viewer, this.leaderMesh);
       }
     } else if (this.leaderMesh) {
       this.leaderMesh.visible = false;
@@ -722,8 +776,8 @@ export class XRExplodedViewController {
       }
       this.sectionGizmoMesh.visible = true;
       const worldCenter = transformPoint(root, this.assemblyCenter);
-      const n = this.activeSection.normal;
-      const dist = vDot(worldCenter, n) - this.activeSection.constant;
+      const n = this.worldSection.normal;
+      const dist = vDot(worldCenter, n) - this.worldSection.constant;
       const planeOrigin = vSub(worldCenter, vScale(n, dist));
       const q = quatFromUnitVectors([0, 0, 1], n);
       setWorldTRS(viewer, this.sectionGizmoMesh, q, planeOrigin, [1, 1, 1]);
@@ -736,6 +790,7 @@ export class XRExplodedViewController {
   resetForNewModel(viewer: PluginViewer, gltf?: unknown): void {
     this.parts = [];
     this.capturedMeshSet.clear();
+    this.consideredMeshSet.clear();
     this.lastLeaderKey = '';
     this.captureRestPoses(viewer, gltf);
   }
@@ -759,11 +814,13 @@ export class XRExplodedViewController {
     this.disposeVisuals(viewer);
     this.parts = [];
     this.capturedMeshSet.clear();
+    this.consideredMeshSet.clear();
     this.wasExploded = false;
     this.handPositions.clear();
     this.spreadGesture = null;
     this.planeDrag = null;
     this.activeSection = {enabled: false, normal: [1, 0, 0], constant: 0, interactive: false};
+    this.worldSection = this.activeSection;
   }
 }
 
@@ -813,7 +870,7 @@ export const explodedViewPlugin: ThreeLivePlugin = {
     };
     const onMove = (e: Event): void => {
       const d = (e as CustomEvent<SelectDetail>).detail;
-      ctrl.handleSelectMove(element, d?.hand ?? 'screen', d?.pivotPosition);
+      ctrl.handleSelectMove(element, d?.hand ?? 'screen', d?.pivotPosition, viewerOf());
     };
     const onEnd = (e: Event): void => {
       const d = (e as CustomEvent<SelectDetail>).detail;
@@ -858,7 +915,8 @@ export const explodedViewPlugin: ThreeLivePlugin = {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;
-    getExplodedViewController(host ?? v).update(v, 1 / 72, host);
+    const ctrl = getExplodedViewController(host ?? v);
+    ctrl.update(v, measureFrameDt(ctrl), host);
   },
   onUpdate(viewer: PluginViewer, dt: number): void {
     if (isXRFrameFresh(viewer)) return;

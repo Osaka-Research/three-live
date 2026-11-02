@@ -20,6 +20,7 @@
  * - In-Browser WebXR: WebGL2 immersive-ar session manager with surface hit-testing and reticle placement.
  */
 
+import {mat4Multiply} from './math';
 import {registeredPlugins, XR_LIVE_AR_SURFACE_Y} from './plugin';
 import {
   buildUSDZZip,
@@ -681,6 +682,8 @@ export class WebXRSessionManager {
     let previewPos: [number, number, number] = [0, -0.25, -1.2];
     let placedPos: [number, number, number] = [0, -0.25, -1.2];
     const activeMat = new Float32Array(16);
+    // Placement composed with the optional locomotion rig (`view.xrRigMatrix`).
+    const renderMat = new Float32Array(16);
     let hasPreview = false;
     let userScale = 1;
     let yaw = 0;
@@ -930,8 +933,14 @@ export class WebXRSessionManager {
           baseScale * userScale,
         );
         if (this.placed) this.placedMat.set(activeMat);
+        const rig = (view as any).xrRigMatrix;
+        if (rig instanceof Float32Array && rig.length === 16) {
+          mat4Multiply(renderMat, rig, activeMat);
+        } else {
+          renderMat.set(activeMat);
+        }
         if ((view as any).modelRootMatrix) {
-          (view as any).modelRootMatrix.set(activeMat);
+          (view as any).modelRootMatrix.set(renderMat);
         }
 
         for (const plugin of registeredPlugins) {
@@ -968,7 +977,7 @@ export class WebXRSessionManager {
             }
             (view as any).renderXRView(
               xrView,
-              activeMat,
+              renderMat,
               this.placed,
               vpTuple,
               isAR,

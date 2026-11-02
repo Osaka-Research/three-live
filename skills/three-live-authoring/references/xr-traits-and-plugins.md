@@ -24,7 +24,7 @@
 | `explode` | `number` (`0..1`) | `0` | Normalized multi-part assembly explosion factor (`xr-live-exploded-view`). |
 | `explode-mode` | `'radial' \| 'axial-x' \| 'axial-y' \| 'axial-z' \| 'hierarchical'` | `'radial'` | Automatic explosion vector strategy when parts omit `userData.xr.explode.direction`. |
 | `explode-scale` | `number` | `1.0` | Multiplier applied to per-part explosion distances. |
-| `section-plane` | `'none' \| 'x:<d>' \| 'y:<d>' \| 'z:<d>' \| '-x:<d>' \| '-y:<d>' \| '-z:<d>' \| 'interactive'` | `'none'` | Real-time GPU cross-section clipping plane (`d` in meters) with optional draggable gizmo frame. |
+| `section-plane` | `'none' \| 'x:<d>' \| 'y:<d>' \| 'z:<d>' \| '-x:<d>' \| '-y:<d>' \| '-z:<d>' \| 'interactive'` | `'none'` | Real-time GPU cross-section clipping plane in scene (model) space (`d` in meters; the cut follows the model through AR placement and turntable rotation) with optional draggable gizmo frame. |
 | `persistent-anchors` | `''` or `string` (namespace) | — | Activates `xr-live-persistent-anchors` cross-session transform persistence (`xr-live:anchors:<ns>`). |
 | `persist-url-hash` | boolean attribute | `false` | Encodes persisted node poses into `#xr-state=<base64url>` (`<= 8192` bytes) for link sharing. |
 | `locomotion` | `'' \| 'teleport' \| 'snap-turn' \| 'smooth' \| 'teleport snap-turn' \| 'none'` | — | Activates `xr-live-spatial-locomotion` parabolic teleportation, snap-turns, or smooth glide. |

@@ -210,7 +210,7 @@ object MagneticSnap {
         val signed =
           ((nextPos[0] - p.position[0]) * n[0] +
             (nextPos[1] - p.position[1]) * n[1] +
-            (nextPos[2] - p.position[2]) * n[2]) - bOff
+            (nextPos[2] - p.position[2]) * n[2]) - (if (n[1] > 0.7) bOff else 0.0)
         val absErr = Math.abs(signed)
         if (absErr <= captureLimit && absErr < bestErr) {
           bestErr = absErr
@@ -222,7 +222,7 @@ object MagneticSnap {
         val signed =
           ((nextPos[0] - bestPlane.position[0]) * n[0] +
             (nextPos[1] - bestPlane.position[1]) * n[1] +
-            (nextPos[2] - bestPlane.position[2]) * n[2]) - bOff
+            (nextPos[2] - bestPlane.position[2]) * n[2]) - (if (n[1] > 0.7) bOff else 0.0)
         nextPos = doubleArrayOf(nextPos[0] - n[0] * signed, nextPos[1] - n[1] * signed, nextPos[2] - n[2] * signed)
         surfaceApplied = true
       } else if (config.surface == "floor" || config.surface == "any") {

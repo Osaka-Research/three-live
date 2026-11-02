@@ -37,6 +37,7 @@ import {
   extractScale,
   getMeshXRTraits,
 } from '../xr-traits';
+import {mat4Create, mat4FromRotationTranslationScale, mat4Multiply} from '../../../three-live/src/math';
 import {
   applyWorldMatrix,
   buildBoxGeometry,
@@ -44,6 +45,7 @@ import {
   createDynamicMesh,
   type DynamicGeometry,
   emitPluginEvent,
+  inverseRootMatrix,
   isXRFrameFresh,
   type PluginViewer,
   type Quat,
@@ -51,7 +53,9 @@ import {
   removeDynamicMesh,
   resolveHeadPose,
   setLocalTRS,
+  rootMatrix,
   setWorldTRS,
+  transformPoint,
   updateDynamicMesh,
   vLen,
   vSub,
@@ -85,6 +89,9 @@ export const MAX_PEER_NAME_CHARS = 32;
 
 /** Maximum remote 3D paint strokes retained per room session. */
 export const MAX_REMOTE_STROKES = 64;
+
+/** Maximum remote paint strokes accepted per peer per second (GPU churn guard). */
+export const MAX_PAINT_MESSAGES_PER_SEC = 8;
 
 /** Maximum points allowed in a single synced paint stroke message. */
 export const MAX_STROKE_CHUNK_POINTS = 128;
@@ -171,7 +178,10 @@ export function hexColorToRgba(
   hex: string,
   alpha = 1,
 ): [number, number, number, number] {
-  const clean = sanitizePeerColor(hex).slice(1);
+  let clean = sanitizePeerColor(hex).slice(1);
+  if (clean.length === 3) {
+    clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2];
+  }
   const r = parseInt(clean.slice(0, 2), 16) / 255;
   const g = parseInt(clean.slice(2, 4), 16) / 255;
   const b = parseInt(clean.slice(4, 6), 16) / 255;
@@ -233,6 +243,39 @@ export function shouldSyncMesh(mesh: any): boolean {
   const rawSync = mesh.userData?.xr?.sync ?? mesh.extras?.xr?.sync;
   if (typeof rawSync === 'boolean') return rawSync;
   return Boolean(traits?.grabbable || traits?.grab || traits?.handles);
+}
+
+/**
+ * Assigns every non-plugin scene mesh a deterministic, unique sync key (the
+ * persistence key, suffixed `#2`, `#3`, ... on duplicates). Peers loading the
+ * same model derive identical keys, so same-named meshes no longer collide.
+ */
+// tslint:disable-next-line:no-any Heterogeneous GPU mesh records.
+export function buildNodeKeyMaps(meshes: readonly any[] | undefined): {
+  // tslint:disable-next-line:no-any Heterogeneous GPU mesh records.
+  keyOf: Map<any, string>;
+  // tslint:disable-next-line:no-any Heterogeneous GPU mesh records.
+  meshOf: Map<string, any>;
+} {
+  // tslint:disable-next-line:no-any Heterogeneous GPU mesh records.
+  const keyOf = new Map<any, string>();
+  // tslint:disable-next-line:no-any Heterogeneous GPU mesh records.
+  const meshOf = new Map<string, any>();
+  // Deduplicate in glTF node order (matching Android / iOS `syncNodeKey`),
+  // not draw order, so suffixes agree across platforms.
+  const ordered = (meshes ?? [])
+    .filter((m) => m && !m.isPluginMesh)
+    .map((m, idx) => ({m, idx, order: typeof m.nodeIndex === 'number' ? m.nodeIndex : 1e9 + idx}))
+    .sort((a, b) => a.order - b.order);
+  for (const {m, idx} of ordered) {
+    const base = resolvePersistableNodeKey(m, idx);
+    let key = base;
+    let suffix = 2;
+    while (meshOf.has(key)) key = `${base}#${suffix++}`;
+    keyOf.set(m, key);
+    meshOf.set(key, m);
+  }
+  return {keyOf, meshOf};
 }
 
 /** Validated incoming wire message variants (`v: 1`). */
@@ -624,6 +667,7 @@ export class XRSharedRoomController {
   private activeRoomKey = '';
   private readonly peers = new Map<string, RemotePeerState>();
   private readonly nodeLeases = new Map<string, NodeSoftLock>();
+  private readonly paintRate = new Map<string, {windowStart: number; count: number}>();
   // tslint:disable-next-line:no-any Dynamic remote paint stroke meshes.
   private readonly remoteStrokes: any[] = [];
   // tslint:disable-next-line:no-any Local meshes actively grabbed in the prior step.
@@ -755,9 +799,10 @@ export class XRSharedRoomController {
         /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.test(rawPaintAttr.trim())
           ? sanitizePeerColor(rawPaintAttr)
           : '#ff4073';
+      const invRoot = inverseRootMatrix(this.lastViewer);
       this.broadcastPaintStroke(
         `s_${++this.strokeSeq}`,
-        stroke.builder.points,
+        stroke.builder.points.map((p: Vec3) => transformPoint(invRoot, p)),
         paintColor,
         stroke.builder.radius,
       );
@@ -799,7 +844,18 @@ export class XRSharedRoomController {
     if (!force && atMs - this.lastPoseSentMs < POSE_TICK_INTERVAL_MS) return false;
     this.lastPoseSentMs = atMs;
 
-    const head = resolveHeadPose(viewer);
+    // Poses travel in scene (model) space: each device places the shared model
+    // independently in AR, so world coordinates are not comparable across peers.
+    const invRoot = inverseRootMatrix(viewer);
+    const headWorld = resolveHeadPose(viewer);
+    const headLocalMat = mat4Create();
+    mat4Multiply(headLocalMat, invRoot, headWorld.matrix);
+    const head = {
+      position: transformPoint(invRoot, headWorld.position),
+      quaternion: extractQuaternion(headLocalMat),
+    };
+    const rayO = this.localRayOrigin ? transformPoint(invRoot, this.localRayOrigin) : null;
+    const rayE = this.localRayEnd ? transformPoint(invRoot, this.localRayEnd) : null;
     const name = sanitizePeerName(element?.getAttribute?.('peer-name'));
     const color = sanitizePeerColor(element?.getAttribute?.('peer-color'));
     const msg: SharedRoomWireMessage = {
@@ -815,12 +871,8 @@ export class XRSharedRoomController {
         q4(head.quaternion[2]),
         q4(head.quaternion[3]),
       ],
-      rayOrigin: this.localRayOrigin
-        ? [q4(this.localRayOrigin[0]), q4(this.localRayOrigin[1]), q4(this.localRayOrigin[2])]
-        : null,
-      rayEnd: this.localRayEnd
-        ? [q4(this.localRayEnd[0]), q4(this.localRayEnd[1]), q4(this.localRayEnd[2])]
-        : null,
+      rayOrigin: rayO ? [q4(rayO[0]), q4(rayO[1]), q4(rayO[2])] : null,
+      rayEnd: rayE ? [q4(rayE[0]), q4(rayE[1]), q4(rayE[2])] : null,
       hasHit: this.localHasHit,
     };
     this.sendWire(msg);
@@ -840,11 +892,8 @@ export class XRSharedRoomController {
     atMs = this.clock(),
   ): boolean {
     if (!this.transport || !shouldSyncMesh(mesh)) return false;
-    const meshes = Array.isArray(viewer.meshes)
-      ? viewer.meshes.filter((m: any) => m && !m.isPluginMesh)
-      : [];
-    const idx = Math.max(0, meshes.indexOf(mesh));
-    const nodeId = resolvePersistableNodeKey(mesh, idx);
+    const nodeId = buildNodeKeyMaps(viewer.meshes).keyOf.get(mesh);
+    if (!nodeId) return false;
     const existing = this.nodeLeases.get(nodeId);
     if (!canAcquireNodeLease(existing, this.peerId, atMs)) {
       return false;
@@ -1004,18 +1053,13 @@ export class XRSharedRoomController {
         });
       }
       if (viewer && Array.isArray(viewer.meshes)) {
-        let idx = 0;
-        for (const m of viewer.meshes) {
-          if (!m || m.isPluginMesh) continue;
-          const key = resolvePersistableNodeKey(m, idx++);
-          if (key === msg.nodeId && shouldSyncMesh(m)) {
-            setLocalTRS(m, msg.q, msg.p, msg.s);
-            emitPluginEvent(element, 'peersync', {
-              peerId: msg.peerId,
-              nodeId: msg.nodeId,
-            });
-            break;
-          }
+        const m = buildNodeKeyMaps(viewer.meshes).meshOf.get(msg.nodeId);
+        if (m && shouldSyncMesh(m)) {
+          setLocalTRS(m, msg.q, msg.p, msg.s);
+          emitPluginEvent(element, 'peersync', {
+            peerId: msg.peerId,
+            nodeId: msg.nodeId,
+          });
         }
       }
       return true;
@@ -1034,6 +1078,13 @@ export class XRSharedRoomController {
     }
 
     if (msg.type === 'paint') {
+      // Each stroke allocates GPU buffers; drop floods from a single peer.
+      const bucket = this.paintRate.get(msg.peerId);
+      if (!bucket || atMs - bucket.windowStart >= 1000) {
+        this.paintRate.set(msg.peerId, {windowStart: atMs, count: 1});
+      } else if (++bucket.count > MAX_PAINT_MESSAGES_PER_SEC) {
+        return false;
+      }
       if (viewer) {
         const builder = new TubeStrokeBuilder({radius: msg.radius});
         for (const pt of msg.points) builder.addPoint(pt);
@@ -1042,12 +1093,13 @@ export class XRSharedRoomController {
           while (this.remoteStrokes.length >= MAX_REMOTE_STROKES) {
             removeDynamicMesh(viewer, this.remoteStrokes.shift());
           }
+          // Points are scene-space: draw through the root matrix so strokes
+          // stay attached to the shared model.
           const mesh = createDynamicMesh(viewer, geo, {
             name: `__xr_peer_stroke_${msg.strokeId}__`,
             color: hexColorToRgba(msg.color, 1),
             roughness: 0.35,
             pickable: false,
-            worldSpace: true,
           });
           this.remoteStrokes.push(mesh);
         }
@@ -1139,6 +1191,7 @@ export class XRSharedRoomController {
     const peer = this.peers.get(peerId);
     if (!peer) return false;
     this.peers.delete(peerId);
+    this.paintRate.delete(peerId);
     removeDynamicMesh(viewer, peer.visorMesh);
     removeDynamicMesh(viewer, peer.laserMesh);
     for (const [nodeId, lease] of Array.from(this.nodeLeases.entries())) {
@@ -1170,7 +1223,18 @@ export class XRSharedRoomController {
       reattachDynamicMesh(viewer, peer.visorMesh);
     }
     peer.visorMesh.visible = true;
-    setWorldTRS(viewer, peer.visorMesh, peer.headQuat, peer.headPos, [1, 1, 1]);
+    const root = rootMatrix(viewer);
+    const headLocal = mat4Create();
+    mat4FromRotationTranslationScale(headLocal, peer.headQuat, peer.headPos, [1, 1, 1]);
+    const headWorld = mat4Create();
+    mat4Multiply(headWorld, root, headLocal);
+    setWorldTRS(
+      viewer,
+      peer.visorMesh,
+      extractQuaternion(headWorld),
+      extractPosition(headWorld),
+      [1, 1, 1],
+    );
 
     if (colorChanged && peer.laserMesh) {
       removeDynamicMesh(viewer, peer.laserMesh);
@@ -1178,7 +1242,11 @@ export class XRSharedRoomController {
     }
 
     if (peer.rayOrigin && peer.rayEnd) {
-      const laserGeo = buildPeerLaserGeometry(peer.rayOrigin, peer.rayEnd, peer.hasHit);
+      const laserGeo = buildPeerLaserGeometry(
+        transformPoint(root, peer.rayOrigin),
+        transformPoint(root, peer.rayEnd),
+        peer.hasHit,
+      );
       const laserColor = hexColorToRgba(peer.color, 0.78);
       if (!peer.laserMesh) {
         peer.laserMesh = createDynamicMesh(viewer, laserGeo, {

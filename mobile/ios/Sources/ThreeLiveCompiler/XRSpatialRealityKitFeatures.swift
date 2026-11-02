@@ -295,6 +295,7 @@
     private var grabbableNodes: Set<Int> = []
     private var remotePeers: [String: RemotePeerVisual] = [:]
     private var nodeLeases: [String: SharedRoom.NodeSoftLock] = [:]
+    private var paintRate: [String: (windowStart: Int64, count: Int)] = [:]
     private var remoteStrokeEntities: [ModelEntity] = []
     private var lastPoseSentMs: Int64 = Int64.min / 2
     private var disposed: Bool = false
@@ -928,6 +929,8 @@
         guard session.isEffectivelyVisible(sNode) else { continue }
         let w = XRSpatialMath.decompose(session.worldMatrix(of: sNode))
         let id = "socket#\(sNode)"
+        // One node per socket: skip sockets another node is already seated in.
+        if activeSocketByNode.contains(where: { $0.key != nodeIndex && $0.value == id }) { continue }
         sockets.append(
           MagneticSnap.SocketCandidate(
             id: id,
@@ -1659,10 +1662,28 @@
       syncTraits[node] ?? grabbableNodes.contains(node)
     }
 
-    private func syncNodeKey(_ node: Int) -> String {
+    private func baseSyncNodeKey(_ node: Int) -> String {
       anchorPersistTraits[node]?.id
         ?? XRLiveTraitParser.safeAnchorId(live.session.nodeName(at: node))
         ?? "node_\(node)"
+    }
+
+    /// Unique sync key per mesh node: duplicate names get `#2`, `#3`, ... in node
+    /// order, matching the web `buildNodeKeyMaps` so same-named nodes don't collide.
+    private func syncNodeKey(_ node: Int) -> String {
+      var used = Set<String>()
+      for n in 0..<live.session.nodeCount {
+        if n != node && !live.session.hasMesh(at: n) { continue }
+        let base = baseSyncNodeKey(n)
+        var key = base
+        var suffix = 2
+        while !used.insert(key).inserted {
+          key = "\(base)#\(suffix)"
+          suffix += 1
+        }
+        if n == node { return key }
+      }
+      return baseSyncNodeKey(node)
     }
 
     /// Returns the current soft-lock owner for `nodeId` if unexpired at `atMs`.
@@ -1675,6 +1696,10 @@
     }
 
     /// Broadcasts a rate-limited (`20 Hz`) local head + pointer ray pose tick.
+    ///
+    /// Pass poses in scene (model) space, the same space as node transforms: each
+    /// device places the shared model independently, so world-space poses from
+    /// different devices do not line up.
     @discardableResult
     public func broadcastPoseTick(
       headPos: SIMD3<Float>,
@@ -1863,6 +1888,13 @@
         return true
       case .paint(let peerId, let strokeId, let color, let radius, let points):
         remotePeers[peerId]?.lastSeenMs = atMs
+        // Each stroke allocates GPU buffers; drop floods from a single peer.
+        if let bucket = paintRate[peerId], atMs - bucket.windowStart < 1000 {
+          guard bucket.count < SharedRoom.maxPaintMessagesPerSec else { return false }
+          paintRate[peerId] = (bucket.windowStart, bucket.count + 1)
+        } else {
+          paintRate[peerId] = (atMs, 1)
+        }
         var builder = TubeStrokeBuilder(radius: radius)
         for pt in points { _ = builder.addPoint(pt) }
         if let geo = builder.build(), let sMesh = Self.mesh(geo) {
@@ -1897,6 +1929,7 @@
 
     private func removeRemotePeer(_ peerId: String) -> Bool {
       guard let p = remotePeers.removeValue(forKey: peerId) else { return false }
+      paintRate.removeValue(forKey: peerId)
       p.visorEntity?.removeFromParent()
       p.laserEntity?.removeFromParent()
       let owned = nodeLeases.filter { $0.value.ownerPeerId == peerId }.map { $0.key }
