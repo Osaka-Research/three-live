@@ -29,7 +29,7 @@ import PackageDescription
 // The two constants below are rewritten automatically at release time by
 // `scripts/update_spm_binary_target.sh`. Do not edit them by hand.
 let releaseTag = "v1.1.0"
-let releaseChecksum = "0ab477603991f7e50453bcfa04814bdd7217f79700ddbc1a912ca677b921a3df"
+let releaseChecksum = "1925aeeca7964c44b9d5f51f558cc99a71ad2967fabd537879224be102468c18"
 
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let candidateFrameworkPaths = [
