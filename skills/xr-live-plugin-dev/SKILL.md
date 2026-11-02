@@ -42,8 +42,8 @@ Every `<xr-live>` feature is authored once and executes across **Web (`WebGL2` /
 Update the Android runtime so compiled `.glb` scenes and scripts execute the trait identically:
 
 1. **`mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt`:** Parse the new `extras.xr` / `ANDROID_xr_scenecore` fields with the exact same clamping ranges as `xr-trait-schema.ts`.
-2. **`mobile/android/src/main/java/com/google/threelive/XRSpatialMath.kt`:** Implement pure, allocation-free math helpers (shared with unit tests).
-3. **`mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt` & `XRLiveRuntimeSession.kt`:** Step the feature during `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry for `ThreeLiveFilamentRenderer.kt`.
+2. **Modular Feature File (`mobile/android/src/main/java/com/google/threelive/<FeatureName>.kt`) & `XRSpatialMath.kt`:** Implement pure, allocation-free math and per-feature state machines in a dedicated Kotlin file (e.g. `SpatialMeasure.kt`, `MagneticSnap.kt`, `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`, `SpatialLocomotion.kt`, `SharedRoom.kt`) rather than bloating a single monolith.
+3. **`mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt` & `XRLiveRuntimeSession.kt`:** Wire the modular controller into `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry (and optional `sectionPlane` uniforms) for `ThreeLiveFilamentRenderer.kt`.
 
 ---
 
@@ -52,7 +52,7 @@ Update the Android runtime so compiled `.glb` scenes and scripts execute the tra
 Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
 
 1. **`XRLiveRuntimeSession.swift` & `XRLiveRealityKit.swift`:** Parse the trait from GLB `extras.xr` and USDZ `customData.xr`.
-2. **`XRSpatialRealityKitFeatures.swift` & `XRLiveRealityKitSession.swift`:** Mirror the math and dynamic entity updates in RealityKit.
+2. **Modular Feature File (`<FeatureName>.swift`), `XRSpatialRealityKitFeatures.swift`, & `XRLiveRealityKitSession.swift`:** Mirror the math and dynamic entity updates in a dedicated Swift file (e.g. `SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`, `PersistentAnchors.swift`, `SpatialLocomotion.swift`, `SharedRoom.swift`) orchestrated by `XRSpatialRealityKitFeatures.swift`.
 3. **Parity Test Check:** Android's `mobile/android/src/test/java/com/google/threelive/XRLiveSwiftSourceParityTest.kt` verifies that the Swift sources implement all required symbols and trait keys even when building on Linux.
 
 ---
@@ -69,11 +69,11 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
    - `three-live-extras.min.js`: `< 17 KB gz`
    - `three-live-animation.min.js`: `< 6.5 KB gz`
    - `three-live-full.min.js`: `< 69 KB gz`
-   - `xr-live-viewer.min.js`: `< 45 KB gz`
+   - `xr-live-viewer.min.js`: `< 46 KB gz`
    - `xr-live.min.js`: `< 65 KB gz`
    - `xr-live-extras.min.js`: `< 9.5 KB gz`
-   - `xr-live-plugins.min.js`: `< 23.5 KB gz`
-   - `xr-live-full.min.js`: `< 104 KB gz`
+   - `xr-live-plugins.min.js`: `< 52 KB gz`
+   - `xr-live-full.min.js`: `< 131 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
    ```bash
    node scripts/build.js --test

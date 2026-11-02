@@ -15,7 +15,7 @@
  * limitations under the License.
  *
  * @fileoverview Optional spatial plugin bundle for `<xr-live>`
- * (`xr-live-plugins.min.js`). Importing this module registers all seven
+ * (`xr-live-plugins.min.js`). Importing this module registers all 14
  * plugins; each is inert until a scene opts in via `userData.xr` traits or
  * host attributes:
  *

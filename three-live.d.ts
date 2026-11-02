@@ -29,8 +29,14 @@ import type {
   ThreeView,
 } from './three-live/src/three-view';
 import type {ARLaunchResult, ARMode} from './three-live/src/three-xr';
-import type {TranscriptEvent} from './xr-live/src/plugins/gemini-live';
-import type {Detection3D} from './xr-live/src/plugins/world-understanding';
+import type {
+  DimensionUnit,
+  ExplodeMode,
+  RemotePeerState,
+  SnapSurfaceMode,
+  TranscriptEvent,
+  Detection3D,
+} from './xr-live/src/plugins/index';
 import type {
   XRAnchorElement,
   XRDepthMode,
@@ -191,21 +197,123 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'xr-simulator'?: XRSimulatorRoom;
   /** Spatial UI profile ("quest3", "android-xr", "visionos", "auto"). */
   'xr-profile'?: XRProfile;
+  /** Play procedural Web Audio earcons and haptics on spatial interactions. */
+  'sound-feedback'?: boolean | string;
   /** Spatial plugin: enables plane/mesh detection; include "reticle" for a gaze reticle. */
   'world-understanding'?: boolean | string;
   /** Spatial plugin: pinch in empty space to paint 3D tubes (optional `#rrggbb` color). */
   'spatial-paint'?: boolean | string;
+  /** Spatial plugin: 3D dimension callouts and AR tape measure ("bounds", "tape", "all", "none"). */
+  'spatial-measure'?: boolean | 'bounds' | 'tape' | 'all' | 'none' | string;
+  /** Default display unit for `spatial-measure` ("auto", "m", "cm", "mm", "in", "ft-in"). */
+  'measure-unit'?: DimensionUnit;
+  /** Spatial plugin: socket, grid, surface, and angle snapping ("grid", "surface", "sockets", "all", "none"). */
+  'magnetic-snap'?: boolean | 'grid' | 'surface' | 'sockets' | 'all' | 'none' | string;
+  /** Cartesian snap grid step in meters ("0.05" or "0.05 0.05 0.05"). */
+  'snap-grid'?: number | string;
+  /** Rotational yaw snap increment in degrees (0 to 180). */
+  'snap-angle'?: number | string;
+  /** Spatial plugin: hands-free eye/head gaze reticle and dwell selection ("auto", "none", or boolean). */
+  'gaze-dwell'?: boolean | 'auto' | 'none' | string;
+  /** Default dwell duration in milliseconds for `gaze-dwell` (250 to 10000, default: 1200). */
+  'dwell-time'?: number | string;
+  /** Spatial plugin: normalized [0..1] multi-part exploded-view factor. */
+  'explode'?: number | string;
+  /** Multi-part explosion vector strategy ("radial", "axial-x", "axial-y", "axial-z", "hierarchical"). */
+  'explode-mode'?: ExplodeMode;
+  /** Multiplier applied to per-part explosion distances (default: 1.0). */
+  'explode-scale'?: number | string;
+  /** Real-time cross-section clipping plane ("none", "x:0", "y:0.2", "-z:0", "interactive"). */
+  'section-plane'?: string;
+  /** Spatial plugin: persist manipulated anchor transforms under an optional storage namespace. */
+  'persistent-anchors'?: boolean | string;
+  /** Sync persisted anchor transforms into `#xr-state=<base64url>` for zero-backend link sharing. */
+  'persist-url-hash'?: boolean | string;
+  /** Spatial plugin: XR locomotion mode ("teleport", "snap-turn", "smooth", "teleport snap-turn", "none"). */
+  'locomotion'?: boolean | string;
+  /** Thumbstick snap-turn increment in degrees (default: 30). */
+  'snap-turn-deg'?: number | string;
+  /** Show a 120ms peripheral FOV comfort vignette on teleport/turn (default: true). */
+  'comfort-vignette'?: boolean | string;
+  /** Spatial plugin: join a multi-user room via BroadcastChannel ID or `wss://` relay URL. */
+  'shared-room'?: string;
+  /** Local display name broadcast to peers in `shared-room` (max 32 chars). */
+  'peer-name'?: string;
+  /** Local avatar visor & laser color (`#rrggbb`) in `shared-room`. */
+  'peer-color'?: string;
+  /** Register WebMCP browser AI tools on `navigator.modelContext`. */
+  'webmcp'?: boolean | string;
+  /** Opt-in gate allowing WebMCP `capture_xr_view` to include the 8x8 depth grid. */
+  'webmcp-allow-depth'?: boolean | string;
+  /** Omit `headPosition` from WebMCP `inspect_xr_scene` responses. */
+  'webmcp-omit-pose'?: boolean | string;
+
   'onxr-object-detected'?: (e: CustomEvent<Detection3D>) => void;
   'onxr-transcription'?: (e: CustomEvent<TranscriptEvent>) => void;
   'onxr-hold-to-ask'?: (
     e: CustomEvent<{mesh: string; transcript: string; prompt: string}>,
   ) => void;
   'onxr-handles-change'?: (
-    e: CustomEvent<{mesh: string; scale: number; yawDeg: number}>,
+    e: CustomEvent<{mesh: any; scale: number; yawDeg: number}>,
   ) => void;
   'onxr-paint-stroke'?: (
     e: CustomEvent<{index: number; points: number; lengthMeters: number}>,
   ) => void;
+  onmeasurecomplete?: (
+    e: CustomEvent<{
+      start: [number, number, number];
+      end: [number, number, number];
+      distanceMeters: number;
+      formatted: string;
+    }>,
+  ) => void;
+  onxrsnap?: (
+    e: CustomEvent<{
+      node: any;
+      socket: any;
+      position: [number, number, number];
+      quaternion: [number, number, number, number];
+      mode: 'socket' | 'grid' | 'surface' | 'angle';
+    }>,
+  ) => void;
+  onxrunsnap?: (e: CustomEvent<{node: any; socket: any}>) => void;
+  ongazeenter?: (
+    e: CustomEvent<{node: any; point: [number, number, number]}>,
+  ) => void;
+  ongazeleave?: (e: CustomEvent<{node: any}>) => void;
+  ongazedwell?: (
+    e: CustomEvent<{
+      node: any;
+      point: [number, number, number];
+      action: 'select' | 'ask';
+    }>,
+  ) => void;
+  onexplodechange?: (
+    e: CustomEvent<{
+      factor: number;
+      source: 'attribute' | 'gesture' | 'api' | 'peer';
+    }>,
+  ) => void;
+  onanchorsrestored?: (
+    e: CustomEvent<{
+      count: number;
+      source: 'xr-anchor' | 'storage' | 'url-hash';
+    }>,
+  ) => void;
+  onxrteleport?: (
+    e: CustomEvent<{
+      from: [number, number, number];
+      to: [number, number, number];
+      yawDeg: number;
+    }>,
+  ) => void;
+  onpeerjoin?: (
+    e: CustomEvent<Pick<RemotePeerState, 'peerId' | 'name' | 'color'>>,
+  ) => void;
+  onpeerleave?: (
+    e: CustomEvent<Pick<RemotePeerState, 'peerId' | 'name' | 'color'>>,
+  ) => void;
+  onpeersync?: (e: CustomEvent<{peerId: string; nodeId: string}>) => void;
 }
 
 declare global {

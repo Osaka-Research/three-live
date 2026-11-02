@@ -300,3 +300,192 @@ func mountScene(script: String, in arView: ARView) async throws {
     XRLiveRealityKit.installTraits(on: entity, in: arView)
 }
 ```
+
+--------------------------------------------------------------------------------
+
+## 6. CAD Exploded-View Assembly, Cross-Section Slicer, 3D Dimensions & Gaze Dwell (`<xr-live>`)
+
+Combines `exploded-view` (`explode` + `section-plane`), `spatial-measure`
+(`userData.xr.dimensions` + point-to-point tape), and hands-free `gaze-dwell`
+selection for engineering design reviews:
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<input type="range" min="0" max="1" step="0.01" value="0.5"
+  oninput="document.getElementById('cad-xr').setExplode(Number(this.value))" />
+
+<xr-live
+  id="cad-xr"
+  allow-client-scripts
+  explode="0.5"
+  explode-mode="axial-y"
+  section-plane="interactive"
+  spatial-measure="all"
+  measure-unit="mm"
+  gaze-dwell="auto"
+  dwell-time="1000"
+  camera-controls
+  style="width: 100%; height: 580px; display: block;">
+  <script type="text/three">
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.26, 0.3, 0.14, 36),
+      new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.25 })
+    );
+    base.name = 'housing-base';
+    base.position.set(0, 0.75, -1.1);
+    base.userData.xr = {
+      explode: false,
+      dimensions: { unit: 'mm', axes: ['x', 'y', 'z'], color: '#38bdf8' }
+    };
+    scene.add(base);
+
+    const core = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16, 0.045, 24, 48),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.7, roughness: 0.2 })
+    );
+    core.name = 'stator-coil';
+    core.rotation.x = Math.PI / 2;
+    core.position.set(0, 0.86, -1.1);
+    core.userData.xr = {
+      explode: { direction: [0, 1, 0], distance: 0.24, layer: 1, leaderLine: true },
+      gaze: { dwellMs: 900, action: 'select' }
+    };
+    scene.add(core);
+
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.24, 0.26, 0.1, 36),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.65, roughness: 0.2 })
+    );
+    cap.name = 'top-cover';
+    cap.position.set(0, 0.96, -1.1);
+    cap.userData.xr = {
+      explode: { direction: [0, 1, 0], distance: 0.48, layer: 2, leaderLine: true },
+      gaze: { dwellMs: 900, action: 'select' }
+    };
+    scene.add(cap);
+
+    const light = new THREE.DirectionalLight(0xffffff, 2.2);
+    light.position.set(2, 4, 3);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</xr-live>
+```
+
+--------------------------------------------------------------------------------
+
+## 7. Modular Magnetic Snapping, Persistent `#xr-state` Layouts & XR Locomotion (`<xr-live>`)
+
+Uses `magnetic-snap` (`snapSocket` + `snapTo`), `persistent-anchors` with
+`persist-url-hash` so rearranged layouts encode directly into `#xr-state=...`
+links, and `spatial-locomotion` parabolic teleportation across walkable floors:
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  id="layout-xr"
+  allow-client-scripts
+  magnetic-snap="all"
+  snap-grid="0.05"
+  snap-angle="15"
+  persistent-anchors="workbench-v1"
+  persist-url-hash
+  locomotion="teleport snap-turn"
+  snap-turn-deg="30"
+  comfort-vignette
+  xr-simulator="office"
+  camera-controls
+  style="width: 100%; height: 580px; display: block;">
+  <script type="text/three">
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(4, 4),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9 })
+    );
+    floor.name = 'studio-floor';
+    floor.rotation.x = -Math.PI / 2;
+    floor.userData.xr = { navigable: 'walkable' };
+    scene.add(floor);
+
+    const dock = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.18, 0.04, 32),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.6, roughness: 0.3 })
+    );
+    dock.name = 'charging-dock';
+    dock.position.set(0, 0.8, -1.1);
+    dock.userData.xr = {
+      snapSocket: { tag: 'module-bay', radius: 0.18, alignRotation: true, highlightColor: '#22c55e' }
+    };
+    scene.add(dock);
+
+    const modulePod = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 0.2, 0.2),
+      new THREE.MeshStandardMaterial({ color: 0x6366f1, metalness: 0.5, roughness: 0.25 })
+    );
+    modulePod.name = 'sensor-pod';
+    modulePod.position.set(0.38, 0.9, -1.1);
+    modulePod.userData.xr = {
+      grab: '1-hand',
+      snapTo: { socketTag: 'module-bay', radius: 0.18, grid: 0.05, angleDeg: 15 },
+      anchor: { id: 'sensor-pod', persist: true }
+    };
+    scene.add(modulePod);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.0));
+  </script>
+</xr-live>
+```
+
+--------------------------------------------------------------------------------
+
+## 8. Multi-User Co-Presence & Shared 3D Annotations (`shared-room` + `spatial-paint`)
+
+Open two browser tabs on the same page to see live `20 Hz` 3D peer visor avatars,
+tinted pointer rays, `2000ms` soft-locked object handoffs, and synchronized 3D
+paint strokes via `BroadcastChannel`—or point `shared-room="wss://..."` at any
+WebSocket relay for cross-device headset + phone collaboration:
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  id="collab-xr"
+  allow-client-scripts
+  shared-room="design-review-42"
+  peer-name="Architect"
+  peer-color="#38bdf8"
+  spatial-paint="#38bdf8"
+  explode="0"
+  camera-controls
+  style="width: 100%; height: 580px; display: block;">
+  <script type="text/three">
+    const block = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.18, 0.055, 64, 16),
+      new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.65, roughness: 0.2 })
+    );
+    block.name = 'shared-prototype';
+    block.position.set(0, 1.0, -1.1);
+    block.userData.xr = {
+      grab: '2-hand',
+      handles: { rotateAxis: 'y', minScale: 0.4, maxScale: 2.5 },
+      explode: { direction: [0, 1, 0], distance: 0.3 },
+      sync: true
+    };
+    scene.add(block);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</xr-live>
+
+<script>
+  const collab = document.getElementById('collab-xr');
+  collab.addEventListener('peerjoin', (e) => {
+    console.log('Peer joined:', e.detail.name, e.detail.color);
+  });
+  collab.addEventListener('peersync', (e) => {
+    console.log('Synced update from', e.detail.peerId, 'on', e.detail.nodeId);
+  });
+</script>
+```

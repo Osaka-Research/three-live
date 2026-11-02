@@ -46,3 +46,12 @@ Every procedural compilation (`toCanvas3D()`, `toGLB()`, `toUSDZ()`) runs `Scene
 - **Max Textures:** `16` (max dimension `2048×2048`)
 - **Execution Watchdog:** `3,000 ms` wall-clock timeout (`250 ms` CPU ceiling inside Rust Boa compiler)
 - **Max Concurrent Sandbox Workers:** `32`
+
+---
+
+## 4. Network CSP & Plugin Security Quotas (`gemini-live`, `shared-room`, `persistent-anchors`)
+
+- **Host `connect-src` for Live Relays:** The procedural `<script type="text/three">` Worker always runs with network access revoked (`connect-src 'none'`). Host-level plugins (`connectGeminiLive()` and `shared-room="wss://..."`) connect from the main thread and enforce `wss://` (or loopback `ws://localhost` / `ws://127.0.0.1` / `ws://[::1]`). If your page serves a strict Content Security Policy and uses remote WebSocket relays, allow your relay origin in `connect-src` (e.g. `connect-src 'self' wss://your-relay.example.com`). Same-origin `shared-room="room-id"` uses `BroadcastChannel` and needs no `connect-src` allowance.
+- **Persistence & Co-Presence Caps:**
+  - `persistent-anchors`: `MAX_PERSISTED_NODES = 128`, `MAX_HASH_BYTES = 8192` (`#xr-state` tokens larger than `8 KB` or containing prototype-pollution keys are rejected).
+  - `shared-room`: `MAX_PEERS = 16`, `MAX_PAYLOAD_BYTES = 16384` (`16 KB`), `MAX_REMOTE_STROKES = 64`, `POSE_TICK_INTERVAL_MS = 50` (`20 Hz`), `SOFT_LOCK_TTL_MS = 2000`.

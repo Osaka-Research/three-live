@@ -38,7 +38,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ### 1. Choose the Right Component & Bundle
 - Use `<three-live>` (`three-live.min.js` or `three-live-full.min.js`) for 3D product viewers, procedural Three.js scenes, `KHR_interactivity` behavior graphs, PBR Next materials, and 1-tap mobile AR handoff (Quick Look / Scene Viewer / WebXR).
-- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), or spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`).
+- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), or any of the 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`).
 
 ### 2. Procedural `<script type="text/three">` Rules
 - Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
@@ -49,10 +49,17 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `scale`: `{ min: 0.1, max: 5.0 } | true`
   - `billboard`: `'capsule' | 'cylindrical' | 'spherical' | true`
   - `follow`: `'head' | 'hand-left' | 'hand-right'` or `{ mode: 'head', lazy: true, distance: 1.2, deadzoneDeg: 15, stiffness: 6, height: -0.1, faceUser: true }`
-  - `anchor`: `'floor' | 'wall' | 'table' | 'horizontal' | 'vertical'`
+  - `anchor`: `'floor' | 'wall' | 'ceiling' | 'table' | 'horizontal' | 'vertical'` or `{ target: 'table', id: 'part-1', persist: true }`
   - `physics`: `'dynamic' | 'static'` (optional `restitution: 0.7`)
   - `orbit`: `{ target: [x, y, z] | 'nodeName', radius: 0.5, speed: 0.8, height: 0, faceCenter: true }`
   - `handles`: `{ rotateAxis: 'y' | 'none', minScale: 0.2, maxScale: 3.0 } | true`
+  - `dimensions`: `{ unit: 'auto' | 'm' | 'cm' | 'mm' | 'in' | 'ft-in', axes: ['x', 'y', 'z'], color: '#38bdf8', showOnSelect: false } | true`
+  - `snapTo`: `{ grid: 0.05, angleDeg: 15, surface: 'floor' | 'wall' | 'ceiling' | 'any' | 'none', socketTag: 'dock', radius: 0.15 } | true`
+  - `snapSocket`: `'dock'` or `{ tag: 'dock', radius: 0.15, alignRotation: true, highlightColor: '#22c55e' }`
+  - `gaze`: `{ dwellMs: 1200, action: 'select' | 'ask', repeat: false } | true`
+  - `explode`: `{ direction: [0, 1, 0], distance: 0.35, layer: 1, leaderLine: true } | boolean`
+  - `navigable`: `true | 'walkable' | 'blocked'`
+  - `sync`: `boolean` (multi-user `shared-room` transform sync; defaults to `true` on grabbable nodes)
   - `particles`: `{ preset: 'rain' | 'snow' | 'sparks' | 'confetti', count: 400, area: [2, 2, 2], speed: 1.0 }`
   - `holdToAsk`: `{ prompt: 'What is this?', holdMs: 600 } | true`
   - `worldUnderstanding`: `{ planes: true, meshes: false, reticle: true }`
@@ -200,5 +207,74 @@ Three.js assumptions never crash or abort a 3D/XR scene:
       <button onclick="console.log('Clicked in 3D space!')">Inspect Details</button>
     </div>
   </div>
+</xr-live>
+```
+
+### Template 3: Collaborative CAD Studio (`exploded-view` + `spatial-measure` + `magnetic-snap` + `shared-room`)
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  spatial-measure="all"
+  measure-unit="cm"
+  magnetic-snap="all"
+  gaze-dwell="auto"
+  explode="0.4"
+  explode-mode="axial-y"
+  section-plane="x:0"
+  persistent-anchors="cad-review"
+  persist-url-hash
+  locomotion="teleport snap-turn"
+  shared-room="cad-review-room"
+  peer-name="Reviewer"
+  peer-color="#38bdf8"
+  camera-controls
+  style="width: 100%; height: 600px; display: block;">
+  <script type="text/three">
+    const deck = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.4, 1.4, 0.04, 48),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85 })
+    );
+    deck.name = 'walkable-deck';
+    deck.position.set(0, -0.45, -1.2);
+    deck.userData.xr = { navigable: 'walkable', explode: false, sync: false };
+    scene.add(deck);
+
+    const chassis = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.28, 0.32, 0.16, 36),
+      new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.75, roughness: 0.25 })
+    );
+    chassis.name = 'turbine-chassis';
+    chassis.position.set(0, 0.75, -1.2);
+    chassis.userData.xr = {
+      dimensions: { unit: 'cm', axes: ['x', 'y', 'z'] },
+      snapSocket: { tag: 'rotor-bay', radius: 0.18, highlightColor: '#22c55e' },
+      explode: false
+    };
+    scene.add(chassis);
+
+    const shroud = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.24, 0.26, 0.22, 36),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.65, roughness: 0.2 })
+    );
+    shroud.name = 'upper-shroud';
+    shroud.position.set(0, 0.96, -1.2);
+    shroud.userData.xr = {
+      grab: '1-hand',
+      snapTo: { socketTag: 'rotor-bay', radius: 0.18, angleDeg: 15 },
+      explode: { direction: [0, 1, 0], distance: 0.32, layer: 2, leaderLine: true },
+      gaze: { dwellMs: 1000, action: 'select' },
+      anchor: { id: 'upper-shroud', persist: true },
+      sync: true
+    };
+    scene.add(shroud);
+
+    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    key.position.set(2, 4, 3);
+    scene.add(key);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
 </xr-live>
 ```

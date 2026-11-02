@@ -31,7 +31,8 @@ This file provides high-signal context, architectural invariants, and authoring 
 | Procedural `<script type="text/three">` + `KHR_interactivity` + AR | `<three-live>` | `three-live.min.js` | `< 54 KB gz` |
 | Full 3D viewer + PBR Next + HDRI + contact shadows + skeletal animation + hotspots | `<three-live>` | `three-live-full.min.js` | `< 69 KB gz` |
 | 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>` | `xr-live.min.js` | `< 65 KB gz` |
-| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 7 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 104 KB gz` |
+| Add-on bundle with all 14 modular `<xr-live>` spatial plugins | `<xr-live>` | `xr-live-plugins.min.js` | `< 52 KB gz` |
+| Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial plugins | `<xr-live>` | `xr-live-full.min.js` | `< 131 KB gz` |
 
 ---
 
@@ -47,10 +48,17 @@ This file provides high-signal context, architectural invariants, and authoring 
      scale: { min: 0.25, max: 3.0 },
      billboard: 'capsule', // 'capsule' | 'cylindrical' | 'spherical' | true
      follow: { mode: 'head', lazy: true, distance: 1.2, deadzoneDeg: 15, stiffness: 6 },
-     anchor: 'table', // 'floor' | 'wall' | 'table' | 'horizontal' | 'vertical'
+     anchor: { target: 'table', id: 'turbine-1', persist: true }, // string or { target?, id?, persist? }
      physics: 'dynamic', // 'dynamic' | 'static'
      orbit: { target: [0, 1, -1], radius: 0.4, speed: 0.8, height: 0.1, faceCenter: true },
      handles: { rotateAxis: 'y', minScale: 0.2, maxScale: 4.0 },
+     dimensions: { unit: 'cm', axes: ['x', 'y', 'z'], color: '#38bdf8', showOnSelect: false },
+     snapTo: { grid: 0.05, angleDeg: 15, surface: 'floor', socketTag: 'dock', radius: 0.15 },
+     snapSocket: { tag: 'dock', radius: 0.15, alignRotation: true, highlightColor: '#22c55e' },
+     gaze: { dwellMs: 1200, action: 'select', repeat: false },
+     explode: { direction: [0, 1, 0], distance: 0.35, layer: 2, leaderLine: true },
+     navigable: 'walkable', // true | 'walkable' | 'blocked'
+     sync: true, // multi-user shared-room sync (default true on grabbable nodes)
      particles: { preset: 'sparks', count: 300, area: [2, 2, 2], speed: 1.0 },
      holdToAsk: { prompt: 'What is this component?', holdMs: 600 },
      worldUnderstanding: { planes: true, meshes: false, reticle: true },
@@ -79,12 +87,12 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
    - Single source of truth for normalizing and clamping `userData.xr` fields (`normalizeXRTraits()`), emitting glTF `nodes[i].extras.xr` + `nodes[i].extensions.ANDROID_xr_scenecore` (`buildXRSceneCoreExtension()`), and flattening USDZ `customData = {dictionary xr = {...}}` (`flattenXRTraitsForUsd()`).
 2. **Web Runtime (`three-live/src/` & `xr-live/src/`):**
    - `<three-live>` (`three-live/src/three-live-element.ts`) and `ThreeView` (`three-live/src/three-view.ts`) provide WebGL2 PBR rendering, Worker/iframe sandboxing, and plugin hooks (`three-live/src/plugin.ts`).
-   - `<xr-live>` (`xr-live/src/xr-live-element.ts`) and the 7 spatial plugins (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`) implement 6DoF WebXR and desktop simulation.
+   - `<xr-live>` (`xr-live/src/xr-live-element.ts`) and the 14 spatial plugins (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`) implement 6DoF WebXR and desktop simulation.
 3. **In-Process Rust Compiler (`compiler/`):**
    - Embeds `compiler/assets/three-author-engine.min.js` inside an isolated Boa JS context with strict opcode/wall-clock watchdogs, outputting `.glb` and `.usdz` bytes via C FFI (`compiler/include/three_live.h`) and `three-live-cli`.
 4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
-   - **Android (`mobile/android/src/main/java/com/google/threelive/`):** `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt`, `XRLiveRuntimeSession.kt`, and `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
-   - **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):** `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`, `XRSpatialRealityKitFeatures.swift`, and `XRLiveRealityKit.swift`.
+   - **Android (`mobile/android/src/main/java/com/google/threelive/`):** `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt` + modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`, `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`, `SpatialLocomotion.kt`, `SharedRoom.kt`), `XRLiveRuntimeSession.kt`, and `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
+   - **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):** `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`, `XRSpatialRealityKitFeatures.swift` + modular feature controllers (`SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`, `PersistentAnchors.swift`, `SpatialLocomotion.swift`, `SharedRoom.swift`), and `XRLiveRealityKit.swift`.
 
 **Parity Rule:** Whenever you add or modify a trait in `three-live/src/xr-trait-schema.ts`, you must update its handling in Web (`xr-live/src/plugins/`), Android (`mobile/android/`), and iOS/visionOS (`mobile/ios/`) and keep `XRLiveSwiftSourceParityTest.kt` green.
 
@@ -116,6 +124,6 @@ make test
 ## 5. Security Invariants (Never Bypass)
 
 - **Mandatory Sandboxing:** Procedural scripts must execute inside a dedicated Web Worker (`sandbox="worker"`) or opaque-origin iframe + Worker (`sandbox="iframe"`). Never evaluate author scripts in the host realm (`eval` / `new Function` on the main thread).
-- **Safe URLs Only:** Media and splat URLs in traits must pass `safeMediaUrl()` (`https://` or clean relative paths without `..`, `\`, `%`, or protocol-relative `//`). Gemini Live endpoints must pass `isAllowedLiveUrl()` (`wss://`, or `ws://` only on `localhost` / `127.0.0.1` / `[::1]`).
-- **Bounded Resources:** All parsers and plugins enforce hard caps (`MAX_PARTICLES_PER_EMITTER = 2000`, `MAX_EMITTERS = 8`, `MAX_STROKES = 256`, `MAX_STROKE_POINTS = 2048`, `MAX_SPLATS = 1_000_000`, `MAX_TRACKED_PLANES = 64`, `MAX_DETECTIONS = 32`).
+- **Safe URLs & Anchor IDs Only:** Media and splat URLs in traits must pass `safeMediaUrl()` (`https://` or clean relative paths without `..`, `\`, `%`, or protocol-relative `//`). Gemini Live and `shared-room` WebSocket endpoints must pass `isAllowedLiveUrl()` / `isAllowedRoomUrl()` (`wss://`, or `ws://` only on `localhost` / `127.0.0.1` / `[::1]`). Persisted anchor keys and `nodeId`s must pass `safeAnchorId()` (rejecting `__proto__`, `constructor`, `prototype`, and control characters).
+- **Bounded Resources:** All parsers and plugins enforce hard caps (`MAX_PARTICLES_PER_EMITTER = 2000`, `MAX_EMITTERS = 8`, `MAX_STROKES = 256`, `MAX_STROKE_POINTS = 2048`, `MAX_SPLATS = 1_000_000`, `MAX_TRACKED_PLANES = 64`, `MAX_DETECTIONS = 32`, `MAX_TAPE_SEGMENTS = 16`, `MAX_DIMENSION_LABELS = 32`, `MAX_PERSISTED_NODES = 128`, `MAX_HASH_BYTES = 8192`, `MAX_PEERS = 16`, `MAX_PAYLOAD_BYTES = 16384`, `MAX_REMOTE_STROKES = 64`).
 - **WebMCP Privacy:** `inspect_xr_scene` quantizes `headPosition` to `0.1m` (and omits it when `webmcp-omit-pose` is set); `capture_xr_view` only includes the 8×8 depth grid when `webmcp-allow-depth` is explicitly enabled.

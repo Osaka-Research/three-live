@@ -1,6 +1,6 @@
 # Copy-Paste Recipes for `<three-live>` and `<xr-live>`
 
-All 6 recipes below use features available in the repository today and work without external build steps.
+All 9 recipes below use features available in the repository today and work without external build steps.
 
 ---
 
@@ -315,4 +315,144 @@ func mountSpatialScene(script: String, in arView: ARView) async throws {
     let entity = try await RealityKitHelper.loadEntity(from: script)
     XRLiveRealityKit.installTraits(on: entity, in: arView)
 }
+```
+
+---
+
+## Recipe 7: CAD Exploded View, Cross-Section Slicer, 3D Dimensions & Gaze Dwell
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  explode="0.55"
+  explode-mode="axial-y"
+  section-plane="interactive"
+  spatial-measure="all"
+  measure-unit="mm"
+  gaze-dwell="auto"
+  dwell-time="950"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+  <script type="text/three">
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.26, 0.3, 0.14, 36),
+      new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.25 })
+    );
+    base.name = 'housing-base';
+    base.position.set(0, 0.75, -1.1);
+    base.userData.xr = {
+      explode: false,
+      dimensions: { unit: 'mm', axes: ['x', 'y', 'z'], color: '#38bdf8' }
+    };
+    scene.add(base);
+
+    const shroud = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.24, 0.26, 0.14, 36),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.65, roughness: 0.2 })
+    );
+    shroud.name = 'upper-shroud';
+    shroud.position.set(0, 0.92, -1.1);
+    shroud.userData.xr = {
+      explode: { direction: [0, 1, 0], distance: 0.38, layer: 2, leaderLine: true },
+      gaze: { dwellMs: 900, action: 'select' }
+    };
+    scene.add(shroud);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+  </script>
+</xr-live>
+```
+
+---
+
+## Recipe 8: Magnetic Socket Snapping, `#xr-state` URL Persistence & XR Locomotion
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  magnetic-snap="all"
+  snap-grid="0.05"
+  snap-angle="15"
+  persistent-anchors="workbench"
+  persist-url-hash
+  locomotion="teleport snap-turn"
+  snap-turn-deg="30"
+  xr-simulator="office"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+  <script type="text/three">
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(4, 4),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9 })
+    );
+    floor.name = 'walkable-floor';
+    floor.rotation.x = -Math.PI / 2;
+    floor.userData.xr = { navigable: 'walkable' };
+    scene.add(floor);
+
+    const socketPedestal = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.18, 0.04, 32),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b })
+    );
+    socketPedestal.name = 'dock-socket';
+    socketPedestal.position.set(0, 0.8, -1.1);
+    socketPedestal.userData.xr = {
+      snapSocket: { tag: 'bay-a', radius: 0.18, alignRotation: true, highlightColor: '#22c55e' }
+    };
+    scene.add(socketPedestal);
+
+    const moduleCube = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.18, 0.18),
+      new THREE.MeshStandardMaterial({ color: 0x6366f1, metalness: 0.5, roughness: 0.25 })
+    );
+    moduleCube.name = 'snap-module';
+    moduleCube.position.set(0.35, 0.9, -1.1);
+    moduleCube.userData.xr = {
+      grab: '1-hand',
+      snapTo: { socketTag: 'bay-a', radius: 0.18, grid: 0.05, angleDeg: 15 },
+      anchor: { id: 'snap-module', persist: true }
+    };
+    scene.add(moduleCube);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.0));
+  </script>
+</xr-live>
+```
+
+---
+
+## Recipe 9: Zero-Backend Multi-User Co-Presence & Shared Spatial Paint (`shared-room`)
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  shared-room="studio-room-1"
+  peer-name="Designer"
+  peer-color="#38bdf8"
+  spatial-paint="#38bdf8"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+  <script type="text/three">
+    const artifact = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.18, 0.055, 64, 16),
+      new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.65, roughness: 0.2 })
+    );
+    artifact.name = 'shared-artifact';
+    artifact.position.set(0, 1.0, -1.1);
+    artifact.userData.xr = {
+      grab: '2-hand',
+      handles: { rotateAxis: 'y', minScale: 0.4, maxScale: 2.5 },
+      sync: true
+    };
+    scene.add(artifact);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+  </script>
+</xr-live>
 ```

@@ -769,7 +769,7 @@ function reportSizes() {
     {name: 'three-live-extras.min.js', budgetKb: '17'},
     {name: 'three-live-animation.min.js', budgetKb: '6.5'},
     {name: 'three-live-full.min.js', budgetKb: '69'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '45'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '46'},
     {name: 'xr-live.min.js', budgetKb: '65'},
     {name: 'xr-live-extras.min.js', budgetKb: '9.5'},
     {name: 'xr-live-full.min.js', budgetKb: '131'},
