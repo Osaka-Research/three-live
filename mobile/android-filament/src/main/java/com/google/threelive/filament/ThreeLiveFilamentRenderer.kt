@@ -52,11 +52,13 @@ import com.google.android.filament.VertexBuffer
 import com.google.android.filament.Viewport
 import com.google.android.filament.gltfio.AssetLoader
 import com.google.android.filament.gltfio.FilamentAsset
+import com.google.android.filament.gltfio.FilamentInstance
 import com.google.android.filament.gltfio.Gltfio
 import com.google.android.filament.gltfio.ResourceLoader
 import com.google.android.filament.gltfio.UbershaderProvider
 import com.google.threelive.CapturedFrame
 import com.google.threelive.GltfSceneIndex
+import com.google.threelive.MiniJson
 import com.google.threelive.OrbitCameraState
 import com.google.threelive.SplatParser
 import com.google.threelive.ThreeLiveCameraOptions
@@ -64,6 +66,7 @@ import com.google.threelive.ThreeLivePick
 import com.google.threelive.ThreeLivePointer
 import com.google.threelive.ThreeLiveRenderer
 import com.google.threelive.ThreeLiveRendererListener
+import com.google.threelive.XRLiveSceneCoreHelper
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -113,6 +116,26 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   private val entityToNode = HashMap<Int, Int>()
   private val hiddenEntities = HashSet<Int>()
   private var materialInstances: Array<MutableList<MaterialInstance>> = emptyArray()
+
+  /** Whether [asset] was loaded instanced (and keeps its source data) for sim spawners. */
+  private var instancedAsset = false
+
+  /** A copy of a template node's subtree, from an extra gltfio instance of [asset]. */
+  private class SimInstance(
+    val template: Int,
+    val entity: Int,
+    val subtree: IntArray,
+    val scale: FloatArray,
+  ) {
+    var visible = false
+  }
+
+  private val simInstances = HashMap<Int, SimInstance>()
+  /** Removed instances kept for reuse (gltfio cannot destroy a single instance). */
+  private val freeSimInstances = HashMap<Int, ArrayList<SimInstance>>()
+  private var nextSimInstanceId = 1
+  /** Original material instances of renderables showing the hit flash. */
+  private val flashed = HashMap<Int, Array<MaterialInstance>>()
 
   private var playingAnimation: Int? = null
   private var animationTime = 0.0
@@ -268,13 +291,21 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val index = GltfSceneIndex.fromGlb(glb) ?: return
     val src = glb.duplicate()
     src.rewind()
-    val loaded = assetLoader.createAsset(src) ?: return
+    // Scenes with `xr-live-sim` spawners load instanced and keep their source data so spawned
+    // copies share GPU buffers and textures with the template (gltfio requires both).
+    instancedAsset = hasSimSpawners(glb)
+    val loaded =
+      (if (instancedAsset) {
+        assetLoader.createInstancedAsset(src, arrayOfNulls<FilamentInstance>(1))
+      } else {
+        assetLoader.createAsset(src)
+      }) ?: return
     resourceLoader.loadResources(loaded)
     scene.addEntities(loaded.entities)
     asset = loaded
     sceneIndex = index
     mapNodes(loaded, index)
-    loaded.releaseSourceData()
+    if (!instancedAsset) loaded.releaseSourceData()
 
     val box = loaded.boundingBox
     val c = box.center
@@ -621,6 +652,201 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     surfaceView = null
   }
 
+  // ---- xr-live-sim ------------------------------------------------------------------------------
+
+  /** Whether the GLB declares any `extras.xr.spawner` node. */
+  private fun hasSimSpawners(glb: ByteBuffer): Boolean {
+    val json =
+      try {
+        XRLiveSceneCoreHelper.extractGlbJsonChunk(glb.duplicate().order(ByteOrder.LITTLE_ENDIAN))
+      } catch (e: RuntimeException) {
+        null
+      } ?: return false
+    val root = MiniJson.parseObjectOrNull(json) ?: return false
+    return MiniJson.asList(root["nodes"]).orEmpty().any { n ->
+      val xr = MiniJson.asMap(MiniJson.asMap(MiniJson.asMap(n)?.get("extras"))?.get("xr"))
+      xr?.get("spawner") != null
+    }
+  }
+
+  /** [entity] and every descendant entity. */
+  private fun subtreeOf(entity: Int): IntArray {
+    val tm = engine.transformManager
+    val out = ArrayList<Int>()
+    val stack = ArrayDeque<Int>()
+    stack.add(entity)
+    while (stack.isNotEmpty() && out.size < MAX_SUBTREE) {
+      val e = stack.removeLast()
+      out += e
+      val ti = tm.getInstance(e)
+      if (ti == 0) continue
+      tm.getChildren(ti, IntArray(tm.getChildCount(ti))).forEach { stack.add(it) }
+    }
+    return out.toIntArray()
+  }
+
+  /** World scale of [entity] relative to the asset root (product of local transforms). */
+  private fun scaleUnderRoot(entity: Int, root: Int): FloatArray {
+    val tm = engine.transformManager
+    var m = DoubleArray(16).also { for (k in 0 until 16 step 5) it[k] = 1.0 }
+    var e = entity
+    var depth = 0
+    val local = FloatArray(16)
+    while (e != 0 && e != root && depth < MAX_DEPTH) {
+      val ti = tm.getInstance(e)
+      if (ti == 0) break
+      tm.getTransform(ti, local)
+      val l = DoubleArray(16) { local[it].toDouble() }
+      m = com.google.threelive.XRSpatialMath.mat4Multiply(l, m, DoubleArray(16))
+      e = tm.getParent(ti)
+      depth++
+    }
+    val s = com.google.threelive.XRSpatialMath.extractScale(m)
+    return floatArrayOf(s[0].toFloat(), s[1].toFloat(), s[2].toFloat())
+  }
+
+  private fun setSubtreeLayer(subtree: IntArray, visible: Boolean) {
+    val rm = engine.renderableManager
+    for (e in subtree) {
+      val ri = rm.getInstance(e)
+      if (ri != 0) rm.setLayerMask(ri, 0xFF, if (visible) VISIBLE_LAYER else 0)
+    }
+  }
+
+  override fun instantiateNode(templateNodeIndex: Int): Int {
+    if (disposed || !instancedAsset) return -1
+    val a = asset ?: return -1
+    val template = nodeEntities.getOrElse(templateNodeIndex) { 0 }
+    if (template == 0) return -1
+    val inst =
+      freeSimInstances[templateNodeIndex]?.removeLastOrNull()
+        ?: run {
+          if (simInstances.size + freeSimInstances.values.sumOf { it.size } >= MAX_SIM_INSTANCES) {
+            return -1
+          }
+          val primary = a.instance?.entities ?: return -1
+          val k = primary.indexOf(template)
+          if (k < 0) return -1
+          val copy = assetLoader.createInstance(a) ?: return -1
+          val entity = copy.entities.getOrNull(k) ?: return -1
+          val tm = engine.transformManager
+          val ti = tm.getInstance(entity)
+          val rootTi = tm.getInstance(a.root)
+          if (ti == 0 || rootTi == 0) return -1
+          // Re-parent the copy under the scene root so poses are scene-space like glTF nodes.
+          tm.setParent(ti, rootTi)
+          val subtree = subtreeOf(entity)
+          scene.addEntities(subtree)
+          SimInstance(templateNodeIndex, entity, subtree, scaleUnderRoot(template, a.root))
+        }
+    inst.visible = false
+    setSubtreeLayer(inst.subtree, false)
+    val id = nextSimInstanceId++
+    simInstances[id] = inst
+    return id
+  }
+
+  override fun setInstancePose(instanceId: Int, position: FloatArray, rotation: FloatArray) {
+    val inst = simInstances[instanceId] ?: return
+    if (position.size < 3 || rotation.size < 4) return
+    val tm = engine.transformManager
+    val ti = tm.getInstance(inst.entity)
+    if (ti != 0) tm.setTransform(ti, composeTrs(position, rotation, inst.scale, scratch16))
+  }
+
+  override fun setInstanceVisible(instanceId: Int, visible: Boolean) {
+    val inst = simInstances[instanceId] ?: return
+    if (inst.visible == visible) return
+    inst.visible = visible
+    setSubtreeLayer(inst.subtree, visible)
+  }
+
+  override fun removeInstance(instanceId: Int) {
+    val inst = simInstances.remove(instanceId) ?: return
+    setFlash(inst.subtree, false)
+    inst.visible = false
+    setSubtreeLayer(inst.subtree, false)
+    freeSimInstances.getOrPut(inst.template) { ArrayList() }.add(inst)
+  }
+
+  override fun setNodeFlash(nodeIndex: Int, on: Boolean) {
+    val entity = nodeEntities.getOrElse(nodeIndex) { 0 }
+    if (entity != 0) setFlash(subtreeOf(entity), on)
+  }
+
+  override fun setInstanceFlash(instanceId: Int, on: Boolean) {
+    simInstances[instanceId]?.let { setFlash(it.subtree, on) }
+  }
+
+  /**
+   * Swaps the renderables of [entities] to red-emissive duplicates of their materials ([on]), or
+   * back. Duplicates keep textures and factors, and other nodes sharing a material are unaffected.
+   */
+  private fun setFlash(entities: IntArray, on: Boolean) {
+    val rm = engine.renderableManager
+    for (e in entities) {
+      val ri = rm.getInstance(e)
+      if (ri == 0) continue
+      if (on) {
+        if (flashed.containsKey(e)) continue
+        val count = rm.getPrimitiveCount(ri)
+        val originals = Array(count) { rm.getMaterialInstanceAt(ri, it) }
+        for (p in 0 until count) {
+          val dup = MaterialInstance.duplicate(originals[p], "xr-sim-flash")
+          if (dup.material.hasParameter("emissiveFactor")) {
+            dup.setParameter(
+              "emissiveFactor",
+              FLASH_EMISSIVE[0],
+              FLASH_EMISSIVE[1],
+              FLASH_EMISSIVE[2],
+            )
+          }
+          rm.setMaterialInstanceAt(ri, p, dup)
+        }
+        flashed[e] = originals
+      } else {
+        val originals = flashed.remove(e) ?: continue
+        for (p in originals.indices) {
+          val dup = rm.getMaterialInstanceAt(ri, p)
+          rm.setMaterialInstanceAt(ri, p, originals[p])
+          if (dup !== originals[p]) engine.destroyMaterialInstance(dup)
+        }
+      }
+    }
+  }
+
+  private fun restoreAllFlashes() {
+    if (flashed.isEmpty()) return
+    setFlash(flashed.keys.toIntArray(), false)
+    flashed.clear()
+  }
+
+  override fun setCameraFollow(
+    target: DoubleArray?,
+    polarDeg: Double,
+    distance: Double,
+    reframe: Boolean,
+  ) {
+    orbit.follow(target)
+    if (target != null && reframe) orbit.frameFollow(polarDeg, distance)
+  }
+
+  /** Spawned instance owning [entity] (itself or an ancestor), or `-1`. */
+  private fun instanceOfEntity(entity: Int): Int {
+    if (simInstances.isEmpty()) return -1
+    val tm = engine.transformManager
+    var e = entity
+    var depth = 0
+    while (e != 0 && depth < MAX_DEPTH) {
+      for ((id, inst) in simInstances) if (inst.entity == e) return id
+      val ti = tm.getInstance(e)
+      if (ti == 0) return -1
+      e = tm.getParent(ti)
+      depth++
+    }
+    return -1
+  }
+
   // ---- Frame loop ------------------------------------------------------------------------------
 
   private fun renderFrame(frameTimeNanos: Long) {
@@ -837,8 +1063,13 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     filamentView.pick(x, y, mainHandler) { result ->
       if (!disposed) {
         val node = nodeOfEntity(result.renderable)
+        val instance = if (node < 0) instanceOfEntity(result.renderable) else -1
         onResult(
-          if (node < 0) null else ThreeLivePick(node, hitPointOnBounds(xPx, yPx, result.renderable))
+          if (node < 0 && instance < 0) {
+            null
+          } else {
+            ThreeLivePick(node, hitPointOnBounds(xPx, yPx, result.renderable), instance)
+          }
         )
       }
     }
@@ -1162,6 +1393,13 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   }
 
   private fun destroyAsset() {
+    restoreAllFlashes()
+    for (inst in simInstances.values + freeSimInstances.values.flatten()) {
+      scene.removeEntities(inst.subtree)
+    }
+    simInstances.clear()
+    freeSimInstances.clear()
+    instancedAsset = false
     asset?.let {
       scene.removeEntities(it.entities)
       resourceLoader.evictResourceData()
@@ -1271,6 +1509,11 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     private const val STUDIO_CUBEMAP_LEVELS = 6
     private const val VISIBLE_LAYER = 0x01
     private const val MAX_DEPTH = 256
+    private const val MAX_SUBTREE = 4096
+    /** Matches `XRSimWorld.MAX_INSTANCES`. */
+    private const val MAX_SIM_INSTANCES = 128
+    /** Linear emissive used for the 120 ms `xr-live-sim` hit flash (web tints toward red). */
+    private val FLASH_EMISSIVE = floatArrayOf(1.0f, 0.25f, 0.25f)
     private const val MAX_MATERIALS = 4096
     private const val MAX_DYNAMIC_VERTICES = 1_000_000
     private const val MAX_SPLAT_VERTICES = SplatParser.MAX_SPLATS * 4

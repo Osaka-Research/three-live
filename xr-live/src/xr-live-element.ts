@@ -29,8 +29,8 @@
 
 import {
   registerPlugin,
-  type ThreeLivePlugin,
   XR_LIVE_AR_SURFACE_Y,
+  type ThreeLivePlugin,
 } from '../../three-live/src/plugin';
 import {webxrPlugin} from '../../three-live/src/plugins/webxr';
 import {ThreeLiveElement} from '../../three-live/src/three-live-element';
@@ -64,7 +64,7 @@ export type XRMode = 'ar' | 'vr' | 'inline' | 'auto';
 export type XRDepthMode = 'occlusion' | 'occlusion-physics' | 'mesh' | 'none';
 /** 25-joint hand tracking and gesture recognition mode. */
 export type XRHandsMode = 'gestures' | 'joints' | 'pinch' | 'none';
-/** Desktop room simulator environment preset. */
+/** Desktop 3D room preview environment preset (not related to `xr-live-sim`). */
 export type XRSimulatorRoom = 'living-room' | 'office' | 'tabletop' | 'none';
 /** Target spatial hardware profile for UI theme scaling. */
 export type XRProfile = 'quest3' | 'android-xr' | 'visionos' | 'auto';
@@ -544,7 +544,9 @@ export const xrLiveSpatialPlugin: ThreeLivePlugin = {
     const prev = lastXRFrameTimes.get(viewer) || 0;
     lastXRFrameTimes.set(viewer, now);
     const dt =
-      prev > 0 ? Math.min(Math.max((now - prev) / 1000, 1 / 120), 0.05) : 1 / 72;
+      prev > 0
+        ? Math.min(Math.max((now - prev) / 1000, 1 / 120), 0.05)
+        : 1 / 72;
 
     const viewerPose = frame?.getViewerPose?.(refSpace);
     const firstView = viewerPose?.views?.[0];

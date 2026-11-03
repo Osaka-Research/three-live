@@ -47,6 +47,7 @@ import {
   mat4LookAt,
   mat4Multiply,
 } from './three-view';
+import {registerSimTraitSchema} from './xr-sim-schema';
 import {
   buildHubsExtension,
   buildXRSceneCoreExtension,
@@ -3734,6 +3735,7 @@ if (typeof window !== 'undefined') {
 if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   // Native GLB/USDZ exports carry the full canonical spatial trait set.
   registerXRTraitSerializer();
+  registerSimTraitSchema();
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);

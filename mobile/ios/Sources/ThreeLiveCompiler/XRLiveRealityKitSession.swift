@@ -117,6 +117,10 @@
     private var nodeByEntity: [ObjectIdentifier: Int] = [:]
     private var inverseBakedSceneByNode: [Int: simd_float4x4] = [:]
     private var referenceEntity: Entity?
+
+    /// The entity whose space is the session's scene space (the parent of the glTF scene roots):
+    /// session world space is this entity's world transform times scene space.
+    public var sceneSpaceEntity: Entity { referenceEntity ?? root }
     private var arSurfacePreviewContainer: Entity?
     private let collector = XRLiveChangeCollector()
     private var gestureTracker = XRHandGestureTracker()
@@ -458,7 +462,8 @@
       if let reticleMesh = XRSpatialRealityKitFeatures.mesh(reticleGeo) {
         let reticleEntity = ModelEntity(
           mesh: reticleMesh,
-          materials: [XRSpatialRealityKitFeatures.material(XRArSurfaceGeometry.defaultReticleColor)])
+          materials: [XRSpatialRealityKitFeatures.material(XRArSurfaceGeometry.defaultReticleColor)]
+        )
         reticleEntity.name = "ThreeLiveArReticle"
         container.addChild(reticleEntity)
       }

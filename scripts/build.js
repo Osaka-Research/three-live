@@ -656,6 +656,22 @@ function buildXRLive() {
     });
   }
 
+  // 4b. xr-live-sim (optional simulation plugins: character-controller,
+  // steering-agents, hit-zones, objectives, synth-audio)
+  for (const [format, ext] of [
+           ['esm', 'js'], ['cjs', 'cjs'], ['iife', 'min.js']]) {
+    buildTarget({
+      entryPoints: [path.join(XR_LIVE_DIR, 'src/sim/index.ts')],
+      bundle: true,
+      format,
+      ...(format === 'iife' ? {globalName: 'XRSim'} : {}),
+      minify: true,
+      target: 'es2020',
+      define: {'IS_DEV': 'false'},
+      outfile: path.join(xrDist, `xr-live-sim.${ext}`),
+    });
+  }
+
   // 5. xr-live-full (All-in-One Kitchen Sink)
   buildTarget({
     entryPoints: [path.join(XR_LIVE_DIR, 'src/full.ts')],
@@ -693,6 +709,7 @@ function buildXRLive() {
   fs.writeFileSync(path.join(xrDist, 'xr-live-extras.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-full.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-plugins.d.ts'), rootDts);
+  fs.writeFileSync(path.join(xrDist, 'xr-live-sim.d.ts'), rootDts);
 
   if (!fs.existsSync(DIST_DIR)) {
     fs.mkdirSync(DIST_DIR, {recursive: true});
@@ -712,6 +729,9 @@ function buildXRLive() {
   fs.copyFileSync(
       path.join(xrDist, 'xr-live-plugins.min.js'),
       path.join(DIST_DIR, 'xr-live-plugins.min.js'));
+  fs.copyFileSync(
+      path.join(xrDist, 'xr-live-sim.min.js'),
+      path.join(DIST_DIR, 'xr-live-sim.min.js'));
 
   const sandboxHtmlSrc =
       path.join(THREE_LIVE_DIR, 'src/three-live-sandbox.html');
@@ -728,6 +748,9 @@ function buildXRLive() {
     fs.copyFileSync(
         path.join(xrDist, 'xr-live-plugins.min.js'),
         path.join(xrExampleDir, 'xr-live-plugins.min.js'));
+    fs.copyFileSync(
+        path.join(xrDist, 'xr-live-sim.min.js'),
+        path.join(xrExampleDir, 'xr-live-sim.min.js'));
     fs.copyFileSync(
         sandboxHtmlSrc, path.join(xrExampleDir, 'three-live-sandbox.html'));
   }
@@ -772,8 +795,9 @@ function reportSizes() {
     {name: 'xr-live-viewer.min.js', budgetKb: '46'},
     {name: 'xr-live.min.js', budgetKb: '66'},
     {name: 'xr-live-extras.min.js', budgetKb: '10'},
-    {name: 'xr-live-full.min.js', budgetKb: '133'},
+    {name: 'xr-live-full.min.js', budgetKb: '151'},
     {name: 'xr-live-plugins.min.js', budgetKb: '52'},
+    {name: 'xr-live-sim.min.js', budgetKb: '22'},
   ];
   const failures = [];
   for (const f of files) {
@@ -803,10 +827,10 @@ function reportSizes() {
   console.log('==============================================================================\n');
   // <three-live> never requests WebXR depth, so its bundles must not carry the
   // depth-occlusion shader (installed only by <xr-live>).
-  for (const name of [
-    'three-live-viewer.min.js',
-    'three-live.min.js',
-    'three-live-full.min.js',
+  for (const name
+           of ['three-live-viewer.min.js',
+               'three-live.min.js',
+               'three-live-full.min.js',
   ]) {
     const filePath = path.join(DIST_DIR, name);
     if (fs.existsSync(filePath) &&

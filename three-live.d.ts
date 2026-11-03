@@ -30,12 +30,12 @@ import type {
 } from './three-live/src/three-view';
 import type {ARLaunchResult, ARMode} from './three-live/src/three-xr';
 import type {
+  Detection3D,
   DimensionUnit,
   ExplodeMode,
   RemotePeerState,
   SnapSurfaceMode,
   TranscriptEvent,
-  Detection3D,
 } from './xr-live/src/plugins/index';
 import type {
   XRAnchorElement,
@@ -193,7 +193,7 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'xr-depth'?: XRDepthMode;
   /** 25-joint hand tracking and gesture recognition mode ("gestures", "joints", "pinch", "none"). */
   'xr-hands'?: XRHandsMode;
-  /** Desktop room simulator environment ("living-room", "office", "tabletop", "none"). */
+  /** Desktop 3D room preview environment, unrelated to `xr-live-sim` ("living-room", "office", "tabletop", "none"). */
   'xr-simulator'?: XRSimulatorRoom;
   /** Spatial UI profile ("quest3", "android-xr", "visionos", "auto"). */
   'xr-profile'?: XRProfile;
@@ -208,7 +208,14 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   /** Default display unit for `spatial-measure` ("auto", "m", "cm", "mm", "in", "ft-in"). */
   'measure-unit'?: DimensionUnit;
   /** Spatial plugin: socket, grid, surface, and angle snapping ("grid", "surface", "sockets", "all", "none"). */
-  'magnetic-snap'?: boolean | 'grid' | 'surface' | 'sockets' | 'all' | 'none' | string;
+  'magnetic-snap'?:
+    | boolean
+    | 'grid'
+    | 'surface'
+    | 'sockets'
+    | 'all'
+    | 'none'
+    | string;
   /** Cartesian snap grid step in meters ("0.05" or "0.05 0.05 0.05"). */
   'snap-grid'?: number | string;
   /** Rotational yaw snap increment in degrees (0 to 180). */
@@ -241,6 +248,45 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'peer-name'?: string;
   /** Local avatar visor & laser color (`#rrggbb`) in `shared-room`. */
   'peer-color'?: string;
+  /** xr-live-sim: character camera mode, or `none` to disable the character. */
+  'character-controller'?:
+    | 'third-person'
+    | 'first-person'
+    | 'top-down'
+    | 'fixed-camera'
+    | 'none';
+  /** xr-live-sim: character speed override (m/s). */
+  'character-speed'?: number | string;
+  /** xr-live-sim: character jump velocity override (m/s). */
+  'character-jump'?: number | string;
+  /** xr-live-sim: on-screen joystick (`auto` shows it on touch screens). */
+  'touch-joystick'?: 'auto' | 'always' | 'none';
+  /** xr-live-sim: `false` or `none` pauses steering agents. */
+  'steering-agents'?: boolean | string;
+  /** xr-live-sim: firing mode (empty means `projectile`). */
+  'hit-zones'?: '' | 'projectile' | 'hitscan' | 'contact' | 'off';
+  /** xr-live-sim: shots per second (default: 4). */
+  'fire-rate'?: number | string;
+  /** xr-live-sim: projectile speed in m/s (default: 14). */
+  'projectile-speed'?: number | string;
+  /** xr-live-sim: projectile gravity in m/s² (default: 0). */
+  'projectile-gravity'?: number | string;
+  /** xr-live-sim: integrity removed per hit (default: 25). */
+  'hit-amount'?: number | string;
+  /** xr-live-sim: enables objectives and scoring (`none` disables). */
+  'objectives'?: boolean | string;
+  /** xr-live-sim: scenario countdown in seconds. */
+  'scenario-timer'?: number | string;
+  /** xr-live-sim: score that passes the scenario. */
+  'target-score'?: number | string;
+  /** xr-live-sim: attempts before the scenario fails. */
+  'attempts'?: number | string;
+  /** xr-live-sim: score HUD style. */
+  'sim-hud'?: 'auto' | 'minimal' | 'none';
+  /** xr-live-sim: plays procedural audio cues (`muted` disables). */
+  'synth-audio'?: boolean | string;
+  /** xr-live-sim: cue volume from 0 to 1 (default: 0.7). */
+  'synth-volume'?: number | string;
   /** Register WebMCP browser AI tools on `navigator.modelContext`. */
   'webmcp'?: boolean | string;
   /** Opt-in gate allowing WebMCP `capture_xr_view` to include the 8x8 depth grid. */
@@ -314,7 +360,74 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
     e: CustomEvent<Pick<RemotePeerState, 'peerId' | 'name' | 'color'>>,
   ) => void;
   onpeersync?: (e: CustomEvent<{peerId: string; nodeId: string}>) => void;
-  onpeergrabconflict?: (e: CustomEvent<{peerId: string; nodeId: string}>) => void;
+  onpeergrabconflict?: (
+    e: CustomEvent<{peerId: string; nodeId: string}>,
+  ) => void;
+  /** xr-live-sim events. */
+  oncharacterjump?: (
+    e: CustomEvent<{nodeId: string; position: [number, number, number]}>,
+  ) => void;
+  oncharacterland?: (
+    e: CustomEvent<{nodeId: string; fallSpeed: number}>,
+  ) => void;
+  onagentstatechange?: (
+    e: CustomEvent<{nodeId: string; state: string; targetId: string | null}>,
+  ) => void;
+  onagentreach?: (
+    e: CustomEvent<{
+      agentId: string;
+      targetId: string;
+      position: [number, number, number];
+    }>,
+  ) => void;
+  onxrhit?: (
+    e: CustomEvent<{
+      targetId: string;
+      /** Shooter node name, or `'user'`. */
+      sourceId: string;
+      amount: number;
+      remaining: number;
+      point: [number, number, number];
+    }>,
+  ) => void;
+  onxrdepleted?: (
+    e: CustomEvent<{targetId: string; group: string; scoreValue: number}>,
+  ) => void;
+  onxrzoneenter?: (
+    e: CustomEvent<{zoneId: string; nodeId: string; group: string}>,
+  ) => void;
+  onxrzoneexit?: (
+    e: CustomEvent<{zoneId: string; nodeId: string; group: string}>,
+  ) => void;
+  onxrspawn?: (
+    e: CustomEvent<{spawnerId: string; instanceId: string; index: number}>,
+  ) => void;
+  onxrobjective?: (
+    e: CustomEvent<{
+      nodeId: string;
+      tag: string;
+      type: string;
+      amount: number;
+      totalScore: number;
+      remainingRequired: number;
+      outOfOrder: boolean;
+    }>,
+  ) => void;
+  onxrscorechange?: (
+    e: CustomEvent<{
+      score: number;
+      delta: number;
+      attemptsLeft: number | null;
+      timeRemaining: number | null;
+    }>,
+  ) => void;
+  onxrscenarioend?: (
+    e: CustomEvent<{
+      outcome: 'pass' | 'fail' | 'timeout';
+      finalScore: number;
+      elapsedSec: number;
+    }>,
+  ) => void;
 }
 
 declare global {

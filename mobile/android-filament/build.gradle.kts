@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // Optional Filament renderer for three-live. The core `:mobile:android` library stays free of
-// rendering dependencies; apps opt in by adding this module and calling ThreeLiveFilament.install().
+// rendering dependencies; apps opt in by adding this module and calling
+// ThreeLiveFilament.install().
 
 import java.net.URL
 import java.nio.file.Files
@@ -73,23 +74,22 @@ val compileFilamentMaterials by tasks.registering {
         matcBin.setExecutable(true)
       }
 
-      val execResult =
-        project.exec {
-          isIgnoreExitValue = true
-          commandLine(
-            matcBin.absolutePath,
-            "-p",
-            "mobile",
-            "-a",
-            "opengl",
-            "-a",
-            "vulkan",
-            "-S",
-            "-o",
-            targetFile.absolutePath,
-            matFile.asFile.absolutePath,
-          )
-        }
+      val execResult = project.exec {
+        isIgnoreExitValue = true
+        commandLine(
+          matcBin.absolutePath,
+          "-p",
+          "mobile",
+          "-a",
+          "opengl",
+          "-a",
+          "vulkan",
+          "-S",
+          "-o",
+          targetFile.absolutePath,
+          matFile.asFile.absolutePath,
+        )
+      }
       if (execResult.exitValue != 0) {
         logger.warn(
           "Filament matc exited with code ${execResult.exitValue}; using built-in ubershader fallback for splats."
@@ -111,11 +111,7 @@ android {
   namespace = "com.google.threelive.filament"
   compileSdk = 34
 
-  sourceSets {
-    getByName("main") {
-      assets.srcDir(compiledMaterialsDir)
-    }
-  }
+  sourceSets { getByName("main") { assets.srcDir(compiledMaterialsDir) } }
 
   defaultConfig {
     minSdk = 24
@@ -155,16 +151,14 @@ dependencies {
   testImplementation("junit:junit:4.13.2")
 }
 
-tasks.named("preBuild") {
-  dependsOn(compileFilamentMaterials)
-}
+tasks.named("preBuild") { dependsOn(compileFilamentMaterials) }
 
 publishing {
   publications {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "filament"
-      version = "1.2.0"
+      version = "1.2.1"
       afterEvaluate { from(components["release"]) }
 
       pom {

@@ -87,6 +87,9 @@ public struct XROrbitCameraState: Sendable {
   private var targetPhi = 0.35
   private var targetDistance = 3.0
   private var customTarget: SIMD3<Double>?
+  private var followTarget: SIMD3<Double>?
+  /// Follow framing (`phi` radians, distance) kept across `apply(_:)`.
+  private var followFrame: (phi: Double, distance: Double)?
   private var minTheta = -Double.infinity
   private var maxTheta = Double.infinity
   private var minPhi = -Self.phiLimit
@@ -126,6 +129,35 @@ public struct XROrbitCameraState: Sendable {
     customTarget = Self.parseCameraTarget(o.cameraTarget)
     applyLimits(o.minCameraOrbit, o.maxCameraOrbit)
     applyOrbit(o.cameraOrbit)
+    // A sim follow camera keeps its framing when host camera options change.
+    if let f = followFrame {
+      targetPhi = clampPhi(f.phi)
+      targetDistance = f.distance
+      autoRotate = false
+      turntable = 0
+    }
+  }
+
+  /// Follows `target` (world meters) every frame, overriding `camera-target`, as the web viewer
+  /// does for an `xr-live-sim` character; `nil` stops following.
+  public mutating func follow(_ target: SIMD3<Double>?) {
+    if let t = target, t.x.isFinite, t.y.isFinite, t.z.isFinite {
+      followTarget = t
+    } else {
+      followTarget = nil
+      followFrame = nil
+    }
+  }
+
+  /// Eases to a follow framing: `polarDeg` from straight down (the web `setCamera` convention, so
+  /// `90` is level) and `distance` meters, keeping the user's azimuth. Bounds distance limits do
+  /// not apply (a first-person camera sits 5 cm from its target). Stops auto-rotate.
+  public mutating func frameFollow(polarDeg: Double, distance: Double) {
+    if polarDeg.isFinite { targetPhi = clampPhi((90 - polarDeg) * .pi / 180) }
+    if distance.isFinite { targetDistance = min(1e4, max(0.01, distance)) }
+    followFrame = (targetPhi, targetDistance)
+    autoRotate = false
+    turntable = 0
   }
 
   /// Frames the scene after a load (initial orbit, else `3.0m` when `distanceMode == "absolute"`,
@@ -201,8 +233,8 @@ public struct XROrbitCameraState: Sendable {
       theta: thetaDeg, phi: phiDeg, zoom: zoom, distance: (distance * 100).rounded() / 100)
   }
 
-  /// The orbit target (`camera-target`, else the bounds center).
-  public var target: SIMD3<Double> { customTarget ?? boundsCenter }
+  /// The orbit target (the follow target, else `camera-target`, else the bounds center).
+  public var target: SIMD3<Double> { followTarget ?? customTarget ?? boundsCenter }
 
   /// `target + distance × (cosφ sinθ, sinφ, cosφ cosθ)`.
   public var eye: SIMD3<Double> {

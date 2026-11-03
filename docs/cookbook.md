@@ -273,6 +273,7 @@ Compile the exact same procedural `<script type="text/three">` string on-device
 and step all spatial traits natively without a WebView:
 
 ### Android (Kotlin + Google Filament + Jetpack XR SceneCore)
+
 ```kotlin
 import com.google.threelive.ThreeLiveRuntimeSession
 import com.google.threelive.XRLiveSceneCoreHelper
@@ -290,6 +291,7 @@ XRLiveSceneCoreHelper.attachTraitsFromGlb(xrSession, rootEntity, glbByteBuffer)
 ```
 
 ### iOS & visionOS (Swift + Apple RealityKit)
+
 ```swift
 import ThreeLiveCompiler
 import RealityKit
@@ -441,10 +443,11 @@ links, and `spatial-locomotion` parabolic teleportation across walkable floors:
 
 ## 8. Multi-User Co-Presence & Shared 3D Annotations (`shared-room` + `spatial-paint`)
 
-Open two browser tabs on the same page to see live `20 Hz` 3D peer visor avatars,
-tinted pointer rays, `2000ms` soft-locked object handoffs, and synchronized 3D
-paint strokes via `BroadcastChannel`—or point `shared-room="wss://..."` at any
-WebSocket relay for cross-device headset + phone collaboration:
+Open two browser tabs on the same page to see live `20 Hz` 3D peer visor
+avatars, tinted pointer rays, `2000ms` soft-locked object handoffs, and
+synchronized 3D paint strokes via `BroadcastChannel`—or point
+`shared-room="wss://..."` at any WebSocket relay for cross-device headset +
+phone collaboration:
 
 ```html
 <script type="module" src="/dist/xr-live-full.min.js"></script>
@@ -489,3 +492,85 @@ WebSocket relay for cross-device headset + phone collaboration:
   });
 </script>
 ```
+
+--------------------------------------------------------------------------------
+
+## 9. Timed Training Drill with a Robot-Cell Safety Zone (`xr-live-sim`)
+
+The optional `xr-live-sim` bundle turns a scene into a scored simulation. This
+drill asks the user to tap three parts in order within 60 seconds, while an
+automated guided vehicle (AGV) patrols through a robot cell that sounds an alarm
+whenever it's occupied. See
+[Simulation plugins](xr-live.md#simulation-plugins-xr-live-sim) for every trait,
+attribute, and event.
+
+```html
+<!-- Load after xr-live.min.js; xr-live-full.min.js already includes it. -->
+<script src="/dist/xr-live-sim.min.js"></script>
+
+<xr-live
+  id="drill"
+  allow-client-scripts
+  objectives
+  scenario-timer="60"
+  synth-audio
+  style="width: 100%; height: 520px; display: block;">
+  <script type="text/three">
+    const mat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+
+    // Ordered, required task steps (tap them in sequence)
+    ['Step_1_Valve', 'Step_2_Filter', 'Step_3_Cap'].forEach((name, i) => {
+      const part = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), mat(0x38bdf8));
+      part.name = name;
+      part.position.set(i * 0.4 - 0.4, 1.0, -1.0);
+      part.userData.xr = {
+        objective: { type: 'checkpoint', order: i + 1, required: true, amount: 10 },
+        audioCues: { onObjective: 'confirm' }
+      };
+      scene.add(part);
+    });
+
+    // Robot cell: alarm while the AGV is inside
+    const cell = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 1, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xef4444, transparent: true, opacity: 0.15 })
+    );
+    cell.name = 'Robot_Cell';
+    cell.position.set(1.4, 0.5, -2);
+    cell.userData.xr = {
+      zone: { shape: 'box', size: [1.2, 1, 1.2], color: '#ef4444', watchGroups: ['agent'] },
+      audioCues: { onZoneEnter: 'alarm' }
+    };
+    scene.add(cell);
+
+    // AGV patrolling through the cell
+    const agv = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.6), mat(0xf59e0b));
+    agv.name = 'AGV';
+    agv.position.set(-1.5, 0.1, -2);
+    agv.userData.xr = {
+      agent: { mode: 'patrol', speed: 0.8, waypoints: [[-1.5, 0.1, -2], [2.5, 0.1, -2]] }
+    };
+    scene.add(agv);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</xr-live>
+
+<script>
+  const drill = document.getElementById('drill');
+  drill.addEventListener('xrobjective', (e) => {
+    if (e.detail.outOfOrder) console.warn('Out of order:', e.detail.nodeId);
+  });
+  drill.addEventListener('xrzoneenter', (e) => {
+    console.log(e.detail.nodeId, 'entered', e.detail.zoneId);
+  });
+  drill.addEventListener('xrscenarioend', (e) => {
+    console.log('Outcome:', e.detail.outcome, 'in', e.detail.elapsedSec, 's');
+  });
+</script>
+```
+
+To build a game instead, add a `character` node (moved with WASD, a gamepad, or
+the touch joystick), set `hit-zones="projectile"`, and give targets an
+`integrity` trait with a `scoreValue`.

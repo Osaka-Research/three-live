@@ -1,6 +1,6 @@
 {
   "name": "xr-live",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "HTML-First Spatial Computing, 6DoF WebXR, Hand Gestures, and AI-Driven XR on top of three-live",
   "author": "Google LLC",
   "license": "Apache-2.0",
@@ -33,10 +33,15 @@
       "types": "./dist/xr-live-plugins.d.ts",
       "import": "./dist/xr-live-plugins.js",
       "require": "./dist/xr-live-plugins.cjs"
+    },
+    "./sim": {
+      "types": "./dist/xr-live-sim.d.ts",
+      "import": "./dist/xr-live-sim.js",
+      "require": "./dist/xr-live-sim.cjs"
     }
   },
   "dependencies": {
-    "three-live": "1.2.0"
+    "three-live": "1.2.1"
   },
   "scripts": {
     "prepack": "node -e \"require('fs').copyFileSync('../LICENSE', 'LICENSE')\"",

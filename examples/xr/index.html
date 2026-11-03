@@ -228,6 +228,13 @@ limitations under the License.
       color: #38bdf8;
     }
 
+    .sim-log {
+      margin-top: 10px;
+      min-height: 20px;
+      font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #cbd5e1;
+    }
+
     .btn-row {
       display: flex;
       gap: 8px;
@@ -901,6 +908,7 @@ limitations under the License.
   <script src="./xr-live.min.js"></script>
   <script src="./xr-live-extras.min.js"></script>
   <script src="./xr-live-plugins.min.js"></script>
+  <script src="./xr-live-sim.min.js"></script>
   <script>
     window.THREE = Object.assign({}, window.XRLive?.THREE, window.XRLive, window.XRLiveExtras);
   </script>
@@ -935,6 +943,9 @@ limitations under the License.
         </button>
         <button class="mode-btn" id="tab-studio" onclick="switchMode('studio')">
           4. Spatial Studio &amp;<br>Co-Presence
+        </button>
+        <button class="mode-btn" id="tab-sim" onclick="switchMode('sim')">
+          5. Simulation &amp;<br>Scenarios
         </button>
       </div>
 
@@ -1076,6 +1087,30 @@ limitations under the License.
             <button class="action-btn" onclick="saveStudioAnchors()">Save &amp; Copy #xr-state</button>
             <button class="action-btn" onclick="clearStudioAnchors()">Reset Saved Layout</button>
           </div>
+        </div>
+      </div>
+
+      <!-- MODE 5: XR-LIVE-SIM SCENARIOS -->
+      <div class="mode-panel" id="panel-sim">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Simulation &amp; Scenarios</h2>
+            <span class="tag-pill">xr-live-sim</span>
+          </div>
+          <ol class="guide-list">
+            <li><strong>Collect game:</strong> move with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> (or the touch joystick), jump with <kbd>Space</kbd>, and fire with <kbd>F</kbd> or a tap. Collect all five gems before the timer runs out while two drones patrol and chase.</li>
+            <li><strong>Training drill:</strong> tap the parts in order (valve, filter, cap). An out-of-order tap plays an error cue. An alarm sounds whenever the AGV enters the robot cell.</li>
+            <li>Click the viewport first so it receives keyboard input.</li>
+          </ol>
+          <div class="btn-row">
+            <button class="action-btn primary" id="btn-sim-game" onclick="switchSimPreset('game')">Collect game</button>
+            <button class="action-btn" id="btn-sim-drill" onclick="switchSimPreset('drill')">Training drill</button>
+          </div>
+          <div class="btn-row">
+            <button class="action-btn purple" onclick="resetSimScenario()">Restart scenario</button>
+            <button class="action-btn" id="btn-sim-audio" onclick="toggleSimAudio()">Synth audio: ON</button>
+          </div>
+          <div class="sim-log" id="sim-log" aria-live="polite"></div>
         </div>
       </div>
 
@@ -1417,6 +1452,135 @@ scene.add(dome);
 return scene;`
     };
 
+    // xr-live-sim presets (mode 5). Host attributes are applied by syncSimAttributes().
+    const SIM_SCRIPTS = {
+      game: `// Collect game: character-controller, steering-agents, hit-zones, objectives, synth-audio
+const scene = new THREE.Scene();
+const mat = (color, extra) =>
+  new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.4, metalness: 0.1 }, extra));
+
+// Arena floor and walls (collidable: the character can't walk through them)
+const floor = new THREE.Mesh(new THREE.BoxGeometry(8, 0.1, 8), mat(0x1e293b));
+floor.name = 'Arena_Floor';
+floor.position.set(0, -0.05, 0);
+floor.userData.xr = { collidable: true };
+scene.add(floor);
+[[0, 0.3, -4, 8, 0.6, 0.2], [0, 0.3, 4, 8, 0.6, 0.2], [-4, 0.3, 0, 0.2, 0.6, 8],
+ [4, 0.3, 0, 0.2, 0.6, 8], [-1.2, 0.4, 0.8, 1.6, 0.8, 0.3], [1.5, 0.4, -1.2, 0.3, 0.8, 1.8]]
+  .forEach(([x, y, z, w, h, d], i) => {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(0x334155));
+    wall.name = 'Wall_' + (i + 1);
+    wall.position.set(x, y, z);
+    wall.userData.xr = { collidable: true };
+    scene.add(wall);
+  });
+
+// Player: third-person character with integrity (drone contact drains it)
+const player = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.1, 20), mat(0x38bdf8));
+player.name = 'Player';
+player.position.set(0, 0.55, 2.8);
+player.userData.xr = {
+  character: { cameraMode: 'third-person', speed: 3, radius: 0.25, height: 1.1 },
+  integrity: { max: 100, group: 'user', showBar: true, cooldownMs: 800 },
+  audioCues: { onJump: 'jump', onHit: 'impact' }
+};
+scene.add(player);
+
+// Gems: pickups worth 10 points each (target score 50 passes)
+[[-3, 2.8], [3, 3], [-2.8, -3], [2.6, -2.8], [0, -1.6]].forEach(([x, z], i) => {
+  const gem = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 4, 2), // 4x2 segments: an octahedron
+    mat(0xfacc15, { emissive: 0x854d0e, metalness: 0.6 })
+  );
+  gem.name = 'Gem_' + (i + 1);
+  gem.position.set(x, 0.45, z);
+  gem.userData.xr = {
+    objective: { type: 'pickup', amount: 10 },
+    audioCues: { onObjective: 'pickup' }
+  };
+  scene.add(gem);
+});
+
+// Drones: one patrols, one chases the player inside its sight radius
+const droneTraits = (agent) => ({
+  agent,
+  integrity: { max: 50, group: 'drones', showBar: true, scoreValue: 5, contactAmount: 20 },
+  audioCues: { onHit: 'impact', onDepleted: 'burst' }
+});
+const patrol = new THREE.Mesh(new THREE.SphereGeometry(0.28, 24, 16), mat(0xef4444));
+patrol.name = 'Drone_Patrol';
+patrol.position.set(-2.5, 0.4, -2);
+patrol.userData.xr = droneTraits({
+  mode: 'patrol', speed: 1.4,
+  waypoints: [[-2.5, 0.4, -2], [2.5, 0.4, -2], [2.5, 0.4, 2], [-2.5, 0.4, 2]]
+});
+scene.add(patrol);
+const chaser = new THREE.Mesh(new THREE.SphereGeometry(0.28, 24, 16), mat(0xf97316));
+chaser.name = 'Drone_Chaser';
+chaser.position.set(2.8, 0.4, -3);
+chaser.userData.xr = droneTraits({ mode: 'chase', target: 'user', speed: 1.2, sightRadius: 3 });
+scene.add(chaser);
+
+return scene;`,
+
+      drill: `// Training drill: ordered task steps, a timed scenario, and a robot-cell safety zone
+const scene = new THREE.Scene();
+const mat = (color, extra) =>
+  new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.45, metalness: 0.2 }, extra));
+
+const floor = new THREE.Mesh(new THREE.BoxGeometry(6, 0.06, 4), mat(0x1e293b));
+floor.name = 'Shop_Floor';
+floor.position.set(0, -0.03, 0);
+scene.add(floor);
+const bench = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.7), mat(0x475569));
+bench.name = 'Workbench';
+bench.position.set(-1.2, 0.8, 0.6);
+scene.add(bench);
+
+// Required steps, completed by tapping them in order (out of order plays an error cue)
+[['Step_1_Valve', 0xef4444, new THREE.CylinderGeometry(0.1, 0.1, 0.16, 24)],
+ ['Step_2_Filter', 0x22c55e, new THREE.BoxGeometry(0.22, 0.22, 0.22)],
+ ['Step_3_Cap', 0x3b82f6, new THREE.SphereGeometry(0.12, 24, 16)]].forEach(([name, color, geo], i) => {
+  const part = new THREE.Mesh(geo, mat(color));
+  part.name = name;
+  part.position.set(-1.8 + i * 0.6, 0.96, 0.6);
+  part.userData.xr = {
+    objective: { type: 'checkpoint', order: i + 1, required: true, amount: 10, tag: 'step' },
+    audioCues: { onObjective: 'confirm' }
+  };
+  scene.add(part);
+});
+
+// Robot cell: a visible safety zone that watches the AGV's group
+const cell = new THREE.Mesh(
+  new THREE.BoxGeometry(1.6, 1.2, 1.6),
+  mat(0xef4444, { transparent: true, opacity: 0.12 })
+);
+cell.name = 'Robot_Cell';
+cell.position.set(1.6, 0.6, -0.6);
+cell.userData.xr = {
+  zone: { shape: 'box', size: [1.6, 1.2, 1.6], color: '#ef4444', watchGroups: ['agent'] },
+  audioCues: { onZoneEnter: 'alarm', onZoneExit: 'confirm' }
+};
+scene.add(cell);
+
+// AGV: patrols a loop that passes through the robot cell
+const agv = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.25, 0.7), mat(0xf59e0b));
+agv.name = 'AGV';
+agv.position.set(-2.4, 0.13, -1.4);
+agv.userData.xr = {
+  agent: {
+    mode: 'patrol', speed: 0.8,
+    waypoints: [[-2.4, 0.13, -1.4], [2.4, 0.13, -1.4], [2.4, 0.13, 1.4], [0.4, 0.13, 1.4]]
+  }
+};
+scene.add(agv);
+
+return scene;`
+    };
+    let simPreset = 'game';
+    let simAudioOn = true;
+
     function setToast(msg) {
       document.getElementById('status-toast').textContent = msg;
     }
@@ -1555,7 +1719,7 @@ return scene;`
       const token = ++switchToken;
       currentMode = mode;
       document.body.dataset.mode = mode;
-      ['ballpit', 'workbench', 'perception', 'studio'].forEach((m) => {
+      ['ballpit', 'workbench', 'perception', 'studio', 'sim'].forEach((m) => {
         document.getElementById('tab-' + m).classList.toggle('active', m === mode);
         document.getElementById('panel-' + m).classList.toggle('active', m === mode);
       });
@@ -1564,12 +1728,14 @@ return scene;`
         ballpit: 'Ballpit Lab',
         workbench: 'Spatial Workbench',
         perception: 'Gemini AI & Depth',
-        studio: 'CAD Studio & Sync'
+        studio: 'CAD Studio & Sync',
+        sim: 'Simulation & Scenarios'
       };
       document.getElementById('hud-mode').textContent = titles[mode];
       syncStudioAttributes(mode === 'studio');
+      syncSimAttributes(mode === 'sim');
 
-      editorEl.value = PRESET_SCRIPTS[mode];
+      editorEl.value = mode === 'sim' ? SIM_SCRIPTS[simPreset] : PRESET_SCRIPTS[mode];
       setToast('Switched to ' + titles[mode]);
       xrRoomEnabled = (mode === 'workbench');
       const btn = document.getElementById('btn-room-toggle');
@@ -1602,6 +1768,10 @@ return scene;`
 
       if (mode === 'perception') {
         setTimeout(() => runCaptureFrame(), 250);
+      }
+      if (mode === 'sim') {
+        // The sim reads keyboard input from the focused viewer.
+        xrEl.focus?.({ preventScroll: true });
       }
     }
 
@@ -1946,6 +2116,8 @@ return scene;`
 
     // Clicking directly on a 3D mesh executes the active hand gesture action on it
     xrEl.addEventListener('meshClick', (e) => {
+      // In mode 5, taps belong to the simulation (hit-zones and objectives).
+      if (currentMode === 'sim') return;
       executeGestureOnHit(e.detail);
     });
 
@@ -2312,6 +2484,10 @@ return scene;`
       keysHeld.add(e.code);
       if (e.code === 'Escape' && immersiveSimActive) {
         exitImmersiveSimulator();
+      } else if (currentMode === 'sim' && e.target === xrEl) {
+        // The focused viewer's sim input owns movement, jump, and fire keys.
+      } else if (e.key === '5') {
+        switchMode('sim');
       } else if (e.code === 'Space') {
         e.preventDefault();
         launchBall();
@@ -2326,6 +2502,95 @@ return scene;`
       } else if (e.key === '4') {
         switchMode('studio');
       }
+    });
+
+    const SIM_ATTRIBUTES = {
+      game: {
+        'character-controller': 'third-person',
+        'hit-zones': 'projectile',
+        'objectives': '',
+        'target-score': '50',
+        'scenario-timer': '90',
+        'attempts': '3',
+        'sim-hud': 'auto'
+      },
+      drill: {
+        'objectives': '',
+        'scenario-timer': '45',
+        'sim-hud': 'auto'
+      }
+    };
+    const SIM_ATTRIBUTE_NAMES = [
+      'character-controller', 'hit-zones', 'objectives', 'target-score',
+      'scenario-timer', 'attempts', 'sim-hud', 'synth-audio', 'synth-volume'
+    ];
+
+    function syncSimAttributes(enable) {
+      SIM_ATTRIBUTE_NAMES.forEach((a) => xrEl.removeAttribute(a));
+      if (!enable) return;
+      for (const [name, value] of Object.entries(SIM_ATTRIBUTES[simPreset])) {
+        xrEl.setAttribute(name, value);
+      }
+      if (simAudioOn) {
+        xrEl.setAttribute('synth-audio', '');
+        xrEl.setAttribute('synth-volume', '0.6');
+      }
+    }
+
+    async function switchSimPreset(preset) {
+      simPreset = preset;
+      document.getElementById('btn-sim-game').classList.toggle('primary', preset === 'game');
+      document.getElementById('btn-sim-drill').classList.toggle('primary', preset === 'drill');
+      document.getElementById('sim-log').textContent = '';
+      await switchMode('sim');
+    }
+
+    function resetSimScenario() {
+      window.XRSim?.resetSimScenario(xrEl);
+      document.getElementById('sim-log').textContent = '';
+      setToast('Scenario restarted');
+      xrEl.focus?.({ preventScroll: true });
+    }
+
+    function toggleSimAudio() {
+      simAudioOn = !simAudioOn;
+      const btn = document.getElementById('btn-sim-audio');
+      btn.textContent = 'Synth audio: ' + (simAudioOn ? 'ON' : 'OFF');
+      btn.classList.toggle('primary', simAudioOn);
+      if (currentMode === 'sim') syncSimAttributes(true);
+    }
+
+    function logSimEvent(text) {
+      const log = document.getElementById('sim-log');
+      if (!log) return;
+      const row = document.createElement('div');
+      row.textContent = text;
+      log.prepend(row);
+      while (log.childElementCount > 8) log.lastElementChild.remove();
+    }
+
+    xrEl.addEventListener('xrobjective', (e) => {
+      const d = e.detail || {};
+      logSimEvent((d.outOfOrder ? 'Out of order: ' : 'Completed: ') + d.nodeId);
+    });
+    xrEl.addEventListener('xrhit', (e) => {
+      const d = e.detail || {};
+      logSimEvent('Hit ' + d.targetId + ' (' + Math.round(d.remaining) + ' left)');
+    });
+    xrEl.addEventListener('xrdepleted', (e) => logSimEvent('Depleted: ' + (e.detail || {}).targetId));
+    xrEl.addEventListener('xrzoneenter', (e) => {
+      const d = e.detail || {};
+      logSimEvent(d.nodeId + ' entered ' + d.zoneId);
+    });
+    xrEl.addEventListener('xrzoneexit', (e) => {
+      const d = e.detail || {};
+      logSimEvent(d.nodeId + ' left ' + d.zoneId);
+    });
+    xrEl.addEventListener('xrscenarioend', (e) => {
+      const d = e.detail || {};
+      const label = { pass: 'Passed', fail: 'Failed', timeout: 'Time is up' }[d.outcome] || d.outcome;
+      logSimEvent(label + ' with ' + d.finalScore + ' points');
+      setToast('Scenario ' + d.outcome + ': ' + d.finalScore + ' points in ' + d.elapsedSec + ' s');
     });
 
     let studioMeasureOn = true;

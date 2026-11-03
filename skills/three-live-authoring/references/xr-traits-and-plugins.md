@@ -4,38 +4,38 @@
 
 `<xr-live>` inherits every `<three-live>` attribute (`src`, `ios-src`, `poster`, `scale`, `camera-orbit`, `camera-target`, `min-camera-orbit`, `max-camera-orbit`, `field-of-view`, `selected-mesh`, `camera-controls`, `ar`, `ar-modes`, `ar-scale`, `ar-placement`, `script-src`, `sandbox`, `allow-client-scripts`, `exposure`, `environment-image`, `skybox-image`, `shadow-intensity`, `shadow-softness`, `tone-mapping`, `autoplay`, `animation-name`, `auto-rotate`) and adds:
 
-| Attribute | Values | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `xr-mode` | `'ar' \| 'vr' \| 'inline' \| 'auto'` | `'auto'` | Target WebXR session mode. |
-| `xr-depth` | `'occlusion' \| 'occlusion-physics' \| 'mesh' \| 'none'` | `'none'` | Hardware depth occlusion and analytical heightfield physics collision. |
-| `xr-hands` | `'gestures' \| 'joints' \| 'pinch' \| 'none'` | `'none'` | 25-joint `XRHand` tracking and gesture classification (`pinch`, `grab`, `point`, `palm-up`). |
-| `xr-simulator` | `'living-room' \| 'office' \| 'tabletop' \| 'none'` | `'none'` | Enables the desktop 6DoF keyboard/mouse simulator with room floor/table planes. |
-| `xr-profile` | `'quest3' \| 'android-xr' \| 'visionos' \| 'auto'` | `'auto'` | Target hardware profile hint. |
-| `sound-feedback` | boolean attribute | `false` | Plays procedural Web Audio earcons (`grab`, `release`, `bounce`, `hover`) on interaction. |
-| `world-understanding` | `'' \| 'planes' \| 'planes reticle' \| 'false'` | — | Activates `xr-live-world-understanding` plane/mesh tracking and optional gaze reticle. |
-| `spatial-paint` | `'' \| '#rrggbb' \| 'false'` | — | Activates `xr-live-spatial-paint`; pinching in empty space extrudes Catmull-Rom 3D tube strokes. |
-| `spatial-measure` | `'' \| 'bounds' \| 'tape' \| 'all' \| 'none'` | — | Activates `xr-live-spatial-measure` 3D dimension callouts and/or interactive AR tape measure. |
-| `measure-unit` | `'auto' \| 'm' \| 'cm' \| 'mm' \| 'in' \| 'ft-in'` | `'auto'` | Default display unit for `spatial-measure`. |
-| `magnetic-snap` | `'' \| 'grid' \| 'surface' \| 'sockets' \| 'all' \| 'none'` | — | Activates `xr-live-magnetic-snap` socket, grid, surface, and yaw snapping. |
-| `snap-grid` | `number` or `'gx gy gz'` (meters) | — | Default Cartesian snap grid spacing in meters. |
-| `snap-angle` | `number` (`0..180` degrees) | `0` | Default rotational yaw snap increment in degrees. |
-| `gaze-dwell` | `'' \| 'auto' \| 'false' \| 'none'` | — | Activates `xr-live-gaze-dwell` hands-free eye/head gaze reticle and radial dwell selection. |
-| `dwell-time` | `number` (`250..10000` ms) | `1200` | Default dwell duration in milliseconds for `gaze-dwell`. |
-| `explode` | `number` (`0..1`) | `0` | Normalized multi-part assembly explosion factor (`xr-live-exploded-view`). |
-| `explode-mode` | `'radial' \| 'axial-x' \| 'axial-y' \| 'axial-z' \| 'hierarchical'` | `'radial'` | Automatic explosion vector strategy when parts omit `userData.xr.explode.direction`. |
-| `explode-scale` | `number` | `1.0` | Multiplier applied to per-part explosion distances. |
-| `section-plane` | `'none' \| 'x:<d>' \| 'y:<d>' \| 'z:<d>' \| '-x:<d>' \| '-y:<d>' \| '-z:<d>' \| 'interactive'` | `'none'` | Real-time GPU cross-section clipping plane in scene (model) space (`d` in meters; the cut follows the model through AR placement and turntable rotation) with optional draggable gizmo frame. |
-| `persistent-anchors` | `''` or `string` (namespace) | — | Activates `xr-live-persistent-anchors` cross-session transform persistence (`xr-live:anchors:<ns>`). |
-| `persist-url-hash` | boolean attribute | `false` | Encodes persisted node poses into `#xr-state=<base64url>` (`<= 8192` bytes) for link sharing. |
-| `locomotion` | `'' \| 'teleport' \| 'snap-turn' \| 'smooth' \| 'teleport snap-turn' \| 'none'` | — | Activates `xr-live-spatial-locomotion` parabolic teleportation, snap-turns, or smooth glide. |
-| `snap-turn-deg` | `number` (degrees) | `30` | Horizontal thumbstick snap-turn increment in degrees. |
-| `comfort-vignette` | boolean attribute | `true` | Shows a `120ms` peripheral FOV comfort vignette during teleports and snap-turns. |
-| `shared-room` | `'<room-id>'` or `'wss://...'` | — | Joins a multi-user room via `BroadcastChannel("xr-live:room:<id>")` or a `wss://` relay (`xr-live-shared-room`). |
-| `peer-name` | `string` (max `32` chars) | — | Local peer display name broadcast in `shared-room`. |
-| `peer-color` | `'#rrggbb'` | `'#38bdf8'` | Local peer 3D visor & laser ray tint color in `shared-room`. |
-| `webmcp` | boolean attribute | `false` | Registers `inspect_xr_scene`, `place_xr_object_at_gaze`, and `capture_xr_view` on `navigator.modelContext`. |
-| `webmcp-allow-depth` | boolean attribute | `false` | Opt-in gate allowing `capture_xr_view` to include the 8×8 metric `depthGridMeters` array. |
-| `webmcp-omit-pose` | boolean attribute | `false` | When present, `inspect_xr_scene` omits `headPosition` entirely. |
+Attribute             | Values                                                                                         | Default     | Description
+:-------------------- | :--------------------------------------------------------------------------------------------- | :---------- | :----------
+`xr-mode`             | `'ar' \| 'vr' \| 'inline' \| 'auto'`                                                           | `'auto'`    | Target WebXR session mode.
+`xr-depth`            | `'occlusion' \| 'occlusion-physics' \| 'mesh' \| 'none'`                                       | `'none'`    | Hardware depth occlusion and analytical heightfield physics collision.
+`xr-hands`            | `'gestures' \| 'joints' \| 'pinch' \| 'none'`                                                  | `'none'`    | 25-joint `XRHand` tracking and gesture classification (`pinch`, `grab`, `point`, `palm-up`).
+`xr-simulator`        | `'living-room' \| 'office' \| 'tabletop' \| 'none'`                                            | `'none'`    | Enables the desktop 6DoF keyboard/mouse simulator with room floor/table planes.
+`xr-profile`          | `'quest3' \| 'android-xr' \| 'visionos' \| 'auto'`                                             | `'auto'`    | Target hardware profile hint.
+`sound-feedback`      | boolean attribute                                                                              | `false`     | Plays procedural Web Audio earcons (`grab`, `release`, `bounce`, `hover`) on interaction.
+`world-understanding` | `'' \| 'planes' \| 'planes reticle' \| 'false'`                                                | —           | Activates `xr-live-world-understanding` plane/mesh tracking and optional gaze reticle.
+`spatial-paint`       | `'' \| '#rrggbb' \| 'false'`                                                                   | —           | Activates `xr-live-spatial-paint`; pinching in empty space extrudes Catmull-Rom 3D tube strokes.
+`spatial-measure`     | `'' \| 'bounds' \| 'tape' \| 'all' \| 'none'`                                                  | —           | Activates `xr-live-spatial-measure` 3D dimension callouts and/or interactive AR tape measure.
+`measure-unit`        | `'auto' \| 'm' \| 'cm' \| 'mm' \| 'in' \| 'ft-in'`                                             | `'auto'`    | Default display unit for `spatial-measure`.
+`magnetic-snap`       | `'' \| 'grid' \| 'surface' \| 'sockets' \| 'all' \| 'none'`                                    | —           | Activates `xr-live-magnetic-snap` socket, grid, surface, and yaw snapping.
+`snap-grid`           | `number` or `'gx gy gz'` (meters)                                                              | —           | Default Cartesian snap grid spacing in meters.
+`snap-angle`          | `number` (`0..180` degrees)                                                                    | `0`         | Default rotational yaw snap increment in degrees.
+`gaze-dwell`          | `'' \| 'auto' \| 'false' \| 'none'`                                                            | —           | Activates `xr-live-gaze-dwell` hands-free eye/head gaze reticle and radial dwell selection.
+`dwell-time`          | `number` (`250..10000` ms)                                                                     | `1200`      | Default dwell duration in milliseconds for `gaze-dwell`.
+`explode`             | `number` (`0..1`)                                                                              | `0`         | Normalized multi-part assembly explosion factor (`xr-live-exploded-view`).
+`explode-mode`        | `'radial' \| 'axial-x' \| 'axial-y' \| 'axial-z' \| 'hierarchical'`                            | `'radial'`  | Automatic explosion vector strategy when parts omit `userData.xr.explode.direction`.
+`explode-scale`       | `number`                                                                                       | `1.0`       | Multiplier applied to per-part explosion distances.
+`section-plane`       | `'none' \| 'x:<d>' \| 'y:<d>' \| 'z:<d>' \| '-x:<d>' \| '-y:<d>' \| '-z:<d>' \| 'interactive'` | `'none'`    | Real-time GPU cross-section clipping plane in scene (model) space (`d` in meters; the cut follows the model through AR placement and turntable rotation) with optional draggable gizmo frame.
+`persistent-anchors`  | `''` or `string` (namespace)                                                                   | —           | Activates `xr-live-persistent-anchors` cross-session transform persistence (`xr-live:anchors:<ns>`).
+`persist-url-hash`    | boolean attribute                                                                              | `false`     | Encodes persisted node poses into `#xr-state=<base64url>` (`<= 8192` bytes) for link sharing.
+`locomotion`          | `'' \| 'teleport' \| 'snap-turn' \| 'smooth' \| 'teleport snap-turn' \| 'none'`                | —           | Activates `xr-live-spatial-locomotion` parabolic teleportation, snap-turns, or smooth glide.
+`snap-turn-deg`       | `number` (degrees)                                                                             | `30`        | Horizontal thumbstick snap-turn increment in degrees.
+`comfort-vignette`    | boolean attribute                                                                              | `true`      | Shows a `120ms` peripheral FOV comfort vignette during teleports and snap-turns.
+`shared-room`         | `'<room-id>'` or `'wss://...'`                                                                 | —           | Joins a multi-user room via `BroadcastChannel("xr-live:room:<id>")` or a `wss://` relay (`xr-live-shared-room`).
+`peer-name`           | `string` (max `32` chars)                                                                      | —           | Local peer display name broadcast in `shared-room`.
+`peer-color`          | `'#rrggbb'`                                                                                    | `'#38bdf8'` | Local peer 3D visor & laser ray tint color in `shared-room`.
+`webmcp`              | boolean attribute                                                                              | `false`     | Registers `inspect_xr_scene`, `place_xr_object_at_gaze`, and `capture_xr_view` on `navigator.modelContext`.
+`webmcp-allow-depth`  | boolean attribute                                                                              | `false`     | Opt-in gate allowing `capture_xr_view` to include the 8×8 metric `depthGridMeters` array.
+`webmcp-omit-pose`    | boolean attribute                                                                              | `false`     | When present, `inspect_xr_scene` omits `headPosition` entirely.
 
 ---
 
@@ -44,6 +44,7 @@
 Defined in `three-live/src/xr-trait-schema.ts`:
 
 ### `follow` (`LazyFollowOptions`)
+
 ```ts
 mesh.userData.xr = {
   follow: {
@@ -60,6 +61,7 @@ mesh.userData.xr = {
 ```
 
 ### `orbit` (`OrbitOptions`)
+
 ```ts
 mesh.userData.xr = {
   orbit: {
@@ -74,6 +76,7 @@ mesh.userData.xr = {
 ```
 
 ### `handles` (`HandlesOptions`)
+
 ```ts
 mesh.userData.xr = {
   handles: {
@@ -85,6 +88,7 @@ mesh.userData.xr = {
 ```
 
 ### `particles` (`ParticleOptions`)
+
 ```ts
 mesh.userData.xr = {
   particles: {
@@ -97,6 +101,7 @@ mesh.userData.xr = {
 ```
 
 ### `holdToAsk` (`HoldToAskOptions`)
+
 ```ts
 mesh.userData.xr = {
   holdToAsk: {
@@ -107,6 +112,7 @@ mesh.userData.xr = {
 ```
 
 ### `dimensions` (`DimensionsOptions`)
+
 ```ts
 mesh.userData.xr = {
   dimensions: {
@@ -120,6 +126,7 @@ mesh.userData.xr = {
 ```
 
 ### `snapTo` & `snapSocket` (`SnapToOptions` / `SnapSocketOptions`)
+
 ```ts
 // On the movable / grabbable part:
 part.userData.xr = {
@@ -145,6 +152,7 @@ dock.userData.xr = {
 ```
 
 ### `gaze` (`GazeOptions`)
+
 ```ts
 mesh.userData.xr = {
   gaze: {
@@ -157,6 +165,7 @@ mesh.userData.xr = {
 ```
 
 ### `explode` (`ExplodeOptions`)
+
 ```ts
 mesh.userData.xr = {
   explode: {
@@ -170,6 +179,7 @@ mesh.userData.xr = {
 ```
 
 ### `anchor` Persistence (`AnchorPersistOptions`), `navigable`, & `sync`
+
 ```ts
 mesh.userData.xr = {
   anchor: {
@@ -209,6 +219,7 @@ Any mesh or group inside `<script type="text/three">` can declare interactive st
 When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-live-full.min.js`):
 
 - **Gemini Live (`gemini-live.ts`):**
+
   ```ts
   import { connectGeminiLive } from 'xr-live/plugins';
 
@@ -224,6 +235,7 @@ When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-l
   });
   ```
 - **Spatial Paint (`spatial-paint.ts`):**
+
   ```ts
   import { getSpatialPaintController } from 'xr-live/plugins';
 
@@ -234,61 +246,108 @@ When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-l
   paint.clear(xrElement.viewer);
   ```
 - **World Understanding (`world-understanding.ts`):**
+
   ```ts
   import { detectObjects, parseDetections, XRTapeMeasure } from 'xr-live/plugins';
 
   const detections = parseDetections('[{"label":"chair","box":[200,300,800,700]}]');
   const located3D = detectObjects(xrElement, detections);
   ```
-- **Spatial Measure, Exploded View, Persistent Anchors, Locomotion & Shared Room:**
-  ```ts
-  import {
-    getSpatialMeasureController,
-    getMagneticSnapController,
-    getGazeDwellController,
-    getExplodedViewController,
-    getPersistentAnchorsController,
-    getSpatialLocomotionController,
-    getSharedRoomController,
-  } from 'xr-live/plugins';
+-   **Spatial Measure, Exploded View, Persistent Anchors, Locomotion & Shared
+    Room:**
 
-  xrElement.setExplode(0.65);                     // Smoothly animate exploded-view [0..1]
-  xrElement.clearMeasurements();                  // Clear locked 3D tape-measure segments
-  const token = xrElement.exportAnchorState();    // Base64url layout snapshot (<= 8 KB)
-  xrElement.importAnchorState(token);             // Restore layout snapshot programmatically
-  xrElement.teleportTo([0, 0, -1.5]);             // Teleport viewer rig + emit xrteleport
-  const peers = xrElement.getSharedPeers();       // Active RemotePeerState[] in shared-room
-  ```
+    ```ts
+    import {
+      getSpatialMeasureController,
+      getMagneticSnapController,
+      getGazeDwellController,
+      getExplodedViewController,
+      getPersistentAnchorsController,
+      getSpatialLocomotionController,
+      getSharedRoomController,
+    } from 'xr-live/plugins';
+
+    xrElement.setExplode(0.65);                     // Smoothly animate exploded-view [0..1]
+    xrElement.clearMeasurements();                  // Clear locked 3D tape-measure segments
+    const token = xrElement.exportAnchorState();    // Base64url layout snapshot (<= 8 KB)
+    xrElement.importAnchorState(token);             // Restore layout snapshot programmatically
+    xrElement.teleportTo([0, 0, -1.5]);             // Teleport viewer rig + emit xrteleport
+    const peers = xrElement.getSharedPeers();       // Active RemotePeerState[] in shared-room
+    ```
 
 ---
 
 ## 5. DOM Events Summary
 
-| Event Name | Dispatched By | `event.detail` Payload |
-| :--- | :--- | :--- |
-| `load` | `<three-live>` / `<xr-live>` | `{ model: GLBData }` |
-| `error` | `<three-live>` / `<xr-live>` | `{ error: Error }` |
-| `meshclick` | `<three-live>` / `<xr-live>` | `{ meshName, hitPoint, normal, distance }` |
-| `camera-change` | `<three-live>` / `<xr-live>` | `{ theta, phi, distance }` |
-| `ar-status` | `<three-live>` / `<xr-live>` | `{ status: 'session-started' \| 'not-presenting' \| 'failed', error? }` |
-| `interactivityEvent` | `KHR_interactivity` VM | `{ id: string, values: Record<string, any> }` |
-| `xr-select-start` / `move` / `end` | `XRInputManager` | `{ hand: 'left' \| 'right' \| 'screen', pivotPosition, quaternion, rayOrigin, rayDirection, hit }` |
-| `xr-handles-change` | `manipulation-handles` | `{ mesh, scale: number, yawDeg: number }` |
-| `xr-object-detected` | `world-understanding` | `{ label: string, position: [number, number, number], distanceMeters: number, source: 'plane' \| 'depth' \| 'fallback' }` |
-| `xr-transcription` | `gemini-live` | `{ speaker: 'user' \| 'model', text: string, isFinal: boolean }` |
-| `xr-hold-to-ask-listening` | `gemini-live` | `{ mesh: string }` |
-| `xr-hold-to-ask` | `gemini-live` | `{ mesh: string, transcript: string, prompt: string }` |
-| `xr-gemini-interrupted` | `gemini-live` | `{}` |
-| `xr-paint-stroke` | `spatial-paint` | `{ index: number, points: number, lengthMeters: number }` |
-| `measurecomplete` | `spatial-measure` | `{ start: [x,y,z], end: [x,y,z], distanceMeters: number, formatted: string }` |
-| `xrsnap` | `magnetic-snap` | `{ node, socket, position: [x,y,z], quaternion: [x,y,z,w], mode: 'socket' \| 'grid' \| 'surface' \| 'angle' }` |
-| `xrunsnap` | `magnetic-snap` | `{ node, socket }` |
-| `gazeenter` / `gazeleave` | `gaze-dwell` | `{ node, point: [x,y,z] }` / `{ node }` |
-| `gazedwell` | `gaze-dwell` | `{ node, point: [x,y,z], action: 'select' \| 'ask' }` |
-| `explodechange` | `exploded-view` | `{ factor: number, source: 'attribute' \| 'gesture' \| 'api' \| 'peer' }` |
-| `anchorsrestored` | `persistent-anchors` | `{ count: number, source: 'xr-anchor' \| 'storage' \| 'url-hash' }` |
-| `xrteleport` | `spatial-locomotion` | `{ from: [x,y,z], to: [x,y,z], yawDeg: number }` |
-| `peerjoin` / `peerleave` | `shared-room` | `{ peerId: string, name: string, color: string }` |
-| `peergrabconflict` | `shared-room` | `{ peerId: string, nodeId: string }` |
-| `peersync` | `shared-room` | `{ peerId: string, nodeId: string }` |
-| `xr-webmcp-capture` | `xr-extras` (WebMCP) | Fired when `capture_xr_view` captures a frame (`data-xr-webmcp-indicator="active"`). |
+Event Name                         | Dispatched By                | `event.detail` Payload
+:--------------------------------- | :--------------------------- | :---------------------
+`load`                             | `<three-live>` / `<xr-live>` | `{ model: GLBData }`
+`error`                            | `<three-live>` / `<xr-live>` | `{ error: Error }`
+`meshclick`                        | `<three-live>` / `<xr-live>` | `{ meshName, hitPoint, normal, distance }`
+`camera-change`                    | `<three-live>` / `<xr-live>` | `{ theta, phi, distance }`
+`ar-status`                        | `<three-live>` / `<xr-live>` | `{ status: 'session-started' \| 'not-presenting' \| 'failed', error? }`
+`interactivityEvent`               | `KHR_interactivity` VM       | `{ id: string, values: Record<string, any> }`
+`xr-select-start` / `move` / `end` | `XRInputManager`             | `{ hand: 'left' \| 'right' \| 'screen', pivotPosition, quaternion, rayOrigin, rayDirection, hit }`
+`xr-handles-change`                | `manipulation-handles`       | `{ mesh, scale: number, yawDeg: number }`
+`xr-object-detected`               | `world-understanding`        | `{ label: string, position: [number, number, number], distanceMeters: number, source: 'plane' \| 'depth' \| 'fallback' }`
+`xr-transcription`                 | `gemini-live`                | `{ speaker: 'user' \| 'model', text: string, isFinal: boolean }`
+`xr-hold-to-ask-listening`         | `gemini-live`                | `{ mesh: string }`
+`xr-hold-to-ask`                   | `gemini-live`                | `{ mesh: string, transcript: string, prompt: string }`
+`xr-gemini-interrupted`            | `gemini-live`                | `{}`
+`xr-paint-stroke`                  | `spatial-paint`              | `{ index: number, points: number, lengthMeters: number }`
+`measurecomplete`                  | `spatial-measure`            | `{ start: [x,y,z], end: [x,y,z], distanceMeters: number, formatted: string }`
+`xrsnap`                           | `magnetic-snap`              | `{ node, socket, position: [x,y,z], quaternion: [x,y,z,w], mode: 'socket' \| 'grid' \| 'surface' \| 'angle' }`
+`xrunsnap`                         | `magnetic-snap`              | `{ node, socket }`
+`gazeenter` / `gazeleave`          | `gaze-dwell`                 | `{ node, point: [x,y,z] }` / `{ node }`
+`gazedwell`                        | `gaze-dwell`                 | `{ node, point: [x,y,z], action: 'select' \| 'ask' }`
+`explodechange`                    | `exploded-view`              | `{ factor: number, source: 'attribute' \| 'gesture' \| 'api' \| 'peer' }`
+`anchorsrestored`                  | `persistent-anchors`         | `{ count: number, source: 'xr-anchor' \| 'storage' \| 'url-hash' }`
+`xrteleport`                       | `spatial-locomotion`         | `{ from: [x,y,z], to: [x,y,z], yawDeg: number }`
+`peerjoin` / `peerleave`           | `shared-room`                | `{ peerId: string, name: string, color: string }`
+`peergrabconflict`                 | `shared-room`                | `{ peerId: string, nodeId: string }`
+`peersync`                         | `shared-room`                | `{ peerId: string, nodeId: string }`
+`characterjump` / `characterland`  | `xr-live-sim`                | `{ nodeId, position }` / `{ nodeId, fallSpeed }`
+`agentstatechange` / `agentreach`  | `xr-live-sim`                | `{ nodeId, state, targetId }` / `{ agentId, targetId, position }`
+`xrhit` / `xrdepleted`             | `xr-live-sim`                | `{ targetId, sourceId, amount, remaining, point }` / `{ targetId, group, scoreValue }`
+`xrzoneenter` / `xrzoneexit`       | `xr-live-sim`                | `{ zoneId, nodeId, group }`
+`xrspawn`                          | `xr-live-sim`                | `{ spawnerId, instanceId, index }`
+`xrobjective`                      | `xr-live-sim`                | `{ nodeId, tag, type, amount, totalScore, remainingRequired, outOfOrder }`
+`xrscorechange`                    | `xr-live-sim`                | `{ score, delta, attemptsLeft, timeRemaining }`
+`xrscenarioend`                    | `xr-live-sim`                | `{ outcome: 'pass' \| 'fail' \| 'timeout', finalScore, elapsedSec }`
+`xr-webmcp-capture`                | `xr-extras` (WebMCP)         | Fired when `capture_xr_view` captures a frame (`data-xr-webmcp-indicator="active"`).
+
+--------------------------------------------------------------------------------
+
+## 6. Simulation Plugins (`xr-live-sim`)
+
+Load `xr-live-sim.min.js` (global `XRSim`, included in `xr-live-full.min.js`) or
+import `xr-live/sim`. Systems step at a fixed 60 Hz (at most 5 steps per frame);
+at most 128 spawned instances exist per scene.
+
+Trait clamping (defaults in parentheses):
+
+-   **`character`:** `speed` 0.1–20 (4), `runMultiplier` 1–4 (1.6),
+    `jumpVelocity` 0–30 (5.5), `gravity` 0–50 (15), `radius` 0.05–5 (0.35),
+    `height` ≥ 2 × radius (1.4), `cameraMode` (`third-person`), `cameraDistance`
+    0.5–50 (3.5), `cameraHeight` −10–50 (1.8).
+-   **`agent`:** `mode` (`wander`), `speed` 0.1–20 (2), `turnSpeed` 0.1–50 (6),
+    `sightRadius` 0–100 (6), `stopDistance` 0.01–10 (0.6), `separationRadius`
+    0–10 (0.8), up to 32 `waypoints`. `chase`, `flee`, and `follow` default
+    `target` to `'user'`.
+-   **`integrity`:** `max` 1–1e6 (100), `group` (`neutral`), `cooldownMs`
+    0–10000 (250), `hideOnDepleted` (true), `scoreValue`, `contactAmount` (0).
+-   **`zone`:** `shape` (`box`), `size` 0.01–1000 (1), `radius` (0.5), up to 16
+    `watchGroups` (empty watches every tracked node).
+-   **`spawner`:** `intervalSec` 0.05–3600 (3), `maxActive` 1–32 (8),
+    `totalCount` (0 = unlimited), `spawnRadius` 0–100 (0).
+-   **`objective`:** `type` (`pickup`), `amount` (10), `radius` 0.05–50 (0.65),
+    `order` 0–1000 (0), `respawnSec` 0–3600 (0). Only pickups spin and bob by
+    default.
+-   **`audioCues`:** event-to-cue map, `pitchJitter` 0–0.5 (0.08), `volume` 0–1
+    (1), `spatial` (true).
+
+Host attributes: `character-controller`, `character-speed`, `character-jump`,
+`touch-joystick`, `steering-agents`, `hit-zones`, `fire-rate`,
+`projectile-speed`, `projectile-gravity`, `hit-amount`, `objectives`,
+`scenario-timer`, `target-score`, `attempts`, `sim-hud`, `synth-audio`, and
+`synth-volume`. `XRSim.resetSimScenario(element)` restarts the scenario.

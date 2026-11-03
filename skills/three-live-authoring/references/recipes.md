@@ -1,6 +1,7 @@
 # Copy-Paste Recipes for `<three-live>` and `<xr-live>`
 
-All 9 recipes below use features available in the repository today and work without external build steps.
+All 9 recipes below use features available in the repository today and work
+without external build steps.
 
 ---
 
@@ -289,6 +290,7 @@ All 9 recipes below use features available in the repository today and work with
 ## Recipe 6: Native Android (Kotlin) & iOS/visionOS (Swift) Integration
 
 ### Android (Google Filament + Jetpack XR SceneCore)
+
 ```kotlin
 import com.google.threelive.ThreeLiveRuntimeSession
 import com.google.threelive.XRLiveSceneCoreHelper
@@ -306,6 +308,7 @@ XRLiveSceneCoreHelper.attachTraitsFromGlb(xrSession, rootEntity, glbByteBuffer)
 ```
 
 ### iOS & visionOS (Apple RealityKit)
+
 ```swift
 import ThreeLiveCompiler
 import RealityKit
@@ -317,7 +320,7 @@ func mountSpatialScene(script: String, in arView: ARView) async throws {
 }
 ```
 
----
+--------------------------------------------------------------------------------
 
 ## Recipe 7: CAD Exploded View, Cross-Section Slicer, 3D Dimensions & Gaze Dwell
 
@@ -365,7 +368,7 @@ func mountSpatialScene(script: String, in arView: ARView) async throws {
 </xr-live>
 ```
 
----
+--------------------------------------------------------------------------------
 
 ## Recipe 8: Magnetic Socket Snapping, `#xr-state` URL Persistence & XR Locomotion
 
@@ -423,7 +426,7 @@ func mountSpatialScene(script: String, in arView: ARView) async throws {
 </xr-live>
 ```
 
----
+--------------------------------------------------------------------------------
 
 ## Recipe 9: Zero-Backend Multi-User Co-Presence & Shared Spatial Paint (`shared-room`)
 
@@ -455,4 +458,79 @@ func mountSpatialScene(script: String, in arView: ARView) async throws {
     scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
   </script>
 </xr-live>
+```
+
+--------------------------------------------------------------------------------
+
+## Recipe 10: Timed Training Drill with a Safety Zone (`xr-live-sim`)
+
+Ordered task steps, a countdown, and an alarm zone around a robot cell. Load
+`xr-live-sim.min.js` (or use `xr-live-full.min.js`). Taps complete steps in
+order; out-of-order taps play an `error` cue.
+
+```html
+<!-- Load after xr-live.min.js; xr-live-full.min.js already includes it. -->
+<script src="/dist/xr-live-sim.min.js"></script>
+
+<xr-live
+  id="drill"
+  allow-client-scripts
+  objectives
+  scenario-timer="60"
+  synth-audio
+  style="width: 100%; height: 520px; display: block;">
+  <script type="text/three">
+    const mat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+
+    // Ordered, required task steps (tap them in sequence)
+    ['Step_1_Valve', 'Step_2_Filter', 'Step_3_Cap'].forEach((name, i) => {
+      const part = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), mat(0x38bdf8));
+      part.name = name;
+      part.position.set(i * 0.4 - 0.4, 1.0, -1.0);
+      part.userData.xr = {
+        objective: { type: 'checkpoint', order: i + 1, required: true, amount: 10 },
+        audioCues: { onObjective: 'confirm' }
+      };
+      scene.add(part);
+    });
+
+    // Robot cell: alarm while the AGV is inside
+    const cell = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 1, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xef4444, transparent: true, opacity: 0.15 })
+    );
+    cell.name = 'Robot_Cell';
+    cell.position.set(1.4, 0.5, -2);
+    cell.userData.xr = {
+      zone: { shape: 'box', size: [1.2, 1, 1.2], color: '#ef4444', watchGroups: ['agent'] },
+      audioCues: { onZoneEnter: 'alarm' }
+    };
+    scene.add(cell);
+
+    // AGV patrolling through the cell
+    const agv = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.6), mat(0xf59e0b));
+    agv.name = 'AGV';
+    agv.position.set(-1.5, 0.1, -2);
+    agv.userData.xr = {
+      agent: { mode: 'patrol', speed: 0.8, waypoints: [[-1.5, 0.1, -2], [2.5, 0.1, -2]] }
+    };
+    scene.add(agv);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</xr-live>
+
+<script>
+  const drill = document.getElementById('drill');
+  drill.addEventListener('xrobjective', (e) => {
+    if (e.detail.outOfOrder) console.warn('Out of order:', e.detail.nodeId);
+  });
+  drill.addEventListener('xrzoneenter', (e) => {
+    console.log(e.detail.nodeId, 'entered', e.detail.zoneId);
+  });
+  drill.addEventListener('xrscenarioend', (e) => {
+    console.log('Outcome:', e.detail.outcome, 'in', e.detail.elapsedSec, 's');
+  });
+</script>
 ```

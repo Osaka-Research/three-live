@@ -28,6 +28,15 @@
  */
 
 import {getSharedRegistry} from './plugin';
+import type {
+  AgentOptions,
+  AudioCueOptions,
+  CharacterOptions,
+  IntegrityOptions,
+  ObjectiveOptions,
+  SpawnerOptions,
+  ZoneOptions,
+} from './xr-sim-schema';
 
 /** Mutable 3-component vector. */
 export type TraitVec3 = [number, number, number];
@@ -54,13 +63,15 @@ export function isFiniteVec3(v: unknown): v is TraitVec3 {
   );
 }
 
-function asRecord(raw: unknown): Record<string, unknown> | null {
+/** Returns `raw` as a plain record, or `null` for arrays and non-objects. */
+export function asRecord(raw: unknown): Record<string, unknown> | null {
   return raw && typeof raw === 'object' && !Array.isArray(raw)
     ? (raw as Record<string, unknown>)
     : null;
 }
 
-function shortString(v: unknown, max = 256): string | undefined {
+/** Returns a non-empty string truncated to `max` chars, else `undefined`. */
+export function shortString(v: unknown, max = 256): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : undefined;
 }
 
@@ -84,7 +95,9 @@ export function parseLazyFollow(raw: unknown): LazyFollowOptions | null {
   const r = asRecord(raw);
   if (!r || r['lazy'] === false) return null;
   const mode =
-    r['mode'] === 'hand-left' || r['mode'] === 'hand-right' ? r['mode'] : 'head';
+    r['mode'] === 'hand-left' || r['mode'] === 'hand-right'
+      ? r['mode']
+      : 'head';
   const isHand = mode !== 'head';
   return {
     mode,
@@ -158,12 +171,13 @@ export type ParticlePreset = 'rain' | 'snow' | 'sparks' | 'confetti';
 /** Hard cap on particles per emitter (bounds CPU and 16-bit index usage). */
 export const MAX_PARTICLES_PER_EMITTER = 2000;
 /** Default particle count per preset. */
-export const PARTICLE_DEFAULT_COUNTS: Readonly<Record<ParticlePreset, number>> = {
-  rain: 600,
-  snow: 400,
-  sparks: 300,
-  confetti: 300,
-};
+export const PARTICLE_DEFAULT_COUNTS: Readonly<Record<ParticlePreset, number>> =
+  {
+    rain: 600,
+    snow: 400,
+    sparks: 300,
+    confetti: 300,
+  };
 
 /** Normalized particle emitter options. */
 export interface ParticleOptions {
@@ -178,7 +192,9 @@ export function parseParticles(raw: unknown): ParticleOptions | null {
   const r = asRecord(raw);
   if (!r) return null;
   const preset: ParticlePreset =
-    r['preset'] === 'snow' || r['preset'] === 'sparks' || r['preset'] === 'confetti'
+    r['preset'] === 'snow' ||
+    r['preset'] === 'sparks' ||
+    r['preset'] === 'confetti'
       ? r['preset']
       : 'rain';
   const a = r['area'];
@@ -191,7 +207,12 @@ export function parseParticles(raw: unknown): ParticleOptions | null {
   return {
     preset,
     count: Math.round(
-      clampNum(r['count'], 1, MAX_PARTICLES_PER_EMITTER, PARTICLE_DEFAULT_COUNTS[preset]),
+      clampNum(
+        r['count'],
+        1,
+        MAX_PARTICLES_PER_EMITTER,
+        PARTICLE_DEFAULT_COUNTS[preset],
+      ),
     ),
     area,
     speed: clampNum(r['speed'], 0.05, 10, 1),
@@ -226,7 +247,9 @@ export interface WorldUnderstandingTrait {
 }
 
 /** Parses a `worldUnderstanding` trait. */
-export function parseWorldUnderstanding(raw: unknown): WorldUnderstandingTrait | null {
+export function parseWorldUnderstanding(
+  raw: unknown,
+): WorldUnderstandingTrait | null {
   if (!raw) return null;
   const r = asRecord(raw) ?? {};
   return {
@@ -253,7 +276,8 @@ export function safeMediaUrl(raw: unknown): string | undefined {
   const url = shortString(raw, 4096)?.trim();
   if (!url || /[\x00-\x20\\%]/.test(url)) return undefined;
   if (/^https:\/\/[^/]/i.test(url)) return url;
-  if (url.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(url)) return undefined;
+  if (url.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(url))
+    return undefined;
   return url.split(/[/?#]/).includes('..') ? undefined : url;
 }
 
@@ -266,7 +290,11 @@ export function parseSpatialAudio(raw: unknown): SpatialAudioTrait | null {
   const r = asRecord(raw);
   const src = safeMediaUrl(r?.['src']);
   if (!r || !src) return null;
-  return {src, refDistance: clampNum(r['refDistance'], 0.01, 1000, 1), loop: r['loop'] === true};
+  return {
+    src,
+    refDistance: clampNum(r['refDistance'], 0.01, 1000, 1),
+    loop: r['loop'] === true,
+  };
 }
 
 /** Sanitizes `#rgb` / `#rrggbb` hex strings, returning `fallback` when invalid. */
@@ -291,7 +319,14 @@ export interface DimensionsOptions {
   readonly showOnSelect: boolean;
 }
 
-const DIM_UNITS = new Set<DimensionUnit>(['m', 'cm', 'mm', 'in', 'ft-in', 'auto']);
+const DIM_UNITS = new Set<DimensionUnit>([
+  'm',
+  'cm',
+  'mm',
+  'in',
+  'ft-in',
+  'auto',
+]);
 const ALL_AXES: readonly DimensionAxis[] = ['x', 'y', 'z'];
 
 /** Parses a `dimensions` trait (`true` or options), returning `null` when disabled. */
@@ -301,7 +336,9 @@ export function parseDimensions(raw: unknown): DimensionsOptions | null {
   if (r && r['enabled'] === false) return null;
   const u = r?.['unit'];
   const unit: DimensionUnit =
-    typeof u === 'string' && DIM_UNITS.has(u as DimensionUnit) ? (u as DimensionUnit) : 'auto';
+    typeof u === 'string' && DIM_UNITS.has(u as DimensionUnit)
+      ? (u as DimensionUnit)
+      : 'auto';
   const rawAxes = r?.['axes'];
   const axisSet = new Set<string>(
     Array.isArray(rawAxes)
@@ -332,7 +369,13 @@ export interface SnapToOptions {
   readonly radius: number;
 }
 
-const SNAP_SURFACES = new Set<SnapSurfaceMode>(['none', 'floor', 'wall', 'ceiling', 'any']);
+const SNAP_SURFACES = new Set<SnapSurfaceMode>([
+  'none',
+  'floor',
+  'wall',
+  'ceiling',
+  'any',
+]);
 
 /** Parses a `snapTo` trait (`true` or options), returning `null` when absent/disabled. */
 export function parseSnapTo(raw: unknown): SnapToOptions | null {
@@ -370,7 +413,9 @@ export interface SnapSocketOptions {
 export function parseSnapSocket(raw: unknown): SnapSocketOptions | null {
   if (typeof raw === 'string') {
     const tag = shortString(raw, 128);
-    return tag ? {tag, radius: 0.15, alignRotation: true, highlightColor: '#22c55e'} : null;
+    return tag
+      ? {tag, radius: 0.15, alignRotation: true, highlightColor: '#22c55e'}
+      : null;
   }
   const r = asRecord(raw);
   const tag = shortString(r?.['tag'], 128);
@@ -439,7 +484,12 @@ export function parseExplode(raw: unknown): ExplodeOptions | null {
   };
 }
 
-const FORBIDDEN_ANCHOR_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+/** Identifiers rejected everywhere they could become object keys. */
+export const FORBIDDEN_ANCHOR_IDS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+]);
 
 /** Sanitizes an `anchor.id` or persistence key, rejecting prototype-pollution keys and control chars. */
 export function safeAnchorId(raw: unknown): string | undefined {
@@ -511,10 +561,52 @@ export interface NormalizedXRTraits {
   navigable?: NavigableMode;
   sync?: boolean;
   pointerEvents?: 'none';
+  character?: CharacterOptions;
+  agent?: AgentOptions;
+  integrity?: IntegrityOptions;
+  zone?: ZoneOptions;
+  spawner?: SpawnerOptions;
+  objective?: ObjectiveOptions;
+  audioCues?: AudioCueOptions;
+  /** Static obstacle for `character-controller` and `steering-agents`. */
+  collidable?: true;
 }
 
-const ANCHORS = new Set(['horizontal', 'vertical', 'floor', 'wall', 'ceiling', 'table']);
+const ANCHORS = new Set([
+  'horizontal',
+  'vertical',
+  'floor',
+  'wall',
+  'ceiling',
+  'table',
+]);
 const BILLBOARDS = new Set(['capsule', 'cylindrical', 'spherical']);
+
+/**
+ * Optional trait family (such as `xr-sim-schema.ts`) that extends
+ * normalization and serialization without growing bundles that don't use it.
+ */
+export interface XRTraitExtension {
+  /** Parses this family's keys from the authored bag into `out`. */
+  normalize(raw: Record<string, unknown>, out: NormalizedXRTraits): void;
+  /** Adds this family's `ANDROID_xr_scenecore` components to `comp`. */
+  sceneCore(n: NormalizedXRTraits, comp: Record<string, unknown>): void;
+  /** Adds this family's flat USD `customData` entries to `out`. */
+  usd(
+    n: NormalizedXRTraits,
+    put: (prefix: string, obj: object) => void,
+    out: Record<string, UsdCustomValue>,
+  ): void;
+}
+
+// Module-scoped (not on the shared global registry) so untrusted scene scripts
+// in the compiler engine cannot inject extensions.
+const XR_TRAIT_EXTENSIONS: XRTraitExtension[] = [];
+
+/** Registers an optional trait family. Idempotent per extension object. */
+export function registerXRTraitExtension(ext: XRTraitExtension): void {
+  if (!XR_TRAIT_EXTENSIONS.includes(ext)) XR_TRAIT_EXTENSIONS.push(ext);
+}
 
 /**
  * Normalizes an authored `userData.xr` bag into {@link NormalizedXRTraits}.
@@ -524,13 +616,16 @@ const BILLBOARDS = new Set(['capsule', 'cylindrical', 'spherical']);
 export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   const r = asRecord(raw);
   if (!r) return null;
-  const traitList = Array.isArray(r['traits']) ? (r['traits'] as unknown[]) : [];
+  const traitList = Array.isArray(r['traits'])
+    ? (r['traits'] as unknown[])
+    : [];
   const has = (name: string): boolean => traitList.includes(name);
   const out: NormalizedXRTraits = {};
 
   const grab = r['grab'];
   if (grab === '1-hand' || grab === '2-hand') out.grab = grab;
-  else if (grab === true || r['grabbable'] === true || has('grab')) out.grab = '2-hand';
+  else if (grab === true || r['grabbable'] === true || has('grab'))
+    out.grab = '2-hand';
   if (out.grab) out.grabbable = true;
 
   // `scale: false` deliberately wins over a legacy `scalable: true`.
@@ -551,11 +646,16 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   }
 
   const follow = r['follow'];
-  const followMode = typeof follow === 'string' ? follow : asRecord(follow)?.['mode'];
-  if (typeof follow === 'string' ? follow : asRecord(follow)?.['lazy'] === false) {
+  const followMode =
+    typeof follow === 'string' ? follow : asRecord(follow)?.['mode'];
+  if (
+    typeof follow === 'string' ? follow : asRecord(follow)?.['lazy'] === false
+  ) {
     // Strings and `{lazy: false}` objects are eager spring follows.
     out.follow =
-      followMode === 'hand-left' || followMode === 'hand-right' ? followMode : 'head';
+      followMode === 'hand-left' || followMode === 'hand-right'
+        ? followMode
+        : 'head';
   } else {
     const lazy = parseLazyFollow(follow);
     if (lazy) out.follow = lazy;
@@ -570,14 +670,16 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
     if (typeof target === 'string' && ANCHORS.has(target)) {
       out.anchor = target as NormalizedXRTraits['anchor'];
     }
-    const persist = parseAnchorPersist(anchor) ?? parseAnchorPersist(r['anchorPersist']);
+    const persist =
+      parseAnchorPersist(anchor) ?? parseAnchorPersist(r['anchorPersist']);
     if (persist) out.anchorPersist = persist;
   }
   if (!out.anchorPersist) {
     const persistExplicit = parseAnchorPersist(r['anchorPersist']);
     if (persistExplicit) out.anchorPersist = persistExplicit;
   }
-  if (r['physics'] === 'dynamic' || r['physics'] === 'static') out.physics = r['physics'];
+  if (r['physics'] === 'dynamic' || r['physics'] === 'static')
+    out.physics = r['physics'];
 
   const orbit = parseOrbit(r['orbit']);
   if (orbit) out.orbit = orbit;
@@ -609,6 +711,8 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (navigable) out.navigable = navigable;
   if (typeof r['sync'] === 'boolean') out.sync = r['sync'];
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
+
+  for (const ext of XR_TRAIT_EXTENSIONS) ext.normalize(r, out);
 
   return Object.keys(out).length > 0 ? out : null;
 }
@@ -648,7 +752,9 @@ export function buildXRSceneCoreExtension(
     const anchorComp: Record<string, unknown> = {};
     if (n.anchor) {
       anchorComp['planeType'] =
-        n.anchor === 'vertical' || n.anchor === 'wall' ? 'VERTICAL' : 'HORIZONTAL';
+        n.anchor === 'vertical' || n.anchor === 'wall'
+          ? 'VERTICAL'
+          : 'HORIZONTAL';
       anchorComp['semanticType'] = n.anchor.toUpperCase();
     }
     if (n.anchorPersist) {
@@ -662,13 +768,18 @@ export function buildXRSceneCoreExtension(
   if (n.handles) comp['resizable'] = {...n.handles};
   if (n.particles) comp['particles'] = {...n.particles};
   if (n.holdToAsk) comp['holdToAsk'] = {...n.holdToAsk};
-  if (n.worldUnderstanding) comp['worldUnderstanding'] = {...n.worldUnderstanding};
+  if (n.worldUnderstanding)
+    comp['worldUnderstanding'] = {...n.worldUnderstanding};
   if (n.splatUrl) comp['splat'] = {url: n.splatUrl};
   if (n.spatialSlot) comp['spatialPanel'] = {slot: n.spatialSlot};
   if (n.audio) comp['spatialAudio'] = {...n.audio};
-  if (n.dimensions) comp['dimensions'] = {...n.dimensions, axes: [...n.dimensions.axes]};
+  if (n.dimensions)
+    comp['dimensions'] = {...n.dimensions, axes: [...n.dimensions.axes]};
   if (n.snapTo) {
-    comp['snapTo'] = {...n.snapTo, grid: n.snapTo.grid ? [...n.snapTo.grid] : null};
+    comp['snapTo'] = {
+      ...n.snapTo,
+      grid: n.snapTo.grid ? [...n.snapTo.grid] : null,
+    };
   }
   if (n.snapSocket) comp['snapSocket'] = {...n.snapSocket};
   if (n.gaze) comp['gaze'] = {...n.gaze};
@@ -680,6 +791,7 @@ export function buildXRSceneCoreExtension(
   }
   if (n.navigable) comp['navigable'] = {mode: n.navigable};
   if (typeof n.sync === 'boolean') comp['sync'] = {enabled: n.sync};
+  for (const ext of XR_TRAIT_EXTENSIONS) ext.sceneCore(n, comp);
   return comp;
 }
 
@@ -698,7 +810,12 @@ export function flattenXRTraitsForUsd(
   const put = (prefix: string, obj: object): void => {
     for (const [k, v] of Object.entries(obj)) {
       const key = prefix + k[0].toUpperCase() + k.slice(1);
-      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[key] = v;
+      if (
+        typeof v === 'string' ||
+        typeof v === 'number' ||
+        typeof v === 'boolean'
+      )
+        out[key] = v;
       else if (isFiniteVec3(v)) out[key] = [v[0], v[1], v[2]];
     }
   };
@@ -744,6 +861,7 @@ export function flattenXRTraitsForUsd(
   if (n.navigable) out['navigable'] = n.navigable;
   if (typeof n.sync === 'boolean') out['sync'] = n.sync;
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
+  for (const ext of XR_TRAIT_EXTENSIONS) ext.usd(n, put, out);
   return out;
 }
 
@@ -760,7 +878,10 @@ export function upgradeGltfNodeXR(
   const normalized = normalizeXRTraits(rawXR);
   if (!normalized) return;
   const mergedXR: Record<string, unknown> = {...node.extras?.xr, ...normalized};
-  if (normalized.anchor === undefined && typeof mergedXR['anchor'] === 'object') {
+  if (
+    normalized.anchor === undefined &&
+    typeof mergedXR['anchor'] === 'object'
+  ) {
     delete mergedXR['anchor'];
   }
   node.extras = {...node.extras, xr: mergedXR};
@@ -772,7 +893,9 @@ export function upgradeGltfNodeXR(
 }
 
 /** Builds the Mozilla Hubs `MOZ_hubs_components` map for normalized traits. */
-export function buildHubsExtension(n: NormalizedXRTraits): Record<string, unknown> {
+export function buildHubsExtension(
+  n: NormalizedXRTraits,
+): Record<string, unknown> {
   const hubs: Record<string, unknown> = {};
   if (n.grab) hubs['grabbable'] = {cursor: true, hand: true};
   if (n.billboard) hubs['billboard'] = {onlyY: n.billboard !== 'spherical'};
@@ -791,7 +914,9 @@ export function buildUsdXRLines(
   const normalized = normalizeXRTraits(rawXR);
   const lines: string[] = [];
   if (!normalized) return lines;
-  for (const [key, value] of Object.entries(flattenXRTraitsForUsd(normalized))) {
+  for (const [key, value] of Object.entries(
+    flattenXRTraitsForUsd(normalized),
+  )) {
     if (!/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(key)) continue;
     if (typeof value === 'boolean') {
       lines.push(`bool ${key} = ${value}`);
@@ -822,7 +947,10 @@ export function registerXRTraitSerializer(): void {
   // reused across requests) cannot swap in a serializer that emits raw USDA.
   try {
     Object.defineProperty(getSharedRegistry(), 'xrTraitSerializer', {
-      value: Object.freeze({gltfNode: upgradeGltfNodeXR, usdLines: buildUsdXRLines}),
+      value: Object.freeze({
+        gltfNode: upgradeGltfNodeXR,
+        usdLines: buildUsdXRLines,
+      }),
       writable: false,
       configurable: false,
       enumerable: true,

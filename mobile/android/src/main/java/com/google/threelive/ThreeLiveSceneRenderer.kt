@@ -106,9 +106,10 @@ interface ThreeLiveSceneRenderer {
   fun cameraMatrices(world: FloatArray, projection: FloatArray): Boolean = false
 
   /**
-   * Captures the next rendered frame as a JPEG (longest edge at most [maxEdge] pixels) together with
-   * the camera matrices it was rendered with, and calls [callback] exactly once, on any thread, with
-   * `null` when capture is unsupported or fails. Used to stream what the user sees to Gemini Live.
+   * Captures the next rendered frame as a JPEG (longest edge at most [maxEdge] pixels) together
+   * with the camera matrices it was rendered with, and calls [callback] exactly once, on any
+   * thread, with `null` when capture is unsupported or fails. Used to stream what the user sees to
+   * Gemini Live.
    */
   fun captureFrame(maxEdge: Int, callback: (CapturedFrame?) -> Unit) {
     callback(null)
@@ -121,10 +122,9 @@ interface ThreeLiveSceneRenderer {
   fun stopAnimation() {}
 
   /**
-   * Adds a world-space triangle mesh used by spatial features (handles, paint strokes,
-   * particles). [positions] and [normals] are xyz triples, [color] is sRGB RGBA (like Three.js hex
-   * colors). Returns a mesh id,
-   * or `-1` when dynamic meshes are unsupported.
+   * Adds a world-space triangle mesh used by spatial features (handles, paint strokes, particles).
+   * [positions] and [normals] are xyz triples, [color] is sRGB RGBA (like Three.js hex colors).
+   * Returns a mesh id, or `-1` when dynamic meshes are unsupported.
    */
   fun addDynamicMesh(
     positions: FloatArray,
@@ -151,6 +151,39 @@ interface ThreeLiveSceneRenderer {
   fun removeDynamicMesh(meshId: Int) {}
 
   /**
+   * Creates a hidden copy of glTF node [templateNodeIndex] and its subtree for an `xr-live-sim`
+   * spawned instance. Returns an instance id, or `-1` when unsupported.
+   */
+  fun instantiateNode(templateNodeIndex: Int): Int = -1
+
+  /**
+   * Places an instance at [position] with unit quaternion [rotation] (`x, y, z, w`) in scene space
+   * (under the scene root, like glTF nodes), keeping the template's scale.
+   */
+  fun setInstancePose(instanceId: Int, position: FloatArray, rotation: FloatArray) {}
+
+  /** Shows or hides an instance. */
+  fun setInstanceVisible(instanceId: Int, visible: Boolean) {}
+
+  /** Removes an instance. Unknown ids are ignored. */
+  fun removeInstance(instanceId: Int) {}
+
+  /**
+   * Tints glTF node [nodeIndex] and its subtree with the `xr-live-sim` hit flash ([on]), or
+   * restores its materials. Other nodes sharing the materials are unaffected.
+   */
+  fun setNodeFlash(nodeIndex: Int, on: Boolean) {}
+
+  /** [setNodeFlash] for a spawned instance. */
+  fun setInstanceFlash(instanceId: Int, on: Boolean) {}
+
+  /**
+   * Follows an `xr-live-sim` character: orbits around [target] (world meters; `null` stops
+   * following) and, when [reframe] is set, eases to [polarDeg] (from straight down) and [distance].
+   */
+  fun setCameraFollow(target: DoubleArray?, polarDeg: Double, distance: Double, reframe: Boolean) {}
+
+  /**
    * Whether [addSplatMesh] uses a GPU-billboarded splat shader (`splat.filamat`) where vertex
    * `positions` are local splat centers, `uvs` are signed local half-sizes `(±r, ±r)`, and only
    * [updateSplatMeshIndices] + [setDynamicMeshTransform] need to run after initial upload.
@@ -159,9 +192,9 @@ interface ThreeLiveSceneRenderer {
     get() = false
 
   /**
-   * Adds a Gaussian splat quad mesh ([positions] 3 floats/vertex, [uvs] 2 floats/vertex,
-   * [colors] 4 RGBA8 bytes/vertex, [indices] triangle indices) drawn with an unlit alpha-blended
-   * radial Gaussian falloff material. Returns a mesh id, or `-1` when unsupported.
+   * Adds a Gaussian splat quad mesh ([positions] 3 floats/vertex, [uvs] 2 floats/vertex, [colors] 4
+   * RGBA8 bytes/vertex, [indices] triangle indices) drawn with an unlit alpha-blended radial
+   * Gaussian falloff material. Returns a mesh id, or `-1` when unsupported.
    */
   fun addSplatMesh(
     positions: FloatArray,
@@ -186,9 +219,9 @@ interface ThreeLiveSceneRenderer {
   fun updateSplatMeshIndices(meshId: Int, indices: IntArray) {}
 
   /**
-   * Shows or hides the built-in 3D AR surface placement reticle and reference floor grid at
-   * height [groundY] (meters) for in-app AR surface placement previews when external ARCore
-   * Scene Viewer is unavailable.
+   * Shows or hides the built-in 3D AR surface placement reticle and reference floor grid at height
+   * [groundY] (meters) for in-app AR surface placement previews when external ARCore Scene Viewer
+   * is unavailable.
    */
   fun setArSurfacePreviewEnabled(enabled: Boolean, groundY: Float = -0.95f) {}
 
@@ -209,8 +242,8 @@ object ThreeLiveArSurfaceGeometry {
   val DEFAULT_RETICLE_COLOR: FloatArray = floatArrayOf(0.13f, 0.85f, 0.68f, 1.0f)
 
   /**
-   * Builds a flat ground-plane grid of thin quad lines on height [y] (meters) with
-   * `(positions, indices)`.
+   * Builds a flat ground-plane grid of thin quad lines on height [y] (meters) with `(positions,
+   * indices)`.
    */
   @JvmStatic
   @JvmOverloads
@@ -347,10 +380,15 @@ class CapturedFrame(
 )
 
 /** A hit on the loaded scene. [nodeIndex] is the glTF node owning the hit renderable. */
-class ThreeLivePick(
+class ThreeLivePick
+@JvmOverloads
+constructor(
+  /** Hit glTF node, or `-1` for an `xr-live-sim` spawned instance. */
   val nodeIndex: Int,
   /** World-space hit point (xyz), or `null` when the renderer cannot compute it. */
   val hitPoint: FloatArray?,
+  /** Hit [ThreeLiveSceneRenderer.instantiateNode] instance id, or `-1`. */
+  val instanceId: Int = -1,
 )
 
 /** A world-space pointer ray (touch or controller), with the scene hit under it, if any. */
@@ -370,8 +408,8 @@ interface ThreeLiveRendererListener {
   fun onLongPress(pick: ThreeLivePick, pressed: Boolean) {}
 
   /**
-   * A pointer went down. Return `true` to capture it: the renderer then skips camera orbiting
-   * and delivers [onPointerMove] / [onPointerUp] for this pointer (used by handles and paint).
+   * A pointer went down. Return `true` to capture it: the renderer then skips camera orbiting and
+   * delivers [onPointerMove] / [onPointerUp] for this pointer (used by handles and paint).
    */
   fun onPointerDown(pointer: ThreeLivePointer): Boolean = false
 
@@ -385,8 +423,8 @@ interface ThreeLiveRendererListener {
   fun onCameraChange(change: ThreeLiveCameraChange) {}
 
   /**
-   * Called once per rendered frame before drawing. [cameraWorld] is the camera's column-major
-   * world matrix (the "head pose" for follow / orbit traits); it is a reused buffer.
+   * Called once per rendered frame before drawing. [cameraWorld] is the camera's column-major world
+   * matrix (the "head pose" for follow / orbit traits); it is a reused buffer.
    */
   fun onFrame(dtSeconds: Double, cameraWorld: FloatArray) {}
 }

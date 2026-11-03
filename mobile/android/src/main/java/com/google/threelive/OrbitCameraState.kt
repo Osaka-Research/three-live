@@ -106,6 +106,9 @@ class OrbitCameraState {
   private var targetPhi = DEFAULT_PHI
   private var targetDistance = DEFAULT_DISTANCE
   private var customTarget: DoubleArray? = null
+  private var followTarget: DoubleArray? = null
+  /** Follow framing (`phi` radians, distance) kept across [applyOptions]. */
+  private var followFrame: DoubleArray? = null
 
   private var minTheta = Double.NEGATIVE_INFINITY
   private var maxTheta = Double.POSITIVE_INFINITY
@@ -144,6 +147,13 @@ class OrbitCameraState {
     customTarget = parseCameraTarget(options.cameraTarget)
     applyOrbitLimits(options.minCameraOrbit, options.maxCameraOrbit)
     applyCameraOrbit(options.cameraOrbit)
+    // A sim follow camera keeps its framing when host camera options change.
+    followFrame?.let { f ->
+      targetPhi = clampPhi(f[0])
+      targetDistance = f[1]
+      autoRotate = false
+      turntableRad = 0.0
+    }
   }
 
   /**
@@ -224,9 +234,34 @@ class OrbitCameraState {
     return ThreeLiveCameraChange(thetaDeg, phiDeg, zoom, (distance * 100).roundToInt() / 100.0)
   }
 
-  /** The orbit target: `camera-target` if set, else the bounds center. */
+  /**
+   * Follows [target] (world meters) every frame, overriding `camera-target`, as the web viewer does
+   * for an `xr-live-sim` character; `null` stops following.
+   */
+  fun follow(target: DoubleArray?) {
+    followTarget =
+      target
+        ?.takeIf { it.size >= 3 && it[0].isFinite() && it[1].isFinite() && it[2].isFinite() }
+        ?.copyOf(3)
+    if (followTarget == null) followFrame = null
+  }
+
+  /**
+   * Eases to a follow framing: [polarDeg] from straight down (the web `setCamera` convention, so
+   * `90` is level) and [distanceMeters], keeping the user's azimuth. Distance limits from the scene
+   * bounds do not apply (a first-person camera sits 5 cm from its target). Stops auto-rotate.
+   */
+  fun frameFollow(polarDeg: Double, distanceMeters: Double) {
+    if (polarDeg.isFinite()) targetPhi = clampPhi(Math.toRadians(90.0 - polarDeg))
+    if (distanceMeters.isFinite()) targetDistance = distanceMeters.coerceIn(0.01, 1e4)
+    followFrame = doubleArrayOf(targetPhi, targetDistance)
+    autoRotate = false
+    turntableRad = 0.0
+  }
+
+  /** The orbit target: the follow target, else `camera-target`, else the bounds center. */
   fun target(out: DoubleArray = DoubleArray(3)): DoubleArray {
-    val c = customTarget ?: boundsCenter
+    val c = followTarget ?: customTarget ?: boundsCenter
     out[0] = c[0]
     out[1] = c[1]
     out[2] = c[2]

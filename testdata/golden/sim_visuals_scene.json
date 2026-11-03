@@ -1,0 +1,76 @@
+{
+  "description": "xr-live-sim cross-platform visuals and camera parity scene: projectiles, a depletion burst followed by RNG-placed spawns, integrity bars, a hit flash, a colored zone outline, and the third-person camera rig. Web (xr_sim_test.ts), Android (XRSimWorldTest.kt), and iOS (XRSimWorldTests.swift) must match sim_visuals_expected.json.",
+  "visuals": true,
+  "gltf": {
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 2, 3, 4, 5, 6]}],
+    "nodes": [
+      {
+        "name": "Hero",
+        "translation": [0, 0, 0],
+        "children": [1],
+        "extras": {"xr": {
+          "character": {"speed": 3, "radius": 0.3},
+          "integrity": {"max": 50, "group": "player", "showBar": true}
+        }}
+      },
+      {"name": "HeroMesh", "mesh": 0, "translation": [0, 0.25, 0]},
+      {
+        "name": "Crate",
+        "mesh": 1,
+        "translation": [0, 0.25, 3],
+        "extras": {"xr": {"integrity": {"max": 25, "group": "targets", "scoreValue": 5, "showBar": true}}}
+      },
+      {
+        "name": "Post",
+        "mesh": 1,
+        "translation": [0, 0.25, 6],
+        "extras": {"xr": {"integrity": {"max": 100, "group": "targets", "showBar": true, "hideOnDepleted": false}}}
+      },
+      {
+        "name": "Bot",
+        "mesh": 1,
+        "translation": [3, 0.2, -3],
+        "extras": {"xr": {"integrity": {"max": 10, "group": "bots", "showBar": true}}}
+      },
+      {
+        "name": "Spawner",
+        "translation": [3, 0.2, -3],
+        "extras": {"xr": {"spawner": {"template": "Bot", "intervalSec": 1, "maxActive": 3, "totalCount": 3, "spawnRadius": 2}}}
+      },
+      {
+        "name": "Cell",
+        "translation": [-2, 1, 0],
+        "extras": {"xr": {"zone": {"size": [2, 2, 2], "color": "#ff3300", "watchGroups": ["player"]}}}
+      }
+    ],
+    "meshes": [
+      {"name": "HeroMesh", "primitives": [{"attributes": {"POSITION": 0}}]},
+      {"name": "Box", "primitives": [{"attributes": {"POSITION": 1}}]}
+    ],
+    "accessors": [
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.25, -0.25, -0.25], "max": [0.25, 0.25, 0.25]},
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.2, -0.2, -0.2], "max": [0.2, 0.2, 0.2]}
+    ]
+  },
+  "headPose": {"position": [0, 1.6, 4], "quaternion": [0, 0, 0, 1]},
+  "config": {"hitMode": "projectile", "objectives": true},
+  "frames": 240,
+  "inputs": [
+    {"frame": 5, "fire": true},
+    {"frame": 60, "fire": true},
+    {"frame": 120, "moveX": -1, "moveZ": 0},
+    {"frame": 150, "moveX": 0, "moveZ": 0},
+    {"frame": 160, "fire": true}
+  ],
+  "checkpoints": [12, 30, 86, 165, 240],
+  "events": [
+    "xrhit",
+    "xrdepleted",
+    "xrspawn",
+    "xrzoneenter",
+    "xrzoneexit",
+    "xrscorechange"
+  ]
+}

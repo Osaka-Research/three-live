@@ -1,0 +1,73 @@
+{
+  "description": "xr-live-sim cross-platform parity scene. Web (xr_sim_test.ts), Android (XRSimWorldTest.kt), and iOS (XRSimWorldTests.swift) step this scene at 60 Hz with the same inputs and must match sim_expected.json.",
+  "gltf": {
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 2, 3, 4, 5, 6, 7]}],
+    "nodes": [
+      {
+        "name": "Hero",
+        "translation": [0, 0, 0],
+        "children": [1],
+        "extras": {"xr": {
+          "character": {"speed": 3, "radius": 0.3},
+          "integrity": {"max": 30, "group": "player", "cooldownMs": 500, "hideOnDepleted": false}
+        }}
+      },
+      {"name": "HeroMesh", "mesh": 0, "translation": [0, 0.25, 0]},
+      {"name": "Wall", "mesh": 1, "translation": [0, 0.5, -3], "extras": {"xr": {"collidable": true}}},
+      {
+        "name": "Drone",
+        "mesh": 2,
+        "translation": [3, 0.2, 0],
+        "extras": {"xr": {
+          "agent": {"mode": "chase", "target": "user", "sightRadius": 0, "speed": 1.5, "stopDistance": 0.4},
+          "integrity": {"max": 10, "group": "hazard", "contactAmount": 5}
+        }}
+      },
+      {
+        "name": "Guard",
+        "mesh": 2,
+        "translation": [-3, 0.2, -3],
+        "extras": {"xr": {"agent": {"mode": "patrol", "speed": 2, "waypoints": [[-3, 0.2, 1], [-1, 0.2, 1]]}}}
+      },
+      {"name": "Wanderer", "mesh": 2, "translation": [2, 0.2, -4], "extras": {"xr": {"agent": {"mode": "wander", "speed": 1}}}},
+      {"name": "Coin", "mesh": 3, "translation": [0, 0.5, -1.2], "extras": {"xr": {"objective": {"amount": 10}}}},
+      {"name": "Cell", "translation": [2, 0.5, -2], "extras": {"xr": {"zone": {"size": [2, 2, 2], "watchGroups": ["player"]}}}}
+    ],
+    "meshes": [
+      {"name": "HeroMesh", "primitives": [{"attributes": {"POSITION": 0}}]},
+      {"name": "Wall", "primitives": [{"attributes": {"POSITION": 1}}]},
+      {"name": "Bot", "primitives": [{"attributes": {"POSITION": 2}}]},
+      {"name": "Coin", "primitives": [{"attributes": {"POSITION": 3}}]}
+    ],
+    "accessors": [
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.25, -0.25, -0.25], "max": [0.25, 0.25, 0.25]},
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.5, -0.5, -0.5], "max": [0.5, 0.5, 0.5]},
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.2, -0.2, -0.2], "max": [0.2, 0.2, 0.2]},
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.1, -0.1, -0.1], "max": [0.1, 0.1, 0.1]}
+    ]
+  },
+  "headPose": {"position": [0, 1.6, 4], "quaternion": [0, 0, 0, 1]},
+  "config": {"hitMode": "contact", "objectives": true, "attempts": 3, "targetScore": 1000},
+  "frames": 240,
+  "inputs": [
+    {"frame": 0, "moveX": 0, "moveZ": 1},
+    {"frame": 45, "moveX": 0, "moveZ": 0, "jump": true},
+    {"frame": 100, "moveX": 1, "moveZ": 0},
+    {"frame": 160, "moveX": 0, "moveZ": 0}
+  ],
+  "checkpoints": [60, 120, 180, 240],
+  "events": [
+    "characterjump",
+    "characterland",
+    "agentstatechange",
+    "agentreach",
+    "xrhit",
+    "xrdepleted",
+    "xrzoneenter",
+    "xrzoneexit",
+    "xrobjective",
+    "xrscorechange"
+  ]
+}

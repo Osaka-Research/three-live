@@ -20,38 +20,103 @@ All notable changes to **Three-Live** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
----
+--------------------------------------------------------------------------------
+
+## [1.2.1] - 2026-11-03
+
+### Added
+
+-   **Interactive Simulation & Scenario Suite (`xr-live-sim` / `xr-live/sim`)
+    Across Web, Android, and iOS / visionOS:**
+    -   `characterControllerPlugin` (`character-controller` /
+        `CharacterController`): Capsule kinematics, floor/slope stepping,
+        coyote-time jumps, WASD/Gamepad/on-screen touch joystick input, and
+        shared `characterCameraRig` (`third-person`, `first-person`, `top-down`,
+        `fixed-camera`) across Web, Android (`OrbitCameraState.follow`), and iOS
+        (`XROrbitCameraState.follow`).
+    -   `steeringAgentsPlugin` (`steering-agents` / `SteeringAgents`):
+        Autonomous kinematic steering (`patrol`, `chase`, `flee`, `follow`,
+        `wander`), vision-cone target detection, obstacle avoidance, and
+        deterministic `mulberry32` wandering.
+    -   `hitZonesPlugin` (`hit-zones` / `HitZones`): Target/part `integrity`,
+        `projectile` / `hitscan` / `contact` interaction, spatial trigger `zone`
+        volumes, and timed template `spawner` pooling, with cross-platform
+        visual feedback (`computeSimVisuals`, Android `XRSimRenderBridge` +
+        Filament instancing, and iOS `XRSimRealityKitBridge`) for hit flashes,
+        world-space integrity bars, projectiles, burst fragments, and zone
+        outlines.
+    -   `objectivesPlugin` (`objectives` / `Objectives`): Ordered/unordered
+        checklist objectives (`reach`, `clear`, `collect`, `activate`, `hold`),
+        score/attempt/countdown evaluation, `scenario-reset-key` resets, and HUD
+        telemetry (`sim-hud`).
+    -   `synthAudioPlugin` (`synth-audio` / `SynthAudio`): Zero-asset procedural
+        audio synthesis (`beep`, `chime`, `buzz`, `thud`, `sweep`, `click`,
+        `alarm`, `whoosh`) via Web Audio API, Android `AudioTrack`, and iOS
+        `AVAudioEngine`.
+
+--------------------------------------------------------------------------------
 
 ## [1.2.0] - 2026-11-03
 
 ### Added
 
-- **Expanded `XRSpatial` to 14 Spatial Plugins Across Web, Android, and iOS:**
-  - `spatialMeasurePlugin` (`spatial-measure`): Interactive point-to-point tape measure and live bounding-box dimension callouts (`m`, `cm`, `in`, `ft`) across Web, Android (`SpatialMeasure`), and iOS (`SpatialMeasure`).
-  - `magneticSnapPlugin` (`magnetic-snap`): Surface alignment, grid snapping (`snap-grid`), angular increments (`snap-angle`), and named socket/plug snapping (`data-xr-snap-socket`, `data-xr-snap-plug`) across Web, Android (`MagneticSnap`), and iOS (`MagneticSnap`).
-  - `gazeDwellPlugin` (`gaze-dwell`): Hands-free eye-gaze and head-reticle dwell selection with animated progress ring and refractory cooldown across Web, Android (`GazeDwell`), and iOS (`GazeDwell`).
-  - `explodedViewPlugin` (`explode`): Interactive CAD assembly explosion (`radial`, `axial-x`, `axial-y`, `axial-z`, `hierarchy`) with leader lines and live `section-plane` clipping across Web, Android (`ExplodedView`), and iOS (`ExplodedView`).
-  - `persistentAnchorsPlugin` (`persistent-anchors`): Cross-session room anchor persistence via WebXR `XRAnchor`, `localStorage`, and shareable `#xr-anchors=` URL hashes across Web, Android (`PersistentAnchors`), and iOS (`PersistentAnchors`).
-  - `spatialLocomotionPlugin` (`locomotion`): Parabolic teleportation arc, thumbstick snap-turn (`snap-turn-deg`), and comfort vignette (`comfort-vignette`) across Web, Android (`SpatialLocomotion`), and iOS (`SpatialLocomotion`).
-  - `sharedRoomPlugin` (`shared-room`): Multi-user spatial presence, peer avatar frustums, and lamport-clock transform sync across `BroadcastChannel` and WebSocket rooms (`SharedRoom`).
+-   **Expanded `XRSpatial` to 14 Spatial Plugins Across Web, Android, and iOS:**
+    -   `spatialMeasurePlugin` (`spatial-measure`): Interactive point-to-point
+        tape measure and live bounding-box dimension callouts (`m`, `cm`, `in`,
+        `ft`) across Web, Android (`SpatialMeasure`), and iOS
+        (`SpatialMeasure`).
+    -   `magneticSnapPlugin` (`magnetic-snap`): Surface alignment, grid snapping
+        (`snap-grid`), angular increments (`snap-angle`), and named socket/plug
+        snapping (`data-xr-snap-socket`, `data-xr-snap-plug`) across Web,
+        Android (`MagneticSnap`), and iOS (`MagneticSnap`).
+    -   `gazeDwellPlugin` (`gaze-dwell`): Hands-free eye-gaze and head-reticle
+        dwell selection with animated progress ring and refractory cooldown
+        across Web, Android (`GazeDwell`), and iOS (`GazeDwell`).
+    -   `explodedViewPlugin` (`explode`): Interactive CAD assembly explosion
+        (`radial`, `axial-x`, `axial-y`, `axial-z`, `hierarchy`) with leader
+        lines and live `section-plane` clipping across Web, Android
+        (`ExplodedView`), and iOS (`ExplodedView`).
+    -   `persistentAnchorsPlugin` (`persistent-anchors`): Cross-session room
+        anchor persistence via WebXR `XRAnchor`, `localStorage`, and shareable
+        `#xr-anchors=` URL hashes across Web, Android (`PersistentAnchors`), and
+        iOS (`PersistentAnchors`).
+    -   `spatialLocomotionPlugin` (`locomotion`): Parabolic teleportation arc,
+        thumbstick snap-turn (`snap-turn-deg`), and comfort vignette
+        (`comfort-vignette`) across Web, Android (`SpatialLocomotion`), and iOS
+        (`SpatialLocomotion`).
+    -   `sharedRoomPlugin` (`shared-room`): Multi-user spatial presence, peer
+        avatar frustums, and lamport-clock transform sync across
+        `BroadcastChannel` and WebSocket rooms (`SharedRoom`).
 
----
+--------------------------------------------------------------------------------
 
 ## [1.1.1] - 2026-11-02
 
 ### Changed
 
-- **Renamed `XRBlocks*` to `XRSpatial*` across Web, Android, and iOS:**
-  - Web: `window.XRSpatial` (`xr-live/plugins`), `xrSpatialPlugins`, and `xr-spatial` attribute (retaining `window.XRBlocks` / `xr-blocks` aliases for backward compatibility).
-  - Android: `XRSpatialFeatures` and `XRSpatialMath`.
-  - iOS / visionOS: `XRSpatialRealityKitFeatures`, `XRSpatialGeometry`, and `XRSpatialMath`.
+-   **Renamed `XRBlocks*` to `XRSpatial*` across Web, Android, and iOS:**
+    -   Web: `window.XRSpatial` (`xr-live/plugins`), `xrSpatialPlugins`, and
+        `xr-spatial` attribute (retaining `window.XRBlocks` / `xr-blocks`
+        aliases for backward compatibility).
+    -   Android: `XRSpatialFeatures` and `XRSpatialMath`.
+    -   iOS / visionOS: `XRSpatialRealityKitFeatures`, `XRSpatialGeometry`, and
+        `XRSpatialMath`.
 
 ### Fixed
 
-- **Android WebXR AR & Depth Sensing:** Fixed 16-bit luminance-alpha depth texture unpacking, planar depth occlusion comparison in eye space, depth-heightfield collision surface normals, and post-AR inline render-loop resume.
-- **iOS `<xr-live>` Quick Look AR Bridge:** Fixed `<xr-live>` mobile AR handoff to export live procedural scenes to `.usdz` and launch Apple AR Quick Look on iOS Safari.
-- **Stereo SBS & 3D Simulator:** Mapped Stereo Side-by-Side pointer picking per eye, mirrored the gaze reticle into both eyes, and fixed 3D Simulator aspect ratio and orbit/WASD controls.
-- **Native Runtime Resilience:** Hardened `XRLiveRuntimeSession` (Kotlin & Swift), `TubeStrokeBuilder`, and `ParticleEmitter` against non-finite inputs and rapid scene teardown.
+-   **Android WebXR AR & Depth Sensing:** Fixed 16-bit luminance-alpha depth
+    texture unpacking, planar depth occlusion comparison in eye space,
+    depth-heightfield collision surface normals, and post-AR inline render-loop
+    resume.
+-   **iOS `<xr-live>` Quick Look AR Bridge:** Fixed `<xr-live>` mobile AR
+    handoff to export live procedural scenes to `.usdz` and launch Apple AR
+    Quick Look on iOS Safari.
+-   **Stereo SBS & 3D Simulator:** Mapped Stereo Side-by-Side pointer picking
+    per eye, mirrored the gaze reticle into both eyes, and fixed 3D Simulator
+    aspect ratio and orbit/WASD controls.
+-   **Native Runtime Resilience:** Hardened `XRLiveRuntimeSession` (Kotlin &
+    Swift), `TubeStrokeBuilder`, and `ParticleEmitter` against non-finite inputs
+    and rapid scene teardown.
 
 ---
 

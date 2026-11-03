@@ -1,7 +1,7 @@
 {
   "name": "three-live-monorepo",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "AI-First Native 3D & XR Monorepo: three-live 3D/AR engine, xr-live spatial computing suite, and native Rust/Android/iOS compiler",
   "author": "Google LLC",
   "license": "Apache-2.0",
@@ -80,6 +80,16 @@
       "types": "./xr-live/dist/xr-live-extras.d.ts",
       "import": "./xr-live/dist/xr-live-extras.js",
       "require": "./xr-live/dist/xr-live-extras.cjs"
+    },
+    "./xr-live-plugins": {
+      "types": "./xr-live/dist/xr-live-plugins.d.ts",
+      "import": "./xr-live/dist/xr-live-plugins.js",
+      "require": "./xr-live/dist/xr-live-plugins.cjs"
+    },
+    "./xr-live-sim": {
+      "types": "./xr-live/dist/xr-live-sim.d.ts",
+      "import": "./xr-live/dist/xr-live-sim.js",
+      "require": "./xr-live/dist/xr-live-sim.cjs"
     },
     "./xr-live-full": {
       "types": "./xr-live/dist/xr-live-full.d.ts",
