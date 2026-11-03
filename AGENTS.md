@@ -66,6 +66,13 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial + 5 sim
       worldUnderstanding: { planes: true, meshes: false, reticle: true },
       splatUrl: 'https://example.com/capture.spz',
       audio: { src: 'https://example.com/chime.mp3', refDistance: 1.0, loop: false },
+      character: { mode: 'third-person', speed: 4.5, jumpVelocity: 5.5, radius: 0.35, height: 1.6 },
+      agent: { behavior: 'patrol', speed: 2.2, waypoints: [[-2, 0, -2], [2, 0, -2]], alertBehavior: 'chase' },
+      integrity: { max: 100, group: 'hazard', scoreValue: 25, removeOnDeplete: true },
+      zone: { shape: 'cylinder', radius: 1.2, height: 2.0, action: 'checkpoint', color: '#22c55e' },
+      spawner: { template: 'DroneTemplate', intervalSec: 4, maxActive: 4, maxTotal: 12 },
+      objective: { id: 'step-1', label: 'Reach checkpoint', type: 'reach', points: 50, order: 1 },
+      audioCues: { onHit: 'thud', onDeplete: 'buzz', onObjective: 'chime', onScenarioPass: 'sweep' },
     };
     ```
 5. **Use `mesh.userData.interactivity` for `KHR_interactivity` behavior graphs:**
@@ -86,17 +93,24 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial + 5 sim
 
 Every procedural scene and `userData.xr` trait runs across **Web**, **Android**, and **iOS / visionOS**:
 
-1. **Canonical Trait Schema (`three-live/src/xr-trait-schema.ts`):**
-   - Single source of truth for normalizing and clamping `userData.xr` fields (`normalizeXRTraits()`), emitting glTF `nodes[i].extras.xr` + `nodes[i].extensions.ANDROID_xr_scenecore` (`buildXRSceneCoreExtension()`), and flattening USDZ `customData = {dictionary xr = {...}}` (`flattenXRTraitsForUsd()`).
+1.  **Canonical Trait Schema (`three-live/src/xr-trait-schema.ts` &
+    `three-live/src/xr-sim-schema.ts`):**
+    -   Single source of truth for normalizing and clamping `userData.xr` fields
+        (`normalizeXRTraits()`, `normalizeXRSimTraits()`), emitting glTF
+        `nodes[i].extras.xr` + `nodes[i].extensions.ANDROID_xr_scenecore`
+        (`buildXRSceneCoreExtension()`), and flattening USDZ
+        `customData = {dictionary xr = {...}}` (`flattenXRTraitsForUsd()`).
 2. **Web Runtime (`three-live/src/` & `xr-live/src/`):**
     - `<three-live>` (`three-live/src/three-live-element.ts`) and `ThreeView` (`three-live/src/three-view.ts`) provide WebGL2 PBR rendering, Worker/iframe sandboxing, and plugin hooks (`three-live/src/plugin.ts`).
-    -   `<xr-live>` (`xr-live/src/xr-live-element.ts`) and the 14 spatial
-        plugins (`xr-live/src/plugins/index.ts`: `head-follow`,
-        `manipulation-handles`, `world-understanding`, `gemini-live`,
-        `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`,
-        `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`,
-        `spatial-locomotion`, `shared-room`) implement 6DoF WebXR and desktop
-        simulation.
+    -   `<xr-live>` (`xr-live/src/xr-live-element.ts`), the 14 spatial plugins
+        (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`,
+        `world-understanding`, `gemini-live`, `spatial-paint`,
+        `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`,
+        `gaze-dwell`, `exploded-view`, `persistent-anchors`,
+        `spatial-locomotion`, `shared-room`), and the 5 `xr-live-sim` simulation
+        plugins (`xr-live/src/sim/index.ts`: `character-controller`,
+        `steering-agents`, `hit-zones`, `objectives`, `synth-audio`) implement
+        6DoF WebXR, desktop simulation, and interactive scenarios.
 3. **In-Process Rust Compiler (`compiler/`):**
    - Embeds `compiler/assets/three-author-engine.min.js` inside an isolated Boa JS context with strict opcode/wall-clock watchdogs, outputting `.glb` and `.usdz` bytes via C FFI (`compiler/include/three_live.h`) and `three-live-cli`.
 4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
@@ -104,14 +118,20 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt` +
         modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`,
         `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`,
-        `SpatialLocomotion.kt`, `SharedRoom.kt`), `XRLiveRuntimeSession.kt`, and
+        `SpatialLocomotion.kt`, `SharedRoom.kt`), `XRSimWorld.kt` + simulation
+        controllers (`CharacterController.kt`, `SteeringAgents.kt`,
+        `HitZones.kt`, `Objectives.kt`, `SynthAudio.kt`, `XRSimParity.kt`,
+        `XRSimRenderBridge.kt`), `XRLiveRuntimeSession.kt`, and
         `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
     -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):**
         `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`,
         `XRSpatialRealityKitFeatures.swift` + modular feature controllers
         (`SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
         `ExplodedView.swift`, `PersistentAnchors.swift`,
-        `SpatialLocomotion.swift`, `SharedRoom.swift`), and
+        `SpatialLocomotion.swift`, `SharedRoom.swift`), `XRSimWorld.swift` +
+        simulation controllers (`CharacterController.swift`,
+        `SteeringAgents.swift`, `HitZones.swift`, `Objectives.swift`,
+        `SynthAudio.swift`, `XRSimRealityKitBridge.swift`), and
         `XRLiveRealityKit.swift`.
 
 **Parity Rule:** Whenever you add or modify a trait in `three-live/src/xr-trait-schema.ts`, you must update its handling in Web (`xr-live/src/plugins/`), Android (`mobile/android/`), and iOS/visionOS (`mobile/ios/`) and keep `XRLiveSwiftSourceParityTest.kt` green.

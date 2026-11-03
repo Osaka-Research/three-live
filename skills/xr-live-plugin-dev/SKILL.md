@@ -42,8 +42,17 @@ Every `<xr-live>` feature is authored once and executes across **Web (`WebGL2` /
 Update the Android runtime so compiled `.glb` scenes and scripts execute the trait identically:
 
 1. **`mobile/android/src/main/java/com/google/threelive/XRLiveSceneCoreHelper.kt`:** Parse the new `extras.xr` / `ANDROID_xr_scenecore` fields with the exact same clamping ranges as `xr-trait-schema.ts`.
-2. **Modular Feature File (`mobile/android/src/main/java/com/google/threelive/<FeatureName>.kt`) & `XRSpatialMath.kt`:** Implement pure, allocation-free math and per-feature state machines in a dedicated Kotlin file (e.g. `SpatialMeasure.kt`, `MagneticSnap.kt`, `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`, `SpatialLocomotion.kt`, `SharedRoom.kt`) rather than bloating a single monolith.
-3. **`mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt` & `XRLiveRuntimeSession.kt`:** Wire the modular controller into `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry (and optional `sectionPlane` uniforms) for `ThreeLiveFilamentRenderer.kt`.
+2.  **Modular Feature File
+    (`mobile/android/src/main/java/com/google/threelive/<FeatureName>.kt`) &
+    `XRSpatialMath.kt`:** Implement pure, allocation-free math and per-feature
+    state machines in a dedicated Kotlin file (e.g. `SpatialMeasure.kt`,
+    `MagneticSnap.kt`, `GazeDwell.kt`, `ExplodedView.kt`,
+    `PersistentAnchors.kt`, `SpatialLocomotion.kt`, `SharedRoom.kt`) rather than
+    bloating a single monolith.
+3.  **`mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt` &
+    `XRLiveRuntimeSession.kt`:** Wire the modular controller into
+    `stepFrame(dtSeconds)` and emit dynamic `ThreeLiveMeshPrimitive` geometry
+    (and optional `sectionPlane` uniforms) for `ThreeLiveFilamentRenderer.kt`.
 
 ---
 
@@ -52,7 +61,12 @@ Update the Android runtime so compiled `.glb` scenes and scripts execute the tra
 Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
 
 1. **`XRLiveRuntimeSession.swift` & `XRLiveRealityKit.swift`:** Parse the trait from GLB `extras.xr` and USDZ `customData.xr`.
-2. **Modular Feature File (`<FeatureName>.swift`), `XRSpatialRealityKitFeatures.swift`, & `XRLiveRealityKitSession.swift`:** Mirror the math and dynamic entity updates in a dedicated Swift file (e.g. `SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`, `PersistentAnchors.swift`, `SpatialLocomotion.swift`, `SharedRoom.swift`) orchestrated by `XRSpatialRealityKitFeatures.swift`.
+2.  **Modular Feature File (`<FeatureName>.swift`),
+    `XRSpatialRealityKitFeatures.swift`, & `XRLiveRealityKitSession.swift`:**
+    Mirror the math and dynamic entity updates in a dedicated Swift file (e.g.
+    `SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
+    `ExplodedView.swift`, `PersistentAnchors.swift`, `SpatialLocomotion.swift`,
+    `SharedRoom.swift`) orchestrated by `XRSpatialRealityKitFeatures.swift`.
 3. **Parity Test Check:** Android's `mobile/android/src/test/java/com/google/threelive/XRLiveSwiftSourceParityTest.kt` verifies that the Swift sources implement all required symbols and trait keys even when building on Linux.
 
 ---
@@ -60,26 +74,33 @@ Update the Swift package under `mobile/ios/Sources/ThreeLiveCompiler/`:
 ## Step 5: Build, Bundle Budget & Test Verification
 
 1. **Rebuild Web bundles & embedded Rust engine asset:**
-   ```bash
-   node scripts/build.js
-   ```
-   Verify that all 10 `.min.js.gz` bundles in `scripts/build.js` remain within their enforced byte budgets:
-   - `three-live-viewer.min.js`: `< 25.5 KB gz`
-   - `three-live.min.js`: `< 54 KB gz`
-   - `three-live-extras.min.js`: `< 17 KB gz`
-   - `three-live-animation.min.js`: `< 6.5 KB gz`
-   - `three-live-full.min.js`: `< 69 KB gz`
-   - `xr-live-viewer.min.js`: `< 46 KB gz`
-   - `xr-live.min.js`: `< 66 KB gz`
-   - `xr-live-extras.min.js`: `< 10 KB gz`
-   - `xr-live-plugins.min.js`: `< 52 KB gz`
-   - `xr-live-full.min.js`: `< 133 KB gz`
+
+    ```bash
+    node scripts/build.js
+    ```
+
+    Verify that all 11 `.min.js.gz` bundles in `scripts/build.js` remain within
+    their enforced byte budgets:
+
+    - `three-live-viewer.min.js`: `< 25.5 KB gz`
+    - `three-live.min.js`: `< 54 KB gz`
+    - `three-live-extras.min.js`: `< 17 KB gz`
+    - `three-live-animation.min.js`: `< 6.5 KB gz`
+    - `three-live-full.min.js`: `< 69 KB gz`
+    -   `xr-live-viewer.min.js`: `< 46 KB gz`
+    -   `xr-live.min.js`: `< 66 KB gz`
+    -   `xr-live-extras.min.js`: `< 10 KB gz`
+    -   `xr-live-plugins.min.js`: `< 52 KB gz`
+    -   `xr-live-sim.min.js`: `< 22 KB gz`
+    -   `xr-live-full.min.js`: `< 151 KB gz`
 2. **Run Web, Rust, and Mobile tests:**
+
    ```bash
    node scripts/build.js --test
    cd compiler && cargo test
    ```
 3. **Update `llms.txt` and `llms-full.txt`:**
+
    ```bash
    node scripts/build_llms_txt.js
    ```

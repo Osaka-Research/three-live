@@ -38,7 +38,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ### 1. Choose the Right Component & Bundle
 - Use `<three-live>` (`three-live.min.js` or `three-live-full.min.js`) for 3D product viewers, procedural Three.js scenes, `KHR_interactivity` behavior graphs, PBR Next materials, and 1-tap mobile AR handoff (Quick Look / Scene Viewer / WebXR).
-- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), or any of the 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`).
+- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), any of the 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`), or any of the 5 `xr-live-sim` simulation plugins (`character-controller`, `steering-agents`, `hit-zones`, `objectives`, `synth-audio`; available in `xr-live-sim.min.js` and `xr-live-full.min.js`).
 
 ### 2. Procedural `<script type="text/three">` Rules
 - Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
@@ -65,6 +65,13 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `worldUnderstanding`: `{ planes: true, meshes: false, reticle: true }`
   - `splatUrl`: `'https://.../capture.spz'` (or `.splat`)
   - `audio`: `{ src: 'https://.../sound.mp3', refDistance: 1.0, loop: false }`
+  - `character`: `true` or `{ mode: 'third-person' | 'first-person' | 'top-down' | 'fixed-camera', speed: 4, jumpVelocity: 5.5, gravity: 15, radius: 0.35, height: 1.7, cameraDistance: 3.5, cameraHeight: 1.6 }`
+  - `agent`: `'patrol'` or `{ behavior: 'patrol' | 'chase' | 'flee' | 'follow' | 'wander', speed: 2.5, waypoints: [[x, y, z], ...], loop: true, sightDistance: 8, sightAngleDeg: 110, reachDistance: 0.6, target: 'character' | 'nodeName', alertBehavior: 'chase' }`
+  - `integrity`: `100` or `{ max: 100, current: 100, group: 'hazard' | 'player' | 'prop', scoreValue: 25, removeOnDeplete: true, hitCooldownMs: 120, contactAmount: 25 }`
+  - `zone`: `{ shape: 'box' | 'sphere' | 'cylinder', size: [2, 2, 2], radius: 1.5, height: 2, triggerGroup: 'player', action: 'checkpoint' | 'hazard' | 'complete' | 'fail' | 'event', ratePerSec: 20, once: false, color: '#22c55e' }`
+  - `spawner`: `{ template: 'BotNode', intervalSec: 3, maxActive: 5, maxTotal: 15, radius: 1.5, autoStart: true }`
+  - `objective`: `'Inspect valve'` or `{ id: 'valve-1', label: 'Inspect valve', type: 'reach' | 'clear' | 'collect' | 'activate' | 'hold', points: 50, order: 1, required: true, holdSec: 1.5, reachRadius: 1.2 }`
+  - `audioCues`: `{ onHit: 'thud', onDeplete: 'buzz', onCollect: 'chime', onObjective: 'beep', onJump: 'whoosh', onScenarioPass: 'sweep', onScenarioFail: 'alarm', pitchHz: 440, gain: 0.7 }`
 - Attach declarative `KHR_interactivity` behaviors via `mesh.userData.interactivity = { onSelect: [...], onHoverIn: [...], onStart: [...] }` using actions `toggleTransform`, `interpolate`, `setProperty`, `toggleVisibility`, `cycleMaterialColor`, `playAnimation`, `stopAnimation`, or `sendEvent`.
 - NEVER use `GLTFLoader`, `OBJLoader`, `TextureLoader`, `EffectComposer`, `ShaderMaterial`, `RawShaderMaterial`, or `requestAnimationFrame` inside `<script type="text/three">`.
 - NEVER create a `THREE.WebGLRenderer` or attach DOM canvas elements inside `<script type="text/three">`.

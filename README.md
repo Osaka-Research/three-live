@@ -36,7 +36,8 @@ LLMs excel at generating Three.js code. Three-Live compiles it on-device in a sa
 > export (`< 54 KB gz`). *
 > **[`<xr-live>` spatial computing studio](https://google.github.io/three-live/xr/)**
 > — 6DoF WebXR, spatial HTML `<div slot="spatial">` cards, depth physics, hand
-> tracking, and 14 spatial plugins (`< 66 KB gz` core, `< 151 KB gz` full).
+> tracking, 14 spatial plugins, and 5 simulation plugins (`< 66 KB gz` core,
+> `< 151 KB gz` full).
 
 ---
 
@@ -229,6 +230,70 @@ The following table lists the 14 modular spatial plugins:
 :                            :                                        : tie-breaking, synced    :
 :                            :                                        : explode and paint).     :
 
+The following table lists the 5 modular simulation plugins (`xr-live-sim.min.js`
+/ `xr-live/sim`):
+
+| Plugin                     | Attribute or            | What it adds across   |
+:                            : `userData.xr` trait     : Web, Android          :
+:                            :                         : Filament, and iOS     :
+:                            :                         : RealityKit            :
+| :------------------------- | :---------------------- | :-------------------- |
+| **`character-controller`** | `character-controller`, | Capsule kinematics    |
+:                            : `xr.character`          : with floor and slope  :
+:                            :                         : stepping, jump with   :
+:                            :                         : coyote time, WASD,    :
+:                            :                         : Arrow, Gamepad, and   :
+:                            :                         : touch joystick input, :
+:                            :                         : and `third-person`,   :
+:                            :                         : `first-person`,       :
+:                            :                         : `top-down`, or        :
+:                            :                         : `fixed-camera` rig    :
+:                            :                         : follow.               :
+| **`steering-agents`**      | `steering-agents`,      | Autonomous kinematic  |
+:                            : `xr.agent`              : agents (`patrol`,     :
+:                            :                         : `chase`, `flee`,      :
+:                            :                         : `follow`, `wander`)   :
+:                            :                         : with vision-cone      :
+:                            :                         : target acquisition,   :
+:                            :                         : obstacle avoidance,   :
+:                            :                         : and                   :
+:                            :                         : `agentstatechange` /  :
+:                            :                         : `agentreach` events.  :
+| **`hit-zones`**            | `hit-zones`,            | Part and target       |
+:                            : `xr.integrity`,         : `integrity` with      :
+:                            : `xr.zone`, `xr.spawner` : world-space health    :
+:                            :                         : bars, hit flashes,    :
+:                            :                         : `projectile` /        :
+:                            :                         : `hitscan` / `contact` :
+:                            :                         : interaction, burst    :
+:                            :                         : fragments, colored    :
+:                            :                         : trigger `zone`        :
+:                            :                         : volumes, and timed    :
+:                            :                         : template `spawner`    :
+:                            :                         : pooling.              :
+| **`objectives`**           | `objectives`,           | Ordered or unordered  |
+:                            : `scenario-timer`,       : checklist objectives  :
+:                            : `target-score`,         : (`reach`, `clear`,    :
+:                            : `attempts`,             : `collect`,            :
+:                            : `xr.objective`          : `activate`, `hold`),  :
+:                            :                         : score, attempt        :
+:                            :                         : counter, countdown    :
+:                            :                         : timer, HUD overlay    :
+:                            :                         : (`sim-hud`), and      :
+:                            :                         : `scenario-reset-key`  :
+:                            :                         : resets.               :
+| **`synth-audio`**          | `synth-audio`,          | Zero-asset procedural |
+:                            : `synth-volume`,         : audio synthesis       :
+:                            : `xr.audioCues`          : (`beep`, `chime`,     :
+:                            :                         : `buzz`, `thud`,       :
+:                            :                         : `sweep`, `click`,     :
+:                            :                         : `alarm`, `whoosh`)    :
+:                            :                         : bound to simulation   :
+:                            :                         : events via Web Audio, :
+:                            :                         : Android `AudioTrack`, :
+:                            :                         : and iOS               :
+:                            :                         : `AVAudioEngine`.      :
+
 ### Safe execution for live, AI-generated Three.js
 
 Because LLMs already know Three.js, an agent or backend can generate a complete
@@ -270,9 +335,10 @@ The following table compares `<three-live>` with `<xr-live>`:
 :                         :                         : `handles`, `snapTo`,     :
 :                         :                         : `gaze`, `explode`,       :
 :                         :                         : `navigable`, `sync`), 14 :
-:                         :                         : spatial plugins,         :
-:                         :                         : 25-joint hands, and      :
-:                         :                         : `KHR_interactivity`      :
+:                         :                         : spatial plugins, 5       :
+:                         :                         : `xr-live-sim` simulation :
+:                         :                         : plugins, 25-joint hands, :
+:                         :                         : and `KHR_interactivity`  :
 | **Spatial HTML UI**     | 2D screen-space overlay | 3D textured and          |
 :                         : hotspots                : raycastable HTML cards   :
 :                         : (`slot="hotspot-*"`)    : (`<div slot="spatial">`) :
@@ -551,15 +617,16 @@ LLM authoring workflows:
 :                                                : mobile     : drop-in JavaScript API, DOM events, `KHR_interactivity`          :
 :                                                : developers : authoring, 3D hotspots, PBR Next and HDRI, animations, and       :
 :                                                :            : sandboxing.                                                      :
-| **[`docs/xr-live.md`](docs/xr-live.md)**       | Spatial    | Complete `<xr-live>` and spatial plugins guide: why native       |
-:                                                : and XR     : bridges matter, optional plugin registration, canonical          :
-:                                                : developers : `userData.xr` traits, all 14 spatial plugins, `<div              :
-:                                                :            : slot="spatial">` cards, depth and physics, 25-joint hands,       :
-:                                                :            : WebMCP, and native Android and iOS runtimes.                     :
+| **[`docs/xr-live.md`](docs/xr-live.md)**       | Spatial    | Complete `<xr-live>` and plugins guide: why native bridges       |
+:                                                : and XR     : matter, optional plugin registration, canonical `userData.xr`    :
+:                                                : developers : traits, all 14 spatial plugins, the 5 `xr-live-sim` simulation   :
+:                                                :            : plugins, `<div slot="spatial">` cards, depth and physics,        :
+:                                                :            : 25-joint hands, WebMCP, and native Android and iOS runtimes.     :
 | **[`docs/cookbook.md`](docs/cookbook.md)**     | All        | Copy-pasteable recipes for e-commerce configurators, precision   |
 :                                                : developers : manipulation handles, Gemini Live spatial assistants, 3D spatial :
 :                                                :            : paint, CAD exploded views and measurements, magnetic snapping    :
-:                                                :            : and persistent anchors, and multi-user co-presence.              :
+:                                                :            : and persistent anchors, multi-user co-presence, and interactive  :
+:                                                :            : training/simulation drills (`xr-live-sim`).                      :
 | **[`docs/llm-guide.md`](docs/llm-guide.md)**   | LLMs and   | Copy-paste system prompt snippet, canonical `userData.xr` and    |
 :                                                : agents     : `userData.interactivity` schemas, strict `THREE.*` allowlist,    :
 :                                                :            : scene quotas, and few-shot templates.                            :
@@ -601,7 +668,7 @@ The repository is organized into the following directories:
 three-live/
 ├── Makefile               # Unified web, Rust, iOS (Xcode), and Android Studio build targets
 ├── three-live/            # Core 3D and AR engine and <three-live> Web Component
-├── xr-live/               # Spatial computing and Deep XR SDK, <xr-live>, and 14 spatial plugins
+├── xr-live/               # Spatial computing and Deep XR SDK, <xr-live>, 14 spatial plugins, and 5 sim plugins
 ├── mobile/                # Native Android (Kotlin, Filament, SceneCore) and iOS (Swift, RealityKit) SDKs
 ├── compiler/              # In-process Rust procedural Three.js to GLB and USDZ compiler and CLI
 ├── docs/                  # Reference documentation for <three-live>, <xr-live>, and LLMs
