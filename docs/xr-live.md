@@ -158,121 +158,38 @@ spatial attributes listed in the following table:
 
 | Element       | Attribute             | Type and values     | Default     | Description                      |
 | :------------ | :-------------------- | :------------------ | :---------- | :------------------------------- |
-| `<xr-live>`   | `xr-mode`             | `'ar' \| 'vr' \|    | `'auto'`    | Target WebXR session mode (`ar`  |
-:               :                       : 'inline' | 'auto'`  :             : requests `immersive-ar`; `vr`    :
-:               :                       :                     :             : requests `immersive-vr`).        :
-| `<xr-live>`   | `xr-depth`            | `'occlusion' \|     | `'none'`    | Enables WebXR `depth-sensing`,   |
-:               :                       : 'occlusion-physics' :             : PBR depth occlusion, and         :
-:               :                       : | 'mesh' | 'none'`  :             : analytical heightfield physics.  :
-| `<xr-live>`   | `xr-hands`            | `'gestures' \|      | `'none'`    | Enables 25-joint `XRHand`        |
-:               :                       : 'joints' | 'pinch'  :             : tracking (`hand-tracking`) and   :
-:               :                       : | 'none'`           :             : gesture classification.          :
-| `<xr-live>`   | `xr-simulator`        | `'living-room' \|   | `'none'`    | Enables the desktop 6DoF         |
-:               :                       : 'office' |          :             : keyboard and mouse simulator     :
-:               :                       : 'tabletop' |        :             : (`WASD`, `Q` and `E`, mouse      :
-:               :                       : 'none'`             :             : look, and virtual hands).        :
-| `<xr-live>`   | `xr-profile`          | `'quest3' \|        | `'auto'`    | Target spatial hardware profile  |
-:               :                       : 'android-xr' |      :             : hint.                            :
-:               :                       : 'visionos' |        :             :                                  :
-:               :                       : 'auto'`             :             :                                  :
-| `<xr-live>`   | `sound-feedback`      | `boolean`           | `false`     | Plays procedural Web Audio       |
-:               :                       :                     :             : earcons (`grab`, `release`,      :
-:               :                       :                     :             : `bounce`, `hover`) and mobile    :
-:               :                       :                     :             : haptics.                         :
-| `<xr-live>`   | `world-understanding` | `'' \| 'planes' \|  | —           | Enables                          |
-:               :                       : 'planes reticle' |  :             : `xr-live-world-understanding`    :
-:               :                       : 'false'`            :             : plane and mesh detection and the :
-:               :                       :                     :             : gaze surface reticle.            :
-| `<xr-live>`   | `spatial-paint`       | `'' \| '#rrggbb' \| | —           | Enables `xr-live-spatial-paint`; |
-:               :                       : 'false'`            :             : pinching in empty space extrudes :
-:               :                       :                     :             : 3D Catmull-Rom tube strokes.     :
-| `<xr-live>`   | `spatial-measure`     | `'' \| 'bounds' \|  | —           | Enables                          |
-:               :                       : 'tape' | 'all' |    :             : `xr-live-spatial-measure` 3D     :
-:               :                       : 'none'`             :             : bounding-box dimension callouts  :
-:               :                       :                     :             : and AR point-to-point tape       :
-:               :                       :                     :             : measure.                         :
-| `<xr-live>`   | `measure-unit`        | `'auto' \| 'm' \|   | `'auto'`    | Default measurement display unit |
-:               :                       : 'cm' | 'mm' | 'in'  :             : for `spatial-measure`.           :
-:               :                       : | 'ft-in'`          :             :                                  :
-| `<xr-live>`   | `magnetic-snap`       | `'' \| 'grid' \|    | —           | Enables `xr-live-magnetic-snap`  |
-:               :                       : 'surface' |         :             : socket, Cartesian grid, surface, :
-:               :                       : 'sockets' | 'all' | :             : and yaw-angle snapping.          :
-:               :                       : 'none'`             :             :                                  :
-| `<xr-live>`   | `snap-grid`           | `number` or `'gx gy | —           | Default Cartesian snap grid      |
-:               :                       : gz'` (meters)       :             : spacing in meters (for example,  :
-:               :                       :                     :             : `'0.05'` or `'0.05 0.05 0.05'`). :
-| `<xr-live>`   | `snap-angle`          | `number` (`0..180`  | `0`         | Default yaw rotation snap        |
-:               :                       : degrees)            :             : increment in degrees.            :
-| `<xr-live>`   | `gaze-dwell`          | `'' \| 'auto' \|    | —           | Enables `xr-live-gaze-dwell`     |
-:               :                       : 'false' | 'none'`   :             : hands-free eye and head gaze     :
-:               :                       :                     :             : reticle and radial dwell         :
-:               :                       :                     :             : selection.                       :
-| `<xr-live>`   | `dwell-time`          | `number`            | `1200`      | Default gaze dwell duration in   |
-:               :                       : (`250..10000` ms)   :             : milliseconds before triggering   :
-:               :                       :                     :             : selection.                       :
-| `<xr-live>`   | `explode`             | `number` (`0..1`)   | `0`         | Normalized multi-part assembly   |
-:               :                       :                     :             : explosion factor                 :
-:               :                       :                     :             : (`xr-live-exploded-view`).       :
-| `<xr-live>`   | `explode-mode`        | `'radial' \|        | `'radial'`  | Automatic explosion vector       |
-:               :                       : 'axial-x' |         :             : strategy when a part omits       :
-:               :                       : 'axial-y' |         :             : `userData.xr.explode.direction`. :
-:               :                       : 'axial-z' |         :             :                                  :
-:               :                       : 'hierarchical'`     :             :                                  :
-| `<xr-live>`   | `explode-scale`       | `number`            | `1.0`       | Global distance multiplier       |
-:               :                       :                     :             : applied to per-part explosion    :
-:               :                       :                     :             : offsets.                         :
-| `<xr-live>`   | `section-plane`       | `'none' \| 'x:<d>'  | `'none'`    | Real-time GPU cross-section      |
-:               :                       : | 'y\:<d>' |        :             : clipping plane in scene (model)  :
-:               :                       : 'z\:<d>' |          :             : space (`d` in meters; the cut    :
-:               :                       : '-x\:<d>' |         :             : follows the model through AR     :
-:               :                       : '-y\:<d>' |         :             : placement and turntable          :
-:               :                       : '-z\:<d>' |         :             : rotation) with optional          :
-:               :                       : 'interactive'`      :             : draggable gizmo frame.           :
-| `<xr-live>`   | `persistent-anchors`  | `''` or `string`    | —           | Enables                          |
-:               :                       : (namespace)         :             : `xr-live-persistent-anchors`     :
-:               :                       :                     :             : cross-session transform          :
-:               :                       :                     :             : persistence                      :
-:               :                       :                     :             : (`xr-live\:anchors\:<ns>`).      :
-| `<xr-live>`   | `persist-url-hash`    | `boolean`           | `false`     | Syncs persisted node poses into  |
-:               :                       :                     :             : `#xr-state=<base64url>` (`<= 8   :
-:               :                       :                     :             : KB`) for zero-backend link       :
-:               :                       :                     :             : sharing.                         :
-| `<xr-live>`   | `locomotion`          | `'' \| 'teleport'   | —           | Enables                          |
-:               :                       : | 'snap-turn' |     :             : `xr-live-spatial-locomotion`     :
-:               :                       : 'smooth' |          :             : parabolic teleportation,         :
-:               :                       : 'teleport           :             : thumbstick snap-turn, or smooth  :
-:               :                       : snap-turn' |        :             : glide.                           :
-:               :                       : 'none'`             :             :                                  :
-| `<xr-live>`   | `snap-turn-deg`       | `number` (degrees)  | `30`        | Horizontal thumbstick snap-turn  |
-:               :                       :                     :             : angle in degrees.                :
-| `<xr-live>`   | `comfort-vignette`    | `boolean`           | `true`      | Renders a `120ms` peripheral FOV |
-:               :                       :                     :             : comfort vignette during          :
-:               :                       :                     :             : teleports and snap-turns.        :
-| `<xr-live>`   | `shared-room`         | `'<room-id>'` or    | —           | Enables `xr-live-shared-room`    |
-:               :                       : `'wss\://...'`      :             : multi-user co-presence via       :
-:               :                       :                     :             : `BroadcastChannel` or WebSocket  :
-:               :                       :                     :             : relay.                           :
-| `<xr-live>`   | `peer-name`           | `string` (max `32`  | —           | Local peer display name          |
-:               :                       : chars)              :             : broadcast to room participants.  :
-| `<xr-live>`   | `peer-color`          | `'#rrggbb'`         | `'#38bdf8'` | Local peer 3D visor and laser    |
-:               :                       :                     :             : ray tint color in `shared-room`. :
-| `<xr-live>`   | `webmcp`              | `boolean`           | `false`     | Registers spatial AI tools       |
-:               :                       :                     :             : (`inspect_xr_scene`,             :
-:               :                       :                     :             : `place_xr_object_at_gaze`,       :
-:               :                       :                     :             : `capture_xr_view`) on            :
-:               :                       :                     :             : `navigator.modelContext`.        :
-| `<xr-live>`   | `webmcp-allow-depth`  | `boolean`           | `false`     | Opt-in gate required before      |
-:               :                       :                     :             : `capture_xr_view` exposes the    :
-:               :                       :                     :             : 8×8 metric `depthGridMeters`     :
-:               :                       :                     :             : array.                           :
-| `<xr-live>`   | `webmcp-omit-pose`    | `boolean`           | `false`     | Omits `headPosition` from        |
-:               :                       :                     :             : `inspect_xr_scene` responses.    :
-| `<xr-anchor>` | `surface`             | `'floor' \| 'wall'  | `'floor'`   | Target semantic surface for      |
-:               :                       : | 'table' |         :             : declarative child placement.     :
-:               :                       : 'ceiling'`          :             :                                  :
-| `<xr-anchor>` | `magnetic`            | `boolean`           | `false`     | Continuously snaps the child     |
-:               :                       :                     :             : anchor to the nearest matching   :
-:               :                       :                     :             : surface plane.                   :
+| `<xr-live>` | `xr-mode` | `'ar' \| 'vr' \|    | `'auto'`    | Target WebXR session mode (`ar` 'inline' | 'auto'`  :             : requests `immersive-ar`; `vr` |
+| `<xr-live>` | `xr-depth` | `'occlusion' \|     | `'none'`    | Enables WebXR `depth-sensing`, | 'mesh' | 'none'`  :             : analytical heightfield physics. |
+| `<xr-live>` | `xr-hands` | `'gestures' \|      | `'none'`    | Enables 25-joint `XRHand` | 'none'`           :             : gesture classification. |
+| `<xr-live>` | `xr-simulator` | `'living-room' \|   | `'none'`    | Enables the desktop 6DoF 'none'`             :             : look, and virtual hands). |
+| `<xr-live>` | `xr-profile` | `'quest3' \|        | `'auto'`    | Target spatial hardware profile 'auto'`             :             : |
+| `<xr-live>` | `sound-feedback` | `boolean` | `false` | Plays procedural Web Audio earcons (`grab`, `release`, `bounce`, `hover`) and mobile haptics. |
+| `<xr-live>` | `world-understanding` | `'' \| 'planes' \|  | —           | Enables 'false'`            :             : plane and mesh detection and the |
+| `<xr-live>` | `spatial-paint` | `'' \| '#rrggbb' \| | —           | Enables `xr-live-spatial-paint`; 'false'`            :             : pinching in empty space extrudes |
+| `<xr-live>` | `spatial-measure` | `'' \| 'bounds' \|  | —           | Enables 'none'`             :             : bounding-box dimension callouts |
+| `<xr-live>` | `measure-unit` | `'auto' \| 'm' \|   | `'auto'`    | Default measurement display unit | 'ft-in'`          :             : |
+| `<xr-live>` | `magnetic-snap` | `'' \| 'grid' \|    | —           | Enables `xr-live-magnetic-snap` 'none'`             :             : |
+| `<xr-live>` | `snap-grid` | `number` or `'gx gy | —           | Default Cartesian snap grid gz'` (meters)       :             : spacing in meters (for example, |
+| `<xr-live>` | `snap-angle` | `number` (`0..180` degrees) | `0` | Default yaw rotation snap increment in degrees. |
+| `<xr-live>` | `gaze-dwell` | `'' \| 'auto' \|    | —           | Enables `xr-live-gaze-dwell` 'false' | 'none'`   :             : hands-free eye and head gaze |
+| `<xr-live>` | `dwell-time` | `number` (`250..10000` ms) | `1200` | Default gaze dwell duration in milliseconds before triggering selection. |
+| `<xr-live>` | `explode` | `number` (`0..1`) | `0` | Normalized multi-part assembly explosion factor (`xr-live-exploded-view`). |
+| `<xr-live>` | `explode-mode` | `'radial' \|        | `'radial'`  | Automatic explosion vector 'hierarchical'`     :             : |
+| `<xr-live>` | `explode-scale` | `number` | `1.0` | Global distance multiplier applied to per-part explosion offsets. |
+| `<xr-live>` | `section-plane` | `'none' \| 'x:<d>'  | `'none'`    | Real-time GPU cross-section 'interactive'`      :             : draggable gizmo frame. |
+| `<xr-live>` | `persistent-anchors` | `''` or `string` (namespace) | — | Enables `xr-live-persistent-anchors` cross-session transform persistence (`xr-live:anchors:<ns>`). |
+| `<xr-live>` | `persist-url-hash` | `boolean` | `false` | Syncs persisted node poses into `#xr-state=<base64url>` (`<= 8 KB`) for zero-backend link sharing. |
+| `<xr-live>` | `locomotion` | `'' \| 'teleport'   | —           | Enables 'none'`             :             : |
+| `<xr-live>` | `snap-turn-deg` | `number` (degrees) | `30` | Horizontal thumbstick snap-turn angle in degrees. |
+| `<xr-live>` | `comfort-vignette` | `boolean` | `true` | Renders a `120ms` peripheral FOV comfort vignette during teleports and snap-turns. |
+| `<xr-live>` | `shared-room` | `'<room-id>'` or `'wss://...'` | — | Enables `xr-live-shared-room` multi-user co-presence via `BroadcastChannel` or WebSocket relay. |
+| `<xr-live>` | `peer-name` | `string` (max `32` chars) | — | Local peer display name broadcast to room participants. |
+| `<xr-live>` | `peer-color` | `'#rrggbb'` | `'#38bdf8'` | Local peer 3D visor and laser ray tint color in `shared-room`. |
+| `<xr-live>` | `webmcp` | `boolean` | `false` | Registers spatial AI tools (`inspect_xr_scene`, `place_xr_object_at_gaze`, `capture_xr_view`) on `navigator.modelContext`. |
+| `<xr-live>` | `webmcp-allow-depth` | `boolean` | `false` | Opt-in gate required before `capture_xr_view` exposes the 8×8 metric `depthGridMeters` array. |
+| `<xr-live>` | `webmcp-omit-pose` | `boolean` | `false` | Omits `headPosition` from `inspect_xr_scene` responses. |
+| `<xr-anchor>` | `surface` | `'floor' \| 'wall'  | `'floor'`   | Target semantic surface for 'ceiling'`          :             : |
+| `<xr-anchor>` | `magnetic` | `boolean` | `false` | Continuously snaps the child anchor to the nearest matching surface plane. |
 
 --------------------------------------------------------------------------------
 
@@ -288,150 +205,27 @@ Android, and iOS or visionOS. The following table describes each trait key:
 
 | Trait key                | Type and options   | Description                  |
 | :----------------------- | :----------------- | :--------------------------- |
-| **`grab`**               | `'1-hand' \|       | 6DoF single-hand grab and    |
-:                          : '2-hand' | true`   : rotate (`'1-hand'`) or       :
-:                          :                    : two-hand grab, pinch-scale,  :
-:                          :                    : and twist (`'2-hand'`).      :
-:                          :                    : Legacy `grabbable\: true` is :
-:                          :                    : also accepted.               :
-| **`scale`**              | `{ min?: number,   | Two-handed pinch scaling     |
-:                          : max?\: number } |  : clamped to `[min, max]`      :
-:                          : true`              : (defaults to `{ min\: 0.05,  :
-:                          :                    : max\: 5 }`).                 :
-| **`billboard`**          | `'capsule' \|      | Orients the node toward the  |
-:                          : 'cylindrical' |    : viewer (`'capsule'` and      :
-:                          : 'spherical' |      : `'cylindrical'` rotate       :
-:                          : true`              : around the Y axis;           :
-:                          :                    : `'spherical'` faces the      :
-:                          :                    : camera in 3D).               :
-| **`follow`**             | `'head' \|         | String values apply an eager |
-:                          : 'hand-left' |      : spring follow; object values :
-:                          : 'hand-right'`      : activate lazy head or hand   :
-:                          : **or** `{ mode,    : follow with an angular       :
-:                          : lazy, distance,    : deadzone (`deadzoneDeg`,     :
-:                          : deadzoneDeg,       : default `15°`) and a         :
-:                          : stiffness, height, : critically damped spring     :
-:                          : faceUser,          : (`stiffness`, default `6`).  :
-:                          : snapOnStart }`     :                              :
-| **`anchor`**             | `'floor' \| 'wall' | Pins the node to a detected  |
-:                          : | 'ceiling' |      : real-world plane or          :
-:                          : 'table' |          : simulator surface; setting   :
-:                          : 'horizontal' |     : `persist\: true` (or `id`)   :
-:                          : 'vertical'` **or** : persists user-moved          :
-:                          : `{ target?, id?,   : transforms across reloads    :
-:                          : persist? }`        : and `#xr-state` links.       :
-| **`physics`**            | `'dynamic' \|      | Steps rigid-body gravity,    |
-:                          : 'static'`          : restitution bounce           :
-:                          :                    : (`userData.xr.restitution`), :
-:                          :                    : sphere-to-sphere collisions, :
-:                          :                    : and depth heightfield        :
-:                          :                    : collisions.                  :
-| **`orbit`**              | `{ target: [x,y,z] | Orbits around a 3D world     |
-:                          : | string,          : point or another mesh's      :
-:                          : radius?\: number,  : `name` at `speed` rad/s.     :
-:                          : speed?\: number,   :                              :
-:                          : height?\: number,  :                              :
-:                          : phase?\: number,   :                              :
-:                          : faceCenter?\:      :                              :
-:                          : boolean }`         :                              :
-| **`handles`**            | `{ rotateAxis?:    | Adds four top-corner uniform |
-:                          : 'y' | 'none',      : scale handles and a bottom   :
-:                          : minScale?\:        : pedestal yaw-rotation bar;   :
-:                          : number,            : emits `xr-handles-change`.   :
-:                          : maxScale?\: number :                              :
-:                          : } | true`          :                              :
-| **`dimensions`**         | `{ enabled?:       | Renders live `W × H × D`     |
-:                          : boolean, unit?\:   : bounding-box dimension guide :
-:                          : 'auto' | 'm' |     : bars and camera-facing       :
-:                          : 'cm' | 'mm' | 'in' : vector-glyph metric or       :
-:                          : | 'ft-in', axes?\: : imperial labels              :
-:                          : Array<'x' | 'y' |  : (`spatial-measure`).         :
-:                          : 'z'>, color?\:     :                              :
-:                          : string,            :                              :
-:                          : showOnSelect?\:    :                              :
-:                          : boolean } | true`  :                              :
-| **`snapTo`**             | `{ grid?: number   | Snaps grabbed meshes to      |
-:                          : | [x,y,z],         : matching `snapSocket`        :
-:                          : angleDeg?\:        : anchors (with `1.25×`        :
-:                          : number, surface?\: : breakaway hysteresis),       :
-:                          : 'none' | 'floor' | : Cartesian grids, surfaces,   :
-:                          : 'wall' | 'ceiling' : and yaw increments           :
-:                          : | 'any',           : (`magnetic-snap`).           :
-:                          : socketTag?\:       :                              :
-:                          : string, radius?\:  :                              :
-:                          : number } | true`   :                              :
-| **`snapSocket`**         | `string` **or** `{ | Marks a node as a magnetic   |
-:                          : tag\: string,      : snap target socket with a    :
-:                          : radius?\: number,  : pulsing proximity highlight  :
-:                          : alignRotation?\:   : ring (`magnetic-snap`).      :
-:                          : boolean,           :                              :
-:                          : highlightColor?\:  :                              :
-:                          : string }`          :                              :
-| **`gaze`**               | `{ enabled?:       | Opts a mesh into hands-free  |
-:                          : boolean,           : eye and head gaze dwell      :
-:                          : dwellMs?\: number, : (`dwellMs` in `[250,         :
-:                          : repeat?\: boolean, : 10000]`, default `1200`),    :
-:                          : action?\: 'select' : firing `meshclick` and       :
-:                          : | 'ask' } | true`  : `KHR_interactivity`          :
-:                          :                    : (`'select'`) or Gemini Live  :
-:                          :                    : (`'ask'`).                   :
-| **`explode`**            | `{ enabled?:       | Configures per-part          |
-:                          : boolean,           : explosion vector, distance   :
-:                          : direction?\:       : (`0..10m`), staggered        :
-:                          : [x,y,z],           : `layer` (`1..10`), and       :
-:                          : distance?\:        : dashed leader lines          :
-:                          : number, layer?\:   : (`exploded-view`); `false`   :
-:                          : number,            : pins a base part in place.   :
-:                          : leaderLine?\:      :                              :
-:                          : boolean } |        :                              :
-:                          : boolean`           :                              :
-| **`navigable`**          | `boolean \|        | Marks floor and platform     |
-:                          : 'walkable' |       : meshes as valid              :
-:                          : 'blocked'`         : (`'walkable'`) or forbidden  :
-:                          :                    : (`'blocked'`) landing        :
-:                          :                    : targets for parabolic XR     :
-:                          :                    : teleportation                :
-:                          :                    : (`spatial-locomotion`).      :
-| **`sync`**               | `boolean`          | Controls whether user        |
-:                          :                    : manipulations on a node      :
-:                          :                    : synchronize across peers in  :
-:                          :                    : `shared-room` (defaults to   :
-:                          :                    : `true` on grabbable nodes;   :
-:                          :                    : set `false` to keep          :
-:                          :                    : local-only).                 :
-| **`particles`**          | `{ preset: 'rain'  | Turns the node into a        |
-:                          : | 'snow' |         : particle emitter volume      :
-:                          : 'sparks' |         : (`count` up to `2,000`) that :
-:                          : 'confetti',        : collides with the floor and  :
-:                          : count?\: number,   : WebXR depth surfaces.        :
-:                          : area?\: number |   :                              :
-:                          : [x,y,z], speed?\:  :                              :
-:                          : number }`          :                              :
-| **`holdToAsk`**          | `{ prompt?:        | Press-and-hold on the mesh   |
-:                          : string, holdMs?\:  : starts speech recognition    :
-:                          : number } | true`   : and sends a contextual       :
-:                          :                    : prompt to Gemini Live; emits :
-:                          :                    : `xr-hold-to-ask`.            :
-| **`worldUnderstanding`** | `{ planes?:        | Opts the scene into WebXR    |
-:                          : boolean, meshes?\: : plane and mesh detection and :
-:                          : boolean,           : the gaze surface reticle     :
-:                          : reticle?\:         : (`__xr_reticle__`).          :
-:                          : boolean,           :                              :
-:                          : objects?\: boolean :                              :
-:                          : }`                 :                              :
-| **`splatUrl`**           | `string`           | Loads and back-to-front      |
-:                          : (`https\://` or    : depth-sorts 3D Gaussian      :
-:                          : relative `.splat`  : Splats (`.splat` or Niantic  :
-:                          : or `.spz` URL)     : `.spz` v2 and v3, up to      :
-:                          :                    : `1,000,000` splats).         :
-| **`audio`**              | `string` **or** `{ | Attaches a 3D `PannerNode`   |
-:                          : src\: string,      : HRTF audio source to the     :
-:                          : refDistance?\:     : mesh.                        :
-:                          : number, loop?\:    :                              :
-:                          : boolean }`         :                              :
-| **`pointerEvents`**      | `'none'`           | Excludes the mesh from       |
-:                          :                    : raycast picking so rays pass :
-:                          :                    : through it.                  :
+| **`grab`** | `'1-hand' \|       | 6DoF single-hand grab and '2-hand' | true`   : rotate (`'1-hand'`) or |
+| **`scale`** | `{ min?: number,   | Two-handed pinch scaling true`              : (defaults to `{ min: 0.05, |
+| **`billboard`** | `'capsule' \|      | Orients the node toward the true`              : around the Y axis; |
+| **`follow`** | `'head' \|         | String values apply an eager 'hand-right'`      : activate lazy head or hand **or** `{ mode,    : follow with an angular snapOnStart }`     : |
+| **`anchor`** | `'floor' \| 'wall' | Pins the node to a detected 'vertical'` **or** : persists user-moved `{ target?, id?,   : transforms across reloads persist? }`        : and `#xr-state` links. |
+| **`physics`** | `'dynamic' \|      | Steps rigid-body gravity, 'static'`          : restitution bounce |
+| **`orbit`** | `{ target: [x,y,z] | Orbits around a 3D world boolean }`         : |
+| **`handles`** | `{ rotateAxis?:    | Adds four top-corner uniform } | true`          : |
+| **`dimensions`** | `{ enabled?:       | Renders live `W × H × D` boolean } | true`  : |
+| **`snapTo`** | `{ grid?: number   | Snaps grabbed meshes to number } | true`   : |
+| **`snapSocket`** | `string` **or** `{ | Marks a node as a magnetic string }`          : |
+| **`gaze`** | `{ enabled?:       | Opts a mesh into hands-free | 'ask' } | true`  : `KHR_interactivity` |
+| **`explode`** | `{ enabled?:       | Configures per-part boolean`           : |
+| **`navigable`** | `boolean \|        | Marks floor and platform 'blocked'`         : (`'walkable'`) or forbidden |
+| **`sync`** | `boolean` | Controls whether user manipulations on a node synchronize across peers in `shared-room` (defaults to `true` on grabbable nodes; set `false` to keep local-only). |
+| **`particles`** | `{ preset: 'rain'  | Turns the node into a number }`          : |
+| **`holdToAsk`** | `{ prompt?:        | Press-and-hold on the mesh number } | true`   : and sends a contextual |
+| **`worldUnderstanding`** | `{ planes?:        | Opts the scene into WebXR }`                 : |
+| **`splatUrl`** | `string` (`https://` or relative `.splat` or `.spz` URL) | Loads and back-to-front depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2 and v3, up to `1,000,000` splats). |
+| **`audio`** | `string` **or** `{ | Attaches a 3D `PannerNode` boolean }`         : |
+| **`pointerEvents`** | `'none'` | Excludes the mesh from raycast picking so rays pass through it. |
 
 --------------------------------------------------------------------------------
 
@@ -551,22 +345,11 @@ plugins.
 
 | Plugin                 | What it does                                        |
 | :--------------------- | :-------------------------------------------------- |
-| `character-controller` | Moves the first `character` node with WASD or arrow |
-:                        : keys, a gamepad, or a touch joystick. Jump with     :
-:                        : Space, sprint with Shift. Slides along `collidable` :
-:                        : nodes, follows with the camera, and switches        :
-:                        : `idle`, `walk`, `run`, and `jump` clips.            :
-| `steering-agents`      | Moves `agent` nodes with `patrol`, `chase`, `flee`, |
-:                        : `follow`, or `wander` steering, with separation and :
-:                        : wall push-out.                                      :
-| `hit-zones`            | Tracks `integrity`, fires projectiles or hitscan    |
-:                        : rays, applies contact amounts, emits zone enter and :
-:                        : exit events, and runs `spawner` nodes.              :
-| `objectives`           | Tracks pickups, checkpoints, keys, time bonuses,    |
-:                        : and restores, plus score, attempts, a countdown,    :
-:                        : and the pass, fail, or timeout outcome.             :
-| `synth-audio`          | Plays procedural cues (no audio files) mapped per   |
-:                        : node by the `audioCues` trait.                      :
+| `character-controller` | Moves the first `character` node with WASD or arrow keys, a gamepad, or a touch joystick. Jump with Space, sprint with Shift. Slides along `collidable` nodes, follows with the camera, and switches `idle`, `walk`, `run`, and `jump` clips. |
+| `steering-agents` | Moves `agent` nodes with `patrol`, `chase`, `flee`, `follow`, or `wander` steering, with separation and wall push-out. |
+| `hit-zones` | Tracks `integrity`, fires projectiles or hitscan rays, applies contact amounts, emits zone enter and exit events, and runs `spawner` nodes. |
+| `objectives` | Tracks pickups, checkpoints, keys, time bonuses, and restores, plus score, attempts, a countdown, and the pass, fail, or timeout outcome. |
+| `synth-audio` | Plays procedural cues (no audio files) mapped per node by the `audioCues` trait. |
 
 ### Simulation traits
 
@@ -574,9 +357,7 @@ Add these keys to `userData.xr` on any mesh or group:
 
 | Trait       | Shape                                              |
 | :---------- | :------------------------------------------------- |
-| `character` | `true`, a camera mode, or `{ speed, runMultiplier, |
-:             : jumpVelocity, gravity, radius, height, cameraMode, :
-:             : cameraDistance, cameraHeight,                      :
+| `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, |
 
 \: : clips: { idle, walk, run, jump }
 }`. Camera modes: `third-person`, : : :`first-person`, `top-down`, `fixed`. : |`agent`|
@@ -598,35 +379,22 @@ face local +Z.
 
 | Attribute              | Values                   | Default                  |
 | :--------------------- | :----------------------- | :----------------------- |
-| `character-controller` | `third-person`,          | trait value              |
-:                        : `first-person`,          :                          :
-:                        : `top-down`,              :                          :
-:                        : `fixed-camera`, `none`   :                          :
+| `character-controller` | `third-person`, `first-person`, `top-down`, `fixed-camera`, `none` | trait value |
 | `character-speed`      | meters per second        | trait value              |
-| `character-jump`       | jump velocity in meters  | trait value              |
-:                        : per second               :                          :
-| `touch-joystick`       | `auto` (touch screens),  | `auto`                   |
-:                        : `always`, `none`         :                          :
-| `steering-agents`      | `false` or `none` pauses | on                       |
-:                        : agents                   :                          :
-| `hit-zones`            | `projectile` (or empty), | off                      |
-:                        : `hitscan`, `contact`     :                          :
+| `character-jump` | jump velocity in meters per second | trait value |
+| `touch-joystick` | `auto` (touch screens), `always`, `none` | `auto` |
+| `steering-agents` | `false` or `none` pauses agents | on |
+| `hit-zones` | `projectile` (or empty), `hitscan`, `contact` | off |
 | `fire-rate`            | shots per second         | `4`                      |
 | `projectile-speed`     | meters per second        | `14`                     |
-| `projectile-gravity`   | meters per second        | `0`                      |
-:                        : squared                  :                          :
-| `hit-amount`           | integrity removed per    | `25`                     |
-:                        : hit                      :                          :
-| `objectives`           | present enables; `none`  | on with objective traits |
-:                        : disables                 :                          :
+| `projectile-gravity` | meters per second squared | `0` |
+| `hit-amount` | integrity removed per hit | `25` |
+| `objectives` | present enables; `none` disables | on with objective traits |
 | `scenario-timer`       | countdown in seconds     | none                     |
-| `target-score`         | score that passes the    | none                     |
-:                        : scenario                 :                          :
+| `target-score` | score that passes the scenario | none |
 | `attempts`             | lives before `fail`      | unlimited                |
-| `sim-hud`              | `auto`, `minimal`,       | `auto` with `objectives` |
-:                        : `none`                   :                          :
-| `synth-audio`          | present enables; `muted` | off                      |
-:                        : disables                 :                          :
+| `sim-hud` | `auto`, `minimal`, `none` | `auto` with `objectives` |
+| `synth-audio` | present enables; `muted` disables | off |
 | `synth-volume`         | `0` to `1`               | `0.7`                    |
 
 To restart a scenario, call `XRSim.resetSimScenario(element)` (or import
@@ -648,11 +416,9 @@ All events bubble from the host element:
 | `xrzoneenter`      | `{ zoneId, nodeId, group }`                            |
 | `xrzoneexit`       | `{ zoneId, nodeId, group }`                            |
 | `xrspawn`          | `{ spawnerId, instanceId, index }`                     |
-| `xrobjective`      | `{ nodeId, tag, type, amount, totalScore,              |
-:                    : remainingRequired, outOfOrder }`                       :
+| `xrobjective` | `{ nodeId, tag, type, amount, totalScore, remainingRequired, outOfOrder }` |
 | `xrscorechange`    | `{ score, delta, attemptsLeft, timeRemaining }`        |
-| `xrscenarioend`    | `{ outcome: 'pass' \| 'fail' \| 'timeout', finalScore, |
-:                    : elapsedSec }`                                          :
+| `xrscenarioend` | `{ outcome: 'pass' \| 'fail' \| 'timeout', finalScore, elapsedSec }` |
 
 ### Example: a timed training drill
 
@@ -764,105 +530,28 @@ interactive textured quad inside WebXR and inline 3D views:
 The `<xr-live>` element dispatches the custom events listed in the following
 table:
 
-| Event                      | `event.detail`   | Description                           |
-:                            : payload          :                                       :
+| Event | `event.detail` payload | Description |
 | :------------------------- | :--------------- | :------------------------------------ |
-| `xr-select-start`,         | `{ hand: 'left'  | Fired on controller trigger, hand     |
-: `xr-select-move`,          : | 'right' |      : pinch, or screen touch ray.           :
-: `xr-select-end`            : 'screen',        :                                       :
-:                            : pivotPosition,   :                                       :
-:                            : quaternion,      :                                       :
-:                            : rayOrigin,       :                                       :
-:                            : rayDirection,    :                                       :
-:                            : hit }`           :                                       :
-| `xr-handles-change`        | `{ mesh, scale:  | Fired when a `userData.xr.handles`    |
-:                            : number, yawDeg\: : corner scale handle or yaw bar is     :
-:                            : number }`        : dragged.                              :
-| `xr-object-detected`       | `{ label:        | Fired for each 2D detection           |
-:                            : string,          : unprojected into 3D by                :
-:                            : position\:       : `world-understanding`.                :
-:                            : [number, number, :                                       :
-:                            : number],         :                                       :
-:                            : distanceMeters\: :                                       :
-:                            : number, source\: :                                       :
-:                            : 'plane' |        :                                       :
-:                            : 'depth' |        :                                       :
-:                            : 'fallback' }`    :                                       :
-| `xr-transcription`         | `{ speaker:      | Fired as Gemini Live user and model   |
-:                            : 'user' |         : speech transcripts arrive.            :
-:                            : 'model', text\:  :                                       :
-:                            : string,          :                                       :
-:                            : isFinal\:        :                                       :
-:                            : boolean }`       :                                       :
-| `xr-hold-to-ask-listening` | `{ mesh: string  | Fired when a press-and-hold on a      |
-:                            : }`               : `holdToAsk` mesh begins listening.    :
-| `xr-hold-to-ask`           | `{ mesh: string, | Fired when a `holdToAsk` voice or     |
-:                            : transcript\:     : text query is dispatched to Gemini    :
-:                            : string, prompt\: : Live.                                 :
-:                            : string }`        :                                       :
-| `xr-gemini-interrupted`    | `{}`             | Fired when user speech barges in and  |
-:                            :                  : cancels Gemini Live audio playback.   :
-| `xr-paint-stroke`          | `{ index:        | Fired when a 3D `spatial-paint` tube  |
-:                            : number, points\: : stroke completes.                     :
-:                            : number,          :                                       :
-:                            : lengthMeters\:   :                                       :
-:                            : number }`        :                                       :
-| `measurecomplete`          | `{ start:        | Fired when a `spatial-measure`        |
-:                            : [x,y,z], end\:   : point-to-point tape segment is        :
-:                            : [x,y,z],         : locked.                               :
-:                            : distanceMeters\: :                                       :
-:                            : number,          :                                       :
-:                            : formatted\:      :                                       :
-:                            : string }`        :                                       :
-| `xrsnap`                   | `{ node, socket, | Fired when `magnetic-snap` snaps a    |
-:                            : position\:       : grabbed or released mesh.             :
-:                            : [x,y,z],         :                                       :
-:                            : quaternion\:     :                                       :
-:                            : [x,y,z,w],       :                                       :
-:                            : mode\: 'socket'  :                                       :
-:                            : | 'grid' |       :                                       :
-:                            : 'surface' |      :                                       :
-:                            : 'angle' }`       :                                       :
-| `xrunsnap`                 | `{ node, socket  | Fired when a mesh is pulled past the  |
-:                            : }`               : `1.25×` breakaway radius of a         :
-:                            :                  : `snapSocket`.                         :
-| `gazeenter`, `gazeleave`   | `{ node, point   | Fired when the smoothed `gaze-dwell`  |
-:                            : }` or `{ node }` : ray enters or leaves a gazeable mesh. :
-| `gazedwell`                | `{ node, point:  | Fired when radial gaze dwell reaches  |
-:                            : [x,y,z],         : `100%`.                               :
-:                            : action\:         :                                       :
-:                            : 'select' | 'ask' :                                       :
-:                            : }`               :                                       :
-| `explodechange`            | `{ factor:       | Fired when `exploded-view` updates    |
-:                            : number, source\: : the assembly explosion factor.        :
-:                            : 'attribute' |    :                                       :
-:                            : 'gesture' |      :                                       :
-:                            : 'api' | 'peer'   :                                       :
-:                            : }`               :                                       :
-| `anchorsrestored`          | `{ count:        | Fired when `persistent-anchors`       |
-:                            : number, source\: : restores saved node poses.            :
-:                            : 'xr-anchor' |    :                                       :
-:                            : 'storage' |      :                                       :
-:                            : 'url-hash' }`    :                                       :
-| `xrteleport`               | `{ from:         | Fired when `spatial-locomotion`       |
-:                            : [x,y,z], to\:    : teleports the viewer rig.             :
-:                            : [x,y,z],         :                                       :
-:                            : yawDeg\: number  :                                       :
-:                            : }`               :                                       :
-| `peerjoin`, `peerleave`    | `{ peerId:       | Fired when a remote participant       |
-:                            : string, name\:   : joins, disconnects, or times out of   :
-:                            : string, color\:  : `shared-room`.                        :
-:                            : string }`        :                                       :
-| `peergrabconflict`         | `{ peerId:       | Fired when a remote participant wins  |
-:                            : string, nodeId\: : a near-simultaneous grab of the same  :
-:                            : string }`        : node and the local hold is released.  :
-| `peersync`                 | `{ peerId:       | Fired when `shared-room` applies a    |
-:                            : string, nodeId\: : remote node transform, explode factor :
-:                            : string }`        : (`__explode__`), or paint stroke      :
-:                            :                  : (`paint\:<id>`).                      :
-| `xr-webmcp-capture`        | `{}`             | Fired when a WebMCP agent invokes     |
-:                            :                  : `capture_xr_view` (sets               :
-:                            :                  : `data-xr-webmcp-indicator="active"`). :
+| `xr-select-start`, | `{ hand: 'left'  | Fired on controller trigger, hand hit }`           : |
+| `xr-handles-change` | `{ mesh, scale:  | Fired when a `userData.xr.handles` number }`        : dragged. |
+| `xr-object-detected` | `{ label:        | Fired for each 2D detection 'fallback' }`    : |
+| `xr-transcription` | `{ speaker:      | Fired as Gemini Live user and model boolean }`       : |
+| `xr-hold-to-ask-listening` | `{ mesh: string  | Fired when a press-and-hold on a }`               : `holdToAsk` mesh begins listening. |
+| `xr-hold-to-ask` | `{ mesh: string, | Fired when a `holdToAsk` voice or string }`        : |
+| `xr-gemini-interrupted` | `{}` | Fired when user speech barges in and cancels Gemini Live audio playback. |
+| `xr-paint-stroke` | `{ index:        | Fired when a 3D `spatial-paint` tube number }`        : |
+| `measurecomplete` | `{ start:        | Fired when a `spatial-measure` string }`        : |
+| `xrsnap` | `{ node, socket, | Fired when `magnetic-snap` snaps a 'angle' }`       : |
+| `xrunsnap` | `{ node, socket  | Fired when a mesh is pulled past the }`               : `1.25×` breakaway radius of a |
+| `gazeenter`, `gazeleave` | `{ node, point   | Fired when the smoothed `gaze-dwell` }` or `{ node }` : ray enters or leaves a gazeable mesh. |
+| `gazedwell` | `{ node, point:  | Fired when radial gaze dwell reaches }`               : |
+| `explodechange` | `{ factor:       | Fired when `exploded-view` updates }`               : |
+| `anchorsrestored` | `{ count:        | Fired when `persistent-anchors` 'url-hash' }`    : |
+| `xrteleport` | `{ from:         | Fired when `spatial-locomotion` }`               : |
+| `peerjoin`, `peerleave` | `{ peerId:       | Fired when a remote participant string }`        : |
+| `peergrabconflict` | `{ peerId:       | Fired when a remote participant wins string }`        : node and the local hold is released. |
+| `peersync` | `{ peerId:       | Fired when `shared-room` applies a string }`        : (`__explode__`), or paint stroke |
+| `xr-webmcp-capture` | `{}` | Fired when a WebMCP agent invokes `capture_xr_view` (sets `data-xr-webmcp-indicator="active"`). |
 
 --------------------------------------------------------------------------------
 
