@@ -138,9 +138,7 @@ export class XRHeightfieldPhysics {
         const projMat = xrCameraContext?.projMatrix;
         if (viewMat && projMat) {
           const rm = xrCameraContext?.modelRootMatrix;
-          const sRoot = rm
-            ? Math.hypot(rm[0], rm[1], rm[2]) || 1
-            : 1;
+          const sRoot = rm ? Math.hypot(rm[0], rm[1], rm[2]) || 1 : 1;
           const wx = rm
             ? rm[0] * pos[0] + rm[4] * pos[1] + rm[8] * pos[2] + rm[12]
             : pos[0];

@@ -23,7 +23,10 @@
  * (`action: 'ask'`).
  */
 
-import {getRegisteredPlugins, type ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  getRegisteredPlugins,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {
   clampNum,
   parseGaze,
@@ -35,12 +38,10 @@ import {extractPosition, getMeshXRTraits} from '../xr-traits';
 import {
   cacheXRFrame,
   createDynamicMesh,
-  type DynamicGeometry,
   emitPluginEvent,
   isXRFrameFresh,
   measureFrameDt,
   normalizeRayDir,
-  type PluginViewer,
   quatFromUnitVectors,
   raycastSceneMeshes,
   reattachDynamicMesh,
@@ -54,6 +55,8 @@ import {
   vNorm,
   vScale,
   vSub,
+  type DynamicGeometry,
+  type PluginViewer,
   type Vec3,
 } from './common';
 import {buildHoldToAskPrompt, getGeminiLiveController} from './gemini-live';
@@ -107,7 +110,11 @@ export function smoothGazeDirection(
     const ct = Math.cos(theta);
     const st = Math.sin(theta);
     return vNorm(
-      [p[0] * ct + perp[0] * st, p[1] * ct + perp[1] * st, p[2] * ct + perp[2] * st],
+      [
+        p[0] * ct + perp[0] * st,
+        p[1] * ct + perp[1] * st,
+        p[2] * ct + perp[2] * st,
+      ],
       target,
     );
   }
@@ -243,11 +250,15 @@ export function resolveGazeElementConfig(element: any): GazeElementConfig {
   const hasAttr =
     typeof element?.hasAttribute === 'function' &&
     element.hasAttribute('gaze-dwell');
-  const raw = (element?.getAttribute?.('gaze-dwell') ?? '').trim().toLowerCase();
+  const raw = (element?.getAttribute?.('gaze-dwell') ?? '')
+    .trim()
+    .toLowerCase();
   const dwellTimeAttr = element?.getAttribute?.('dwell-time');
   const defaultDwellMs = Math.round(
     clampNum(
-      dwellTimeAttr !== null && dwellTimeAttr !== undefined && dwellTimeAttr !== ''
+      dwellTimeAttr !== null &&
+        dwellTimeAttr !== undefined &&
+        dwellTimeAttr !== ''
         ? Number(dwellTimeAttr)
         : undefined,
       250,
@@ -374,7 +385,10 @@ export class XRGazeDwellController {
     const elemCfg = resolveGazeElementConfig(element);
     const anyNodeHasGaze =
       Array.isArray(viewer.meshes) &&
-      viewer.meshes.some((m) => m && !m.isPluginMesh && Boolean(parseGaze(getMeshXRTraits(m)?.gaze)));
+      viewer.meshes.some(
+        (m) =>
+          m && !m.isPluginMesh && Boolean(parseGaze(getMeshXRTraits(m)?.gaze)),
+      );
     const active =
       elemCfg.mode === 'on' ||
       (elemCfg.mode === 'auto' && autoEnabled) ||
@@ -391,18 +405,30 @@ export class XRGazeDwellController {
       ? [...rayOverride.origin]
       : [...head.position];
     const rawDir: Vec3 = rayOverride?.direction
-      ? (normalizeRayDir(rayOverride.direction) ?? forwardFromMatrix(head.matrix))
+      ? (normalizeRayDir(rayOverride.direction) ??
+        forwardFromMatrix(head.matrix))
       : forwardFromMatrix(head.matrix);
-    this.smoothedDir = smoothGazeDirection(this.smoothedDir, rawDir, GAZE_EMA_ALPHA);
+    this.smoothedDir = smoothGazeDirection(
+      this.smoothedDir,
+      rawDir,
+      GAZE_EMA_ALPHA,
+    );
 
     // Raycast every pickable scene mesh so opaque non-gaze geometry occludes
     // gaze targets behind it, then accept only a gaze-enabled nearest hit.
-    const rawHit = raycastSceneMeshes(viewer, origin, this.smoothedDir, 30, (m) => {
-      const pe = m.extras?.xr?.pointerEvents ?? m.userData?.xr?.pointerEvents;
-      return pe !== 'none';
-    });
+    const rawHit = raycastSceneMeshes(
+      viewer,
+      origin,
+      this.smoothedDir,
+      30,
+      (m) => {
+        const pe = m.extras?.xr?.pointerEvents ?? m.userData?.xr?.pointerEvents;
+        return pe !== 'none';
+      },
+    );
     const hit =
-      rawHit && this.resolveMeshGazeOptions(rawHit.mesh, elemCfg, autoEnabled) !== null
+      rawHit &&
+      this.resolveMeshGazeOptions(rawHit.mesh, elemCfg, autoEnabled) !== null
         ? rawHit
         : null;
 
@@ -423,7 +449,8 @@ export class XRGazeDwellController {
       const toPrev = vSub(this.activePoint, origin);
       if (
         vLen(toPrev) > 1e-4 &&
-        angleBetweenDirectionsDeg(this.smoothedDir, toPrev) <= GAZE_GRACE_CONE_DEG
+        angleBetweenDirectionsDeg(this.smoothedDir, toPrev) <=
+          GAZE_GRACE_CONE_DEG
       ) {
         nextMesh = this.activeMesh;
         nextPoint = this.activePoint;
@@ -459,7 +486,11 @@ export class XRGazeDwellController {
       return {target: null, progress: 0, triggered: false};
     }
 
-    const opts = this.resolveMeshGazeOptions(this.activeMesh, elemCfg, autoEnabled);
+    const opts = this.resolveMeshGazeOptions(
+      this.activeMesh,
+      elemCfg,
+      autoEnabled,
+    );
     if (!opts) {
       this.clearTarget(element);
       if (this.reticleMesh) this.reticleMesh.visible = false;
@@ -470,10 +501,22 @@ export class XRGazeDwellController {
     let progress = 0;
     if (!this.latched) {
       this.elapsedMs += dtMs;
-      progress = computeDwellProgress(this.elapsedMs, opts.dwellMs, GAZE_GRACE_MS);
+      progress = computeDwellProgress(
+        this.elapsedMs,
+        opts.dwellMs,
+        GAZE_GRACE_MS,
+      );
       if (progress >= 1) {
         triggered = true;
-        this.fireDwellAction(viewer, element, this.activeMesh, this.activePoint, this.activeNormal, this.activeDistance, opts);
+        this.fireDwellAction(
+          viewer,
+          element,
+          this.activeMesh,
+          this.activePoint,
+          this.activeNormal,
+          this.activeDistance,
+          opts,
+        );
         if (opts.repeat) {
           this.elapsedMs = 0;
           progress = 0;
@@ -486,7 +529,13 @@ export class XRGazeDwellController {
       progress = 1;
     }
 
-    this.syncReticle(viewer, this.activePoint, this.activeNormal, this.activeDistance, progress);
+    this.syncReticle(
+      viewer,
+      this.activePoint,
+      this.activeNormal,
+      this.activeDistance,
+      progress,
+    );
     return {target: this.activeMesh, progress, triggered};
   }
 
@@ -528,7 +577,9 @@ export class XRGazeDwellController {
 
     // `action === 'select'`: synthesize `meshclick` / `meshClick` and notify
     // `KHR_interactivity` (`onMeshSelect`) + spatial UI slot controls.
-    const meshIndex = Array.isArray(viewer.meshes) ? viewer.meshes.indexOf(mesh) : -1;
+    const meshIndex = Array.isArray(viewer.meshes)
+      ? viewer.meshes.indexOf(mesh)
+      : -1;
     const hitDetail = {
       meshIndex,
       meshName: mesh.name ?? '',
@@ -550,9 +601,17 @@ export class XRGazeDwellController {
     if (typeof vAny?.opts?.onMeshClick === 'function') {
       vAny.opts.onMeshClick(hitDetail);
     }
-    if (mesh?.isSpatialSlot && typeof element?.inputManager?.onSpatialSlotHit === 'function') {
+    if (
+      mesh?.isSpatialSlot &&
+      typeof element?.inputManager?.onSpatialSlotHit === 'function'
+    ) {
       element.inputManager.onSpatialSlotHit(
-        {mesh, distance, point: [...point] as Vec3, normal: [...normal] as Vec3},
+        {
+          mesh,
+          distance,
+          point: [...point] as Vec3,
+          normal: [...normal] as Vec3,
+        },
         'click',
       );
     }
@@ -604,7 +663,11 @@ export class XRGazeDwellController {
     const n = vNorm(normal, [0, 0, 1]);
     const pos = vAdd(point, vScale(n, 0.003));
     const q = quatFromUnitVectors([0, 0, 1], n);
-    setWorldTRS(viewer, this.reticleMesh, q, pos, [outerRadius, outerRadius, outerRadius]);
+    setWorldTRS(viewer, this.reticleMesh, q, pos, [
+      outerRadius,
+      outerRadius,
+      outerRadius,
+    ]);
   }
 
   // tslint:disable-next-line:no-any Host element.
@@ -623,7 +686,8 @@ export class XRGazeDwellController {
     this.clearTarget(element);
     this.smoothedDir = null;
     if (this.reticleMesh) this.reticleMesh.visible = false;
-    if (viewer && this.reticleMesh) reattachDynamicMesh(viewer, this.reticleMesh);
+    if (viewer && this.reticleMesh)
+      reattachDynamicMesh(viewer, this.reticleMesh);
   }
 
   /** Disposes reticle GPU buffers and resets controller state. */
@@ -657,11 +721,20 @@ export const gazeDwellPlugin: ThreeLivePlugin = {
   onElementDisconnected(element: any): void {
     controllers.get(element)?.dispose(element?._view ?? element?.viewer);
   },
-  onXRFrame(viewer: unknown, session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;
-    const {gazeRay, hasTrackedControllers} = resolveXRInputGaze(session, frame, refSpace);
+    const {gazeRay, hasTrackedControllers} = resolveXRInputGaze(
+      session,
+      frame,
+      refSpace,
+    );
     const autoEnabled = gazeRay !== null || !hasTrackedControllers;
     const ctrl = getGazeDwellController(host ?? v);
     ctrl.step(v, measureFrameDt(ctrl), host, gazeRay, autoEnabled);

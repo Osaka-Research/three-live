@@ -30,8 +30,8 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * Host-side JVM tests for the pure-Kotlin spatial runtime: [MiniJson], canonical trait parsing,
- * the `KHR_interactivity` VM in [XRLiveRuntimeSession], and the math / geometry / decoder helpers.
+ * Host-side JVM tests for the pure-Kotlin spatial runtime: [MiniJson], canonical trait parsing, the
+ * `KHR_interactivity` VM in [XRLiveRuntimeSession], and the math / geometry / decoder helpers.
  *
  * Numeric expectations mirror `xr-live/tests/xr_plugins_test.ts` so web and Android stay in parity.
  */
@@ -115,7 +115,15 @@ class XRLiveRuntimeSessionTest {
 
   @Test
   fun miniJsonStringifyRoundTrips() {
-    val src = mapOf("id" to "a\"b\n", "n" to 1.0, "f" to 0.5, "v" to doubleArrayOf(1.0, 2.5), "b" to true, "z" to null)
+    val src =
+      mapOf(
+        "id" to "a\"b\n",
+        "n" to 1.0,
+        "f" to 0.5,
+        "v" to doubleArrayOf(1.0, 2.5),
+        "b" to true,
+        "z" to null,
+      )
     val json = MiniJson.stringify(src)
     assertEquals("""{"id":"a\"b\n","n":1,"f":0.5,"v":[1,2.5],"b":true,"z":null}""", json)
     val back = MiniJson.asMap(MiniJson.parse(json))!!
@@ -172,7 +180,10 @@ class XRLiveRuntimeSessionTest {
     assertEquals("snow", snow.particles?.preset)
     assertEquals(2000, snow.particles?.count)
     assertEquals(listOf(2.0, 2.0, 2.0), snow.particles?.area)
-    assertEquals(XRWorldUnderstandingTrait(planes = true, meshes = false, reticle = true, objects = false), snow.worldUnderstanding)
+    assertEquals(
+      XRWorldUnderstandingTrait(planes = true, meshes = false, reticle = true, objects = false),
+      snow.worldUnderstanding,
+    )
     assertTrue(snow.scalable)
     assertEquals(0.5, snow.minScale, 1e-9)
     assertEquals(3.0, snow.maxScale, 1e-9)
@@ -257,7 +268,10 @@ class XRLiveRuntimeSessionTest {
 
   @Test
   fun traitNormalizationClampsAndSanitizes() {
-    val lazy = XRLiveSceneCoreHelper.parseLazyFollow(mapOf("distance" to 99.0, "deadzoneDeg" to -5.0, "stiffness" to "x"))!!
+    val lazy =
+      XRLiveSceneCoreHelper.parseLazyFollow(
+        mapOf("distance" to 99.0, "deadzoneDeg" to -5.0, "stiffness" to "x")
+      )!!
     assertEquals(10.0, lazy.distance, 0.0)
     assertEquals(0.0, lazy.deadzoneDeg, 0.0)
     assertEquals(6.0, lazy.stiffness, 0.0)
@@ -287,9 +301,23 @@ class XRLiveRuntimeSessionTest {
     assertEquals("What is this?", t[3].holdToAsk!!.prompt)
     assertNull(t[3].orbit!!.targetName)
 
-    assertEquals("https://cdn.test/a.spz", XRLiveSceneCoreHelper.safeMediaUrl("https://cdn.test/a.spz"))
+    assertEquals(
+      "https://cdn.test/a.spz",
+      XRLiveSceneCoreHelper.safeMediaUrl("https://cdn.test/a.spz"),
+    )
     assertEquals("scans/room.spz", XRLiveSceneCoreHelper.safeMediaUrl(" scans/room.spz "))
-    for (bad in listOf("http://x.com/a", "//evil/a", "../a.spz", "a/../b", "a%2e.spz", "a\\b", "data:x", "https:///x", "")) {
+    for (bad in
+      listOf(
+        "http://x.com/a",
+        "//evil/a",
+        "../a.spz",
+        "a/../b",
+        "a%2e.spz",
+        "a\\b",
+        "data:x",
+        "https:///x",
+        "",
+      )) {
       assertNull(bad, XRLiveSceneCoreHelper.safeMediaUrl(bad))
     }
   }
@@ -351,7 +379,12 @@ class XRLiveRuntimeSessionTest {
     val events = ArrayList<Pair<String, String>>()
     val animations = ArrayList<String>()
 
-    override fun onNodeTransformChanged(nodeIndex: Int, translation: FloatArray, rotation: FloatArray, scale: FloatArray) {
+    override fun onNodeTransformChanged(
+      nodeIndex: Int,
+      translation: FloatArray,
+      rotation: FloatArray,
+      scale: FloatArray,
+    ) {
       transforms.add(nodeIndex to (translation.toList() + rotation.toList() + scale.toList()))
     }
 
@@ -532,11 +565,11 @@ class XRLiveRuntimeSessionTest {
         "nodes/0/translation",
         "/nodes/0/weights",
       )
-    val nodes =
-      ptrs.mapIndexed { i, p ->
-        """{"op":"pointer/set","configuration":{"pointer":"$p"},"values":{"value":{"value":[5,5,5,1]}},"flows":{"out":{"node":${i + 1}}}}"""
-      }
-    val graph = """{"nodes":[${nodes.joinToString(",")},{"op":"event/onStart","flows":{"out":{"node":0}}}]}"""
+    val nodes = ptrs.mapIndexed { i, p ->
+      """{"op":"pointer/set","configuration":{"pointer":"$p"},"values":{"value":{"value":[5,5,5,1]}},"flows":{"out":{"node":${i + 1}}}}"""
+    }
+    val graph =
+      """{"nodes":[${nodes.joinToString(",")},{"op":"event/onStart","flows":{"out":{"node":0}}}]}"""
     val (s, r) = session(gltfWithGraph(graph))
     s.start()
     assertTrue(r.transforms.isEmpty())
@@ -544,13 +577,17 @@ class XRLiveRuntimeSessionTest {
     for (p in ptrs) assertNull(p, s.readPointer(p))
     assertNotNull(s.readPointer("/nodes/0/translation"))
     assertNotNull(s.readPointer("/materials/0/emissiveFactor"))
-    assertEquals(listOf("__proto__x", "a/b", "c~d"), XRLiveRuntimeSession.parseSafePointer("/__proto__x/a~1b/c~0d"))
+    assertEquals(
+      listOf("__proto__x", "a/b", "c~d"),
+      XRLiveRuntimeSession.parseSafePointer("/__proto__x/a~1b/c~0d"),
+    )
     assertNull(XRLiveRuntimeSession.parseSafePointer("/a/__proto__"))
   }
 
   @Test
   fun graphSafetyLimitsDisableTheVm() {
-    val many = (0..XRLiveRuntimeSession.MAX_GRAPH_NODES).joinToString(",") { """{"op":"flow/sequence"}""" }
+    val many =
+      (0..XRLiveRuntimeSession.MAX_GRAPH_NODES).joinToString(",") { """{"op":"flow/sequence"}""" }
     val (s, _) = session(gltfWithGraph("""{"nodes":[$many]}"""))
     assertFalse(s.interactivityEnabled)
     assertTrue(s.interactivityError!!.contains("MAX_GRAPH_NODES"))
@@ -776,14 +813,33 @@ class XRLiveRuntimeSessionTest {
     assertEquals(4, layout.corners.size)
     assertEquals(0.5, layout.corners[2][1], 1e-9)
     val opts = XRHandlesTrait(minScale = 0.5, maxScale = 2.0)
-    val hit = ManipulationHandles.pick(layout, doubleArrayOf(0.5, 0.5, 0.0), doubleArrayOf(0.0, 0.0, -1.0), opts)
+    val hit =
+      ManipulationHandles.pick(
+        layout,
+        doubleArrayOf(0.5, 0.5, 0.0),
+        doubleArrayOf(0.0, 0.0, -1.0),
+        opts,
+      )
     assertTrue(hit is ManipulationHandles.Hit.Corner)
-    assertNull(ManipulationHandles.pick(layout, doubleArrayOf(10.0, 10.0, 0.0), doubleArrayOf(0.0, 0.0, -1.0), opts))
+    assertNull(
+      ManipulationHandles.pick(
+        layout,
+        doubleArrayOf(10.0, 10.0, 0.0),
+        doubleArrayOf(0.0, 0.0, -1.0),
+        opts,
+      )
+    )
 
     val drag = ManipulationHandles.Drag(opts)
     val c = layout.corners[2]
     assertNotNull(
-      drag.begin(layout, doubleArrayOf(c[0], c[1], 0.0), doubleArrayOf(0.0, 0.0, -1.0), doubleArrayOf(1.0, 1.0, 1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))
+      drag.begin(
+        layout,
+        doubleArrayOf(c[0], c[1], 0.0),
+        doubleArrayOf(0.0, 0.0, -1.0),
+        doubleArrayOf(1.0, 1.0, 1.0),
+        doubleArrayOf(0.0, 0.0, 0.0, 1.0),
+      )
     )
     assertTrue(drag.update(doubleArrayOf(c[0] * 10, c[1] * 10, 0.0), doubleArrayOf(0.0, 0.0, -1.0)))
     assertEquals(2.0, drag.scale[0], 1e-3)
@@ -814,8 +870,16 @@ class XRLiveRuntimeSessionTest {
 
   @Test
   fun unprojectsDetections() {
-    assertEquals(0.2, WorldUnderstanding.normalizeBox(doubleArrayOf(100.0, 200.0, 300.0, 400.0))!![1], 1e-12)
-    assertEquals(0.2, WorldUnderstanding.normalizeBox(doubleArrayOf(0.5, 0.1, 0.2, 0.3))!![0], 1e-12)
+    assertEquals(
+      0.2,
+      WorldUnderstanding.normalizeBox(doubleArrayOf(100.0, 200.0, 300.0, 400.0))!![1],
+      1e-12,
+    )
+    assertEquals(
+      0.2,
+      WorldUnderstanding.normalizeBox(doubleArrayOf(0.5, 0.1, 0.2, 0.3))!![0],
+      1e-12,
+    )
     assertNull(WorldUnderstanding.normalizeBox(doubleArrayOf(Double.NaN, 0.0, 1.0, 1.0)))
     assertNull(WorldUnderstanding.normalizeBox(doubleArrayOf(0.0, 0.0, 1.0)))
 
@@ -825,14 +889,22 @@ class XRLiveRuntimeSessionTest {
     proj[10] = -1f
     proj[11] = -1f
     proj[14] = -0.2f
-    val cam = FloatArray(16).also {
-      it[0] = 1f
-      it[5] = 1f
-      it[10] = 1f
-      it[15] = 1f
-      it[13] = 1.6f
-    }
-    val center = WorldUnderstanding.unprojectDetection(doubleArrayOf(400.0, 400.0, 600.0, 600.0), cam, proj, 2.0, label = "cup")!!
+    val cam =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[15] = 1f
+        it[13] = 1.6f
+      }
+    val center =
+      WorldUnderstanding.unprojectDetection(
+        doubleArrayOf(400.0, 400.0, 600.0, 600.0),
+        cam,
+        proj,
+        2.0,
+        label = "cup",
+      )!!
     assertEquals(-2.0, center.z, 1e-3)
     assertEquals(1.6, center.y, 1e-3)
     assertEquals(0.0, center.x, 1e-3)
@@ -840,14 +912,34 @@ class XRLiveRuntimeSessionTest {
     assertEquals(0.8, center.widthMeters, 1e-3)
     assertEquals("cup", center.label)
 
-    val floor = WorldUnderstanding.TrackedPlane("horizontal", doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(0.0, 1.0, 0.0), 10.0)
-    val low = WorldUnderstanding.unprojectDetection(doubleArrayOf(900.0, 450.0, 1000.0, 550.0), cam, proj, null, listOf(floor))!!
+    val floor =
+      WorldUnderstanding.TrackedPlane(
+        "horizontal",
+        doubleArrayOf(0.0, 0.0, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+        10.0,
+      )
+    val low =
+      WorldUnderstanding.unprojectDetection(
+        doubleArrayOf(900.0, 450.0, 1000.0, 550.0),
+        cam,
+        proj,
+        null,
+        listOf(floor),
+      )!!
     assertEquals(WorldUnderstanding.DepthSource.PLANE, low.depthSource)
     assertEquals(0.0, low.y, 0.01)
-    val none = WorldUnderstanding.unprojectDetection(doubleArrayOf(0.0, 0.0, 1.0, 1.0), cam, proj, 0.01)!!
+    val none =
+      WorldUnderstanding.unprojectDetection(doubleArrayOf(0.0, 0.0, 1.0, 1.0), cam, proj, 0.01)!!
     assertEquals(WorldUnderstanding.DepthSource.FALLBACK, none.depthSource)
     assertEquals(-1.5, none.z, 1e-3)
-    assertNull(WorldUnderstanding.hitTestPlanes(listOf(floor), doubleArrayOf(0.0, 1.0, 0.0), doubleArrayOf(0.0, 1.0, 0.0)))
+    assertNull(
+      WorldUnderstanding.hitTestPlanes(
+        listOf(floor),
+        doubleArrayOf(0.0, 1.0, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+      )
+    )
 
     val tape = WorldUnderstanding.TapeMeasure()
     tape.addPoint(0.0, 0.0, 0.0)
@@ -864,7 +956,13 @@ class XRLiveRuntimeSessionTest {
   @Test
   fun tubeStrokeGeometry() {
     val mid =
-      TubeStrokeBuilder.catmullRom(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(1.0, 0.0, 0.0), doubleArrayOf(2.0, 0.0, 0.0), doubleArrayOf(3.0, 0.0, 0.0), 0.5)
+      TubeStrokeBuilder.catmullRom(
+        doubleArrayOf(0.0, 0.0, 0.0),
+        doubleArrayOf(1.0, 0.0, 0.0),
+        doubleArrayOf(2.0, 0.0, 0.0),
+        doubleArrayOf(3.0, 0.0, 0.0),
+        0.5,
+      )
     assertEquals(1.5, mid[0], 1e-9)
     val b = TubeStrokeBuilder(radius = 0.01, radialSegments = 6, samplesPerSpan = 2)
     assertNull(b.build())
@@ -891,7 +989,12 @@ class XRLiveRuntimeSessionTest {
     val p0 = pt(i0)
     val e1 = pt(i1).mapIndexed { k, v -> v - p0[k] }
     val e2 = pt(i2).mapIndexed { k, v -> v - p0[k] }
-    val cross = doubleArrayOf(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+    val cross =
+      doubleArrayOf(
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+      )
     val out = DoubleArray(3) { g.normals[i0 * 3 + it].toDouble() }
     assertTrue(cross[0] * out[0] + cross[1] * out[1] + cross[2] * out[2] > 0)
 
@@ -904,7 +1007,14 @@ class XRLiveRuntimeSessionTest {
     assertTrue(capDot > 0.99)
 
     val rev = TubeStrokeBuilder(radius = 0.01, samplesPerSpan = 1)
-    for (p in listOf(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(0.1, 0.0, 0.0), doubleArrayOf(0.2, 0.0, 0.0), doubleArrayOf(0.1, 0.0001, 0.0), doubleArrayOf(0.0, 0.0002, 0.0))) {
+    for (p in
+      listOf(
+        doubleArrayOf(0.0, 0.0, 0.0),
+        doubleArrayOf(0.1, 0.0, 0.0),
+        doubleArrayOf(0.2, 0.0, 0.0),
+        doubleArrayOf(0.1, 0.0001, 0.0),
+        doubleArrayOf(0.0, 0.0002, 0.0),
+      )) {
       rev.addPoint(p[0], p[1], p[2])
     }
     assertTrue(rev.build()!!.normals.all { it.isFinite() })
@@ -928,7 +1038,14 @@ class XRLiveRuntimeSessionTest {
     val parity = ParticleEmitter(XRParticlesTrait("rain", 2, listOf(1.0, 1.0, 1.0), 1.0), 7)
     parity.reset(0.0, 1.0, 0.0)
     assertArrayEquals(
-      floatArrayOf(-0.4882952570915222f, 0.5619582533836365f, 0.4769076406955719f, 0.19902870059013367f, 1.0214452743530273f, -0.0944783091545105f),
+      floatArrayOf(
+        -0.4882952570915222f,
+        0.5619582533836365f,
+        0.4769076406955719f,
+        0.19902870059013367f,
+        1.0214452743530273f,
+        -0.0944783091545105f,
+      ),
       parity.positions,
       0f,
     )
@@ -950,18 +1067,20 @@ class XRLiveRuntimeSessionTest {
       assertTrue(e.positions.all { it.isFinite() })
     }
 
-    val proj = FloatArray(16).also {
-      it[0] = 1f
-      it[5] = 1f
-      it[10] = -1f
-      it[11] = -1f
-    }
-    val view = FloatArray(16).also {
-      it[0] = 1f
-      it[5] = 1f
-      it[10] = 1f
-      it[15] = 1f
-    }
+    val proj =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = -1f
+        it[11] = -1f
+      }
+    val view =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[15] = 1f
+      }
     val cam = ParticleDepthCamera(view, proj) { _, _ -> 2.0 }
     assertTrue(ParticleEmitter.isOccludedByDepth(doubleArrayOf(0.0, 0.0, -3.0), cam))
     assertFalse(ParticleEmitter.isOccludedByDepth(doubleArrayOf(0.0, 0.0, -1.0), cam))
@@ -1023,7 +1142,8 @@ class XRLiveRuntimeSessionTest {
 
     assertThrows { SplatParser.parseSpzPayload(bytes.copyOf(20)) }
     assertThrows { SplatParser.parseSpzPayload(bytes.copyOf(10)) }
-    val badCount = bytes.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(8, -1) }
+    val badCount =
+      bytes.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(8, -1) }
     assertThrows { SplatParser.parseSpzPayload(badCount) }
     val badMagic = bytes.copyOf().also { it[0] = 0 }
     assertThrows { SplatParser.parseSpzPayload(badMagic) }
@@ -1049,13 +1169,15 @@ class XRLiveRuntimeSessionTest {
 
   @Test
   fun sortsSplatsBackToFront() {
-    val persp = FloatArray(16).also {
-      it[0] = 1f
-      it[5] = 1f
-      it[10] = 1f
-      it[11] = -1f
-    }
-    val order = SplatParser.sortSplatsByDepth(3, floatArrayOf(0f, 0f, -1f, 0f, 0f, -5f, 0f, 0f, -3f), persp)
+    val persp =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[11] = -1f
+      }
+    val order =
+      SplatParser.sortSplatsByDepth(3, floatArrayOf(0f, 0f, -1f, 0f, 0f, -5f, 0f, 0f, -3f), persp)
     assertArrayEquals(intArrayOf(1, 2, 0), order)
 
     // URL policy (mirrors web resolveSplatUrl vectors).
@@ -1063,13 +1185,18 @@ class XRLiveRuntimeSessionTest {
     assertNull(SplatParser.resolveSplatUrl("javascript:alert(1)"))
     assertNull(SplatParser.resolveSplatUrl("data:application/octet-stream;base64,AA"))
     assertNull(SplatParser.resolveSplatUrl("http://evil.com/x.splat"))
-    assertEquals("http://localhost:8080/x.spz", SplatParser.resolveSplatUrl("http://localhost:8080/x.spz"))
+    assertEquals(
+      "http://localhost:8080/x.spz",
+      SplatParser.resolveSplatUrl("http://localhost:8080/x.spz"),
+    )
     assertEquals(
       "https://site.test/scans/room.spz",
       SplatParser.resolveSplatUrl("/scans/room.spz", "https://site.test/app/"),
     )
     assertNull(SplatParser.resolveSplatUrl("https://cdn.test/x.spz", "https://site.test/", false))
-    assertNotNull(SplatParser.resolveSplatUrl("https://site.test/x.spz", "https://site.test/", false))
+    assertNotNull(
+      SplatParser.resolveSplatUrl("https://site.test/x.spz", "https://site.test/", false)
+    )
     assertNull(SplatParser.resolveSplatUrl("//evil.com/x.spz", "https://site.test/", true))
 
     // Deterministic stride downsampling.
@@ -1089,8 +1216,20 @@ class XRLiveRuntimeSessionTest {
     assertEquals(7f, sampled.positions[9], 0f)
 
     // Resort threshold (5 cm move or 5° rotation) and billboard quad corners.
-    val camId = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
-    val nodeId = DoubleArray(16).also { it[0] = 1.0; it[5] = 1.0; it[10] = 1.0; it[15] = 1.0 }
+    val camId =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[15] = 1f
+      }
+    val nodeId =
+      DoubleArray(16).also {
+        it[0] = 1.0
+        it[5] = 1.0
+        it[10] = 1.0
+        it[15] = 1.0
+      }
     assertTrue(SplatParser.shouldResort(null, camId, null, nodeId))
     assertFalse(SplatParser.shouldResort(camId, camId, nodeId, nodeId))
     val camMoved = camId.copyOf().also { it[12] = 0.08f }
@@ -1119,7 +1258,10 @@ class XRLiveRuntimeSessionTest {
         ]}"""
     val (s, r) = session(gltfWithGraph(graph))
     s.sendEvent("e")
-    assertTrue("sends=${r.events.size}", r.events.size in 1..XRLiveRuntimeSession.MAX_STEPS_PER_INVOCATION)
+    assertTrue(
+      "sends=${r.events.size}",
+      r.events.size in 1..XRLiveRuntimeSession.MAX_STEPS_PER_INVOCATION,
+    )
   }
 
   @Test(timeout = 10_000)
@@ -1127,7 +1269,9 @@ class XRLiveRuntimeSessionTest {
     // Each math/add reads the previous node twice: naive evaluation is 2^60.
     val n = 60
     val adds =
-      (1..n).joinToString(",") { i -> """{"op":"math/add","values":{"a":{"node":${i - 1}},"b":{"node":${i - 1}}}}""" }
+      (1..n).joinToString(",") { i ->
+        """{"op":"math/add","values":{"a":{"node":${i - 1}},"b":{"node":${i - 1}}}}"""
+      }
     val graph =
       """{"nodes":[{"op":"math/add","values":{"a":1,"b":0}},$adds,
           {"op":"pointer/set","configuration":{"pointer":"/nodes/0/translation"},"values":{"value":{"node":$n}}},
@@ -1175,7 +1319,11 @@ class XRLiveRuntimeSessionTest {
     // Self-feeding 64-way sequence: the queue never outgrows the step budget.
     val self = (0 until 64).joinToString(",") { """"$it":{"node":1}""" }
     val (s2, _) =
-      session(gltfWithGraph("""{"nodes":[{"op":"event/onStart","flows":{"out":{"node":1}}},{"op":"flow/sequence","flows":{$self}}]}"""))
+      session(
+        gltfWithGraph(
+          """{"nodes":[{"op":"event/onStart","flows":{"out":{"node":1}}},{"op":"flow/sequence","flows":{$self}}]}"""
+        )
+      )
     s2.start()
   }
 
@@ -1193,9 +1341,13 @@ class XRLiveRuntimeSessionTest {
     assertNull(MiniJson.parseOrNull("1" + "0".repeat(MiniJson.MAX_NUMBER_CHARS)))
 
     val nodes = (0..XRLiveRuntimeSession.MAX_NODES).joinToString(",") { "{}" }
-    assertThrows { val unused = XRLiveRuntimeSession("""{"nodes":[$nodes]}""") }
+    assertThrows {
+      val unused = XRLiveRuntimeSession("""{"nodes":[$nodes]}""")
+    }
     val mats = (0..XRLiveRuntimeSession.MAX_MATERIALS).joinToString(",") { "{}" }
-    assertThrows { val unused = XRLiveRuntimeSession("""{"materials":[$mats]}""") }
+    assertThrows {
+      val unused = XRLiveRuntimeSession("""{"materials":[$mats]}""")
+    }
 
     assertEquals(128 * 1024 * 1024, SplatParser.MAX_SPZ_DECOMPRESSED_BYTES)
   }
@@ -1224,29 +1376,35 @@ class XRLiveRuntimeSessionTest {
 
   @Test
   fun unprojectsWithYawedCamera() {
-    val proj = FloatArray(16).also {
-      it[0] = 1f
-      it[5] = 1f
-      it[10] = -1f
-      it[11] = -1f
-      it[14] = -0.2f
-    }
+    val proj =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = -1f
+        it[11] = -1f
+        it[14] = -0.2f
+      }
     // Camera at (0, 1.6, 0) yawed +90° about +Y: it looks down -X.
-    val cam = FloatArray(16).also {
-      it[2] = -1f // column 0 = (0, 0, -1)
-      it[5] = 1f // column 1 = (0, 1, 0)
-      it[8] = 1f // column 2 = (1, 0, 0)
-      it[13] = 1.6f
-      it[15] = 1f
-    }
-    val d = WorldUnderstanding.unprojectDetection(doubleArrayOf(0.4, 0.4, 0.6, 0.6), cam, proj, 2.0)!!
+    val cam =
+      FloatArray(16).also {
+        it[2] = -1f // column 0 = (0, 0, -1)
+        it[5] = 1f // column 1 = (0, 1, 0)
+        it[8] = 1f // column 2 = (1, 0, 0)
+        it[13] = 1.6f
+        it[15] = 1f
+      }
+    val d =
+      WorldUnderstanding.unprojectDetection(doubleArrayOf(0.4, 0.4, 0.6, 0.6), cam, proj, 2.0)!!
     assertEquals(-2.0, d.x, 1e-6)
     assertEquals(1.6, d.y, 1e-6)
     assertEquals(0.0, d.z, 1e-6)
     // A box right of center lands toward -Z (the camera's right) when yawed +90°.
-    val right = WorldUnderstanding.unprojectDetection(doubleArrayOf(0.4, 0.7, 0.6, 0.9), cam, proj, 2.0)!!
+    val right =
+      WorldUnderstanding.unprojectDetection(doubleArrayOf(0.4, 0.7, 0.6, 0.9), cam, proj, 2.0)!!
     assertTrue(right.z < -0.5)
-    assertThrows { WorldUnderstanding.unprojectDetection(doubleArrayOf(0.4, 0.4, 0.6, 0.6), FloatArray(4), proj) }
+    assertThrows {
+      WorldUnderstanding.unprojectDetection(doubleArrayOf(0.4, 0.4, 0.6, 0.6), FloatArray(4), proj)
+    }
   }
 
   @Test
@@ -1265,7 +1423,10 @@ class XRLiveRuntimeSessionTest {
 
   @Test
   fun lazyFollowReadsOnlyModeExceptFromSceneCore() {
-    assertEquals("head", XRLiveSceneCoreHelper.parseLazyFollow(mapOf("target" to "hand-left"))!!.mode)
+    assertEquals(
+      "head",
+      XRLiveSceneCoreHelper.parseLazyFollow(mapOf("target" to "hand-left"))!!.mode,
+    )
     val json =
       """{"nodes":[{"name":"S","extensions":{"ANDROID_xr_scenecore":{"follow":{"target":"hand-left","lazy":true,"distance":0.3}}}}]}"""
     val t = XRLiveSceneCoreHelper.parseNodeTraitsFromGltfJson(json)[0]
@@ -1342,8 +1503,10 @@ class XRLiveRuntimeSessionTest {
         ?: error("testdata/golden not found from ${java.io.File(".").absolutePath}")
 
     val sceneJson = java.io.File(dir, "scene.glb.json").readText(Charsets.UTF_8)
-    val script = MiniJson.parseObjectOrNull(java.io.File(dir, "script.json").readText(Charsets.UTF_8))!!
-    val expected = MiniJson.parseObjectOrNull(java.io.File(dir, "expected.json").readText(Charsets.UTF_8))!!
+    val script =
+      MiniJson.parseObjectOrNull(java.io.File(dir, "script.json").readText(Charsets.UTF_8))!!
+    val expected =
+      MiniJson.parseObjectOrNull(java.io.File(dir, "expected.json").readText(Charsets.UTF_8))!!
 
     val (session, rec) = session(sceneJson)
     var detectionsOut: List<WorldUnderstanding.Detection3D> = emptyList()
@@ -1356,18 +1519,26 @@ class XRLiveRuntimeSessionTest {
         "step" -> {
           val dt = (step["dt"] as Number).toDouble()
           val repeat = (step["repeat"] as? Number)?.toInt() ?: 1
-          val hp = MiniJson.asList(step["headPosition"])!!.map { (it as Number).toFloat() }.toFloatArray()
-          val hq = MiniJson.asList(step["headQuaternion"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val hp =
+            MiniJson.asList(step["headPosition"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val hq =
+            MiniJson.asList(step["headQuaternion"])!!.map { (it as Number).toFloat() }
+              .toFloatArray()
           val pose = XRPose(hp, hq)
           repeat(repeat) { session.step(dt, pose) }
         }
         "dragCorner" -> {
           val nodeIdx = (step["nodeIndex"] as Number).toInt()
-          val localMin = MiniJson.asList(step["localMin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
-          val localMax = MiniJson.asList(step["localMax"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val localMin =
+            MiniJson.asList(step["localMin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val localMax =
+            MiniJson.asList(step["localMax"])!!.map { (it as Number).toDouble() }.toDoubleArray()
           val cornerIdx = (step["cornerIndex"] as Number).toInt()
-          val rayOrigin = MiniJson.asList(step["rayOrigin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
-          val rawDir = MiniJson.asList(step["rayDirection"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val rayOrigin =
+            MiniJson.asList(step["rayOrigin"])!!.map { (it as Number).toDouble() }.toDoubleArray()
+          val rawDir =
+            MiniJson.asList(step["rayDirection"])!!.map { (it as Number).toDouble() }
+              .toDoubleArray()
           val dirLen = XRSpatialMath.len3(rawDir[0], rawDir[1], rawDir[2])
           val rayDir = doubleArrayOf(rawDir[0] / dirLen, rawDir[1] / dirLen, rawDir[2] / dirLen)
           val world = DoubleArray(16)
@@ -1377,30 +1548,39 @@ class XRLiveRuntimeSessionTest {
           val startScale = session.nodeTransform(nodeIdx)!!.scale[0].toDouble()
           val newScale =
             ManipulationHandles.cornerScale(
-              startScale,
-              layout.corners[cornerIdx],
-              layout.origin,
-              rayOrigin,
-              rayDir,
-              traits.minScale,
-              traits.maxScale,
-            ).toFloat()
+                startScale,
+                layout.corners[cornerIdx],
+                layout.origin,
+                rayOrigin,
+                rayDir,
+                traits.minScale,
+                traits.maxScale,
+              )
+              .toFloat()
           session.setNodeTransform(nodeIdx, scale = floatArrayOf(newScale, newScale, newScale))
         }
         "autoRotate" -> {
           val rad = (step["angleDeg"] as Number).toDouble() * Math.PI / 180.0
           val q = XRSpatialMath.quatFromYaw(rad)
           val root = DoubleArray(16)
-          XRSpatialMath.mat4FromTRS(doubleArrayOf(0.0, 0.0, 0.0), q, doubleArrayOf(1.0, 1.0, 1.0), root)
+          XRSpatialMath.mat4FromTRS(
+            doubleArrayOf(0.0, 0.0, 0.0),
+            q,
+            doubleArrayOf(1.0, 1.0, 1.0),
+            root,
+          )
           session.rootTransform = root
         }
         "detect" -> {
           val detJson = MiniJson.stringify(step["detections"])
           val boxes = ThreeLiveDetections.parse(detJson)
-          val camWorld = MiniJson.asList(step["cameraWorld"])!!.map { (it as Number).toFloat() }.toFloatArray()
-          val proj = MiniJson.asList(step["projection"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val camWorld =
+            MiniJson.asList(step["cameraWorld"])!!.map { (it as Number).toFloat() }.toFloatArray()
+          val proj =
+            MiniJson.asList(step["projection"])!!.map { (it as Number).toFloat() }.toFloatArray()
           val depth = (step["depthMeters"] as Number).toDouble()
-          detectionsOut = ThreeLiveDetections.detect(boxes, camWorld, proj, { _, _ -> depth }, emptyList())
+          detectionsOut =
+            ThreeLiveDetections.detect(boxes, camWorld, proj, { _, _ -> depth }, emptyList())
         }
       }
     }
@@ -1414,7 +1594,8 @@ class XRLiveRuntimeSessionTest {
       val et = MiniJson.asList(en["translation"])!!.map { (it as Number).toFloat() }.toFloatArray()
       val er = MiniJson.asList(en["rotation"])!!.map { (it as Number).toFloat() }.toFloatArray()
       val es = MiniJson.asList(en["scale"])!!.map { (it as Number).toFloat() }.toFloatArray()
-      val ew = MiniJson.asList(en["worldPosition"])!!.map { (it as Number).toFloat() }.toFloatArray()
+      val ew =
+        MiniJson.asList(en["worldPosition"])!!.map { (it as Number).toFloat() }.toFloatArray()
       assertArrayEquals("node[$i] translation", et, tr.translation, 1e-4f)
       val qMatch =
         (0..3).all { kotlin.math.abs(tr.rotation[it] - er[it]) <= 1e-4f } ||
@@ -1426,7 +1607,8 @@ class XRLiveRuntimeSessionTest {
     }
 
     val em0 = MiniJson.asMap(MiniJson.asList(expected["materials"])!![0])!!
-    val ebc = MiniJson.asList(em0["baseColorFactor"])!!.map { (it as Number).toFloat() }.toFloatArray()
+    val ebc =
+      MiniJson.asList(em0["baseColorFactor"])!!.map { (it as Number).toFloat() }.toFloatArray()
     assertArrayEquals(ebc, session.materialColor(0)!!, 1e-4f)
     assertEquals((em0["metallicFactor"] as Number).toFloat(), session.materialMetallic(0), 1e-4f)
     assertEquals((em0["roughnessFactor"] as Number).toFloat(), session.materialRoughness(0), 1e-4f)
@@ -1489,7 +1671,10 @@ class XRLiveRuntimeSessionTest {
     val yBall1 = s.nodeTransform(2)!!.translation[1]
     val yBall2 = s.nodeTransform(3)!!.translation[1]
     assertTrue("Ball_1 stays above negative-Y Room_Floor (-0.81 + r)", yBall1 >= -0.71f)
-    assertTrue("Ball_2 outside pedestal rim falls below pedestal top (-0.21) toward Room_Floor", yBall2 < 0.5f && yBall2 >= -0.71f)
+    assertTrue(
+      "Ball_2 outside pedestal rim falls below pedestal top (-0.21) toward Room_Floor",
+      yBall2 < 0.5f && yBall2 >= -0.71f,
+    )
   }
 
   private fun assertThrows(block: () -> Unit) {
@@ -1549,6 +1734,7 @@ class XRLiveRuntimeSessionTest {
      * toggleTransform, cycleMaterialColor, sendEvent / onReceive / onStart behaviors, a lazy HUD,
      * an orbiting moon, and a snow emitter.
      */
-    const val CANONICAL_GLTF = """{"asset":{"version":"2.0"},"extensionsUsed":["KHR_interactivity"],"extensions":{"KHR_interactivity":{"graphs":[{"declarations":[{"op":"variable/get"},{"op":"math/not"},{"op":"variable/set"},{"op":"pointer/set"},{"op":"pointer/onSelect"},{"op":"pointer/interpolate"},{"op":"flow/branch"},{"op":"math/add"},{"op":"math/rem"},{"op":"flow/switch"},{"op":"event/send"},{"op":"event/onStart"},{"op":"event/receive"}],"nodes":[{"declaration":0,"configuration":{"variable":0}},{"declaration":1,"values":{"a":{"node":0,"socket":"value"}}},{"declaration":2,"configuration":{"variable":0},"values":{"value":{"node":1,"socket":"value"}},"flows":{"out":{"node":3}}},{"declaration":3,"configuration":{"pointer":"/nodes/0/extensions/KHR_node_visibility/visible"},"values":{"value":{"node":0,"socket":"value"}}},{"declaration":4,"configuration":{"nodeIndex":0},"flows":{"out":{"node":2}}},{"declaration":0,"configuration":{"variable":1}},{"declaration":1,"values":{"a":{"node":5,"socket":"value"}}},{"declaration":2,"configuration":{"variable":1},"values":{"value":{"node":6,"socket":"value"}},"flows":{"out":{"node":10}}},{"declaration":5,"configuration":{"pointer":"/nodes/1/translation"},"values":{"value":{"value":[1,2,0]},"duration":{"value":0.4}}},{"declaration":5,"configuration":{"pointer":"/nodes/1/translation"},"values":{"value":{"value":[1,0,0]},"duration":{"value":0.4}}},{"declaration":6,"values":{"condition":{"node":5,"socket":"value"}},"flows":{"true":{"node":8},"false":{"node":9}}},{"declaration":4,"configuration":{"nodeIndex":1},"flows":{"out":{"node":7}}},{"declaration":0,"configuration":{"variable":2}},{"declaration":7,"values":{"a":{"node":12,"socket":"value"},"b":{"value":1}}},{"declaration":8,"values":{"a":{"node":13,"socket":"value"},"b":{"value":3}}},{"declaration":2,"configuration":{"variable":2},"values":{"value":{"node":14,"socket":"value"}},"flows":{"out":{"node":19}}},{"declaration":3,"configuration":{"pointer":"/materials/1/pbrMetallicRoughness/baseColorFactor"},"values":{"value":{"value":[1,0,0,1]}}},{"declaration":3,"configuration":{"pointer":"/materials/1/pbrMetallicRoughness/baseColorFactor"},"values":{"value":{"value":[0,1,0,1]}}},{"declaration":3,"configuration":{"pointer":"/materials/1/pbrMetallicRoughness/baseColorFactor"},"values":{"value":{"value":[0,0,1,1]}}},{"declaration":9,"values":{"selection":{"node":12,"socket":"value"}},"flows":{"0":{"node":16},"1":{"node":17},"2":{"node":18}}},{"declaration":4,"configuration":{"nodeIndex":2},"flows":{"out":{"node":15}}},{"declaration":10,"configuration":{"event":0},"values":{"volume":{"value":0.5}}},{"declaration":4,"configuration":{"nodeIndex":3},"flows":{"out":{"node":21}}},{"declaration":3,"configuration":{"pointer":"/nodes/3/translation"},"values":{"value":{"value":[0,3,0]}}},{"declaration":11,"flows":{"out":{"node":23}}},{"declaration":3,"configuration":{"pointer":"/nodes/3/scale"},"values":{"value":{"value":[2,2,2]}}},{"declaration":12,"configuration":{"event":0},"flows":{"out":{"node":25}}}],"variables":[{"id":"__vis_0_0","type":"bool","value":true},{"id":"__toggle_1_0","type":"bool","value":false},{"id":"__color_idx_2_0","type":"int","value":0}],"events":[{"id":"ring"}]}],"graph":0}},"nodes":[{"name":"Lamp","mesh":0,"translation":[0,1,-2],"extras":{}},{"name":"Box","mesh":1,"translation":[1,0,0],"extras":{}},{"name":"Ball","mesh":2,"extras":{}},{"name":"Bell","extras":{}},{"name":"Hud","extras":{"xr":{"grab":"2-hand","grabbable":true,"follow":{"mode":"head","lazy":true,"distance":1.2,"deadzoneDeg":20,"stiffness":6,"height":-0.1,"faceUser":true,"snapOnStart":true},"holdToAsk":{"prompt":"What lamp is this?","holdMs":600}}},"extensions":{"MOZ_hubs_components":{"grabbable":{"cursor":true,"hand":true}},"ANDROID_xr_scenecore":{"interactable":{"mode":"2-hand"},"movable":{"systemMovable":true,"scaleInZ":false,"minScale":0.05,"maxScale":5},"follow":{"target":"head","lazy":true,"distance":1.2,"deadzoneDeg":20,"stiffness":6,"height":-0.1,"faceUser":true},"holdToAsk":{"prompt":"What lamp is this?","holdMs":600}}}},{"name":"Moon","extras":{"xr":{"follow":"head","orbit":{"target":"Lamp","radius":0.4,"speed":0.6,"height":0,"phase":0,"faceCenter":false},"handles":{"rotateAxis":"y","minScale":0.5,"maxScale":3},"splatUrl":"room.spz","spatialSlot":"info-card","audio":{"src":"hum.mp3","refDistance":1,"loop":true}}},"extensions":{"MOZ_hubs_components":{},"ANDROID_xr_scenecore":{"follow":{"target":"head","lazy":false},"orbit":{"target":"Lamp","radius":0.4,"speed":0.6,"height":0,"phase":0,"faceCenter":false},"resizable":{"rotateAxis":"y","minScale":0.5,"maxScale":3},"splat":{"url":"room.spz"},"spatialPanel":{"slot":"info-card"},"spatialAudio":{"src":"hum.mp3","refDistance":1,"loop":true}}}},{"name":"Snow","extras":{"xr":{"scale":{"min":0.5,"max":3},"scalable":true,"billboard":"capsule","anchor":"floor","physics":"static","particles":{"preset":"snow","count":2000,"area":[2,2,2],"speed":1},"worldUnderstanding":{"planes":true,"meshes":false,"reticle":true,"objects":false}}},"extensions":{"MOZ_hubs_components":{"billboard":{"onlyY":true}},"ANDROID_xr_scenecore":{"billboard":{"mode":"capsule"},"anchor":{"planeType":"HORIZONTAL","semanticType":"FLOOR"},"rigidbody":{"type":"static"},"particles":{"preset":"snow","count":2000,"area":[2,2,2],"speed":1},"worldUnderstanding":{"planes":true,"meshes":false,"reticle":true,"objects":false}}}}],"meshes":[{"primitives":[{"material":0}]},{"primitives":[{"material":0}]},{"primitives":[{"material":1}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[1,1,1,1]}},{"pbrMetallicRoughness":{"baseColorFactor":[0.5,0.5,0.5,1],"metallicFactor":0}}]}"""
+    const val CANONICAL_GLTF =
+      """{"asset":{"version":"2.0"},"extensionsUsed":["KHR_interactivity"],"extensions":{"KHR_interactivity":{"graphs":[{"declarations":[{"op":"variable/get"},{"op":"math/not"},{"op":"variable/set"},{"op":"pointer/set"},{"op":"pointer/onSelect"},{"op":"pointer/interpolate"},{"op":"flow/branch"},{"op":"math/add"},{"op":"math/rem"},{"op":"flow/switch"},{"op":"event/send"},{"op":"event/onStart"},{"op":"event/receive"}],"nodes":[{"declaration":0,"configuration":{"variable":0}},{"declaration":1,"values":{"a":{"node":0,"socket":"value"}}},{"declaration":2,"configuration":{"variable":0},"values":{"value":{"node":1,"socket":"value"}},"flows":{"out":{"node":3}}},{"declaration":3,"configuration":{"pointer":"/nodes/0/extensions/KHR_node_visibility/visible"},"values":{"value":{"node":0,"socket":"value"}}},{"declaration":4,"configuration":{"nodeIndex":0},"flows":{"out":{"node":2}}},{"declaration":0,"configuration":{"variable":1}},{"declaration":1,"values":{"a":{"node":5,"socket":"value"}}},{"declaration":2,"configuration":{"variable":1},"values":{"value":{"node":6,"socket":"value"}},"flows":{"out":{"node":10}}},{"declaration":5,"configuration":{"pointer":"/nodes/1/translation"},"values":{"value":{"value":[1,2,0]},"duration":{"value":0.4}}},{"declaration":5,"configuration":{"pointer":"/nodes/1/translation"},"values":{"value":{"value":[1,0,0]},"duration":{"value":0.4}}},{"declaration":6,"values":{"condition":{"node":5,"socket":"value"}},"flows":{"true":{"node":8},"false":{"node":9}}},{"declaration":4,"configuration":{"nodeIndex":1},"flows":{"out":{"node":7}}},{"declaration":0,"configuration":{"variable":2}},{"declaration":7,"values":{"a":{"node":12,"socket":"value"},"b":{"value":1}}},{"declaration":8,"values":{"a":{"node":13,"socket":"value"},"b":{"value":3}}},{"declaration":2,"configuration":{"variable":2},"values":{"value":{"node":14,"socket":"value"}},"flows":{"out":{"node":19}}},{"declaration":3,"configuration":{"pointer":"/materials/1/pbrMetallicRoughness/baseColorFactor"},"values":{"value":{"value":[1,0,0,1]}}},{"declaration":3,"configuration":{"pointer":"/materials/1/pbrMetallicRoughness/baseColorFactor"},"values":{"value":{"value":[0,1,0,1]}}},{"declaration":3,"configuration":{"pointer":"/materials/1/pbrMetallicRoughness/baseColorFactor"},"values":{"value":{"value":[0,0,1,1]}}},{"declaration":9,"values":{"selection":{"node":12,"socket":"value"}},"flows":{"0":{"node":16},"1":{"node":17},"2":{"node":18}}},{"declaration":4,"configuration":{"nodeIndex":2},"flows":{"out":{"node":15}}},{"declaration":10,"configuration":{"event":0},"values":{"volume":{"value":0.5}}},{"declaration":4,"configuration":{"nodeIndex":3},"flows":{"out":{"node":21}}},{"declaration":3,"configuration":{"pointer":"/nodes/3/translation"},"values":{"value":{"value":[0,3,0]}}},{"declaration":11,"flows":{"out":{"node":23}}},{"declaration":3,"configuration":{"pointer":"/nodes/3/scale"},"values":{"value":{"value":[2,2,2]}}},{"declaration":12,"configuration":{"event":0},"flows":{"out":{"node":25}}}],"variables":[{"id":"__vis_0_0","type":"bool","value":true},{"id":"__toggle_1_0","type":"bool","value":false},{"id":"__color_idx_2_0","type":"int","value":0}],"events":[{"id":"ring"}]}],"graph":0}},"nodes":[{"name":"Lamp","mesh":0,"translation":[0,1,-2],"extras":{}},{"name":"Box","mesh":1,"translation":[1,0,0],"extras":{}},{"name":"Ball","mesh":2,"extras":{}},{"name":"Bell","extras":{}},{"name":"Hud","extras":{"xr":{"grab":"2-hand","grabbable":true,"follow":{"mode":"head","lazy":true,"distance":1.2,"deadzoneDeg":20,"stiffness":6,"height":-0.1,"faceUser":true,"snapOnStart":true},"holdToAsk":{"prompt":"What lamp is this?","holdMs":600}}},"extensions":{"MOZ_hubs_components":{"grabbable":{"cursor":true,"hand":true}},"ANDROID_xr_scenecore":{"interactable":{"mode":"2-hand"},"movable":{"systemMovable":true,"scaleInZ":false,"minScale":0.05,"maxScale":5},"follow":{"target":"head","lazy":true,"distance":1.2,"deadzoneDeg":20,"stiffness":6,"height":-0.1,"faceUser":true},"holdToAsk":{"prompt":"What lamp is this?","holdMs":600}}}},{"name":"Moon","extras":{"xr":{"follow":"head","orbit":{"target":"Lamp","radius":0.4,"speed":0.6,"height":0,"phase":0,"faceCenter":false},"handles":{"rotateAxis":"y","minScale":0.5,"maxScale":3},"splatUrl":"room.spz","spatialSlot":"info-card","audio":{"src":"hum.mp3","refDistance":1,"loop":true}}},"extensions":{"MOZ_hubs_components":{},"ANDROID_xr_scenecore":{"follow":{"target":"head","lazy":false},"orbit":{"target":"Lamp","radius":0.4,"speed":0.6,"height":0,"phase":0,"faceCenter":false},"resizable":{"rotateAxis":"y","minScale":0.5,"maxScale":3},"splat":{"url":"room.spz"},"spatialPanel":{"slot":"info-card"},"spatialAudio":{"src":"hum.mp3","refDistance":1,"loop":true}}}},{"name":"Snow","extras":{"xr":{"scale":{"min":0.5,"max":3},"scalable":true,"billboard":"capsule","anchor":"floor","physics":"static","particles":{"preset":"snow","count":2000,"area":[2,2,2],"speed":1},"worldUnderstanding":{"planes":true,"meshes":false,"reticle":true,"objects":false}}},"extensions":{"MOZ_hubs_components":{"billboard":{"onlyY":true}},"ANDROID_xr_scenecore":{"billboard":{"mode":"capsule"},"anchor":{"planeType":"HORIZONTAL","semanticType":"FLOOR"},"rigidbody":{"type":"static"},"particles":{"preset":"snow","count":2000,"area":[2,2,2],"speed":1},"worldUnderstanding":{"planes":true,"meshes":false,"reticle":true,"objects":false}}}}],"meshes":[{"primitives":[{"material":0}]},{"primitives":[{"material":0}]},{"primitives":[{"material":1}]}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[1,1,1,1]}},{"pbrMetallicRoughness":{"baseColorFactor":[0.5,0.5,0.5,1],"metallicFactor":0}}]}"""
   }
 }

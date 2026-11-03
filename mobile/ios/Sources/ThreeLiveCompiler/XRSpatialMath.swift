@@ -51,7 +51,8 @@ public struct XRPose: Sendable, Equatable {
 
   /// The pose as a rigid column-major matrix.
   public var matrix: simd_float4x4 {
-    XRSpatialMath.compose(translation: position, rotation: orientation, scale: SIMD3<Float>(1, 1, 1))
+    XRSpatialMath.compose(
+      translation: position, rotation: orientation, scale: SIMD3<Float>(1, 1, 1))
   }
 
   public static func == (lhs: XRPose, rhs: XRPose) -> Bool {
@@ -205,7 +206,8 @@ public enum XRSpatialMath {
   }
 
   /// Computes the desired world position for a lazy follower.
-  public static func computeFollowTarget(anchor: XRPose, options: XRLiveLazyFollow) -> SIMD3<Float> {
+  public static func computeFollowTarget(anchor: XRPose, options: XRLiveLazyFollow) -> SIMD3<Float>
+  {
     if !options.isHead {
       return anchor.position + SIMD3<Float>(0, options.height, 0)
     }
@@ -466,7 +468,8 @@ public enum WorldUnderstanding {
     /// Bounding radius of the plane polygon in meters.
     public var radius: Float
 
-    public init(orientation: Orientation, center: SIMD3<Float>, normal: SIMD3<Float>, radius: Float) {
+    public init(orientation: Orientation, center: SIMD3<Float>, normal: SIMD3<Float>, radius: Float)
+    {
       self.orientation = orientation
       self.center = center
       self.normal = XRSpatialMath.normalize(normal, fallback: SIMD3<Float>(0, 1, 0))
@@ -530,7 +533,8 @@ public enum WorldUnderstanding {
     let p0 = p.columns.0.x != 0 ? p.columns.0.x : 1
     let p5 = p.columns.1.y != 0 ? p.columns.1.y : 1
     let viewDir = SIMD3<Float>((ndcX + p.columns.2.x) / p0, (ndcY + p.columns.2.y) / p5, -1)
-    let origin = SIMD3<Float>(cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
+    let origin = SIMD3<Float>(
+      cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
     let far = XRSpatialMath.transformPoint(cameraWorld, viewDir)
     return (origin, XRSpatialMath.normalize(far - origin), viewDir)
   }
@@ -608,4 +612,3 @@ public enum WorldUnderstanding {
 }
 
 // MARK: - Spatial Measure
-

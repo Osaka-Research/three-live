@@ -211,7 +211,7 @@ object SynthAudio {
         if (z != null && cue != null) {
           if (cue == "alarm") {
             val a = st.alarms.getOrPut(z) { doubleArrayOf(0.0, world.timeMs) }
-            a[0] += 1
+            a[0] += 1.0
           } else {
             play(world, cue, z)
           }
@@ -221,7 +221,7 @@ object SynthAudio {
       world.on("xrzoneexit") { _, z, _ ->
         val a = z?.let { st.alarms[it] }
         if (a != null) {
-          a[0] -= 1
+          a[0] -= 1.0
           if (a[0] <= 0) st.alarms.remove(z)
         }
       }

@@ -37,8 +37,8 @@ object SharedRoom {
   private val HEX_COLOR = Regex("^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
   /**
-   * Optimistic soft-lock lease on a synchronized scene node. [acquiredMs] is when the current
-   * owner first took the lease (renewals keep it).
+   * Optimistic soft-lock lease on a synchronized scene node. [acquiredMs] is when the current owner
+   * first took the lease (renewals keep it).
    */
   data class NodeSoftLock(
     val ownerPeerId: String,
@@ -114,7 +114,8 @@ object SharedRoom {
       val scheme = uri.scheme?.lowercase() ?: return false
       val host = uri.host?.lowercase() ?: return false
       if (scheme == "wss") return host.isNotEmpty()
-      scheme == "ws" && (host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host == "::1")
+      scheme == "ws" &&
+        (host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host == "::1")
     } catch (_: Exception) {
       false
     }
@@ -130,7 +131,8 @@ object SharedRoom {
     }
     val cleaned = sb.toString().trim()
     if (cleaned.isEmpty()) return "Peer"
-    return if (cleaned.length > MAX_PEER_NAME_CHARS) cleaned.substring(0, MAX_PEER_NAME_CHARS) else cleaned
+    return if (cleaned.length > MAX_PEER_NAME_CHARS) cleaned.substring(0, MAX_PEER_NAME_CHARS)
+    else cleaned
   }
 
   /** Sanitizes a `#rrggbb` / `#rgb` peer color string. */
@@ -148,11 +150,7 @@ object SharedRoom {
 
   /** Returns whether [candidatePeerId] may acquire or renew a soft-lock at [atMs]. */
   @JvmStatic
-  fun canAcquireNodeLease(
-    existing: NodeSoftLock?,
-    candidatePeerId: String,
-    atMs: Long,
-  ): Boolean {
+  fun canAcquireNodeLease(existing: NodeSoftLock?, candidatePeerId: String, atMs: Long): Boolean {
     if (existing == null) return true
     if (existing.ownerPeerId == candidatePeerId) return true
     return atMs >= existing.leaseUntilMs
@@ -234,7 +232,8 @@ object SharedRoom {
         WireMessage.Explode(peerId, q4(XRSpatialMath.clampNum(f, 0.0, 1.0, 0.0)))
       }
       "paint" -> {
-        val strokeId = XRLiveSceneCoreHelper.safeAnchorId(root["strokeId"] as? String) ?: return null
+        val strokeId =
+          XRLiveSceneCoreHelper.safeAnchorId(root["strokeId"] as? String) ?: return null
         val ptsRaw = MiniJson.asList(root["points"]) ?: return null
         if (ptsRaw.size < 2 || ptsRaw.size > MAX_STROKE_CHUNK_POINTS) return null
         val pts = ArrayList<DoubleArray>(ptsRaw.size)
@@ -246,7 +245,13 @@ object SharedRoom {
           peerId = peerId,
           strokeId = strokeId,
           color = sanitizePeerColor(root["color"] as? String),
-          radius = XRSpatialMath.clampNum((root["radius"] as? Number)?.toDouble() ?: Double.NaN, 0.002, 0.1, 0.01),
+          radius =
+            XRSpatialMath.clampNum(
+              (root["radius"] as? Number)?.toDouble() ?: Double.NaN,
+              0.002,
+              0.1,
+              0.01,
+            ),
           points = pts,
         )
       }
@@ -367,9 +372,6 @@ object SharedRoom {
     if (!hasHit) return bar
     val tipStart = doubleArrayOf(end[0], end[1] - 0.012, end[2])
     val tipEnd = doubleArrayOf(end[0], end[1] + 0.012, end[2])
-    return SpatialMeasure.buildSegmentBarsGeometry(
-      listOf(origin to end, tipStart to tipEnd),
-      0.004,
-    )
+    return SpatialMeasure.buildSegmentBarsGeometry(listOf(origin to end, tipStart to tipEnd), 0.004)
   }
 }

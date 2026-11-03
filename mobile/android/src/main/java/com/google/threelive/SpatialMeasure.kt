@@ -29,7 +29,8 @@ object SpatialMeasure {
 
   data class WorldBounds(val min: DoubleArray, val max: DoubleArray, val size: DoubleArray) {
     val center: DoubleArray
-      get() = doubleArrayOf((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5)
+      get() =
+        doubleArrayOf((min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, (min[2] + max[2]) * 0.5)
   }
 
   data class Callout(
@@ -44,11 +45,7 @@ object SpatialMeasure {
     val lengthMeters: Double,
   )
 
-  data class MeshGeometry(
-    val positions: FloatArray,
-    val normals: FloatArray,
-    val indices: IntArray,
-  )
+  data class MeshGeometry(val positions: FloatArray, val normals: FloatArray, val indices: IntArray)
 
   /** Formats a metric distance in meters using `m`, `cm`, `mm`, `in`, `ft-in`, or `auto`. */
   @JvmStatic
@@ -74,7 +71,10 @@ object SpatialMeasure {
     }
   }
 
-  /** Computes the world-space AABB of `[localMin, localMax]` transformed by column-major [worldMatrix]. */
+  /**
+   * Computes the world-space AABB of `[localMin, localMax]` transformed by column-major
+   * [worldMatrix].
+   */
   @JvmStatic
   fun computeWorldBounds(
     localMin: DoubleArray,
@@ -188,24 +188,98 @@ object SpatialMeasure {
 
   private val GLYPH_STROKES: Map<Char, Array<DoubleArray>> =
     mapOf(
-      '0' to arrayOf(doubleArrayOf(0.1, 0.0, 0.9, 0.0), doubleArrayOf(0.9, 0.0, 0.9, 1.0), doubleArrayOf(0.9, 1.0, 0.1, 1.0), doubleArrayOf(0.1, 1.0, 0.1, 0.0)),
-      '1' to arrayOf(doubleArrayOf(0.5, 0.0, 0.5, 1.0), doubleArrayOf(0.25, 0.8, 0.5, 1.0), doubleArrayOf(0.2, 0.0, 0.8, 0.0)),
-      '2' to arrayOf(doubleArrayOf(0.1, 1.0, 0.9, 1.0), doubleArrayOf(0.9, 1.0, 0.9, 0.5), doubleArrayOf(0.9, 0.5, 0.1, 0.5), doubleArrayOf(0.1, 0.5, 0.1, 0.0), doubleArrayOf(0.1, 0.0, 0.9, 0.0)),
-      '3' to arrayOf(doubleArrayOf(0.1, 1.0, 0.9, 1.0), doubleArrayOf(0.9, 1.0, 0.9, 0.0), doubleArrayOf(0.1, 0.5, 0.9, 0.5), doubleArrayOf(0.1, 0.0, 0.9, 0.0)),
-      '4' to arrayOf(doubleArrayOf(0.1, 1.0, 0.1, 0.5), doubleArrayOf(0.1, 0.5, 0.9, 0.5), doubleArrayOf(0.8, 1.0, 0.8, 0.0)),
-      '5' to arrayOf(doubleArrayOf(0.9, 1.0, 0.1, 1.0), doubleArrayOf(0.1, 1.0, 0.1, 0.5), doubleArrayOf(0.1, 0.5, 0.9, 0.5), doubleArrayOf(0.9, 0.5, 0.9, 0.0), doubleArrayOf(0.9, 0.0, 0.1, 0.0)),
-      '6' to arrayOf(doubleArrayOf(0.9, 1.0, 0.1, 1.0), doubleArrayOf(0.1, 1.0, 0.1, 0.0), doubleArrayOf(0.1, 0.0, 0.9, 0.0), doubleArrayOf(0.9, 0.0, 0.9, 0.5), doubleArrayOf(0.9, 0.5, 0.1, 0.5)),
+      '0' to
+        arrayOf(
+          doubleArrayOf(0.1, 0.0, 0.9, 0.0),
+          doubleArrayOf(0.9, 0.0, 0.9, 1.0),
+          doubleArrayOf(0.9, 1.0, 0.1, 1.0),
+          doubleArrayOf(0.1, 1.0, 0.1, 0.0),
+        ),
+      '1' to
+        arrayOf(
+          doubleArrayOf(0.5, 0.0, 0.5, 1.0),
+          doubleArrayOf(0.25, 0.8, 0.5, 1.0),
+          doubleArrayOf(0.2, 0.0, 0.8, 0.0),
+        ),
+      '2' to
+        arrayOf(
+          doubleArrayOf(0.1, 1.0, 0.9, 1.0),
+          doubleArrayOf(0.9, 1.0, 0.9, 0.5),
+          doubleArrayOf(0.9, 0.5, 0.1, 0.5),
+          doubleArrayOf(0.1, 0.5, 0.1, 0.0),
+          doubleArrayOf(0.1, 0.0, 0.9, 0.0),
+        ),
+      '3' to
+        arrayOf(
+          doubleArrayOf(0.1, 1.0, 0.9, 1.0),
+          doubleArrayOf(0.9, 1.0, 0.9, 0.0),
+          doubleArrayOf(0.1, 0.5, 0.9, 0.5),
+          doubleArrayOf(0.1, 0.0, 0.9, 0.0),
+        ),
+      '4' to
+        arrayOf(
+          doubleArrayOf(0.1, 1.0, 0.1, 0.5),
+          doubleArrayOf(0.1, 0.5, 0.9, 0.5),
+          doubleArrayOf(0.8, 1.0, 0.8, 0.0),
+        ),
+      '5' to
+        arrayOf(
+          doubleArrayOf(0.9, 1.0, 0.1, 1.0),
+          doubleArrayOf(0.1, 1.0, 0.1, 0.5),
+          doubleArrayOf(0.1, 0.5, 0.9, 0.5),
+          doubleArrayOf(0.9, 0.5, 0.9, 0.0),
+          doubleArrayOf(0.9, 0.0, 0.1, 0.0),
+        ),
+      '6' to
+        arrayOf(
+          doubleArrayOf(0.9, 1.0, 0.1, 1.0),
+          doubleArrayOf(0.1, 1.0, 0.1, 0.0),
+          doubleArrayOf(0.1, 0.0, 0.9, 0.0),
+          doubleArrayOf(0.9, 0.0, 0.9, 0.5),
+          doubleArrayOf(0.9, 0.5, 0.1, 0.5),
+        ),
       '7' to arrayOf(doubleArrayOf(0.1, 1.0, 0.9, 1.0), doubleArrayOf(0.9, 1.0, 0.4, 0.0)),
-      '8' to arrayOf(doubleArrayOf(0.1, 0.0, 0.9, 0.0), doubleArrayOf(0.9, 0.0, 0.9, 1.0), doubleArrayOf(0.9, 1.0, 0.1, 1.0), doubleArrayOf(0.1, 1.0, 0.1, 0.0), doubleArrayOf(0.1, 0.5, 0.9, 0.5)),
-      '9' to arrayOf(doubleArrayOf(0.1, 0.0, 0.9, 0.0), doubleArrayOf(0.9, 0.0, 0.9, 1.0), doubleArrayOf(0.9, 1.0, 0.1, 1.0), doubleArrayOf(0.1, 1.0, 0.1, 0.5), doubleArrayOf(0.1, 0.5, 0.9, 0.5)),
+      '8' to
+        arrayOf(
+          doubleArrayOf(0.1, 0.0, 0.9, 0.0),
+          doubleArrayOf(0.9, 0.0, 0.9, 1.0),
+          doubleArrayOf(0.9, 1.0, 0.1, 1.0),
+          doubleArrayOf(0.1, 1.0, 0.1, 0.0),
+          doubleArrayOf(0.1, 0.5, 0.9, 0.5),
+        ),
+      '9' to
+        arrayOf(
+          doubleArrayOf(0.1, 0.0, 0.9, 0.0),
+          doubleArrayOf(0.9, 0.0, 0.9, 1.0),
+          doubleArrayOf(0.9, 1.0, 0.1, 1.0),
+          doubleArrayOf(0.1, 1.0, 0.1, 0.5),
+          doubleArrayOf(0.1, 0.5, 0.9, 0.5),
+        ),
       '.' to arrayOf(doubleArrayOf(0.4, 0.0, 0.6, 0.0), doubleArrayOf(0.5, 0.0, 0.5, 0.15)),
       '-' to arrayOf(doubleArrayOf(0.15, 0.5, 0.85, 0.5)),
       '\'' to arrayOf(doubleArrayOf(0.5, 1.0, 0.45, 0.68)),
       '"' to arrayOf(doubleArrayOf(0.32, 1.0, 0.28, 0.68), doubleArrayOf(0.68, 1.0, 0.64, 0.68)),
-      'c' to arrayOf(doubleArrayOf(0.85, 0.6, 0.15, 0.6), doubleArrayOf(0.15, 0.6, 0.15, 0.0), doubleArrayOf(0.15, 0.0, 0.85, 0.0)),
-      'm' to arrayOf(doubleArrayOf(0.08, 0.0, 0.08, 0.6), doubleArrayOf(0.08, 0.6, 0.5, 0.6), doubleArrayOf(0.5, 0.6, 0.5, 0.0), doubleArrayOf(0.5, 0.6, 0.92, 0.6), doubleArrayOf(0.92, 0.6, 0.92, 0.0)),
+      'c' to
+        arrayOf(
+          doubleArrayOf(0.85, 0.6, 0.15, 0.6),
+          doubleArrayOf(0.15, 0.6, 0.15, 0.0),
+          doubleArrayOf(0.15, 0.0, 0.85, 0.0),
+        ),
+      'm' to
+        arrayOf(
+          doubleArrayOf(0.08, 0.0, 0.08, 0.6),
+          doubleArrayOf(0.08, 0.6, 0.5, 0.6),
+          doubleArrayOf(0.5, 0.6, 0.5, 0.0),
+          doubleArrayOf(0.5, 0.6, 0.92, 0.6),
+          doubleArrayOf(0.92, 0.6, 0.92, 0.0),
+        ),
       'i' to arrayOf(doubleArrayOf(0.5, 0.0, 0.5, 0.58), doubleArrayOf(0.5, 0.76, 0.5, 0.9)),
-      'n' to arrayOf(doubleArrayOf(0.15, 0.0, 0.15, 0.6), doubleArrayOf(0.15, 0.6, 0.85, 0.6), doubleArrayOf(0.85, 0.6, 0.85, 0.0)),
+      'n' to
+        arrayOf(
+          doubleArrayOf(0.15, 0.0, 0.15, 0.6),
+          doubleArrayOf(0.15, 0.6, 0.85, 0.6),
+          doubleArrayOf(0.85, 0.6, 0.85, 0.0),
+        ),
     )
 
   /** Builds double-sided 3D vector-stroke label geometry centered at `(0, 0, 0)` facing `+Z`. */
@@ -257,12 +331,13 @@ object SpatialMeasure {
       val y0 = q[1] - ey + offsetY
       val x1 = q[2] + ex + offsetX
       val y1 = q[3] + ey + offsetY
-      val pts = arrayOf(
-        doubleArrayOf(x0 - nx, y0 - ny),
-        doubleArrayOf(x1 - nx, y1 - ny),
-        doubleArrayOf(x1 + nx, y1 + ny),
-        doubleArrayOf(x0 + nx, y0 + ny),
-      )
+      val pts =
+        arrayOf(
+          doubleArrayOf(x0 - nx, y0 - ny),
+          doubleArrayOf(x1 - nx, y1 - ny),
+          doubleArrayOf(x1 + nx, y1 + ny),
+          doubleArrayOf(x0 + nx, y0 + ny),
+        )
       val frontBase = v
       for (pt in pts) {
         positions[v * 3] = pt[0].toFloat()
@@ -308,7 +383,13 @@ object SpatialMeasure {
     val positions = FloatArray(valid.size * 24 * 3)
     val normals = FloatArray(valid.size * 24 * 3)
     val indices = IntArray(valid.size * 36)
-    val corners = arrayOf(doubleArrayOf(-1.0, -1.0), doubleArrayOf(1.0, -1.0), doubleArrayOf(1.0, 1.0), doubleArrayOf(-1.0, 1.0))
+    val corners =
+      arrayOf(
+        doubleArrayOf(-1.0, -1.0),
+        doubleArrayOf(1.0, -1.0),
+        doubleArrayOf(1.0, 1.0),
+        doubleArrayOf(-1.0, 1.0),
+      )
     var vOut = 0
     var iOut = 0
     for ((a, b) in valid) {
@@ -319,7 +400,8 @@ object SpatialMeasure {
       val len = XRSpatialMath.len3(dx, dy, dz)
       val halfLen = len * 0.5
       val t = doubleArrayOf(dx / len, dy / len, dz / len)
-      val ref = if (Math.abs(t[1]) < 0.9) doubleArrayOf(0.0, 1.0, 0.0) else doubleArrayOf(1.0, 0.0, 0.0)
+      val ref =
+        if (Math.abs(t[1]) < 0.9) doubleArrayOf(0.0, 1.0, 0.0) else doubleArrayOf(1.0, 0.0, 0.0)
       val ux = t[1] * ref[2] - t[2] * ref[1]
       val uy = t[2] * ref[0] - t[0] * ref[2]
       val uz = t[0] * ref[1] - t[1] * ref[0]
@@ -333,21 +415,25 @@ object SpatialMeasure {
       val nt = doubleArrayOf(-t[0], -t[1], -t[2])
       val nu = doubleArrayOf(-u[0], -u[1], -u[2])
       val nv = doubleArrayOf(-v[0], -v[1], -v[2])
-      val faces = arrayOf(
-        Triple(t, u, v) to doubleArrayOf(halfLen, r, r),
-        Triple(nt, u, nv) to doubleArrayOf(halfLen, r, r),
-        Triple(u, v, t) to doubleArrayOf(r, r, halfLen),
-        Triple(nu, v, nt) to doubleArrayOf(r, r, halfLen),
-        Triple(v, t, u) to doubleArrayOf(r, halfLen, r),
-        Triple(nv, nt, u) to doubleArrayOf(r, halfLen, r),
-      )
+      val faces =
+        arrayOf(
+          Triple(t, u, v) to doubleArrayOf(halfLen, r, r),
+          Triple(nt, u, nv) to doubleArrayOf(halfLen, r, r),
+          Triple(u, v, t) to doubleArrayOf(r, r, halfLen),
+          Triple(nu, v, nt) to doubleArrayOf(r, r, halfLen),
+          Triple(v, t, u) to doubleArrayOf(r, halfLen, r),
+          Triple(nv, nt, u) to doubleArrayOf(r, halfLen, r),
+        )
       for ((axes, dims) in faces) {
         val (fn, fu, fv) = axes
         val base = vOut
         for (c in corners) {
-          positions[vOut * 3] = (mid[0] + fn[0] * dims[0] + fu[0] * dims[1] * c[0] + fv[0] * dims[2] * c[1]).toFloat()
-          positions[vOut * 3 + 1] = (mid[1] + fn[1] * dims[0] + fu[1] * dims[1] * c[0] + fv[1] * dims[2] * c[1]).toFloat()
-          positions[vOut * 3 + 2] = (mid[2] + fn[2] * dims[0] + fu[2] * dims[1] * c[0] + fv[2] * dims[2] * c[1]).toFloat()
+          positions[vOut * 3] =
+            (mid[0] + fn[0] * dims[0] + fu[0] * dims[1] * c[0] + fv[0] * dims[2] * c[1]).toFloat()
+          positions[vOut * 3 + 1] =
+            (mid[1] + fn[1] * dims[0] + fu[1] * dims[1] * c[0] + fv[1] * dims[2] * c[1]).toFloat()
+          positions[vOut * 3 + 2] =
+            (mid[2] + fn[2] * dims[0] + fu[2] * dims[1] * c[0] + fv[2] * dims[2] * c[1]).toFloat()
           normals[vOut * 3] = fn[0].toFloat()
           normals[vOut * 3 + 1] = fn[1].toFloat()
           normals[vOut * 3 + 2] = fn[2].toFloat()
@@ -383,16 +469,18 @@ object SpatialMeasure {
     while (d < total && out.size < 128) {
       val t0 = d / total
       val t1 = Math.min(1.0, (d + dash) / total)
-      val p0 = doubleArrayOf(
-        start[0] + (end[0] - start[0]) * t0,
-        start[1] + (end[1] - start[1]) * t0,
-        start[2] + (end[2] - start[2]) * t0,
-      )
-      val p1 = doubleArrayOf(
-        start[0] + (end[0] - start[0]) * t1,
-        start[1] + (end[1] - start[1]) * t1,
-        start[2] + (end[2] - start[2]) * t1,
-      )
+      val p0 =
+        doubleArrayOf(
+          start[0] + (end[0] - start[0]) * t0,
+          start[1] + (end[1] - start[1]) * t0,
+          start[2] + (end[2] - start[2]) * t0,
+        )
+      val p1 =
+        doubleArrayOf(
+          start[0] + (end[0] - start[0]) * t1,
+          start[1] + (end[1] - start[1]) * t1,
+          start[2] + (end[2] - start[2]) * t1,
+        )
       if (XRSpatialMath.dist3(p0, p1) > 1e-4) out.add(p0 to p1)
       d += stride
     }

@@ -62,11 +62,11 @@ import {
   rootMatrix,
   setWorldTRS,
   vDot,
+  type Vec3,
   vLen,
   vNorm,
   vScale,
   vSub,
-  type Vec3,
 } from './common';
 import {parseHexColor} from './spatial-paint';
 import {
@@ -413,7 +413,9 @@ export interface MagneticSnapElementDefaults {
   readonly surface: SnapSurfaceMode;
 }
 
-function parseGridAttr(raw: string | null | undefined): [number, number, number] | null {
+function parseGridAttr(
+  raw: string | null | undefined,
+): [number, number, number] | null {
   if (!raw) return null;
   const parts = raw
     .split(/[\s,]+/)
@@ -435,11 +437,15 @@ function parseGridAttr(raw: string | null | undefined): [number, number, number]
 
 /** Parses `magnetic-snap`, `snap-grid`, and `snap-angle` attributes on `<xr-live>`. */
 // tslint:disable-next-line:no-any Host element is `<xr-live>`.
-export function resolveMagneticSnapDefaults(element: any): MagneticSnapElementDefaults {
+export function resolveMagneticSnapDefaults(
+  element: any,
+): MagneticSnapElementDefaults {
   const hasAttr =
     typeof element?.hasAttribute === 'function' &&
     element.hasAttribute('magnetic-snap');
-  const rawMode = (element?.getAttribute?.('magnetic-snap') ?? '').trim().toLowerCase();
+  const rawMode = (element?.getAttribute?.('magnetic-snap') ?? '')
+    .trim()
+    .toLowerCase();
   const gridAttr = parseGridAttr(element?.getAttribute?.('snap-grid'));
   const rawAngle = element?.getAttribute?.('snap-angle');
   const angleDeg =
@@ -560,7 +566,8 @@ export class XRMagneticSnapController {
     const parsed = parseSnapTo(rawTraits?.snapTo);
     if (parsed) {
       return {
-        grid: parsed.grid ?? (rawTraits?.snapTo === true ? defaults.grid : null),
+        grid:
+          parsed.grid ?? (rawTraits?.snapTo === true ? defaults.grid : null),
         angleDeg:
           parsed.angleDeg > 0
             ? parsed.angleDeg
@@ -589,8 +596,16 @@ export class XRMagneticSnapController {
 
   /** Steps magnetic snap evaluation for active and newly-released grabs. */
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
-  update(viewer: PluginViewer, dt = 1 / 60, element?: any, planesOverride?: readonly TrackedPlane[]): void {
-    const clampedDt = Math.max(0.001, Math.min(0.1, Number.isFinite(dt) ? dt : 1 / 60));
+  update(
+    viewer: PluginViewer,
+    dt = 1 / 60,
+    element?: any,
+    planesOverride?: readonly TrackedPlane[],
+  ): void {
+    const clampedDt = Math.max(
+      0.001,
+      Math.min(0.1, Number.isFinite(dt) ? dt : 1 / 60),
+    );
     this.pulsePhase += clampedDt * 5.0;
     const traitSystem = element?.traitSystem;
     const defaults = resolveMagneticSnapDefaults(element);
@@ -615,7 +630,9 @@ export class XRMagneticSnapController {
         ? traitSystem.getGrabbedMeshes()
         : [];
     const grabbedSet = new Set<object>(
-      grabbedList.filter((m): m is object => typeof m === 'object' && m !== null),
+      grabbedList.filter(
+        (m): m is object => typeof m === 'object' && m !== null,
+      ),
     );
 
     let activePreviewSocket: SnapSocketCandidate | null = null;
@@ -683,7 +700,8 @@ export class XRMagneticSnapController {
       // grabbed mesh is already seated in.
       const occupied = new Set<string>();
       for (const [other, st] of this.activeStates) {
-        if (other !== meshObj && st.matchedSocketId) occupied.add(st.matchedSocketId);
+        if (other !== meshObj && st.matchedSocketId)
+          occupied.add(st.matchedSocketId);
       }
       const availableSockets = sockets.filter(
         (s) => s.node !== mesh && !occupied.has(s.id),
@@ -710,7 +728,8 @@ export class XRMagneticSnapController {
       }
 
       // Exponential ease-in (~0.15s settling) into socket pose; crisp follow otherwise.
-      const easeAlpha = ev.mode === 'socket' ? 1 - Math.exp(-clampedDt / 0.04) : 1;
+      const easeAlpha =
+        ev.mode === 'socket' ? 1 - Math.exp(-clampedDt / 0.04) : 1;
       const basePos = prev ? prev.smoothedPos : rawWorldPos;
       const baseQuat = prev ? prev.smoothedQuat : rawWorldQuat;
       const smoothedPos: Vec3 = [
@@ -725,7 +744,10 @@ export class XRMagneticSnapController {
       }
 
       // Dispatch socket `xrunsnap` / `xrsnap` and deduplicated grid/surface `xrsnap`.
-      if (prev?.matchedSocketId && prev.matchedSocketId !== ev.matchedSocketId) {
+      if (
+        prev?.matchedSocketId &&
+        prev.matchedSocketId !== ev.matchedSocketId
+      ) {
         emitPluginEvent(element, 'xrunsnap', {
           node: mesh,
           socket: prev.matchedSocketNode ?? null,
@@ -783,7 +805,10 @@ export class XRMagneticSnapController {
     const radius = Math.max(0.03, socket.radius * 0.75);
     const rgba = parseHexColor(socket.highlightColor, [0.13, 0.77, 0.37, 0.65]);
     rgba[3] = 0.55;
-    if (!this.previewRingMesh || Math.abs(this.previewRingRadius - radius) > 1e-3) {
+    if (
+      !this.previewRingMesh ||
+      Math.abs(this.previewRingRadius - radius) > 1e-3
+    ) {
       removeDynamicMesh(viewer, this.previewRingMesh);
       this.previewRingMesh = createDynamicMesh(
         viewer,
@@ -826,7 +851,9 @@ const controllers = new WeakMap<object, XRMagneticSnapController>();
 const listeners = new WeakMap<object, Array<[string, EventListener]>>();
 
 /** Returns (creating on first use) the `magnetic-snap` controller for `key`. */
-export function getMagneticSnapController(key: object): XRMagneticSnapController {
+export function getMagneticSnapController(
+  key: object,
+): XRMagneticSnapController {
   let c = controllers.get(key);
   if (!c) {
     c = new XRMagneticSnapController();
@@ -848,12 +875,17 @@ export const magneticSnapPlugin: ThreeLivePlugin = {
   },
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
   onElementConnected(element: any): void {
-    if (!element || typeof element.addEventListener !== 'function' || listeners.has(element)) {
+    if (
+      !element ||
+      typeof element.addEventListener !== 'function' ||
+      listeners.has(element)
+    ) {
       return;
     }
     const step = (): void => {
       const viewer: PluginViewer | undefined = element._view ?? element.viewer;
-      if (viewer) getMagneticSnapController(element).update(viewer, 1 / 60, element);
+      if (viewer)
+        getMagneticSnapController(element).update(viewer, 1 / 60, element);
     };
     const bound: Array<[string, EventListener]> = [
       ['xr-select-start', step],
@@ -870,7 +902,12 @@ export const magneticSnapPlugin: ThreeLivePlugin = {
     listeners.delete(element);
     controllers.get(element)?.dispose(element?._view ?? element?.viewer);
   },
-  onXRFrame(viewer: unknown, _session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    _session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;

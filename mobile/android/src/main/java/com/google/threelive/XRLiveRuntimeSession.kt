@@ -24,15 +24,15 @@ import java.nio.ByteBuffer
  *
  * This is the Android counterpart of `three-live/src/plugins/interactivity.ts` and
  * `xr-live/src/plugins/head-follow.ts` (see `docs/xr-spatial-parity.md`). It uses no Android
- * framework classes so it is JVM-unit-testable; hosts mirror state changes onto Filament or
- * Jetpack XR SceneCore entities through [Listener].
+ * framework classes so it is JVM-unit-testable; hosts mirror state changes onto Filament or Jetpack
+ * XR SceneCore entities through [Listener].
  *
  * All positions are in the glTF scene space of the loaded model; hosts pass head / hand poses in
- * that same space. Follow and orbit write the node's local TRS, converting from scene space
- * through the parent chain when the node is not a root node.
+ * that same space. Follow and orbit write the node's local TRS, converting from scene space through
+ * the parent chain when the node is not a root node.
  *
- * The session is not thread-safe; drive it from a single thread (typically the render loop).
- * Public entry points never throw on malformed graphs: invalid nodes are ignored.
+ * The session is not thread-safe; drive it from a single thread (typically the render loop). Public
+ * entry points never throw on malformed graphs: invalid nodes are ignored.
  *
  * `event/onStart` runs on [start], or lazily before the first [step], [dispatchSelect],
  * [dispatchHover] or [sendEvent] call when the host never calls [start] explicitly.
@@ -50,8 +50,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
    */
   interface Listener {
     /**
-     * A node's local TRS changed. The arrays are reused scratch buffers that are only valid for
-     * the duration of the callback.
+     * A node's local TRS changed. The arrays are reused scratch buffers that are only valid for the
+     * duration of the callback.
      */
     fun onNodeTransformChanged(
       nodeIndex: Int,
@@ -226,7 +226,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val n = nodes.size
     require(n <= MAX_NODES) { "XRLiveRuntimeSession: more than $MAX_NODES nodes" }
     val materials = MiniJson.asList(root["materials"]) ?: emptyList()
-    require(materials.size <= MAX_MATERIALS) { "XRLiveRuntimeSession: more than $MAX_MATERIALS materials" }
+    require(materials.size <= MAX_MATERIALS) {
+      "XRLiveRuntimeSession: more than $MAX_MATERIALS materials"
+    }
     nodeCount = n
     followStates = arrayOfNulls(n)
     orbitTime = DoubleArray(n)
@@ -260,7 +262,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
       }
     }
     meshNames =
-      (MiniJson.asList(root["meshes"]) ?: emptyList()).map { MiniJson.asMap(it)?.get("name") as? String }
+      (MiniJson.asList(root["meshes"]) ?: emptyList())
+        .map { MiniJson.asMap(it)?.get("name") as? String }
         .toTypedArray()
     animationNames =
       (MiniJson.asList(root["animations"]) ?: emptyList())
@@ -374,11 +377,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
           val initVel =
             if (dynNodes.size > 1) {
               val angle = (idx.toDouble() / dynNodes.size) * Math.PI * 2.0
-              doubleArrayOf(
-                Math.cos(angle) * 0.85,
-                1.1 + (idx % 4) * 0.45,
-                Math.sin(angle) * 0.85,
-              )
+              doubleArrayOf(Math.cos(angle) * 0.85, 1.1 + (idx % 4) * 0.45, Math.sin(angle) * 0.85)
             } else {
               DoubleArray(3)
             }
@@ -603,8 +602,21 @@ class XRLiveRuntimeSession(gltfJson: String) {
   fun setNodeWorldPose(nodeIndex: Int, position: DoubleArray, quaternion: DoubleArray? = null) {
     if (nodeIndex !in 0 until nodeCount || position.size < 3) return
     if (position.take(3).any { !it.isFinite() }) return
-    if (quaternion != null && (quaternion.size < 4 || quaternion.take(4).any { !it.isFinite() })) return
+    if (quaternion != null && (quaternion.size < 4 || quaternion.take(4).any { !it.isFinite() }))
+      return
     setWorldPose(nodeIndex, position, quaternion)
+    flush()
+  }
+
+  /**
+   * Sets a node's own `KHR_node_visibility` flag from the host (descendants inherit it), notifying
+   * [listener] when it changes.
+   */
+  fun setNodeVisible(nodeIndex: Int, isVisible: Boolean) {
+    if (nodeIndex !in 0 until nodeCount || visible[nodeIndex] == isVisible) return
+    visible[nodeIndex] = isVisible
+    dirtyVisibility[nodeIndex] = true
+    anyDirty = true
     flush()
   }
 
@@ -788,10 +800,13 @@ class XRLiveRuntimeSession(gltfJson: String) {
         if (d != 0.0 && !d.isNaN()) (if (d < 0) -1 else 1) else a.compareTo(b)
       }
     val isEventLike =
-      op.startsWith("event/") || op.startsWith("pointer/on") || op.startsWith("scene/on") ||
+      op.startsWith("event/") ||
+        op.startsWith("pointer/on") ||
+        op.startsWith("scene/on") ||
         op.startsWith("flow/")
     val ptr = readCfgRaw(config, "pointer") as? String
-    val staticPtr = if (ptr != null && !ptr.contains('{') && parseSafePointer(ptr) != null) ptr else null
+    val staticPtr =
+      if (ptr != null && !ptr.contains('{') && parseSafePointer(ptr) != null) ptr else null
     return GNode(op, config, values, flows, seq, flows.keys.sorted(), isEventLike, staticPtr)
   }
 
@@ -851,7 +866,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private fun lerpVal(a: Any?, b: Any?, t: Double, isQuat: Boolean): Any? {
     if (a is Double && b is Double) return a + (b - a) * t
     if (a is DoubleArray && b is DoubleArray) {
-      val out = DoubleArray(if (isQuat && a.size == 4 && b.size == 4) 4 else Math.min(a.size, b.size))
+      val out =
+        DoubleArray(if (isQuat && a.size == 4 && b.size == 4) 4 else Math.min(a.size, b.size))
       lerpInto(out, a, b, t, isQuat)
       return out
     }
@@ -859,7 +875,13 @@ class XRLiveRuntimeSession(gltfJson: String) {
   }
 
   /** Lerps / slerps arrays [a] -> [b] into [out] (sized by [lerpVal]). */
-  private fun lerpInto(out: DoubleArray, a: DoubleArray, b: DoubleArray, t: Double, isQuat: Boolean) {
+  private fun lerpInto(
+    out: DoubleArray,
+    a: DoubleArray,
+    b: DoubleArray,
+    t: Double,
+    isQuat: Boolean,
+  ) {
     if (isQuat && a.size == 4 && b.size == 4) {
       normQuat(a, q4b)
       normQuat(b, q4c)
@@ -915,8 +937,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val key = normKey(rawKey)
     val c = cloneVal(value)
     when (key) {
-      is Int ->
-        if (key in varValues.indices) varValues[key] = c else putExtra(key, c)
+      is Int -> if (key in varValues.indices) varValues[key] = c else putExtra(key, c)
       is String -> {
         if (key in FORBIDDEN_SEGMENTS) return
         val idx = varIds[key]
@@ -951,8 +972,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
           s.size == 3 && s[2] == "rotation" -> K_R
           s.size == 3 && s[2] == "scale" -> K_S
           s.size == 3 && s[2] == "visible" -> K_VIS
-          s.size == 5 && s[2] == "extensions" && s[3] == "KHR_node_visibility" && s[4] == "visible" ->
-            K_VIS
+          s.size == 5 &&
+            s[2] == "extensions" &&
+            s[3] == "KHR_node_visibility" &&
+            s[4] == "visible" -> K_VIS
           else -> return null
         }
       return Target(kind, idx)
@@ -1004,7 +1027,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
       }
       K_R -> {
         if (value !is DoubleArray || value.size < 4) return false
-        for (k in 0 until 4) q4a[k] = if (value[k].isFinite()) value[k] else if (k == 3) 1.0 else 0.0
+        for (k in 0 until 4) q4a[k] =
+          if (value[k].isFinite()) value[k] else if (k == 3) 1.0 else 0.0
         normalizeQuatInto(q4a)
         for (k in 0 until 4) rotation[i * 4 + k] = q4a[k]
         markTransform(i)
@@ -1118,7 +1142,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
         return applyUn(inp("a"), it)
       }
       BINARY_MATH[m]?.let {
-        val dB = if (m == "mul" || m == "div" || m == "rem" || m == "mod" || m == "pow") 1.0 else 0.0
+        val dB =
+          if (m == "mul" || m == "div" || m == "rem" || m == "mod" || m == "pow") 1.0 else 0.0
         return applyBin(inp("a", if (m == "mul") 1.0 else 0.0), inp("b", dB), it)
       }
       return when (m) {
@@ -1132,7 +1157,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
             MIN_FN,
           )
         "mix",
-        "quatSlerp" -> lerpVal(inp("a", 0.0), inp("b", 1.0), num(inp("c", inp("t", 0.5)), 0.5), m == "quatSlerp")
+        "quatSlerp" ->
+          lerpVal(inp("a", 0.0), inp("b", 1.0), num(inp("c", inp("t", 0.5)), 0.5), m == "quatSlerp")
         "dot" -> {
           val a = inp("a")
           val b = inp("b")
@@ -1321,7 +1347,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
           val stp = Math.max(1.0, trunc(num(inp("step", 1.0), 1.0)))
           val body = node.flows["body"]
           if (body != null && eIdx > sIdx && forDepth < MAX_FOR_DEPTH) {
-            val maxIt = Math.min(Math.ceil((eIdx - sIdx) / stp), MAX_STEPS_PER_INVOCATION.toDouble()).toInt()
+            val maxIt =
+              Math.min(Math.ceil((eIdx - sIdx) / stp), MAX_STEPS_PER_INVOCATION.toDouble()).toInt()
             var iter = 0
             forDepth++
             try {
@@ -1343,7 +1370,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
           setOut(nodeIdx, "currentCount", c.toDouble())
           setOut(nodeIdx, "count", c.toDouble())
           if (inSock != "reset") {
-            val maxC = trunc(num(inp("n", readCfg(node, "stopIterations") ?: readCfg(node, "n") ?: 1.0), 1.0))
+            val maxC =
+              trunc(
+                num(inp("n", readCfg(node, "stopIterations") ?: readCfg(node, "n") ?: 1.0), 1.0)
+              )
             if (c <= maxC) pushOut()
           }
         }
@@ -1361,7 +1391,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
                 }
               if (idx < keys.size) {
                 pushOut(keys[idx])
-                multiGates[nodeIdx] = if (readCfg(node, "isLoop") != false) (idx + 1) % keys.size else idx + 1
+                multiGates[nodeIdx] =
+                  if (readCfg(node, "isLoop") != false) (idx + 1) % keys.size else idx + 1
               }
             }
           }
@@ -1413,7 +1444,11 @@ class XRLiveRuntimeSession(gltfJson: String) {
               val id = nextDelayId++
               setOut(nodeIdx, "lastDelayIndex", id.toDouble())
               delays.add(Delay(id, nodeIdx, dur, done))
-              if (node.op == "flow/setDelay" && node.flows["out"] != null && node.flows["done"] != null) {
+              if (
+                node.op == "flow/setDelay" &&
+                  node.flows["out"] != null &&
+                  node.flows["done"] != null
+              ) {
                 pushOut("out")
               }
             }
@@ -1532,7 +1567,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
       val node = gnodes[i]
       if (node.op !in ops) continue
       evalCount = 0
-      val tNode = readCfg(node, "nodeIndex") ?: readCfg(node, "node") ?: readIn(i, "nodeIndex", null)
+      val tNode =
+        readCfg(node, "nodeIndex") ?: readCfg(node, "node") ?: readIn(i, "nodeIndex", null)
       val tMesh = readCfg(node, "meshName")
       val matches =
         if (tMesh is String && tMesh.isNotEmpty()) {
@@ -1545,7 +1581,12 @@ class XRLiveRuntimeSession(gltfJson: String) {
       setOut(i, "nodeIndex", nIdx.toDouble())
       setOut(i, "meshIndex", mIdx.toDouble())
       if (hitPoint != null && hitPoint.size >= 3) {
-        val pt = doubleArrayOf(numD(hitPoint[0].toDouble()), numD(hitPoint[1].toDouble()), numD(hitPoint[2].toDouble()))
+        val pt =
+          doubleArrayOf(
+            numD(hitPoint[0].toDouble()),
+            numD(hitPoint[1].toDouble()),
+            numD(hitPoint[2].toDouble()),
+          )
         setOut(i, "hitPoint", pt)
         setOut(i, "point", pt.copyOf())
         setOut(i, "intersectionPoint", pt.copyOf())
@@ -1569,7 +1610,11 @@ class XRLiveRuntimeSession(gltfJson: String) {
    * Delivers a custom event. Nested deliveries from `event/send` pass the sender's [budget] so a
    * graph cannot fan out exponentially; top-level deliveries ([budget] `null`) start fresh.
    */
-  private fun receiveCustomEvent(eventId: Any, payload: Map<String, Any?>, budget: IntArray? = null) {
+  private fun receiveCustomEvent(
+    eventId: Any,
+    payload: Map<String, Any?>,
+    budget: IntArray? = null,
+  ) {
     if (eventDepth >= MAX_EVENT_NESTING_DEPTH) return
     eventDepth++
     try {
@@ -1623,7 +1668,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
         } else {
           lerpVal(tw.from, tw.to, et, tw.quat)
         }
-      if (tw.target != null) writeTarget(tw.target, cur) else if (tw.varKey != null) setVar(tw.varKey, cur)
+      if (tw.target != null) writeTarget(tw.target, cur)
+      else if (tw.varKey != null) setVar(tw.varKey, cur)
       if (rt >= 1) {
         tweens.removeAt(i)
         if (tw.done != null) (doneFlows ?: ArrayList<Flow>().also { doneFlows = it }).add(tw.done)
@@ -1685,10 +1731,12 @@ class XRLiveRuntimeSession(gltfJson: String) {
       val ry = pos[1] - anchor.position[1]
       val rz = pos[2] - anchor.position[2]
       val radialErr =
-        if (options.mode == "head") Math.abs(Math.sqrt(rx * rx + rz * rz) - options.distance) else err
+        if (options.mode == "head") Math.abs(Math.sqrt(rx * rx + rz * rz) - options.distance)
+        else err
       val verticalErr = Math.abs(ry - options.height)
       val slack = Math.max(0.05, options.distance * 0.35)
-      if (angle > options.deadzoneDeg || radialErr > slack || verticalErr > slack) state.following = true
+      if (angle > options.deadzoneDeg || radialErr > slack || verticalErr > slack)
+        state.following = true
     }
     if (state.following) {
       XRFollowMath.stepCriticallyDampedSpring(state.spring, target, options.stiffness, dt)
@@ -1784,7 +1832,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
       py += v[1] * clampedDt
       pz += v[2] * clampedDt
 
-      // 2. Collide against static scene mesh AABBs / circular pedestals (e.g. Pedestal_Table, Workbench_Pedestal)
+      // 2. Collide against static scene mesh AABBs / circular pedestals (e.g. Pedestal_Table,
+      // Workbench_Pedestal)
       for (box in staticColliders) {
         val spanX = box[3] - box[0]
         val spanZ = box[5] - box[2]
@@ -1947,7 +1996,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
         }
       }
       val spSq =
-        a.velocity[0] * a.velocity[0] + a.velocity[1] * a.velocity[1] + a.velocity[2] * a.velocity[2]
+        a.velocity[0] * a.velocity[0] +
+          a.velocity[1] * a.velocity[1] +
+          a.velocity[2] * a.velocity[2]
       if (spSq > maxSpeedSq) maxSpeedSq = spSq
     }
 
@@ -2222,7 +2273,16 @@ class XRLiveRuntimeSession(gltfJson: String) {
     private const val K_ALPHA = 8
 
     private val EMPTY_NODE =
-      GNode("", emptyMap(), emptyMap(), emptyMap(), emptyList(), emptyList(), isEventLike = false, staticPointer = null)
+      GNode(
+        "",
+        emptyMap(),
+        emptyMap(),
+        emptyMap(),
+        emptyList(),
+        emptyList(),
+        isEventLike = false,
+        staticPointer = null,
+      )
 
     private val MAX_FN: (Double, Double) -> Double = { x, y -> jsMax(x, y) }
     private val MIN_FN: (Double, Double) -> Double = { x, y -> jsMin(x, y) }
@@ -2297,15 +2357,19 @@ class XRLiveRuntimeSession(gltfJson: String) {
       return if (idx < max) idx else -1
     }
 
-    private fun jsMax(x: Double, y: Double): Double = if (x.isNaN() || y.isNaN()) Double.NaN else Math.max(x, y)
+    private fun jsMax(x: Double, y: Double): Double =
+      if (x.isNaN() || y.isNaN()) Double.NaN else Math.max(x, y)
 
-    private fun jsMin(x: Double, y: Double): Double = if (x.isNaN() || y.isNaN()) Double.NaN else Math.min(x, y)
+    private fun jsMin(x: Double, y: Double): Double =
+      if (x.isNaN() || y.isNaN()) Double.NaN else Math.min(x, y)
 
     private fun trunc(x: Double): Double = if (x < 0) Math.ceil(x) else Math.floor(x)
 
     private fun clamp01(v: Double): Double = Math.max(0.0, Math.min(1.0, v))
 
-    /** `Math.hypot` over [a] (or over `a - b`), scaled to avoid overflow; `NaN` elements count 0. */
+    /**
+     * `Math.hypot` over [a] (or over `a - b`), scaled to avoid overflow; `NaN` elements count 0.
+     */
     private fun hypot(a: DoubleArray, b: DoubleArray?): Double {
       var max = 0.0
       for (i in a.indices) {

@@ -23,8 +23,8 @@ import java.util.concurrent.Executors
  * Native spatial features on top of any [ThreeLiveSceneRenderer] that supports dynamic meshes:
  *
  * - **Manipulation handles** for nodes with a `handles` trait: corner cubes scale uniformly and the
- *   pedestal bar yaws the node (same math as `manipulation-handles.ts`), reported as
- *   `{mesh, scale, yawDeg}`.
+ *   pedestal bar yaws the node (same math as `manipulation-handles.ts`), reported as `{mesh, scale,
+ *   yawDeg}`.
  * - **Spatial paint** (when [paintColor] is set): dragging in empty space draws a tube stroke 0.4 m
  *   in front of the camera (web screen-paint depth), reported as `{index, points, lengthMeters}`.
  * - **Particles** for nodes with a `particles` trait, simulated with the shared `ParticleEmitter`
@@ -47,10 +47,13 @@ constructor(
   val allowRemoteSplats: Boolean = false,
   /** Maximum splats rendered per cloud (deterministic stride downsampling when exceeded). */
   val maxSplats: Int =
-    if (renderer.supportsGpuSplats) SplatParser.DEFAULT_MAX_GPU_SPLATS else SplatParser.DEFAULT_MAX_CPU_SPLATS,
+    if (renderer.supportsGpuSplats) SplatParser.DEFAULT_MAX_GPU_SPLATS
+    else SplatParser.DEFAULT_MAX_CPU_SPLATS,
   /** Custom loader for tests; defaults to [SplatParser.loadUrl]. */
   private val splatLoader: (url: String, baseUrl: String?, allowCrossOrigin: Boolean) -> SplatData =
-    { u, b, a -> SplatParser.loadUrl(u, b, a) },
+    { u, b, a ->
+      SplatParser.loadUrl(u, b, a)
+    },
   /** Background executor for splat downloads and depth sorting. */
   private val backgroundExecutor: Executor? = null,
 ) {
@@ -119,19 +122,30 @@ constructor(
   /** Currently selected node index (used by `dimensions.showOnSelect`). */
   var selectedNodeIndex: Int = -1
 
-  /** Gaze-dwell activation mode: `"off"`, `"on"`, or `"auto"` (active when [stepGazeDwell] `autoEnabled` is `true`). */
+  /**
+   * Gaze-dwell activation mode: `"off"`, `"on"`, or `"auto"` (active when [stepGazeDwell]
+   * `autoEnabled` is `true`).
+   */
   var gazeDwellMode: String = "off"
 
-  /** Default dwell duration in milliseconds (`250..10000`) when not overridden by a node's `gaze` trait. */
+  /**
+   * Default dwell duration in milliseconds (`250..10000`) when not overridden by a node's `gaze`
+   * trait.
+   */
   var defaultDwellMs: Int = 1200
 
-  /** Explosion layout mode: `"radial"`, `"axial-x"`, `"axial-y"`, `"axial-z"`, or `"hierarchical"`. */
+  /**
+   * Explosion layout mode: `"radial"`, `"axial-x"`, `"axial-y"`, `"axial-z"`, or `"hierarchical"`.
+   */
   var explodeMode: String = "radial"
 
   /** Multiplier (`0..10`) applied to exploded part travel distances. */
   var explodeScale: Double = 1.5
 
-  /** Cross-section cut plane specification (`"none"`, `"x:0.2"`, `"y:0.0"`, `"-z:0.1"`, `"interactive"`). */
+  /**
+   * Cross-section cut plane specification (`"none"`, `"x:0.2"`, `"y:0.0"`, `"-z:0.1"`,
+   * `"interactive"`).
+   */
   var sectionPlaneSpec: String = "none"
 
   /** Current spring-smoothed assembly explosion factor in `[0..1]`. */
@@ -321,7 +335,9 @@ constructor(
   private var ownedExecutor = false
   private val executor: Executor =
     backgroundExecutor
-      ?: Executors.newSingleThreadExecutor { r -> Thread(r, "three-live-splat").apply { isDaemon = true } }
+      ?: Executors.newSingleThreadExecutor { r ->
+          Thread(r, "three-live-splat").apply { isDaemon = true }
+        }
         .also { ownedExecutor = true }
   private var dragging: HandleNode? = null
 
@@ -339,7 +355,10 @@ constructor(
     for (t in session.traits) {
       val node = t.nodeIndex
       if (node !in 0 until scene.nodeCount) continue
-      t.handles?.let { if (scene.meshBounds.getOrNull(scene.nodeMesh[node]) != null) handles.add(HandleNode(node, it)) }
+      t.handles?.let {
+        if (scene.meshBounds.getOrNull(scene.nodeMesh[node]) != null)
+          handles.add(HandleNode(node, it))
+      }
       t.particles?.let { emitters.add(Emitter(node, ParticleEmitter(it, seed = node + 1))) }
       t.dimensions?.let { dimensionVisuals[node] = DimensionVisual(node, it) }
       t.snapTo?.let { snapTraits[node] = it }
@@ -375,7 +394,8 @@ constructor(
       }
     }
     for (h in handles) {
-      for (k in 0 until 5) h.meshIds[k] = renderer.addDynamicMesh(UNIT_CUBE_POSITIONS, null, UNIT_CUBE_INDICES, HANDLE_COLOR)
+      for (k in 0 until 5) h.meshIds[k] =
+        renderer.addDynamicMesh(UNIT_CUBE_POSITIONS, null, UNIT_CUBE_INDICES, HANDLE_COLOR)
     }
     for (e in emitters) {
       if (session.nodeWorldMatrix(e.node, world)) e.emitter.reset(world[12], world[13], world[14])
@@ -397,8 +417,8 @@ constructor(
   }
 
   /**
-   * Whether the local user may grab [nodeIndex] now: `false` while another `shared-room` peer
-   * holds an unexpired lease on it, so two users never fight over the same object.
+   * Whether the local user may grab [nodeIndex] now: `false` while another `shared-room` peer holds
+   * an unexpired lease on it, so two users never fight over the same object.
    */
   @JvmOverloads
   fun canGrabNode(nodeIndex: Int, atMs: Long = System.currentTimeMillis()): Boolean {
@@ -536,7 +556,8 @@ constructor(
     }
     val color = paintColor ?: return false
     if (p.pick != null) return false
-    if (strokes.size >= MAX_STROKES) strokes.removeAt(0).let { renderer.removeDynamicMesh(it.meshId) }
+    if (strokes.size >= MAX_STROKES)
+      strokes.removeAt(0).let { renderer.removeDynamicMesh(it.meshId) }
     val stroke = Stroke(TubeStrokeBuilder(), -1, strokeCount++)
     paintAt(stroke, p)
     stroke.meshId = renderer.addDynamicMesh(FloatArray(9), null, intArrayOf(0, 1, 2), color)
@@ -571,11 +592,21 @@ constructor(
       dragging = null
       val t = session.nodeTransform(h.node) ?: return
       val q = t.rotation
-      val yaw = XRSpatialMath.yawFromQuat(q[0].toDouble(), q[1].toDouble(), q[2].toDouble(), q[3].toDouble())
+      val yaw =
+        XRSpatialMath.yawFromQuat(
+          q[0].toDouble(),
+          q[1].toDouble(),
+          q[2].toDouble(),
+          q[3].toDouble(),
+        )
       if (!persistentAnchorsNamespace.isNullOrBlank() || anchorPersistTraits.containsKey(h.node)) {
         savePersistedAnchors()
       }
-      listener?.onHandlesChange(scene.nodeNames.getOrNull(h.node) ?: "", t.scale[0].toDouble(), Math.toDegrees(yaw))
+      listener?.onHandlesChange(
+        scene.nodeNames.getOrNull(h.node) ?: "",
+        t.scale[0].toDouble(),
+        Math.toDegrees(yaw),
+      )
       return
     }
     if (activeTape != null) {
@@ -628,7 +659,11 @@ constructor(
       val fy = floorY ?: 0.0
       val t = (fy - p.origin[1]) / dir[1]
       if (t in 0.02..20.0) {
-        return doubleArrayOf(p.origin[0] + dir[0] * t, p.origin[1] + dir[1] * t, p.origin[2] + dir[2] * t)
+        return doubleArrayOf(
+          p.origin[0] + dir[0] * t,
+          p.origin[1] + dir[1] * t,
+          p.origin[2] + dir[2] * t,
+        )
       }
     }
     return doubleArrayOf(p.origin[0] + dir[0], p.origin[1] + dir[1], p.origin[2] + dir[2])
@@ -641,9 +676,12 @@ constructor(
       if (it.labelMeshId >= 0) renderer.removeDynamicMesh(it.labelMeshId)
     }
     val barGeo = SpatialMeasure.buildSegmentBarsGeometry(emptyList())
-    val lblGeo = SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(0.0, measureUnit))
-    val lineId = renderer.addDynamicMesh(barGeo.positions, barGeo.normals, barGeo.indices, MEASURE_COLOR)
-    val labelId = renderer.addDynamicMesh(lblGeo.positions, lblGeo.normals, lblGeo.indices, LABEL_COLOR)
+    val lblGeo =
+      SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(0.0, measureUnit))
+    val lineId =
+      renderer.addDynamicMesh(barGeo.positions, barGeo.normals, barGeo.indices, MEASURE_COLOR)
+    val labelId =
+      renderer.addDynamicMesh(lblGeo.positions, lblGeo.normals, lblGeo.indices, LABEL_COLOR)
     activeTape = TapeVisual(start.copyOf(3), start.copyOf(3), lineId, labelId)
   }
 
@@ -653,7 +691,8 @@ constructor(
     t.end = end.copyOf(3)
     val dist = XRSpatialMath.dist3(t.start, t.end)
     val barGeo = SpatialMeasure.buildSegmentBarsGeometry(listOf(t.start to t.end), 0.0022)
-    val lblGeo = SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(dist, measureUnit))
+    val lblGeo =
+      SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(dist, measureUnit))
     renderer.updateDynamicMesh(t.lineMeshId, barGeo.positions, barGeo.normals, barGeo.indices)
     renderer.updateDynamicMesh(t.labelMeshId, lblGeo.positions, lblGeo.normals, lblGeo.indices)
   }
@@ -698,14 +737,17 @@ constructor(
   private fun stepDimensions(cameraWorld: FloatArray) {
     if (measureBoundsEnabled) {
       for (n in 0 until scene.nodeCount) {
-        if (scene.meshBounds.getOrNull(scene.nodeMesh[n]) != null && !dimensionVisuals.containsKey(n)) {
+        if (
+          scene.meshBounds.getOrNull(scene.nodeMesh[n]) != null && !dimensionVisuals.containsKey(n)
+        ) {
           dimensionVisuals[n] = DimensionVisual(n, null)
         }
       }
     }
     var activeLabels = 0
     for (dv in dimensionVisuals.values) {
-      val cfg = dv.trait ?: if (measureBoundsEnabled) XRDimensionsTrait(unit = measureUnit) else null
+      val cfg =
+        dv.trait ?: if (measureBoundsEnabled) XRDimensionsTrait(unit = measureUnit) else null
       val mb = scene.meshBounds.getOrNull(scene.nodeMesh[dv.node])
       val show =
         cfg != null &&
@@ -742,22 +784,34 @@ constructor(
         val barGeo = SpatialMeasure.buildSegmentBarsGeometry(segs, 0.002)
         val color = parseHexRgba(cfg.color)
         if (dv.barMeshId < 0) {
-          dv.barMeshId = renderer.addDynamicMesh(barGeo.positions, barGeo.normals, barGeo.indices, color)
+          dv.barMeshId =
+            renderer.addDynamicMesh(barGeo.positions, barGeo.normals, barGeo.indices, color)
         } else {
           renderer.updateDynamicMesh(dv.barMeshId, barGeo.positions, barGeo.normals, barGeo.indices)
         }
-        val allowed = Math.max(0, Math.min(callouts.size, SpatialMeasure.MAX_DIMENSION_LABELS - activeLabels))
+        val allowed =
+          Math.max(0, Math.min(callouts.size, SpatialMeasure.MAX_DIMENSION_LABELS - activeLabels))
         while (dv.labelMeshIds.size > allowed) {
           renderer.removeDynamicMesh(dv.labelMeshIds.removeAt(dv.labelMeshIds.lastIndex))
         }
         dv.labelPositions.clear()
         for (i in 0 until allowed) {
           val c = callouts[i]
-          val lGeo = SpatialMeasure.buildVectorLabelGeometry(SpatialMeasure.formatDimension(c.lengthMeters, unit))
+          val lGeo =
+            SpatialMeasure.buildVectorLabelGeometry(
+              SpatialMeasure.formatDimension(c.lengthMeters, unit)
+            )
           if (i < dv.labelMeshIds.size) {
-            renderer.updateDynamicMesh(dv.labelMeshIds[i], lGeo.positions, lGeo.normals, lGeo.indices)
+            renderer.updateDynamicMesh(
+              dv.labelMeshIds[i],
+              lGeo.positions,
+              lGeo.normals,
+              lGeo.indices,
+            )
           } else {
-            dv.labelMeshIds.add(renderer.addDynamicMesh(lGeo.positions, lGeo.normals, lGeo.indices, color))
+            dv.labelMeshIds.add(
+              renderer.addDynamicMesh(lGeo.positions, lGeo.normals, lGeo.indices, color)
+            )
           }
           dv.labelPositions.add(c.labelPosition)
         }
@@ -876,7 +930,13 @@ constructor(
     }
     if (ev.matchedSocketId != null) {
       if (ev.matchedSocketId != prevId) {
-        listener?.onSnap(nodeIndex, socketNodeById[ev.matchedSocketId], ev.position.copyOf(), ev.quaternion.copyOf(), "socket")
+        listener?.onSnap(
+          nodeIndex,
+          socketNodeById[ev.matchedSocketId],
+          ev.position.copyOf(),
+          ev.quaternion.copyOf(),
+          "socket",
+        )
       }
       activeSocketByNode[nodeIndex] = ev.matchedSocketId
     } else {
@@ -893,7 +953,10 @@ constructor(
       session.setNodeWorldPose(nodeIndex, ev.position, ev.quaternion)
     }
 
-    val previewSock = if (!released && ev.previewSocketId != null) sockets.firstOrNull { it.id == ev.previewSocketId } else null
+    val previewSock =
+      if (!released && ev.previewSocketId != null)
+        sockets.firstOrNull { it.id == ev.previewSocketId }
+      else null
     if (previewSock == null) {
       if (previewRingMeshId >= 0) {
         zeroMatrix()
@@ -905,11 +968,21 @@ constructor(
         if (previewRingMeshId >= 0) renderer.removeDynamicMesh(previewRingMeshId)
         val rGeo = MagneticSnap.buildSnapRingGeometry(rad, Math.max(0.004, rad * 0.08))
         previewRingMeshId =
-          renderer.addDynamicMesh(rGeo.positions, rGeo.normals, rGeo.indices, parseHexRgba(previewSock.highlightColor, 0.55f))
+          renderer.addDynamicMesh(
+            rGeo.positions,
+            rGeo.normals,
+            rGeo.indices,
+            parseHexRgba(previewSock.highlightColor, 0.55f),
+          )
         previewRingRadius = rad
       }
       val pulse = 1.0 + 0.07 * Math.sin(pulsePhase)
-      val dMat = XRSpatialMath.mat4FromTRS(previewSock.position, previewSock.quaternion, doubleArrayOf(pulse, pulse, pulse))
+      val dMat =
+        XRSpatialMath.mat4FromTRS(
+          previewSock.position,
+          previewSock.quaternion,
+          doubleArrayOf(pulse, pulse, pulse),
+        )
       for (i in 0 until 16) matrix[i] = dMat[i].toFloat()
       renderer.setDynamicMeshTransform(previewRingMeshId, matrix)
     }
@@ -937,9 +1010,17 @@ constructor(
       if (node in pointerNoneNodes || !session.isEffectivelyVisible(node)) continue
       if (!session.nodeWorldMatrix(node, world)) continue
       if (!XRSpatialMath.mat4Invert(world, invWorld)) continue
-      val lo = XRSpatialMath.transformPoint(invWorld, origin[0], origin[1], origin[2], DoubleArray(3))
+      val lo =
+        XRSpatialMath.transformPoint(invWorld, origin[0], origin[1], origin[2], DoubleArray(3))
       val farWorld = doubleArrayOf(origin[0] + dir[0], origin[1] + dir[1], origin[2] + dir[2])
-      val lf = XRSpatialMath.transformPoint(invWorld, farWorld[0], farWorld[1], farWorld[2], DoubleArray(3))
+      val lf =
+        XRSpatialMath.transformPoint(
+          invWorld,
+          farWorld[0],
+          farWorld[1],
+          farWorld[2],
+          DoubleArray(3),
+        )
       val ld = doubleArrayOf(lf[0] - lo[0], lf[1] - lo[1], lf[2] - lo[2])
       var tMin = 0.0
       var tMax = Double.POSITIVE_INFINITY
@@ -1015,7 +1096,8 @@ constructor(
     if (disposed) return
     val active =
       when (gazeDwellMode) {
-        "on", "true" -> true
+        "on",
+        "true" -> true
         "auto" -> autoEnabled
         else -> gazeTraits.isNotEmpty()
       }
@@ -1030,15 +1112,20 @@ constructor(
     var hitPoint = hit?.second ?: doubleArrayOf(0.0, 0.0, 0.0)
     var hitNormal = hit?.third ?: doubleArrayOf(0.0, 0.0, 1.0)
 
-    if (candidateNode != activeGazeNode && activeGazeNode >= 0 && session.isEffectivelyVisible(activeGazeNode)) {
+    if (
+      candidateNode != activeGazeNode &&
+        activeGazeNode >= 0 &&
+        session.isEffectivelyVisible(activeGazeNode)
+    ) {
       val toPrev =
         doubleArrayOf(
           lastGazeHitPoint[0] - origin[0],
           lastGazeHitPoint[1] - origin[1],
           lastGazeHitPoint[2] - origin[2],
         )
-      if (XRSpatialMath.len3(toPrev[0], toPrev[1], toPrev[2]) > 1e-4 &&
-        GazeDwell.angleBetweenDeg(dir, toPrev) <= GazeDwell.GRACE_CONE_DEG
+      if (
+        XRSpatialMath.len3(toPrev[0], toPrev[1], toPrev[2]) > 1e-4 &&
+          GazeDwell.angleBetweenDeg(dir, toPrev) <= GazeDwell.GRACE_CONE_DEG
       ) {
         candidateNode = activeGazeNode
         hitPoint = lastGazeHitPoint
@@ -1067,7 +1154,11 @@ constructor(
     val trait = gazeTraits[candidateNode]
     val dwellMs = (trait?.dwellMs ?: defaultDwellMs).coerceIn(250, 10000).toDouble()
     val repeat = trait?.repeat == true
-    val action = trait?.action ?: if (session.traits.firstOrNull { it.nodeIndex == candidateNode }?.holdToAsk != null) "ask" else "select"
+    val action =
+      trait?.action
+        ?: if (session.traits.firstOrNull { it.nodeIndex == candidateNode }?.holdToAsk != null)
+          "ask"
+        else "select"
     val dtMs = dtSeconds.coerceIn(0.0, 0.1) * 1000.0
     var progress = 0.0
 
@@ -1094,7 +1185,8 @@ constructor(
       lastReticleProgressBucket = bucket
       val geo = GazeDwell.buildReticleGeometry(bucket / 24.0, 24)
       if (gazeReticleMeshId < 0) {
-        gazeReticleMeshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, GAZE_RETICLE_COLOR)
+        gazeReticleMeshId =
+          renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, GAZE_RETICLE_COLOR)
       } else {
         renderer.updateDynamicMesh(gazeReticleMeshId, geo.positions, geo.normals, geo.indices)
       }
@@ -1172,7 +1264,12 @@ constructor(
       restParts.add(
         RestPart(
           node = node,
-          restPos = doubleArrayOf(t.translation[0].toDouble(), t.translation[1].toDouble(), t.translation[2].toDouble()),
+          restPos =
+            doubleArrayOf(
+              t.translation[0].toDouble(),
+              t.translation[1].toDouble(),
+              t.translation[2].toDouble(),
+            ),
           restRot = t.rotation.copyOf(),
           restScale = t.scale.copyOf(),
           restWorldCenter = wb.center.copyOf(),
@@ -1182,11 +1279,14 @@ constructor(
     }
     if (minX.isFinite()) {
       assemblyCenter = doubleArrayOf((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
-      assemblyRadius = Math.max(0.05, XRSpatialMath.len3(maxX - minX, maxY - minY, maxZ - minZ) * 0.5)
+      assemblyRadius =
+        Math.max(0.05, XRSpatialMath.len3(maxX - minX, maxY - minY, maxZ - minZ) * 0.5)
     }
   }
 
-  /** Steps `exploded-view` spring smoothing, node offsets, dashed leader lines, and section gizmo. */
+  /**
+   * Steps `exploded-view` spring smoothing, node offsets, dashed leader lines, and section gizmo.
+   */
   fun stepExplodedView(dt: Double) {
     if (disposed) return
     val sec = ExplodedView.parseSectionPlane(sectionPlaneSpec, assemblyCenter)
@@ -1244,12 +1344,22 @@ constructor(
           )
         session.setNodeTransform(part.node, nextPos, part.restRot, part.restScale)
         renderer.setNodeTransform(part.node, nextPos, part.restRot, part.restScale)
-        if (currentExplodeFactor > 0.02 && (tr?.leaderLine != false) && session.nodeWorldMatrix(part.node, world)) {
+        if (
+          currentExplodeFactor > 0.02 &&
+            (tr?.leaderLine != false) &&
+            session.nodeWorldMatrix(part.node, world)
+        ) {
           val b = scene.meshBounds.getOrNull(scene.nodeMesh[part.node])
           if (b != null) {
-            val curWb = SpatialMeasure.computeWorldBounds(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world)
-            if (XRSpatialMath.dist3(part.restWorldCenter, curWb.center) > 0.01 && leaderSegs.size < 512) {
-              leaderSegs.addAll(SpatialMeasure.buildDashedSegments(part.restWorldCenter, curWb.center))
+            val curWb =
+              SpatialMeasure.computeWorldBounds(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world)
+            if (
+              XRSpatialMath.dist3(part.restWorldCenter, curWb.center) > 0.01 &&
+                leaderSegs.size < 512
+            ) {
+              leaderSegs.addAll(
+                SpatialMeasure.buildDashedSegments(part.restWorldCenter, curWb.center)
+              )
             }
           }
         }
@@ -1265,7 +1375,8 @@ constructor(
     } else {
       val geo = SpatialMeasure.buildSegmentBarsGeometry(leaderSegs, 0.0014)
       if (explodeLeaderMeshId < 0) {
-        explodeLeaderMeshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, EXPLODE_LEADER_COLOR)
+        explodeLeaderMeshId =
+          renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, EXPLODE_LEADER_COLOR)
       } else {
         renderer.updateDynamicMesh(explodeLeaderMeshId, geo.positions, geo.normals, geo.indices)
       }
@@ -1278,7 +1389,8 @@ constructor(
       if (sectionGizmoMeshId < 0 || Math.abs(halfExt - lastSectionGizmoRadius) > 1e-3) {
         if (sectionGizmoMeshId >= 0) renderer.removeDynamicMesh(sectionGizmoMeshId)
         val gGeo = ExplodedView.buildSectionGizmoGeometry(halfExt)
-        sectionGizmoMeshId = renderer.addDynamicMesh(gGeo.positions, gGeo.normals, gGeo.indices, MEASURE_COLOR)
+        sectionGizmoMeshId =
+          renderer.addDynamicMesh(gGeo.positions, gGeo.normals, gGeo.indices, MEASURE_COLOR)
         lastSectionGizmoRadius = halfExt
       }
       val d = sec.constant - XRSpatialMath.dot3(assemblyCenter, sec.normal)
@@ -1316,7 +1428,10 @@ constructor(
 
   private fun resolveStorageKey(): String? {
     val raw = persistentAnchorsNamespace?.trim()
-    if (raw != null && (raw.equals("false", ignoreCase = true) || raw.equals("none", ignoreCase = true))) {
+    if (
+      raw != null &&
+        (raw.equals("false", ignoreCase = true) || raw.equals("none", ignoreCase = true))
+    ) {
       return null
     }
     val ns =
@@ -1347,7 +1462,11 @@ constructor(
       val t = session.nodeTransform(node) ?: continue
       val clean =
         PersistentAnchors.sanitizePose(
-          doubleArrayOf(t.translation[0].toDouble(), t.translation[1].toDouble(), t.translation[2].toDouble()),
+          doubleArrayOf(
+            t.translation[0].toDouble(),
+            t.translation[1].toDouble(),
+            t.translation[2].toDouble(),
+          ),
           doubleArrayOf(
             t.rotation[0].toDouble(),
             t.rotation[1].toDouble(),
@@ -1365,8 +1484,10 @@ constructor(
     var applied = 0
     for (node in 0 until scene.nodeCount) {
       val explicitId = anchorPersistTraits[node]?.id
-      val fallbackKey = XRLiveSceneCoreHelper.safeAnchorId(scene.nodeNames.getOrNull(node)) ?: "node_$node"
-      val pose = (if (explicitId != null) poses[explicitId] else null) ?: poses[fallbackKey] ?: continue
+      val fallbackKey =
+        XRLiveSceneCoreHelper.safeAnchorId(scene.nodeNames.getOrNull(node)) ?: "node_$node"
+      val pose =
+        (if (explicitId != null) poses[explicitId] else null) ?: poses[fallbackKey] ?: continue
       val p = FloatArray(3) { pose.p[it].toFloat() }
       val q = FloatArray(4) { pose.q[it].toFloat() }
       val s = FloatArray(3) { pose.s[it].toFloat() }
@@ -1510,10 +1631,16 @@ constructor(
       val arcGeo = SpatialLocomotion.buildArcGeometry(resolved.points)
       if (teleportArcMeshId < 0 || teleportArcValidColor != resolved.valid) {
         if (teleportArcMeshId >= 0) renderer.removeDynamicMesh(teleportArcMeshId)
-        teleportArcMeshId = renderer.addDynamicMesh(arcGeo.positions, arcGeo.normals, arcGeo.indices, color)
+        teleportArcMeshId =
+          renderer.addDynamicMesh(arcGeo.positions, arcGeo.normals, arcGeo.indices, color)
         teleportArcValidColor = resolved.valid
       } else {
-        renderer.updateDynamicMesh(teleportArcMeshId, arcGeo.positions, arcGeo.normals, arcGeo.indices)
+        renderer.updateDynamicMesh(
+          teleportArcMeshId,
+          arcGeo.positions,
+          arcGeo.normals,
+          arcGeo.indices,
+        )
       }
       identityMatrix()
       renderer.setDynamicMeshTransform(teleportArcMeshId, matrix)
@@ -1521,7 +1648,8 @@ constructor(
       val ringGeo = MagneticSnap.buildSnapRingGeometry(0.18, 0.018)
       if (teleportRingMeshId < 0 || teleportRingValidColor != resolved.valid) {
         if (teleportRingMeshId >= 0) renderer.removeDynamicMesh(teleportRingMeshId)
-        teleportRingMeshId = renderer.addDynamicMesh(ringGeo.positions, ringGeo.normals, ringGeo.indices, color)
+        teleportRingMeshId =
+          renderer.addDynamicMesh(ringGeo.positions, ringGeo.normals, ringGeo.indices, color)
         teleportRingValidColor = resolved.valid
       }
       val ringPos =
@@ -1594,8 +1722,7 @@ constructor(
 
   // ---- Shared Room (Multi-User Co-Presence & State Sync) ----------------------------------------
 
-  private fun shouldSyncNode(node: Int): Boolean =
-    syncTraits[node] ?: (node in grabbableNodes)
+  private fun shouldSyncNode(node: Int): Boolean = syncTraits[node] ?: (node in grabbableNodes)
 
   private fun baseSyncNodeKey(node: Int): String =
     anchorPersistTraits[node]?.id
@@ -1603,8 +1730,8 @@ constructor(
       ?: "node_$node"
 
   /**
-   * Unique sync key per mesh node: duplicate names get `#2`, `#3`, ... in node
-   * order, matching the web `buildNodeKeyMaps` so same-named nodes don't collide.
+   * Unique sync key per mesh node: duplicate names get `#2`, `#3`, ... in node order, matching the
+   * web `buildNodeKeyMaps` so same-named nodes don't collide.
    */
   private fun syncNodeKey(node: Int): String {
     val used = HashSet<String>()
@@ -1628,9 +1755,8 @@ constructor(
   /**
    * Broadcasts a rate-limited (`20 Hz`) local head + pointer ray pose tick.
    *
-   * Pass poses in scene (model) space, the same space as node transforms: each
-   * device places the shared model independently, so world-space poses from
-   * different devices do not line up.
+   * Pass poses in scene (model) space, the same space as node transforms: each device places the
+   * shared model independently, so world-space poses from different devices do not line up.
    */
   @JvmOverloads
   fun broadcastPoseTick(
@@ -1677,7 +1803,8 @@ constructor(
     grabState: String = "move",
     atMs: Long = System.currentTimeMillis(),
   ): Boolean {
-    if (disposed || nodeIndex !in 0 until scene.nodeCount || !shouldSyncNode(nodeIndex)) return false
+    if (disposed || nodeIndex !in 0 until scene.nodeCount || !shouldSyncNode(nodeIndex))
+      return false
     val sender = roomSend ?: return false
     val cleanId = XRLiveSceneCoreHelper.safeAnchorId(localPeerId) ?: return false
     val nodeId = syncNodeKey(nodeIndex)
@@ -1686,14 +1813,25 @@ constructor(
     if (grabState == "release") {
       nodeLeases.remove(nodeId)
     } else {
-      val acquired = if (existing != null && existing.ownerPeerId == cleanId) existing.acquiredMs else atMs
-      nodeLeases[nodeId] = SharedRoom.NodeSoftLock(cleanId, atMs + SharedRoom.SOFT_LOCK_TTL_MS, acquired)
+      val acquired =
+        if (existing != null && existing.ownerPeerId == cleanId) existing.acquiredMs else atMs
+      nodeLeases[nodeId] =
+        SharedRoom.NodeSoftLock(cleanId, atMs + SharedRoom.SOFT_LOCK_TTL_MS, acquired)
     }
     val t = session.nodeTransform(nodeIndex) ?: return false
     val clean =
       PersistentAnchors.sanitizePose(
-        doubleArrayOf(t.translation[0].toDouble(), t.translation[1].toDouble(), t.translation[2].toDouble()),
-        doubleArrayOf(t.rotation[0].toDouble(), t.rotation[1].toDouble(), t.rotation[2].toDouble(), t.rotation[3].toDouble()),
+        doubleArrayOf(
+          t.translation[0].toDouble(),
+          t.translation[1].toDouble(),
+          t.translation[2].toDouble(),
+        ),
+        doubleArrayOf(
+          t.rotation[0].toDouble(),
+          t.rotation[1].toDouble(),
+          t.rotation[2].toDouble(),
+          t.rotation[3].toDouble(),
+        ),
         doubleArrayOf(t.scale[0].toDouble(), t.scale[1].toDouble(), t.scale[2].toDouble()),
       ) ?: return false
     val json =
@@ -1778,7 +1916,9 @@ constructor(
     return false
   }
 
-  /** Processes an incoming room JSON payload, updating peer avatars, soft-locks, and scene state. */
+  /**
+   * Processes an incoming room JSON payload, updating peer avatars, soft-locks, and scene state.
+   */
   @JvmOverloads
   fun handleRoomMessage(rawJson: String, atMs: Long = System.currentTimeMillis()): Boolean {
     if (disposed) return false
@@ -1842,7 +1982,8 @@ constructor(
           nodeLeases.remove(msg.nodeId)
         } else {
           val acquired =
-            if (existing != null && existing.ownerPeerId == msg.peerId) existing.acquiredMs else atMs
+            if (existing != null && existing.ownerPeerId == msg.peerId) existing.acquiredMs
+            else atMs
           nodeLeases[msg.nodeId] =
             SharedRoom.NodeSoftLock(msg.peerId, atMs + SharedRoom.SOFT_LOCK_TTL_MS, acquired)
         }
@@ -1881,7 +2022,13 @@ constructor(
           while (remoteStrokeMeshIds.size >= SharedRoom.MAX_REMOTE_STROKES) {
             renderer.removeDynamicMesh(remoteStrokeMeshIds.removeAt(0))
           }
-          val meshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, parseHexRgba(msg.color, 1f))
+          val meshId =
+            renderer.addDynamicMesh(
+              geo.positions,
+              geo.normals,
+              geo.indices,
+              parseHexRgba(msg.color, 1f),
+            )
           identityMatrix()
           renderer.setDynamicMeshTransform(meshId, matrix)
           remoteStrokeMeshIds.add(meshId)
@@ -1922,7 +2069,13 @@ constructor(
     if (peer.visorMeshId < 0 || colorChanged) {
       if (peer.visorMeshId >= 0) renderer.removeDynamicMesh(peer.visorMeshId)
       val geo = SharedRoom.buildPeerVisorGeometry()
-      peer.visorMeshId = renderer.addDynamicMesh(geo.positions, geo.normals, geo.indices, parseHexRgba(peer.color, 0.92f))
+      peer.visorMeshId =
+        renderer.addDynamicMesh(
+          geo.positions,
+          geo.normals,
+          geo.indices,
+          parseHexRgba(peer.color, 0.92f),
+        )
       peer.appliedColor = peer.color
     }
     val dMat = XRSpatialMath.mat4FromTRS(peer.headPos, peer.headQuat, doubleArrayOf(1.0, 1.0, 1.0))
@@ -1940,9 +2093,19 @@ constructor(
       val laserGeo = SharedRoom.buildPeerLaserGeometry(ro, re, peer.hasHit)
       if (peer.laserMeshId < 0) {
         peer.laserMeshId =
-          renderer.addDynamicMesh(laserGeo.positions, laserGeo.normals, laserGeo.indices, parseHexRgba(peer.color, 0.78f))
+          renderer.addDynamicMesh(
+            laserGeo.positions,
+            laserGeo.normals,
+            laserGeo.indices,
+            parseHexRgba(peer.color, 0.78f),
+          )
       } else {
-        renderer.updateDynamicMesh(peer.laserMeshId, laserGeo.positions, laserGeo.normals, laserGeo.indices)
+        renderer.updateDynamicMesh(
+          peer.laserMeshId,
+          laserGeo.positions,
+          laserGeo.normals,
+          laserGeo.indices,
+        )
       }
       identityMatrix()
       renderer.setDynamicMeshTransform(peer.laserMeshId, matrix)
@@ -1955,7 +2118,9 @@ constructor(
   private fun layoutOf(h: HandleNode): ManipulationHandles.Layout? {
     val b = scene.meshBounds.getOrNull(scene.nodeMesh[h.node]) ?: return null
     if (!session.nodeWorldMatrix(h.node, world)) return null
-    return ManipulationHandles.computeLayout(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world).also { h.layout = it }
+    return ManipulationHandles.computeLayout(b.copyOfRange(0, 3), b.copyOfRange(3, 6), world).also {
+      h.layout = it
+    }
   }
 
   private fun placeHandles(h: HandleNode) {
@@ -1973,8 +2138,17 @@ constructor(
     renderer.setDynamicMeshTransform(h.meshIds[4], matrix)
   }
 
-  /** Column-major TRS for a unit cube scaled to (sx, sy, sz), yawed, at [c]; zero scale hides it. */
-  private fun boxMatrix(c: DoubleArray, sx: Double, sy: Double, sz: Double, yaw: Double, visible: Boolean) {
+  /**
+   * Column-major TRS for a unit cube scaled to (sx, sy, sz), yawed, at [c]; zero scale hides it.
+   */
+  private fun boxMatrix(
+    c: DoubleArray,
+    sx: Double,
+    sy: Double,
+    sz: Double,
+    yaw: Double,
+    visible: Boolean,
+  ) {
     val k = if (visible) 1.0 else 0.0
     val cs = Math.cos(yaw)
     val sn = Math.sin(yaw)
@@ -1996,9 +2170,16 @@ constructor(
     val n = e.emitter.count
     if (n == 0) return
     val visible = session.isEffectivelyVisible(e.node)
-    val geo = particleQuads(e.emitter.positions, n, cameraWorld, if (visible) PARTICLE_SIZE else 0.0)
+    val geo =
+      particleQuads(e.emitter.positions, n, cameraWorld, if (visible) PARTICLE_SIZE else 0.0)
     if (e.meshId < 0) {
-      e.meshId = renderer.addDynamicMesh(geo.first, null, geo.second, PARTICLE_COLORS[e.emitter.options.preset] ?: PARTICLE_DEFAULT_COLOR)
+      e.meshId =
+        renderer.addDynamicMesh(
+          geo.first,
+          null,
+          geo.second,
+          PARTICLE_COLORS[e.emitter.options.preset] ?: PARTICLE_DEFAULT_COLOR,
+        )
     } else {
       renderer.updateDynamicMesh(e.meshId, geo.first, null, geo.second)
     }
@@ -2060,7 +2241,8 @@ constructor(
         val depths = sc.depths?.takeIf { it.size >= n } ?: FloatArray(n).also { sc.depths = it }
         val keys = sc.keys?.takeIf { it.size >= n } ?: IntArray(n).also { sc.keys = it }
         val counts = sc.counts ?: IntArray(65536).also { sc.counts = it }
-        val sorted = SplatParser.sortSplatsByDepth(n, data.positions, mvp, out, depths, keys, counts)
+        val sorted =
+          SplatParser.sortSplatsByDepth(n, data.positions, mvp, out, depths, keys, counts)
         if (!disposed) {
           if (gpuPath) {
             sc.pendingIndices = SplatParser.buildSortedSplatIndices(sorted, n)
@@ -2134,12 +2316,42 @@ constructor(
 
     internal val UNIT_CUBE_INDICES: IntArray =
       intArrayOf(
-        0, 2, 1, 1, 2, 3, // -z
-        4, 5, 6, 5, 7, 6, // +z
-        0, 1, 4, 1, 5, 4, // -y
-        2, 6, 3, 3, 6, 7, // +y
-        0, 4, 2, 2, 4, 6, // -x
-        1, 3, 5, 3, 7, 5, // +x
+        0,
+        2,
+        1,
+        1,
+        2,
+        3, // -z
+        4,
+        5,
+        6,
+        5,
+        7,
+        6, // +z
+        0,
+        1,
+        4,
+        1,
+        5,
+        4, // -y
+        2,
+        6,
+        3,
+        3,
+        6,
+        7, // +y
+        0,
+        4,
+        2,
+        2,
+        4,
+        6, // -x
+        1,
+        3,
+        5,
+        3,
+        7,
+        5, // +x
       )
 
     /**
@@ -2147,7 +2359,12 @@ constructor(
      * camera's right / up axes from its column-major world matrix.
      */
     @JvmStatic
-    fun particleQuads(positions: FloatArray, n: Int, cameraWorld: FloatArray, size: Double): Pair<FloatArray, IntArray> {
+    fun particleQuads(
+      positions: FloatArray,
+      n: Int,
+      cameraWorld: FloatArray,
+      size: Double,
+    ): Pair<FloatArray, IntArray> {
       val h = (size / 2).toFloat()
       val rx = cameraWorld[0] * h
       val ry = cameraWorld[1] * h

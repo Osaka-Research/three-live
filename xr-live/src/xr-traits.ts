@@ -171,7 +171,11 @@ export function quatSlerp(
 }
 
 export function getMeshXRTraits(mesh: any): XRMeshTraits | undefined {
-  if (mesh?.extras?.xr && mesh?.userData?.xr && mesh.extras.xr !== mesh.userData.xr) {
+  if (
+    mesh?.extras?.xr &&
+    mesh?.userData?.xr &&
+    mesh.extras.xr !== mesh.userData.xr
+  ) {
     Object.assign(mesh.extras.xr, mesh.userData.xr);
   }
   return mesh?.extras?.xr || mesh?.userData?.xr;
@@ -274,7 +278,12 @@ export class XRTraitSystem {
     return s
       ? {
           position: [...s.rawTargetPosition] as [number, number, number],
-          quaternion: [...s.rawTargetQuaternion] as [number, number, number, number],
+          quaternion: [...s.rawTargetQuaternion] as [
+            number,
+            number,
+            number,
+            number,
+          ],
         }
       : null;
   }
@@ -299,7 +308,10 @@ export class XRTraitSystem {
     handPose: XRPose6DoF,
   ): boolean {
     const traits = getMeshXRTraits(mesh);
-    if (!traits?.grab && !(traits as {grabbable?: boolean} | undefined)?.grabbable) {
+    if (
+      !traits?.grab &&
+      !(traits as {grabbable?: boolean} | undefined)?.grabbable
+    ) {
       return false;
     }
     if (!this.activeGrabs.has(mesh)) {
@@ -596,10 +608,7 @@ export class XRTraitSystem {
             pos[1] = restY;
             modified = true;
           }
-        } else if (
-          anchorTarget === 'table' ||
-          anchorTarget === 'horizontal'
-        ) {
+        } else if (anchorTarget === 'table' || anchorTarget === 'horizontal') {
           const basePlaneY =
             Math.abs(pos[1] - bottomOffset - tableY) < 0.45 ? tableY : floorY;
           const restY = basePlaneY + bottomOffset;

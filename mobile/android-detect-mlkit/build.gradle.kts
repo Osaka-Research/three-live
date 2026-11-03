@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Optional ML Kit on-device object detector for three-live. The core `:mobile:android` library stays
+// Optional ML Kit on-device object detector for three-live. The core `:mobile:android` library
+// stays
 // zero-dependency; apps opt in by adding this module and calling ThreeLiveMlKitDetector.install().
 
 plugins {

@@ -56,15 +56,13 @@
     /// `{nodeIndex}` when gaze leaves a node (`gazeleave`).
     public var onGazeLeave: ((_ nodeIndex: Int) -> Void)?
     /// `{nodeIndex, action, point}` when gaze dwell completes (`gazedwell`).
-    public var onGazeDwell:
-      ((_ nodeIndex: Int, _ action: String, _ point: SIMD3<Float>) -> Void)?
+    public var onGazeDwell: ((_ nodeIndex: Int, _ action: String, _ point: SIMD3<Float>) -> Void)?
     /// `{factor, source}` when explosion factor changes (`explodechange`).
     public var onExplodeChange: ((_ factor: Float, _ source: String) -> Void)?
     /// `{count, source}` when persisted anchors restore (`anchorsrestored`).
     public var onAnchorsRestored: ((_ count: Int, _ source: String) -> Void)?
     /// `{from, to, yawDeg}` when a spatial teleport commits (`xrteleport`).
-    public var onTeleport:
-      ((_ from: SIMD3<Float>, _ to: SIMD3<Float>, _ yawDeg: Float) -> Void)?
+    public var onTeleport: ((_ from: SIMD3<Float>, _ to: SIMD3<Float>, _ yawDeg: Float) -> Void)?
     /// `{peerId, name, color}` when a remote peer joins `shared-room` (`peerjoin`).
     public var onPeerJoin: ((_ peerId: String, _ name: String, _ color: String) -> Void)?
     /// `{peerId, name, color}` when a remote peer leaves or times out (`peerleave`).
@@ -653,7 +651,8 @@
         drag = nil
         if let t = live.session.nodeTransform(at: active.node) {
           let yaw = XRSpatialMath.yawFromQuat(t.rotation) * 180 / .pi
-          if !(persistentAnchorsNamespace ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          if !(persistentAnchorsNamespace ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
             || anchorPersistTraits[active.node] != nil
           {
             _ = savePersistedAnchors()
@@ -958,7 +957,9 @@
         let w = XRSpatialMath.decompose(session.worldMatrix(of: sNode))
         let id = "socket#\(sNode)"
         // One node per socket: skip sockets another node is already seated in.
-        if activeSocketByNode.contains(where: { $0.key != nodeIndex && $0.value == id }) { continue }
+        if activeSocketByNode.contains(where: { $0.key != nodeIndex && $0.value == id }) {
+          continue
+        }
         sockets.append(
           MagneticSnap.SocketCandidate(
             id: id,
@@ -1345,7 +1346,8 @@
             let lb = resolvedNodeBounds(part.node)
           {
             let curWb = SpatialMeasure.computeWorldBounds(
-              localMin: lb.min, localMax: lb.max, worldMatrix: live.session.worldMatrix(of: part.node))
+              localMin: lb.min, localMax: lb.max,
+              worldMatrix: live.session.worldMatrix(of: part.node))
             if simd_length(curWb.center - part.restWorldCenter) > 0.01 && leaderSegs.count < 512 {
               leaderSegs.append(
                 contentsOf: SpatialMeasure.buildDashedSegments(
@@ -1773,8 +1775,9 @@
       else { return false }
       let nodeId = syncNodeKey(nodeIndex)
       let existing = nodeLeases[nodeId]
-      guard SharedRoom.canAcquireNodeLease(
-        existing: existing, candidatePeerId: cleanId, atMs: atMs)
+      guard
+        SharedRoom.canAcquireNodeLease(
+          existing: existing, candidatePeerId: cleanId, atMs: atMs)
       else { return false }
       if grabState == "release" {
         nodeLeases.removeValue(forKey: nodeId)
@@ -1867,7 +1870,8 @@
       switch msg {
       case .leave(let peerId):
         return removeRemotePeer(peerId)
-      case .pose(let peerId, let name, let color, let headPos, let headQuat, let ro, let re, let hit):
+      case .pose(
+        let peerId, let name, let color, let headPos, let headQuat, let ro, let re, let hit):
         let peer: RemotePeerVisual
         var joined = false
         if let existing = remotePeers[peerId] {

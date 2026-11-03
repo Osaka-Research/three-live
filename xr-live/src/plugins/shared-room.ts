@@ -25,6 +25,11 @@
  * 5. Stylized 3D peer visor pills and tinted laser rays with hit dots
  */
 
+import {
+  mat4Create,
+  mat4FromRotationTranslationScale,
+  mat4Multiply,
+} from '../../../three-live/src/math';
 import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
 import {
   clampNum,
@@ -37,7 +42,6 @@ import {
   extractScale,
   getMeshXRTraits,
 } from '../xr-traits';
-import {mat4Create, mat4FromRotationTranslationScale, mat4Multiply} from '../../../three-live/src/math';
 import {
   applyWorldMatrix,
   buildBoxGeometry,
@@ -52,14 +56,14 @@ import {
   reattachDynamicMesh,
   removeDynamicMesh,
   resolveHeadPose,
-  setLocalTRS,
   rootMatrix,
+  setLocalTRS,
   setWorldTRS,
   transformPoint,
   updateDynamicMesh,
+  type Vec3,
   vLen,
   vSub,
-  type Vec3,
 } from './common';
 import {getExplodedViewController} from './exploded-view';
 import {
@@ -109,7 +113,11 @@ export interface SharedRoomTransport {
 /** Parsed target classification for the `<xr-live shared-room="...">` attribute. */
 export type RoomTarget =
   | {readonly kind: 'disabled'}
-  | {readonly kind: 'broadcast'; readonly channelName: string; readonly roomId: string}
+  | {
+      readonly kind: 'broadcast';
+      readonly channelName: string;
+      readonly roomId: string;
+    }
   | {readonly kind: 'websocket'; readonly url: string}
   | {readonly kind: 'rejected'; readonly reason: string};
 
@@ -142,7 +150,10 @@ export function parseRoomTarget(raw: unknown): RoomTarget {
     if (isAllowedRoomUrl(trimmed)) {
       return {kind: 'websocket', url: trimmed};
     }
-    return {kind: 'rejected', reason: 'Only wss:// or loopback ws:// room URLs are permitted'};
+    return {
+      kind: 'rejected',
+      reason: 'Only wss:// or loopback ws:// room URLs are permitted',
+    };
   }
   const cleanId = safeAnchorId(trimmed);
   if (!cleanId) {
@@ -158,7 +169,10 @@ export function parseRoomTarget(raw: unknown): RoomTarget {
 /** Sanitizes an untrusted peer display name (plain text only, max 32 chars). */
 export function sanitizePeerName(raw: unknown): string {
   if (typeof raw !== 'string') return 'Peer';
-  const cleaned = raw.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, MAX_PEER_NAME_CHARS);
+  const cleaned = raw
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .trim()
+    .slice(0, MAX_PEER_NAME_CHARS);
   return cleaned || 'Peer';
 }
 
@@ -168,7 +182,8 @@ export function sanitizePeerColor(raw: unknown): string {
 }
 
 function nowMs(): number {
-  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+  return typeof performance !== 'undefined' &&
+    typeof performance.now === 'function'
     ? performance.now()
     : Date.now();
 }
@@ -205,7 +220,9 @@ function utf8ByteLength(str: string): number {
 }
 
 function generatePeerId(): string {
-  const g = globalThis as {crypto?: {getRandomValues?: (a: Uint8Array) => Uint8Array}};
+  const g = globalThis as {
+    crypto?: {getRandomValues?: (a: Uint8Array) => Uint8Array};
+  };
   if (typeof g.crypto?.getRandomValues === 'function') {
     const bytes = g.crypto.getRandomValues(new Uint8Array(6));
     let hex = 'peer-';
@@ -243,9 +260,14 @@ export function winsGrabConflict(
   atMs: number,
 ): boolean {
   if (!existing || grabState !== 'grab') return false;
-  if (existing.ownerPeerId === senderPeerId || atMs >= existing.leaseUntilMs) return false;
-  const acquired = existing.acquiredMs ?? existing.leaseUntilMs - SOFT_LOCK_TTL_MS;
-  return atMs - acquired <= GRAB_CONFLICT_WINDOW_MS && senderPeerId < existing.ownerPeerId;
+  if (existing.ownerPeerId === senderPeerId || atMs >= existing.leaseUntilMs)
+    return false;
+  const acquired =
+    existing.acquiredMs ?? existing.leaseUntilMs - SOFT_LOCK_TTL_MS;
+  return (
+    atMs - acquired <= GRAB_CONFLICT_WINDOW_MS &&
+    senderPeerId < existing.ownerPeerId
+  );
 }
 
 /** Returns whether `candidatePeerId` may acquire or renew a soft-lock at `atMs`. */
@@ -290,7 +312,11 @@ export function buildNodeKeyMaps(meshes: readonly any[] | undefined): {
   // not draw order, so suffixes agree across platforms.
   const ordered = (meshes ?? [])
     .filter((m) => m && !m.isPluginMesh)
-    .map((m, idx) => ({m, idx, order: typeof m.nodeIndex === 'number' ? m.nodeIndex : 1e9 + idx}))
+    .map((m, idx) => ({
+      m,
+      idx,
+      order: typeof m.nodeIndex === 'number' ? m.nodeIndex : 1e9 + idx,
+    }))
     .sort((a, b) => a.order - b.order);
   for (const {m, idx} of ordered) {
     const base = resolvePersistableNodeKey(m, idx);
@@ -398,8 +424,14 @@ function parseUnitQuat(raw: unknown): Quat | null {
  * `MAX_PAYLOAD_BYTES`, `safeAnchorId` prototype-pollution checks, and finite
  * coordinate bounds. Returns `null` on any violation.
  */
-export function parseSharedRoomMessage(rawJson: string): SharedRoomWireMessage | null {
-  if (typeof rawJson !== 'string' || !rawJson || rawJson.length > MAX_PAYLOAD_BYTES) {
+export function parseSharedRoomMessage(
+  rawJson: string,
+): SharedRoomWireMessage | null {
+  if (
+    typeof rawJson !== 'string' ||
+    !rawJson ||
+    rawJson.length > MAX_PAYLOAD_BYTES
+  ) {
     return null;
   }
   if (utf8ByteLength(rawJson) > MAX_PAYLOAD_BYTES) return null;
@@ -410,7 +442,8 @@ export function parseSharedRoomMessage(rawJson: string): SharedRoomWireMessage |
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    return null;
   const r = parsed as Record<string, unknown>;
   if (r['v'] !== 1) return null;
   const peerId = safeAnchorId(r['peerId']);
@@ -472,7 +505,8 @@ export function parseSharedRoomMessage(rawJson: string): SharedRoomWireMessage |
     const strokeId = safeAnchorId(r['strokeId']);
     if (!strokeId || !Array.isArray(r['points'])) return null;
     const rawPts = r['points'] as unknown[];
-    if (rawPts.length < 2 || rawPts.length > MAX_STROKE_CHUNK_POINTS) return null;
+    if (rawPts.length < 2 || rawPts.length > MAX_STROKE_CHUNK_POINTS)
+      return null;
     const points: Vec3[] = [];
     for (const pt of rawPts) {
       const cleanPt = parseBoundedVec3(pt);
@@ -498,7 +532,9 @@ export function parseSharedRoomMessage(rawJson: string): SharedRoomWireMessage |
 }
 
 /** Creates a same-origin `BroadcastChannel` transport (no-op in headless Node). */
-export function createBroadcastChannelTransport(channelName: string): SharedRoomTransport {
+export function createBroadcastChannelTransport(
+  channelName: string,
+): SharedRoomTransport {
   // tslint:disable-next-line:no-any BroadcastChannel may be absent in headless runtimes.
   const BC = (globalThis as {BroadcastChannel?: any}).BroadcastChannel;
   if (typeof BC !== 'function') {
@@ -542,7 +578,9 @@ export function createBroadcastChannelTransport(channelName: string): SharedRoom
  */
 export function createRoomWebSocketTransport(url: string): SharedRoomTransport {
   if (!isAllowedRoomUrl(url)) {
-    throw new Error('shared-room: only wss:// (or loopback ws://) endpoints are allowed');
+    throw new Error(
+      'shared-room: only wss:// (or loopback ws://) endpoints are allowed',
+    );
   }
   let ws: WebSocket | null = null;
   let closedByCaller = false;
@@ -588,7 +626,10 @@ export function createRoomWebSocketTransport(url: string): SharedRoomTransport {
         }
       });
       sock.addEventListener('message', (ev: MessageEvent) => {
-        if (typeof ev.data === 'string' && ev.data.length <= MAX_PAYLOAD_BYTES) {
+        if (
+          typeof ev.data === 'string' &&
+          ev.data.length <= MAX_PAYLOAD_BYTES
+        ) {
           transport.onMessage?.(ev.data);
         }
       });
@@ -692,7 +733,10 @@ export class XRSharedRoomController {
   private activeRoomKey = '';
   private readonly peers = new Map<string, RemotePeerState>();
   private readonly nodeLeases = new Map<string, NodeSoftLock>();
-  private readonly paintRate = new Map<string, {windowStart: number; count: number}>();
+  private readonly paintRate = new Map<
+    string,
+    {windowStart: number; count: number}
+  >();
   // tslint:disable-next-line:no-any Dynamic remote paint stroke meshes.
   private readonly remoteStrokes: any[] = [];
   // tslint:disable-next-line:no-any Local meshes actively grabbed in the prior step.
@@ -724,8 +768,18 @@ export class XRSharedRoomController {
   }
 
   /** Returns active remote peer metadata keyed by `peerId`. */
-  getPeers(): ReadonlyArray<{peerId: string; name: string; color: string; headPos: Vec3}> {
-    const out: Array<{peerId: string; name: string; color: string; headPos: Vec3}> = [];
+  getPeers(): ReadonlyArray<{
+    peerId: string;
+    name: string;
+    color: string;
+    headPos: Vec3;
+  }> {
+    const out: Array<{
+      peerId: string;
+      name: string;
+      color: string;
+      headPos: Vec3;
+    }> = [];
     for (const p of this.peers.values()) {
       out.push({
         peerId: p.peerId,
@@ -770,7 +824,9 @@ export class XRSharedRoomController {
     }
 
     const nextKey =
-      target.kind === 'websocket' ? `ws:${target.url}` : `bc:${target.channelName}`;
+      target.kind === 'websocket'
+        ? `ws:${target.url}`
+        : `bc:${target.channelName}`;
     if (this.transport && this.activeRoomKey === nextKey) {
       return true;
     }
@@ -809,8 +865,14 @@ export class XRSharedRoomController {
     if (!element || typeof element.addEventListener !== 'function') return;
     this.boundHost = element;
     this.onHostExplode = (ev: Event) => {
-      const detail = (ev as CustomEvent<{factor?: number; source?: string}>).detail;
-      if (!detail || detail.source === 'peer' || typeof detail.factor !== 'number') return;
+      const detail = (ev as CustomEvent<{factor?: number; source?: string}>)
+        .detail;
+      if (
+        !detail ||
+        detail.source === 'peer' ||
+        typeof detail.factor !== 'number'
+      )
+        return;
       this.broadcastExplode(detail.factor);
     };
     this.onHostPaintStroke = (ev: Event) => {
@@ -851,12 +913,18 @@ export class XRSharedRoomController {
       this.boundHost?.traitSystem?.grabGuards?.delete?.(this.grabGuard);
       this.grabGuard = null;
     }
-    if (this.boundHost && typeof this.boundHost.removeEventListener === 'function') {
+    if (
+      this.boundHost &&
+      typeof this.boundHost.removeEventListener === 'function'
+    ) {
       if (this.onHostExplode) {
         this.boundHost.removeEventListener('explodechange', this.onHostExplode);
       }
       if (this.onHostPaintStroke) {
-        this.boundHost.removeEventListener('xr-paint-stroke', this.onHostPaintStroke);
+        this.boundHost.removeEventListener(
+          'xr-paint-stroke',
+          this.onHostPaintStroke,
+        );
       }
     }
     this.onHostExplode = null;
@@ -866,8 +934,8 @@ export class XRSharedRoomController {
 
   /** Records the local user's active pointer ray for the next 20 Hz pose tick. */
   setLocalRay(origin: Vec3 | null, end: Vec3 | null, hasHit = false): void {
-    this.localRayOrigin = origin ? [...origin] as Vec3 : null;
-    this.localRayEnd = end ? [...end] as Vec3 : null;
+    this.localRayOrigin = origin ? ([...origin] as Vec3) : null;
+    this.localRayEnd = end ? ([...end] as Vec3) : null;
     this.localHasHit = Boolean(hasHit && origin && end);
   }
 
@@ -880,7 +948,8 @@ export class XRSharedRoomController {
     force = false,
   ): boolean {
     if (!this.transport) return false;
-    if (!force && atMs - this.lastPoseSentMs < POSE_TICK_INTERVAL_MS) return false;
+    if (!force && atMs - this.lastPoseSentMs < POSE_TICK_INTERVAL_MS)
+      return false;
     this.lastPoseSentMs = atMs;
 
     // Poses travel in scene (model) space: each device places the shared model
@@ -893,8 +962,12 @@ export class XRSharedRoomController {
       position: transformPoint(invRoot, headWorld.position),
       quaternion: extractQuaternion(headLocalMat),
     };
-    const rayO = this.localRayOrigin ? transformPoint(invRoot, this.localRayOrigin) : null;
-    const rayE = this.localRayEnd ? transformPoint(invRoot, this.localRayEnd) : null;
+    const rayO = this.localRayOrigin
+      ? transformPoint(invRoot, this.localRayOrigin)
+      : null;
+    const rayE = this.localRayEnd
+      ? transformPoint(invRoot, this.localRayEnd)
+      : null;
     const name = sanitizePeerName(element?.getAttribute?.('peer-name'));
     const color = sanitizePeerColor(element?.getAttribute?.('peer-color'));
     const msg: SharedRoomWireMessage = {
@@ -903,7 +976,11 @@ export class XRSharedRoomController {
       peerId: this.peerId,
       name,
       color,
-      headPos: [q4(head.position[0]), q4(head.position[1]), q4(head.position[2])],
+      headPos: [
+        q4(head.position[0]),
+        q4(head.position[1]),
+        q4(head.position[2]),
+      ],
       headQuat: [
         q4(head.quaternion[0]),
         q4(head.quaternion[1]),
@@ -944,7 +1021,10 @@ export class XRSharedRoomController {
       this.nodeLeases.set(nodeId, {
         ownerPeerId: this.peerId,
         leaseUntilMs: atMs + SOFT_LOCK_TTL_MS,
-        acquiredMs: existing?.ownerPeerId === this.peerId ? existing.acquiredMs ?? atMs : atMs,
+        acquiredMs:
+          existing?.ownerPeerId === this.peerId
+            ? (existing.acquiredMs ?? atMs)
+            : atMs,
       });
     }
 
@@ -995,7 +1075,11 @@ export class XRSharedRoomController {
         ? Math.ceil(points.length / MAX_STROKE_CHUNK_POINTS)
         : 1;
     const sampled: Vec3[] = [];
-    for (let i = 0; i < points.length && sampled.length < MAX_STROKE_CHUNK_POINTS; i += stride) {
+    for (
+      let i = 0;
+      i < points.length && sampled.length < MAX_STROKE_CHUNK_POINTS;
+      i += stride
+    ) {
       const p = parseBoundedVec3(points[i]);
       if (p) sampled.push(p);
     }
@@ -1081,7 +1165,12 @@ export class XRSharedRoomController {
 
     if (msg.type === 'node') {
       const existing = this.nodeLeases.get(msg.nodeId);
-      const takesOver = winsGrabConflict(existing, msg.peerId, msg.grabState, atMs);
+      const takesOver = winsGrabConflict(
+        existing,
+        msg.peerId,
+        msg.grabState,
+        atMs,
+      );
       if (!takesOver && !canAcquireNodeLease(existing, msg.peerId, atMs)) {
         return false;
       }
@@ -1106,7 +1195,9 @@ export class XRSharedRoomController {
           ownerPeerId: msg.peerId,
           leaseUntilMs: atMs + SOFT_LOCK_TTL_MS,
           acquiredMs:
-            existing?.ownerPeerId === msg.peerId ? existing.acquiredMs ?? atMs : atMs,
+            existing?.ownerPeerId === msg.peerId
+              ? (existing.acquiredMs ?? atMs)
+              : atMs,
         });
       }
       if (viewer && Array.isArray(viewer.meshes)) {
@@ -1122,9 +1213,15 @@ export class XRSharedRoomController {
     }
 
     if (msg.type === 'explode') {
-      const targetKey = (element && typeof element === 'object' ? element : viewer) as object | undefined;
+      const targetKey = (
+        element && typeof element === 'object' ? element : viewer
+      ) as object | undefined;
       if (targetKey) {
-        getExplodedViewController(targetKey).setExplode(msg.factor, element, 'peer');
+        getExplodedViewController(targetKey).setExplode(
+          msg.factor,
+          element,
+          'peer',
+        );
       }
       emitPluginEvent(element, 'peersync', {
         peerId: msg.peerId,
@@ -1181,7 +1278,10 @@ export class XRSharedRoomController {
     const attr = element?.getAttribute?.('shared-room');
     if (typeof attr === 'string' && attr.trim()) {
       this.connect(attr, viewer, element);
-    } else if (attr !== undefined && !this.activeRoomKey.startsWith('custom:')) {
+    } else if (
+      attr !== undefined &&
+      !this.activeRoomKey.startsWith('custom:')
+    ) {
       if (this.transport) this.disconnectTransport(viewer, element);
     }
 
@@ -1281,7 +1381,12 @@ export class XRSharedRoomController {
     peer.visorMesh.visible = true;
     const root = rootMatrix(viewer);
     const headLocal = mat4Create();
-    mat4FromRotationTranslationScale(headLocal, peer.headQuat, peer.headPos, [1, 1, 1]);
+    mat4FromRotationTranslationScale(
+      headLocal,
+      peer.headQuat,
+      peer.headPos,
+      [1, 1, 1],
+    );
     const headWorld = mat4Create();
     mat4Multiply(headWorld, root, headLocal);
     setWorldTRS(
@@ -1386,7 +1491,8 @@ export const sharedRoomPlugin: ThreeLivePlugin = {
   onElementConnected(element: any): void {
     if (!element) return;
     const ctrl = getSharedRoomController(element);
-    const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
+    const viewerOf = (): PluginViewer | undefined =>
+      element._view ?? element.viewer;
     element.getSharedPeers = () => ctrl.getPeers();
 
     const initialRoom = element.getAttribute?.('shared-room');
@@ -1394,7 +1500,11 @@ export const sharedRoomPlugin: ThreeLivePlugin = {
       ctrl.connect(initialRoom, viewerOf(), element);
     }
 
-    if (typeof element.addEventListener !== 'function' || listeners.has(element)) return;
+    if (
+      typeof element.addEventListener !== 'function' ||
+      listeners.has(element)
+    )
+      return;
 
     const onSelectRay = (e: Event): void => {
       // tslint:disable-next-line:no-any Custom XR select detail.
@@ -1463,7 +1573,12 @@ export const sharedRoomPlugin: ThreeLivePlugin = {
     controllers.get(element)?.dispose(element?._view ?? element?.viewer);
   },
 
-  onXRFrame(viewer: unknown, _session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    _session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;

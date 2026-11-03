@@ -34,8 +34,8 @@ import {
 } from '../../../three-live/src/plugin';
 import {
   clampNum,
-  parseNavigable,
   type NavigableMode,
+  parseNavigable,
 } from '../../../three-live/src/xr-trait-schema';
 import {extractPosition, getMeshXRTraits, quatFromEulerYXZ} from '../xr-traits';
 import {
@@ -59,11 +59,11 @@ import {
   updateDynamicMesh,
   vAdd,
   vCross,
+  type Vec3,
   vLen,
   vNorm,
   vScale,
   vSub,
-  type Vec3,
 } from './common';
 import {buildSnapRingGeometry} from './magnetic-snap';
 
@@ -185,7 +185,9 @@ export function evaluateTeleportArc(
       visited.push(hit.point);
       const nav = parseNavigable(getMeshXRTraits(hit.mesh)?.navigable);
       const slopeOk = hit.normal[1] > MIN_WALKABLE_NORMAL_Y;
-      const navOk = hasExplicitWalkable ? nav === 'walkable' : nav !== 'blocked';
+      const navOk = hasExplicitWalkable
+        ? nav === 'walkable'
+        : nav !== 'blocked';
       return {
         valid: slopeOk && navOk,
         point: hit.point,
@@ -196,13 +198,14 @@ export function evaluateTeleportArc(
     }
 
     // Ground-plane `y = floorY` fallback when no explicit navigable mesh is tagged.
-    if (!hasExplicitWalkable && a[1] >= floorY && b[1] <= floorY && a[1] !== b[1]) {
+    if (
+      !hasExplicitWalkable &&
+      a[1] >= floorY &&
+      b[1] <= floorY &&
+      a[1] !== b[1]
+    ) {
       const u = (a[1] - floorY) / (a[1] - b[1]);
-      const groundPt: Vec3 = [
-        a[0] + delta[0] * u,
-        floorY,
-        a[2] + delta[2] * u,
-      ];
+      const groundPt: Vec3 = [a[0] + delta[0] * u, floorY, a[2] + delta[2] * u];
       visited.push(groundPt);
       return {
         valid: true,
@@ -328,7 +331,9 @@ export function resolveLocomotionConfig(element: any): LocomotionElementConfig {
   const hasAttr =
     typeof element?.hasAttribute === 'function' &&
     element.hasAttribute('locomotion');
-  const raw = (element?.getAttribute?.('locomotion') ?? '').trim().toLowerCase();
+  const raw = (element?.getAttribute?.('locomotion') ?? '')
+    .trim()
+    .toLowerCase();
   const snapTurnDeg = clampNum(
     element?.getAttribute?.('snap-turn-deg') !== null &&
       element?.getAttribute?.('snap-turn-deg') !== undefined &&
@@ -342,7 +347,8 @@ export function resolveLocomotionConfig(element: any): LocomotionElementConfig {
   const rawVig = (element?.getAttribute?.('comfort-vignette') ?? 'true')
     .trim()
     .toLowerCase();
-  const comfortVignette = rawVig !== 'false' && rawVig !== 'none' && rawVig !== '0';
+  const comfortVignette =
+    rawVig !== 'false' && rawVig !== 'none' && rawVig !== '0';
 
   if (!hasAttr || raw === 'none' || raw === 'false') {
     return {
@@ -459,7 +465,10 @@ export class XRSpatialLocomotionController {
 
   /** Current normalized `[0..1]` peripheral comfort vignette opacity. */
   get vignetteIntensity(): number {
-    return Math.max(0, Math.min(1, this.vignetteRemainingMs / COMFORT_VIGNETTE_MS));
+    return Math.max(
+      0,
+      Math.min(1, this.vignetteRemainingMs / COMFORT_VIGNETTE_MS),
+    );
   }
 
   /** Previews a parabolic teleport arc from `(origin, direction)` and updates visuals. */
@@ -489,7 +498,8 @@ export class XRSpatialLocomotionController {
     this.hideVisuals();
     if (!hit || !hit.valid) return false;
     const isSim = Boolean(
-      element?.simulator?.active && Array.isArray(element.simulator.headPosition),
+      element?.simulator?.active &&
+        Array.isArray(element.simulator.headPosition),
     );
     if (this.inXR && !isSim) {
       this.teleportXR(viewer, hit.point, element);
@@ -536,7 +546,11 @@ export class XRSpatialLocomotionController {
       this.vignetteRemainingMs = COMFORT_VIGNETTE_MS;
       this.syncVignetteDom(viewer);
     }
-    emitPluginEvent(element, 'xrteleport', {from, to: [...to], yawDeg: this.rigYawDeg});
+    emitPluginEvent(element, 'xrteleport', {
+      from,
+      to: [...to],
+      yawDeg: this.rigYawDeg,
+    });
   }
 
   /** Clears the WebXR rig when an immersive session ends. */
@@ -598,9 +612,11 @@ export class XRSpatialLocomotionController {
     const res = evaluateSnapTurn(axisX, this.snapLatched, cfg.snapTurnDeg);
     this.snapLatched = res.latched;
     if (res.deltaYawDeg !== 0) {
-      this.rigYawDeg = ((this.rigYawDeg + res.deltaYawDeg) % 360 + 540) % 360 - 180;
+      this.rigYawDeg =
+        ((((this.rigYawDeg + res.deltaYawDeg) % 360) + 540) % 360) - 180;
       const isSim = Boolean(
-        element?.simulator?.active && Array.isArray(element.simulator.headPosition),
+        element?.simulator?.active &&
+          Array.isArray(element.simulator.headPosition),
       );
       if (this.inXR && !isSim) {
         // Turning the user by +delta rotates the world by -delta around the
@@ -670,7 +686,8 @@ export class XRSpatialLocomotionController {
 
       if (cfg.teleport) {
         const isSim = Boolean(
-          element?.simulator?.active && Array.isArray(element.simulator.headPosition),
+          element?.simulator?.active &&
+            Array.isArray(element.simulator.headPosition),
         );
         // In WebXR the virtual floor is the scene surface the placement pins to
         // the real floor, moved by the rig; the user's physical floor is that
@@ -680,9 +697,15 @@ export class XRSpatialLocomotionController {
           !isSim && root && root.length === 16
             ? root[5] * XR_LIVE_AR_SURFACE_Y + root[13]
             : floorY;
-        this.lastWorldFloorY = worldFloorY - (this.rigMatrix ? this.rigMatrix[13] : 0);
+        this.lastWorldFloorY =
+          worldFloorY - (this.rigMatrix ? this.rigMatrix[13] : 0);
         if (stick && stick.axisY < -0.5) {
-          this.aimTeleport(viewer, stick.rayOrigin, stick.rayDirection, worldFloorY);
+          this.aimTeleport(
+            viewer,
+            stick.rayOrigin,
+            stick.rayDirection,
+            worldFloorY,
+          );
         } else if (this.aimingTeleport && (!stick || stick.axisY >= -0.35)) {
           this.commitTeleport(viewer, element);
         }
@@ -693,7 +716,8 @@ export class XRSpatialLocomotionController {
         const speed = 2.2 * -stick.axisY * dt;
         const flatWorldFwd = vNorm([headFwd[0], 0, headFwd[2]], [0, 0, -1]);
         const isSim = Boolean(
-          element?.simulator?.active && Array.isArray(element.simulator.headPosition),
+          element?.simulator?.active &&
+            Array.isArray(element.simulator.headPosition),
         );
         const alpha = !isSim ? (this.rigYawDeg * Math.PI) / 180 : 0;
         const cosA = Math.cos(alpha);
@@ -728,9 +752,15 @@ export class XRSpatialLocomotionController {
     element: any,
     deltaYawDeg = 0,
   ): void {
-    if (element?.simulator?.active && Array.isArray(element.simulator.headPosition)) {
+    if (
+      element?.simulator?.active &&
+      Array.isArray(element.simulator.headPosition)
+    ) {
       const floorY = clampNum(element.simulator.room?.floorY, -100, 100, 0);
-      const eyeOffset = Math.max(0.2, (element.simulator.headPosition[1] ?? 1.6) - floorY);
+      const eyeOffset = Math.max(
+        0.2,
+        (element.simulator.headPosition[1] ?? 1.6) - floorY,
+      );
       element.simulator.headPosition = [
         this.rigPosition[0],
         this.rigPosition[1] + eyeOffset,
@@ -783,14 +813,18 @@ export class XRSpatialLocomotionController {
 
     if (!this.ringMesh || this.ringValidState !== hit.valid) {
       removeDynamicMesh(viewer, this.ringMesh);
-      this.ringMesh = createDynamicMesh(viewer, buildSnapRingGeometry(0.18, 0.014), {
-        name: '__xr_teleport_ring__',
-        color,
-        roughness: 0.2,
-        alphaBlend: true,
-        pickable: false,
-        worldSpace: true,
-      });
+      this.ringMesh = createDynamicMesh(
+        viewer,
+        buildSnapRingGeometry(0.18, 0.014),
+        {
+          name: '__xr_teleport_ring__',
+          color,
+          roughness: 0.2,
+          alphaBlend: true,
+          pickable: false,
+          worldSpace: true,
+        },
+      );
       this.ringValidState = hit.valid;
     } else {
       reattachDynamicMesh(viewer, this.ringMesh);
@@ -811,7 +845,9 @@ export class XRSpatialLocomotionController {
     const opacity = this.vignetteIntensity;
     // tslint:disable-next-line:no-any Optional DOM container.
     const container = viewer?.container as any;
-    const doc = container?.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+    const doc =
+      container?.ownerDocument ??
+      (typeof document !== 'undefined' ? document : null);
     if (!doc || typeof container?.appendChild !== 'function') return;
 
     if (opacity <= 1e-3) {
@@ -878,7 +914,8 @@ export const spatialLocomotionPlugin: ThreeLivePlugin = {
   onElementConnected(element: any): void {
     if (!element) return;
     const ctrl = getSpatialLocomotionController(element);
-    const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
+    const viewerOf = (): PluginViewer | undefined =>
+      element._view ?? element.viewer;
     element.teleportTo = (target: Vec3) => {
       const v = viewerOf();
       if (v) ctrl.teleportTo(v, target, element);
@@ -888,7 +925,12 @@ export const spatialLocomotionPlugin: ThreeLivePlugin = {
   onElementDisconnected(element: any): void {
     controllers.get(element)?.dispose(element?._view ?? element?.viewer);
   },
-  onXRFrame(viewer: unknown, session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;

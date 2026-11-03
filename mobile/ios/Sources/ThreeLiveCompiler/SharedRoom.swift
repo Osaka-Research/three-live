@@ -123,8 +123,9 @@ public enum SharedRoom {
   public static func sanitizePeerName(_ raw: String?) -> String {
     guard let raw = raw else { return "Peer" }
     let filtered = String(
-      raw.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F })
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+      raw.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F }
+    )
+    .trimmingCharacters(in: .whitespacesAndNewlines)
     if filtered.isEmpty { return "Peer" }
     return String(filtered.prefix(maxPeerNameChars))
   }

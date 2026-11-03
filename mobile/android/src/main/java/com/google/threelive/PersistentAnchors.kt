@@ -198,10 +198,7 @@ object PersistentAnchors {
   fun injectHashToken(existingHash: String?, token: String?): String {
     val clean = (existingHash ?: "").removePrefix("#")
     val parts =
-      clean
-        .split('&')
-        .filter { it.isNotEmpty() && !it.startsWith("xr-state=") }
-        .toMutableList()
+      clean.split('&').filter { it.isNotEmpty() && !it.startsWith("xr-state=") }.toMutableList()
     if (!token.isNullOrEmpty() && token.length <= MAX_HASH_BYTES) {
       parts.add("xr-state=$token")
     }

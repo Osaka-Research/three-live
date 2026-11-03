@@ -64,7 +64,9 @@ publishing {
 
       pom {
         name.set("Three-Live Android XR Hands")
-        description.set("Optional Jetpack XR (androidx.xr.arcore) hand-tracking adapter for three-live on Android XR")
+        description.set(
+          "Optional Jetpack XR (androidx.xr.arcore) hand-tracking adapter for three-live on Android XR"
+        )
         url.set("https://github.com/google/three-live")
         licenses {
           license {

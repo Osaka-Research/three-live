@@ -135,7 +135,9 @@ export function sanitizePersistedPose(raw: unknown): PersistedNodePose | null {
     round4(clampNum(s[2], 0.001, 1000, 1)),
   ];
   const uuid = safeAnchorId(r['xrAnchorUuid']);
-  return uuid ? {p: sp, q: sq, s: ss, xrAnchorUuid: uuid} : {p: sp, q: sq, s: ss};
+  return uuid
+    ? {p: sp, q: sq, s: ss, xrAnchorUuid: uuid}
+    : {p: sp, q: sq, s: ss};
 }
 
 function encodeBase64Url(utf8: string): string {
@@ -145,7 +147,10 @@ function encodeBase64Url(utf8: string): string {
     for (let i = 0; i < bytes.length; i++) {
       bin += String.fromCharCode(bytes[i]);
     }
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    return btoa(bin)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
   }
   // Node.js fallback for headless tests.
   // tslint:disable-next-line:no-any Node global Buffer.
@@ -209,7 +214,11 @@ export function serializeAnchorPayload(
 export function deserializeAnchorPayload(
   jsonText: string | null | undefined,
 ): Map<string, PersistedNodePose> | null {
-  if (typeof jsonText !== 'string' || !jsonText || jsonText.length > MAX_HASH_BYTES * 2) {
+  if (
+    typeof jsonText !== 'string' ||
+    !jsonText ||
+    jsonText.length > MAX_HASH_BYTES * 2
+  ) {
     return null;
   }
   let parsed: unknown;
@@ -218,7 +227,8 @@ export function deserializeAnchorPayload(
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    return null;
   const root = parsed as Record<string, unknown>;
   if (root['version'] !== undefined && root['version'] !== 1) return null;
   const rawNodes = root['nodes'];
@@ -226,7 +236,9 @@ export function deserializeAnchorPayload(
     return null;
   }
   const out = new Map<string, PersistedNodePose>();
-  for (const [rawKey, rawVal] of Object.entries(rawNodes as Record<string, unknown>)) {
+  for (const [rawKey, rawVal] of Object.entries(
+    rawNodes as Record<string, unknown>,
+  )) {
     if (out.size >= MAX_PERSISTED_NODES) break;
     const key = safeAnchorId(rawKey);
     if (!key) continue;
@@ -264,7 +276,9 @@ export function decodeAnchorState(
 }
 
 /** Extracts the `xr-state` token from a `location.hash` string, or `null`. */
-export function extractHashAnchorToken(hash: string | null | undefined): string | null {
+export function extractHashAnchorToken(
+  hash: string | null | undefined,
+): string | null {
   if (!hash) return null;
   const trimmed = hash.startsWith('#') ? hash.slice(1) : hash;
   if (!trimmed) return null;
@@ -282,9 +296,13 @@ export function injectHashAnchorToken(
   currentHash: string,
   token: string | null,
 ): string {
-  const trimmed = currentHash.startsWith('#') ? currentHash.slice(1) : currentHash;
+  const trimmed = currentHash.startsWith('#')
+    ? currentHash.slice(1)
+    : currentHash;
   const others = trimmed
-    ? trimmed.split('&').filter((p) => p.length > 0 && !p.startsWith('xr-state='))
+    ? trimmed
+        .split('&')
+        .filter((p) => p.length > 0 && !p.startsWith('xr-state='))
     : [];
   if (token && token.length <= MAX_HASH_BYTES) {
     others.push(`xr-state=${token}`);
@@ -325,12 +343,18 @@ function defaultUrlAdapter(): UrlHashAdapter | null {
 
 /** Resolves the deterministic persistence / room-sync key for a scene mesh. */
 // tslint:disable-next-line:no-any Heterogeneous GPU mesh record.
-export function resolvePersistableNodeKey(mesh: any, fallbackIndex = 0): string {
+export function resolvePersistableNodeKey(
+  mesh: any,
+  fallbackIndex = 0,
+): string {
   const traits = getMeshXRTraits(mesh);
-  const rawAnchor = mesh?.userData?.xr?.anchor ?? mesh?.extras?.xr?.anchor ?? traits?.anchor;
+  const rawAnchor =
+    mesh?.userData?.xr?.anchor ?? mesh?.extras?.xr?.anchor ?? traits?.anchor;
   const persistMeta =
     parseAnchorPersist(rawAnchor) ??
-    parseAnchorPersist((traits as {anchorPersist?: unknown} | undefined)?.anchorPersist);
+    parseAnchorPersist(
+      (traits as {anchorPersist?: unknown} | undefined)?.anchorPersist,
+    );
   return (
     persistMeta?.id ??
     safeAnchorId(mesh?.name) ??
@@ -355,15 +379,20 @@ export function resolvePersistentAnchorsConfig(
     typeof element?.hasAttribute === 'function' &&
     element.hasAttribute('persistent-anchors');
   const rawNs = (element?.getAttribute?.('persistent-anchors') ?? '').trim();
-  const disabled = rawNs.toLowerCase() === 'false' || rawNs.toLowerCase() === 'none';
+  const disabled =
+    rawNs.toLowerCase() === 'false' || rawNs.toLowerCase() === 'none';
   const namespace =
-    safeAnchorId(rawNs && rawNs.toLowerCase() !== 'true' ? rawNs : fallbackPath) ??
-    'default';
+    safeAnchorId(
+      rawNs && rawNs.toLowerCase() !== 'true' ? rawNs : fallbackPath,
+    ) ?? 'default';
   const hasHashAttr =
     typeof element?.hasAttribute === 'function' &&
     element.hasAttribute('persist-url-hash');
-  const rawHash = (element?.getAttribute?.('persist-url-hash') ?? '').trim().toLowerCase();
-  const persistUrlHash = hasHashAttr && rawHash !== 'false' && rawHash !== 'none';
+  const rawHash = (element?.getAttribute?.('persist-url-hash') ?? '')
+    .trim()
+    .toLowerCase();
+  const persistUrlHash =
+    hasHashAttr && rawHash !== 'false' && rawHash !== 'none';
   return {
     enabled: (hasAttr && !disabled) || persistUrlHash,
     namespace,
@@ -392,7 +421,10 @@ export class XRPersistentAnchorsController {
   private readonly xrUuids = new Map<string, string>();
   private readonly anchoredPoseKeys = new Map<string, string>();
 
-  constructor(storage?: StorageLike | null, urlAdapter?: UrlHashAdapter | null) {
+  constructor(
+    storage?: StorageLike | null,
+    urlAdapter?: UrlHashAdapter | null,
+  ) {
     this.storageOverride = storage ?? null;
     this.urlOverride = urlAdapter ?? null;
   }
@@ -422,7 +454,9 @@ export class XRPersistentAnchorsController {
     const meshes = viewer.meshes;
     if (!Array.isArray(meshes)) return [];
     const cfg = this.resolveStorageKey(element);
-    const rawNs = (element?.getAttribute?.('persistent-anchors') ?? '').trim().toLowerCase();
+    const rawNs = (element?.getAttribute?.('persistent-anchors') ?? '')
+      .trim()
+      .toLowerCase();
     if (rawNs === 'false' || rawNs === 'none') return [];
 
     const out: PersistableEntry[] = [];
@@ -430,7 +464,11 @@ export class XRPersistentAnchorsController {
     for (let i = 0; i < meshes.length; i++) {
       if (out.length >= MAX_PERSISTED_NODES) break;
       const m = meshes[i];
-      if (!m || m.isPluginMesh || (typeof m.name === 'string' && m.name.startsWith('__xr_'))) {
+      if (
+        !m ||
+        m.isPluginMesh ||
+        (typeof m.name === 'string' && m.name.startsWith('__xr_'))
+      ) {
         continue;
       }
       const traits = getMeshXRTraits(m);
@@ -444,7 +482,9 @@ export class XRPersistentAnchorsController {
       }
       const persistMeta =
         parseAnchorPersist(rawAnchor) ??
-        parseAnchorPersist((traits as {anchorPersist?: unknown} | undefined)?.anchorPersist);
+        parseAnchorPersist(
+          (traits as {anchorPersist?: unknown} | undefined)?.anchorPersist,
+        );
       const eligible =
         Boolean(persistMeta?.persist) ||
         (cfg.enabled &&
@@ -579,7 +619,9 @@ export class XRPersistentAnchorsController {
 
     // Tier 2: Namespaced `localStorage`.
     const cfg = this.resolveStorageKey(element);
-    const rawJson = this.getStorage()?.getItem(`${ANCHOR_STORAGE_PREFIX}${cfg.namespace}`);
+    const rawJson = this.getStorage()?.getItem(
+      `${ANCHOR_STORAGE_PREFIX}${cfg.namespace}`,
+    );
     const stored = deserializeAnchorPayload(rawJson);
     if (stored && stored.size > 0) {
       const count = this.applyPoseMap(viewer, element, stored);
@@ -659,7 +701,9 @@ export class XRPersistentAnchorsController {
     const entries = this.collectPersistableMeshes(viewer, element);
     if (entries.length === 0) return;
 
-    const hasUnseenMesh = entries.some(({mesh}) => !this.restoredForMeshSet.has(mesh));
+    const hasUnseenMesh = entries.some(
+      ({mesh}) => !this.restoredForMeshSet.has(mesh),
+    );
     if (!this.hasRestoredOnce || hasUnseenMesh) {
       for (const {mesh} of entries) this.restoredForMeshSet.add(mesh);
       this.restore(viewer, element);
@@ -667,7 +711,14 @@ export class XRPersistentAnchorsController {
 
     // Tier 3: WebXR `persistentAnchors` restore & pose tracking.
     if (xrCtx?.session && xrCtx.frame && xrCtx.refSpace) {
-      this.stepWebXRAnchors(viewer, element, entries, xrCtx.session, xrCtx.frame, xrCtx.refSpace);
+      this.stepWebXRAnchors(
+        viewer,
+        element,
+        entries,
+        xrCtx.session,
+        xrCtx.frame,
+        xrCtx.refSpace,
+      );
     }
 
     const grabbedCount =
@@ -740,7 +791,8 @@ export class XRPersistentAnchorsController {
     for (const {key, mesh} of entries) {
       // tslint:disable-next-line:no-any WebXR XRAnchor.
       const anchor = this.liveXrAnchors.get(key) as any;
-      if (!anchor?.anchorSpace || element?.traitSystem?.isGrabbing?.(mesh)) continue;
+      if (!anchor?.anchorSpace || element?.traitSystem?.isGrabbing?.(mesh))
+        continue;
       try {
         const pose = frame.getPose?.(anchor.anchorSpace, refSpace);
         const mat = pose?.transform?.matrix;
@@ -781,8 +833,13 @@ export class XRPersistentAnchorsController {
       const quat = extractQuaternion(wm);
       // Only re-anchor nodes that actually moved: headsets cap persistent
       // anchors, and every release used to re-anchor every node.
-      const poseKey = [...pos, ...quat].map((v) => Math.round(v * 1000)).join(',');
-      if (this.anchoredPoseKeys.get(key) === poseKey && this.liveXrAnchors.has(key)) {
+      const poseKey = [...pos, ...quat]
+        .map((v) => Math.round(v * 1000))
+        .join(',');
+      if (
+        this.anchoredPoseKeys.get(key) === poseKey &&
+        this.liveXrAnchors.has(key)
+      ) {
         continue;
       }
       this.anchoredPoseKeys.set(key, poseKey);
@@ -795,7 +852,9 @@ export class XRPersistentAnchorsController {
           // tslint:disable-next-line:no-any WebXR XRAnchor.
           .then(async (anchor: any) => {
             if (!anchor) return;
-            const prev = this.liveXrAnchors.get(key) as {delete?: () => void} | undefined;
+            const prev = this.liveXrAnchors.get(key) as
+              | {delete?: () => void}
+              | undefined;
             prev?.delete?.();
             this.liveXrAnchors.set(key, anchor);
             if (typeof anchor.requestPersistentHandle === 'function') {
@@ -809,7 +868,9 @@ export class XRPersistentAnchorsController {
                   typeof session?.deletePersistentAnchor === 'function'
                 ) {
                   // Release the superseded handle so stored anchors don't leak.
-                  Promise.resolve(session.deletePersistentAnchor(oldUuid)).catch(() => {});
+                  Promise.resolve(
+                    session.deletePersistentAnchor(oldUuid),
+                  ).catch(() => {});
                 }
                 this.xrUuids.set(key, cleanUuid);
                 this.save(viewer, element);
@@ -870,18 +931,24 @@ export const persistentAnchorsPlugin: ThreeLivePlugin = {
   onElementConnected(element: any): void {
     if (!element) return;
     const ctrl = getPersistentAnchorsController(element);
-    const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
+    const viewerOf = (): PluginViewer | undefined =>
+      element._view ?? element.viewer;
     element.savePersistedAnchors = () => {
       const v = viewerOf();
       return v ? ctrl.save(v, element) : '';
     };
     element.clearPersistedAnchors = () =>
       ctrl.clearPersistedAnchors(element, element.activeXRSession);
-    element.exportAnchorState = () => ctrl.exportAnchorState(viewerOf(), element);
+    element.exportAnchorState = () =>
+      ctrl.exportAnchorState(viewerOf(), element);
     element.importAnchorState = (token: string) =>
       ctrl.importAnchorState(token, viewerOf(), element);
 
-    if (typeof element.addEventListener !== 'function' || listeners.has(element)) return;
+    if (
+      typeof element.addEventListener !== 'function' ||
+      listeners.has(element)
+    )
+      return;
     const onSaveTrigger = (): void => {
       const v = viewerOf();
       if (v) ctrl.save(v, element);
@@ -906,7 +973,12 @@ export const persistentAnchorsPlugin: ThreeLivePlugin = {
     const host = viewer?.container;
     controllers.get(host ?? viewer)?.resetForNewModel();
   },
-  onXRFrame(viewer: unknown, session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;

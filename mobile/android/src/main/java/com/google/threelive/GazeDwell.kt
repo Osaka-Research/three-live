@@ -35,7 +35,13 @@ object GazeDwell {
     alpha: Double = EMA_ALPHA,
   ): DoubleArray {
     val target = XRSpatialMath.normalizeRayDir(raw) ?: doubleArrayOf(0.0, 0.0, -1.0)
-    if (prev == null || prev.size < 3 || !prev[0].isFinite() || !prev[1].isFinite() || !prev[2].isFinite()) {
+    if (
+      prev == null ||
+        prev.size < 3 ||
+        !prev[0].isFinite() ||
+        !prev[1].isFinite() ||
+        !prev[2].isFinite()
+    ) {
       return target
     }
     val p = XRSpatialMath.normalizeRayDir(prev) ?: return target
@@ -51,7 +57,8 @@ object GazeDwell {
       return XRSpatialMath.normalizeRayDir(blended) ?: target
     }
     if (d < -0.9995) {
-      val ref = if (Math.abs(p[0]) < 0.9) doubleArrayOf(1.0, 0.0, 0.0) else doubleArrayOf(0.0, 1.0, 0.0)
+      val ref =
+        if (Math.abs(p[0]) < 0.9) doubleArrayOf(1.0, 0.0, 0.0) else doubleArrayOf(0.0, 1.0, 0.0)
       val perp =
         XRSpatialMath.normalizeRayDir(
           doubleArrayOf(
@@ -92,11 +99,7 @@ object GazeDwell {
   /** Computes normalized `[0..1]` radial dwell progress after [graceMs] over [dwellMs]. */
   @JvmStatic
   @JvmOverloads
-  fun computeDwellProgress(
-    elapsedMs: Double,
-    dwellMs: Double,
-    graceMs: Double = GRACE_MS,
-  ): Double {
+  fun computeDwellProgress(elapsedMs: Double, dwellMs: Double, graceMs: Double = GRACE_MS): Double {
     val total = XRSpatialMath.clampNum(dwellMs, 250.0, 10000.0, 1200.0)
     val grace = Math.min(total - 1.0, Math.max(0.0, graceMs))
     if (!elapsedMs.isFinite() || elapsedMs <= grace) return 0.0
@@ -124,13 +127,13 @@ object GazeDwell {
     else doubleArrayOf(0.0, 0.0, 0.0, 1.0)
   }
 
-  /** Builds a double-sided dual-ring + clockwise progress arc mesh of unit radius (`1.0`) facing `+Z`. */
+  /**
+   * Builds a double-sided dual-ring + clockwise progress arc mesh of unit radius (`1.0`) facing
+   * `+Z`.
+   */
   @JvmStatic
   @JvmOverloads
-  fun buildReticleGeometry(
-    progress: Double,
-    segments: Int = 24,
-  ): SpatialMeasure.MeshGeometry {
+  fun buildReticleGeometry(progress: Double, segments: Int = 24): SpatialMeasure.MeshGeometry {
     val segs = Math.max(8, Math.min(64, segments))
     val p = if (progress.isFinite()) Math.max(0.0, Math.min(1.0, progress)) else 0.0
     val arcSegs = if (p > 1e-3) Math.max(1, Math.round(p * segs).toInt()) else 0
@@ -146,12 +149,13 @@ object GazeDwell {
       val s0 = Math.sin(a0)
       val c1 = Math.cos(a1)
       val s1 = Math.sin(a1)
-      val pts = arrayOf(
-        doubleArrayOf(c0 * rInner, s0 * rInner),
-        doubleArrayOf(c1 * rInner, s1 * rInner),
-        doubleArrayOf(c1 * rOuter, s1 * rOuter),
-        doubleArrayOf(c0 * rOuter, s0 * rOuter),
-      )
+      val pts =
+        arrayOf(
+          doubleArrayOf(c0 * rInner, s0 * rInner),
+          doubleArrayOf(c1 * rInner, s1 * rInner),
+          doubleArrayOf(c1 * rOuter, s1 * rOuter),
+          doubleArrayOf(c0 * rOuter, s0 * rOuter),
+        )
       val front = vi
       for (pt in pts) {
         positions[vi * 3] = pt[0].toFloat()

@@ -148,7 +148,11 @@ export function resolveHeadPose(viewer: PluginViewer | undefined): XRPose6DoF {
     return sim.getHeadPose();
   }
   const view = viewer?.viewMatrix;
-  if (view && view.length === 16 && view.some((v, i) => v !== (i % 5 ? 0 : 1))) {
+  if (
+    view &&
+    view.length === 16 &&
+    view.some((v, i) => v !== (i % 5 ? 0 : 1))
+  ) {
     const world = mat4Create();
     mat4Invert(world, view);
     return {
@@ -161,7 +165,12 @@ export function resolveHeadPose(viewer: PluginViewer | undefined): XRPose6DoF {
     return sim.getHeadPose();
   }
   const matrix = mat4Create();
-  mat4FromRotationTranslationScale(matrix, [0, 0, 0, 1], DEFAULT_HEAD, [1, 1, 1]);
+  mat4FromRotationTranslationScale(
+    matrix,
+    [0, 0, 0, 1],
+    DEFAULT_HEAD,
+    [1, 1, 1],
+  );
   return {position: [...DEFAULT_HEAD], quaternion: [0, 0, 0, 1], matrix};
 }
 
@@ -216,7 +225,9 @@ export function isXRFrameFresh(viewer: PluginViewer | undefined): boolean {
 }
 
 /** Returns the active projection (headset view 0 when presenting). */
-export function resolveProjection(viewer: PluginViewer | undefined): Float32Array | undefined {
+export function resolveProjection(
+  viewer: PluginViewer | undefined,
+): Float32Array | undefined {
   const xr = viewer ? xrFrameCache.get(viewer) : undefined;
   if (xr?.proj && isXRFrameFresh(viewer)) return xr.proj;
   return viewer?.projMatrix;
@@ -237,7 +248,9 @@ export function isEventClaimed(e: object): boolean {
 /** Normalizes a ray direction, returning `null` for zero/non-finite input. */
 export function normalizeRayDir(dir: readonly number[]): Vec3 | null {
   const len = vLen(dir);
-  return Number.isFinite(len) && len > 1e-8 ? [dir[0] / len, dir[1] / len, dir[2] / len] : null;
+  return Number.isFinite(len) && len > 1e-8
+    ? [dir[0] / len, dir[1] / len, dir[2] / len]
+    : null;
 }
 
 const IDENTITY = mat4Create();
@@ -249,7 +262,9 @@ export function rootMatrix(viewer: PluginViewer | undefined): Float32Array {
 }
 
 /** Inverse of {@link rootMatrix} (world -> scene-local), or identity. */
-export function inverseRootMatrix(viewer: PluginViewer | undefined): Float32Array {
+export function inverseRootMatrix(
+  viewer: PluginViewer | undefined,
+): Float32Array {
   const root = rootMatrix(viewer);
   const out = mat4Create();
   if (root === IDENTITY || !mat4Invert(out, root)) return mat4Create();
@@ -277,7 +292,10 @@ export function measureFrameDt(key: object, fallback = 1 / 72): number {
 
 /** Returns `modelRootMatrix * mesh.transform` (the mesh's drawn world matrix). */
 // tslint:disable-next-line:no-any Mesh records are heterogeneous GPU structs.
-export function meshWorldMatrix(viewer: PluginViewer | undefined, mesh: any): Float32Array {
+export function meshWorldMatrix(
+  viewer: PluginViewer | undefined,
+  mesh: any,
+): Float32Array {
   const out = mat4Create();
   mat4Multiply(out, rootMatrix(viewer), mesh.transform);
   return out;
@@ -292,7 +310,12 @@ export function setLocalTRS(
   scale: readonly number[],
 ): void {
   if (!(mesh?.transform instanceof Float32Array)) return;
-  mat4FromRotationTranslationScale(mesh.transform, quat as Quat, pos as Vec3, scale as Vec3);
+  mat4FromRotationTranslationScale(
+    mesh.transform,
+    quat as Quat,
+    pos as Vec3,
+    scale as Vec3,
+  );
   if (mesh.worldMatrix instanceof Float32Array) {
     mesh.worldMatrix.set(mesh.transform);
   }
@@ -311,15 +334,24 @@ export function setWorldTRS(
   pos: readonly number[],
   scale: readonly number[],
 ): void {
-  const world = mesh.worldMatrix instanceof Float32Array ? mesh.worldMatrix : mat4Create();
-  mat4FromRotationTranslationScale(world, quat as Quat, pos as Vec3, scale as Vec3);
+  const world =
+    mesh.worldMatrix instanceof Float32Array ? mesh.worldMatrix : mat4Create();
+  mat4FromRotationTranslationScale(
+    world,
+    quat as Quat,
+    pos as Vec3,
+    scale as Vec3,
+  );
   mesh.worldMatrix = world;
   applyWorldMatrix(viewer, mesh);
 }
 
 /** Re-derives `mesh.transform = inverse(root) * mesh.worldMatrix`. */
 // tslint:disable-next-line:no-any Mesh records are heterogeneous GPU structs.
-export function applyWorldMatrix(viewer: PluginViewer | undefined, mesh: any): void {
+export function applyWorldMatrix(
+  viewer: PluginViewer | undefined,
+  mesh: any,
+): void {
   if (!(mesh?.worldMatrix instanceof Float32Array)) return;
   const root = rootMatrix(viewer);
   if (root === IDENTITY || isIdentity(root)) {
@@ -382,7 +414,10 @@ function scanLocalBounds(mesh: any): LocalBounds {
 }
 
 /** Transforms point `p` by column-major 4x4 matrix `m`. */
-export function transformPoint(m: ArrayLike<number>, p: readonly number[]): Vec3 {
+export function transformPoint(
+  m: ArrayLike<number>,
+  p: readonly number[],
+): Vec3 {
   return [
     m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
     m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
@@ -481,7 +516,11 @@ export function createDynamicMesh(
   const gl = viewer.gl;
   const uploaded =
     gl && typeof gl.createVertexArray === 'function'
-      ? uploadBuffers(gl, geometry, options.pickable === false ? DYNAMIC_DRAW : STATIC_DRAW)
+      ? uploadBuffers(
+          gl,
+          geometry,
+          options.pickable === false ? DYNAMIC_DRAW : STATIC_DRAW,
+        )
       : {vao: null, buffers: []};
   const transform = mat4Create();
   const normalMatrix = new Float32Array(9);
@@ -502,7 +541,9 @@ export function createDynamicMesh(
         vao: uploaded.vao,
         indexCount: geometry.indices.length,
         indexType:
-          geometry.indices instanceof Uint32Array ? UNSIGNED_INT : UNSIGNED_SHORT,
+          geometry.indices instanceof Uint32Array
+            ? UNSIGNED_INT
+            : UNSIGNED_SHORT,
         baseColor: [...(options.color ?? [1, 1, 1, 1])],
         metallic: options.metallic ?? 0,
         roughness: options.roughness ?? 0.6,
@@ -540,7 +581,11 @@ export function updateDynamicMesh(
   if (gl && prim.vao && prim.buffers?.length === 4) {
     // Reuse the VAO and buffers; only re-specify their contents.
     const vertexCount = geometry.positions.length / 3;
-    const data = [geometry.positions, geometry.normals, new Float32Array(vertexCount * 2)];
+    const data = [
+      geometry.positions,
+      geometry.normals,
+      new Float32Array(vertexCount * 2),
+    ];
     gl.bindVertexArray(prim.vao);
     data.forEach((d, i) => {
       gl.bindBuffer(ARRAY_BUFFER, prim.buffers[i]);
@@ -602,18 +647,47 @@ export function setMeshTRS(
 /** Generates an axis-aligned box of half-extent `h` centered on the origin. */
 export function buildBoxGeometry(h: number): DynamicGeometry {
   const faces: Array<[Vec3, Vec3, Vec3]> = [
-    [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-    [[-1, 0, 0], [0, 1, 0], [0, 0, -1]],
-    [[0, 1, 0], [0, 0, 1], [1, 0, 0]],
-    [[0, -1, 0], [0, 0, -1], [1, 0, 0]],
-    [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
-    [[0, 0, -1], [-1, 0, 0], [0, 1, 0]],
+    [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ],
+    [
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, 0, -1],
+    ],
+    [
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 0, 0],
+    ],
+    [
+      [0, -1, 0],
+      [0, 0, -1],
+      [1, 0, 0],
+    ],
+    [
+      [0, 0, 1],
+      [1, 0, 0],
+      [0, 1, 0],
+    ],
+    [
+      [0, 0, -1],
+      [-1, 0, 0],
+      [0, 1, 0],
+    ],
   ];
   const positions = new Float32Array(24 * 3);
   const normals = new Float32Array(24 * 3);
   const indices = new Uint16Array(36);
   faces.forEach(([n, u, v], f) => {
-    const corners: Array<[number, number]> = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    const corners: Array<[number, number]> = [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ];
     corners.forEach(([a, b], c) => {
       const o = (f * 4 + c) * 3;
       for (let k = 0; k < 3; k++) {
@@ -636,7 +710,9 @@ export function emitPluginEvent(
   const el = target as {dispatchEvent?: (e: Event) => boolean} | null;
   if (!el || typeof el.dispatchEvent !== 'function') return;
   if (typeof CustomEvent !== 'function') return;
-  el.dispatchEvent(new CustomEvent(name, {bubbles: true, composed: true, detail}));
+  el.dispatchEvent(
+    new CustomEvent(name, {bubbles: true, composed: true, detail}),
+  );
 }
 
 /**
@@ -668,7 +744,8 @@ export function reattachDynamicMesh(
   mesh: any,
 ): void {
   const prim = mesh?.primitives?.[0];
-  if (!prim || !Array.isArray(viewer.meshes) || viewer.meshes.includes(mesh)) return;
+  if (!prim || !Array.isArray(viewer.meshes) || viewer.meshes.includes(mesh))
+    return;
   prim.vao = null;
   prim.buffers = [];
   updateDynamicMesh(viewer, mesh, {
@@ -681,7 +758,10 @@ export function reattachDynamicMesh(
 }
 
 /** Returns a unit quaternion rotating unit vector `from` onto unit vector `to`. */
-export function quatFromUnitVectors(from: readonly number[], to: readonly number[]): Quat {
+export function quatFromUnitVectors(
+  from: readonly number[],
+  to: readonly number[],
+): Quat {
   const f = vNorm(from, [0, 0, 1]);
   const t = vNorm(to, [0, 0, 1]);
   const dot = vDot(f, t);
@@ -721,17 +801,20 @@ export function raycastSceneMeshes(
 ): SceneRaycastHit | null {
   const meshes = viewer?.meshes;
   const dir = normalizeRayDir(direction);
-  if (!Array.isArray(meshes) || !dir || !origin.every(Number.isFinite)) return null;
+  if (!Array.isArray(meshes) || !dir || !origin.every(Number.isFinite))
+    return null;
 
   const invModel = mat4Create();
   const normMat = new Float32Array(9);
   let best: SceneRaycastHit | null = null;
-  let bestDist = Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance : 50;
+  let bestDist =
+    Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance : 50;
 
   for (let i = 0; i < meshes.length; i++) {
     const mesh = meshes[i];
     if (!mesh || mesh.visible === false || mesh.isPluginMesh) continue;
-    const pe = mesh.extras?.xr?.pointerEvents ?? mesh.userData?.xr?.pointerEvents;
+    const pe =
+      mesh.extras?.xr?.pointerEvents ?? mesh.userData?.xr?.pointerEvents;
     if (pe === 'none' && !filter) continue;
     if (filter && !filter(mesh, i)) continue;
 
@@ -778,22 +861,38 @@ export function raycastSceneMeshes(
     }
     if (slabMiss) continue;
 
-    const outHit: RayHit = {distance: Infinity, point: [0, 0, 0], normal: [0, 1, 0]};
+    const outHit: RayHit = {
+      distance: Infinity,
+      point: [0, 0, 0],
+      normal: [0, 1, 0],
+    };
     for (const prim of mesh.primitives ?? []) {
       const pos: ArrayLike<number> | undefined = prim?.positions;
       if (!pos) continue;
       const idx: ArrayLike<number> | undefined = prim?.indices;
-      const triCount = idx ? Math.floor(idx.length / 3) : Math.floor(pos.length / 9);
+      const triCount = idx
+        ? Math.floor(idx.length / 3)
+        : Math.floor(pos.length / 9);
       for (let t = 0; t < triCount; t++) {
         const i0 = idx ? idx[t * 3] : t * 3;
         const i1 = idx ? idx[t * 3 + 1] : t * 3 + 1;
         const i2 = idx ? idx[t * 3 + 2] : t * 3 + 2;
         rayIntersectsTriangle(
-          lo[0], lo[1], lo[2],
-          ld[0], ld[1], ld[2],
-          pos[i0 * 3], pos[i0 * 3 + 1], pos[i0 * 3 + 2],
-          pos[i1 * 3], pos[i1 * 3 + 1], pos[i1 * 3 + 2],
-          pos[i2 * 3], pos[i2 * 3 + 1], pos[i2 * 3 + 2],
+          lo[0],
+          lo[1],
+          lo[2],
+          ld[0],
+          ld[1],
+          ld[2],
+          pos[i0 * 3],
+          pos[i0 * 3 + 1],
+          pos[i0 * 3 + 2],
+          pos[i1 * 3],
+          pos[i1 * 3 + 1],
+          pos[i1 * 3 + 2],
+          pos[i2 * 3],
+          pos[i2 * 3 + 1],
+          pos[i2 * 3 + 2],
           outHit,
           1e-5,
         );

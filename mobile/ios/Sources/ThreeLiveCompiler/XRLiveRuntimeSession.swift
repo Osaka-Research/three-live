@@ -669,6 +669,19 @@ public final class XRLiveRuntimeSession {
     return updated
   }
 
+  /// Sets node `index`'s own `KHR_node_visibility` flag from the host (descendants inherit
+  /// it), notifying `delegate` when it changes. Returns `false` for an invalid index.
+  @discardableResult
+  public func setNodeVisible(_ index: Int, _ visible: Bool) -> Bool {
+    guard index >= 0, index < nodes.count else { return false }
+    if nodes[index].visible != visible {
+      nodes[index].visible = visible
+      dirtyVisibility.insert(index)
+      flush()
+    }
+    return true
+  }
+
   /// Whether node `index` is visible (its own `KHR_node_visibility` flag; ancestors are
   /// not considered). `false` for an invalid index.
   public func isVisible(_ index: Int) -> Bool {

@@ -611,7 +611,8 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
   func testOrbitPositions() throws {
     let rawOrbit: [String: Any] = ["radius": 2, "speed": Double.pi, "target": [1, 0, 0]]
     let opts = try XCTUnwrap(XRLiveTraitParser.parseOrbit(rawOrbit))
-    let op = XRSpatialMath.computeOrbitPosition(center: SIMD3<Float>(1, 0, 0), options: opts, t: 0.5)
+    let op = XRSpatialMath.computeOrbitPosition(
+      center: SIMD3<Float>(1, 0, 0), options: opts, t: 0.5)
     XCTAssertEqual(op.x, 1, accuracy: 1e-3)
     XCTAssertEqual(op.z, 2, accuracy: 1e-3)
 
@@ -1504,16 +1505,24 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertNil(broken.matchedSocketId)
 
     let (s, _) = session(
-      #"{"nodes": [{"name": "Parent", "translation": [1, 0, 0], "children": [1]}, {"name": "Child"}]}"#)
+      #"{"nodes": [{"name": "Parent", "translation": [1, 0, 0], "children": [1]}, {"name": "Child"}]}"#
+    )
     XCTAssertTrue(
-      s.setNodeWorldPose(1, position: SIMD3<Float>(2.5, 1, -1), rotation: XRSpatialMath.identityQuat))
+      s.setNodeWorldPose(
+        1, position: SIMD3<Float>(2.5, 1, -1), rotation: XRSpatialMath.identityQuat))
     XCTAssertEqual(translation(s, 1).x, 1.5, accuracy: 1e-4)
   }
 
   func testGazeDwellAndExplodedViewMathParity() throws {
-    XCTAssertEqual(GazeDwell.computeDwellProgress(elapsedMs: 140, dwellMs: 1000, graceMs: 150), 0, accuracy: 1e-5)
-    XCTAssertEqual(GazeDwell.computeDwellProgress(elapsedMs: 575, dwellMs: 1000, graceMs: 150), 0.5, accuracy: 1e-5)
-    XCTAssertEqual(GazeDwell.computeDwellProgress(elapsedMs: 1200, dwellMs: 1000, graceMs: 150), 1, accuracy: 1e-5)
+    XCTAssertEqual(
+      GazeDwell.computeDwellProgress(elapsedMs: 140, dwellMs: 1000, graceMs: 150), 0, accuracy: 1e-5
+    )
+    XCTAssertEqual(
+      GazeDwell.computeDwellProgress(elapsedMs: 575, dwellMs: 1000, graceMs: 150), 0.5,
+      accuracy: 1e-5)
+    XCTAssertEqual(
+      GazeDwell.computeDwellProgress(elapsedMs: 1200, dwellMs: 1000, graceMs: 150), 1,
+      accuracy: 1e-5)
 
     let ret0 = GazeDwell.buildReticleGeometry(progress: 0)
     let retHalf = GazeDwell.buildReticleGeometry(progress: 0.5)
@@ -1583,9 +1592,12 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(arcGeo.indices.count, 4 * 12)
 
     let st1 = SpatialLocomotion.evaluateSnapTurn(axisX: 0.8, wasLatched: false, snapTurnDeg: 30)
-    let st2 = SpatialLocomotion.evaluateSnapTurn(axisX: 0.5, wasLatched: st1.latched, snapTurnDeg: 30)
-    let st3 = SpatialLocomotion.evaluateSnapTurn(axisX: 0.1, wasLatched: st2.latched, snapTurnDeg: 30)
-    let st4 = SpatialLocomotion.evaluateSnapTurn(axisX: -0.8, wasLatched: st3.latched, snapTurnDeg: 30)
+    let st2 = SpatialLocomotion.evaluateSnapTurn(
+      axisX: 0.5, wasLatched: st1.latched, snapTurnDeg: 30)
+    let st3 = SpatialLocomotion.evaluateSnapTurn(
+      axisX: 0.1, wasLatched: st2.latched, snapTurnDeg: 30)
+    let st4 = SpatialLocomotion.evaluateSnapTurn(
+      axisX: -0.8, wasLatched: st3.latched, snapTurnDeg: 30)
     XCTAssertEqual(st1.deltaYawDeg, -30)
     XCTAssertEqual(st2.deltaYawDeg, 0)
     XCTAssertFalse(st3.latched)
@@ -1629,7 +1641,8 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertNil(
       SharedRoom.parseMessage(#"{"v":1,"type":"leave","peerId":"__proto__"}"#))
     XCTAssertNil(
-      SharedRoom.parseMessage(#"{"v":1,"type":"paint","peerId":"p1","strokeId":"s1","points":[[0,0,0]]}"#))
+      SharedRoom.parseMessage(
+        #"{"v":1,"type":"paint","peerId":"p1","strokeId":"s1","points":[[0,0,0]]}"#))
 
     let lease = SharedRoom.NodeSoftLock(ownerPeerId: "peer-alice", leaseUntilMs: 3000)
     XCTAssertTrue(
@@ -1642,16 +1655,20 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     // Near-simultaneous grabs resolve to the lower peerId inside the window (matches web).
     let held = SharedRoom.NodeSoftLock(ownerPeerId: "peer-z", leaseUntilMs: 2100, acquiredMs: 100)
     XCTAssertTrue(
-      SharedRoom.winsGrabConflict(existing: held, senderPeerId: "peer-a", grabState: "grab", atMs: 300))
-    XCTAssertFalse(
-      SharedRoom.winsGrabConflict(existing: held, senderPeerId: "peer-a", grabState: "move", atMs: 300))
+      SharedRoom.winsGrabConflict(
+        existing: held, senderPeerId: "peer-a", grabState: "grab", atMs: 300))
     XCTAssertFalse(
       SharedRoom.winsGrabConflict(
-        existing: SharedRoom.NodeSoftLock(ownerPeerId: "peer-a", leaseUntilMs: 2100, acquiredMs: 100),
+        existing: held, senderPeerId: "peer-a", grabState: "move", atMs: 300))
+    XCTAssertFalse(
+      SharedRoom.winsGrabConflict(
+        existing: SharedRoom.NodeSoftLock(
+          ownerPeerId: "peer-a", leaseUntilMs: 2100, acquiredMs: 100),
         senderPeerId: "peer-z", grabState: "grab", atMs: 300))
     XCTAssertFalse(
       SharedRoom.winsGrabConflict(
-        existing: SharedRoom.NodeSoftLock(ownerPeerId: "peer-z", leaseUntilMs: 2900, acquiredMs: 100),
+        existing: SharedRoom.NodeSoftLock(
+          ownerPeerId: "peer-z", leaseUntilMs: 2900, acquiredMs: 100),
         senderPeerId: "peer-a", grabState: "grab", atMs: 900))
 
     let visor = SharedRoom.buildPeerVisorGeometry()

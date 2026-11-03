@@ -112,7 +112,10 @@ data class XRGazeTrait(
 /** Normalized `explode` trait (`exploded-view`). */
 data class XRExplodeTrait(
   val enabled: Boolean = true,
-  /** Unit direction `(x, y, z)` in node/parent space, or `null` for automatic radial/axial direction. */
+  /**
+   * Unit direction `(x, y, z)` in node/parent space, or `null` for automatic radial/axial
+   * direction.
+   */
   val direction: List<Double>? = null,
   val distance: Double = 0.35,
   val layer: Int = 1,
@@ -120,10 +123,7 @@ data class XRExplodeTrait(
 )
 
 /** Normalized `anchor` persistence metadata (`persistent-anchors`). */
-data class XRAnchorPersistTrait(
-  val id: String? = null,
-  val persist: Boolean = true,
-)
+data class XRAnchorPersistTrait(val id: String? = null, val persist: Boolean = true)
 
 /** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
@@ -198,7 +198,17 @@ data class XRLiveNodeTraits(
     anchor: String?,
     follow: String?,
     physics: String?,
-  ) : this(nodeIndex, name, grabbable, scalable, billboard, anchor, follow, physics, grabMode = null)
+  ) : this(
+    nodeIndex,
+    name,
+    grabbable,
+    scalable,
+    billboard,
+    anchor,
+    follow,
+    physics,
+    grabMode = null,
+  )
 
   /** Lazy-follow options when [followLazy] is set, otherwise `null`. */
   val lazyFollow: XRLazyFollowOptions?
@@ -344,7 +354,8 @@ object XRLiveSceneCoreHelper {
   fun parseNodeTraitsFromGltfJson(json: String): List<XRLiveNodeTraits> {
     val root =
       MiniJson.parseObjectOrNull(json)
-        ?: return if (json.length > MiniJson.DEFAULT_MAX_CHARS) emptyList() else parseNodeTraitsLegacy(json)
+        ?: return if (json.length > MiniJson.DEFAULT_MAX_CHARS) emptyList()
+        else parseNodeTraitsLegacy(json)
     return parseNodeTraits(root)
   }
 
@@ -587,8 +598,8 @@ object XRLiveSceneCoreHelper {
 
   /**
    * Port of `safeMediaUrl()`: returns [raw] (trimmed) when it is an `https:` URL or a plain
-   * relative path (no `..`, `\`, `%`, whitespace / control characters, scheme, or
-   * protocol-relative `//`), else `null`. Hosts must apply this before fetching any media.
+   * relative path (no `..`, `\`, `%`, whitespace / control characters, scheme, or protocol-relative
+   * `//`), else `null`. Hosts must apply this before fetching any media.
    */
   @JvmStatic
   fun safeMediaUrl(raw: Any?): String? {
@@ -731,7 +742,9 @@ object XRLiveSceneCoreHelper {
   /** Sanitizes an `anchor.id` or persistence key. */
   @JvmStatic
   fun safeAnchorId(raw: Any?): String? {
-    val s = (raw as? String)?.trim()?.let { if (it.length > 128) it.substring(0, 128) else it } ?: return null
+    val s =
+      (raw as? String)?.trim()?.let { if (it.length > 128) it.substring(0, 128) else it }
+        ?: return null
     if (s.isEmpty() || s in FORBIDDEN_ANCHOR_IDS) return null
     for (c in s) if (c.code <= 0x1F || c.code == 0x7F) return null
     return s
@@ -866,7 +879,8 @@ object XRLiveSceneCoreHelper {
     val ph = xr["physics"] ?: MiniJson.asMap(sc["rigidbody"])?.get("type")
     val physics = if (ph == "dynamic" || ph == "static") ph as String else null
 
-    val splat = safeMediaUrl(xr["splatUrl"]) ?: safeMediaUrl(MiniJson.asMap(sc["splat"])?.get("url"))
+    val splat =
+      safeMediaUrl(xr["splatUrl"]) ?: safeMediaUrl(MiniJson.asMap(sc["splat"])?.get("url"))
     val slot =
       shortString(xr["spatialSlot"]) ?: shortString(MiniJson.asMap(sc["spatialPanel"])?.get("slot"))
 
@@ -893,7 +907,8 @@ object XRLiveSceneCoreHelper {
       handles = parseHandles(xr["handles"] ?: sc["resizable"]),
       particles = parseParticles(xr["particles"] ?: sc["particles"]),
       holdToAsk = parseHoldToAsk(xr["holdToAsk"] ?: sc["holdToAsk"]),
-      worldUnderstanding = parseWorldUnderstanding(xr["worldUnderstanding"] ?: sc["worldUnderstanding"]),
+      worldUnderstanding =
+        parseWorldUnderstanding(xr["worldUnderstanding"] ?: sc["worldUnderstanding"]),
       splatUrl = splat,
       spatialSlot = slot,
       audio = parseSpatialAudio(xr["audio"] ?: sc["spatialAudio"]),

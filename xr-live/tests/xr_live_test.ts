@@ -955,7 +955,10 @@ async function runXRLiveTests() {
   depthMgr.updateFromXRFrame(
     u16DepthViewer,
     {
-      session: {depthUsage: 'cpu-optimized', depthDataFormat: 'luminance-alpha'},
+      session: {
+        depthUsage: 'cpu-optimized',
+        depthDataFormat: 'luminance-alpha',
+      },
       getDepthInformation: () => ({
         width: 90,
         height: 160,
@@ -1073,7 +1076,9 @@ async function runXRLiveTests() {
   });
   const floorN = normalMgr.sampleDepthAndNormal(0.5, 0.5, testProj);
   assert(
-    floorN !== null && floorN.normal[1] > 0.5 && Math.abs(floorN.normal[0]) < 1e-6,
+    floorN !== null &&
+      floorN.normal[1] > 0.5 &&
+      Math.abs(floorN.normal[0]) < 1e-6,
     'Regression X4: sampleDepthAndNormal returns an upward (+Y) normal for a floor',
   );
   // Side wall on the right: real depth shrinks toward the right edge (u -> 1).
@@ -1099,7 +1104,12 @@ async function runXRLiveTests() {
   };
   const reuseViewer: any = {
     gl: reuseGl,
-    xrDepthState: {enabled: false, texture: null, format: 0, rawValueToMeters: 0.001},
+    xrDepthState: {
+      enabled: false,
+      texture: null,
+      format: 0,
+      rawValueToMeters: 0.001,
+    },
   };
   const makeDepthFrame = () => ({
     session: {depthUsage: 'cpu-optimized', depthDataFormat: 'luminance-alpha'},
@@ -1115,9 +1125,16 @@ async function runXRLiveTests() {
   normalMgr.updateFromXRFrame(reuseViewer, frameA, {eye: 'none'}, true);
   const uploadsSameFrame = depthUploads;
   normalMgr.updateFromXRFrame(reuseViewer, frameA, {eye: 'right'}, true);
-  normalMgr.updateFromXRFrame(reuseViewer, makeDepthFrame(), {eye: 'none'}, true);
+  normalMgr.updateFromXRFrame(
+    reuseViewer,
+    makeDepthFrame(),
+    {eye: 'none'},
+    true,
+  );
   assert(
-    uploadsSameFrame === 1 && depthUploads === 3 && reuseViewer.xrDepthState.enabled,
+    uploadsSameFrame === 1 &&
+      depthUploads === 3 &&
+      reuseViewer.xrDepthState.enabled,
     'Regression X4: depth texture uploads once per frame/eye and re-uploads for new eyes and frames',
   );
   normalMgr.clearSessionDepth(reuseViewer);
@@ -1165,19 +1182,36 @@ async function runXRLiveTests() {
   // Virtual room AABB colliders are ignored during AR sessions.
   const arColliderPhysics = new XRHeightfieldPhysics();
   arColliderPhysics.gravity = [0, 0, 0];
-  arColliderPhysics.colliders = [{min: [-0.05, -0.05, -1.05], max: [0.05, 0.05, -0.95]}];
+  arColliderPhysics.colliders = [
+    {min: [-0.05, -0.05, -1.05], max: [0.05, 0.05, -0.95]},
+  ];
   const arBallTransform = mat4Create();
-  mat4FromRotationTranslationScale(arBallTransform, [0, 0, 0, 1], [0, 0, -1], [1, 1, 1]);
+  mat4FromRotationTranslationScale(
+    arBallTransform,
+    [0, 0, 0, 1],
+    [0, 0, -1],
+    [1, 1, 1],
+  );
   const arBall = {
     name: 'ARBall',
     visible: true,
     transform: arBallTransform,
     extras: {xr: {physics: 'dynamic'}},
   };
-  arColliderPhysics.step([arBall], 1 / 60, undefined, -10, undefined, undefined, {isAR: true});
+  arColliderPhysics.step(
+    [arBall],
+    1 / 60,
+    undefined,
+    -10,
+    undefined,
+    undefined,
+    {isAR: true},
+  );
   const arBallPos = extractPosition(arBall.transform);
   assert(
-    Math.abs(arBallPos[0]) < 1e-6 && Math.abs(arBallPos[1]) < 1e-6 && Math.abs(arBallPos[2] + 1) < 1e-6,
+    Math.abs(arBallPos[0]) < 1e-6 &&
+      Math.abs(arBallPos[1]) < 1e-6 &&
+      Math.abs(arBallPos[2] + 1) < 1e-6,
     'Regression X4: virtual room colliders are skipped while isAR is true',
   );
 
@@ -1213,12 +1247,27 @@ async function runXRLiveTests() {
   const gpuSession = {depthUsage: 'gpu-optimized', depthDataFormat: 'float32'};
   const gpuViewer: any = {
     gl: {...mockGl},
-    xrDepthState: {enabled: false, texture: null, format: 0, rawValueToMeters: 0.001},
+    xrDepthState: {
+      enabled: false,
+      texture: null,
+      format: 0,
+      rawValueToMeters: 0.001,
+    },
   };
   try {
-    const gpuRet = gpuMgr.updateFromXRFrame(gpuViewer, {session: gpuSession}, {eye: 'left'}, true);
+    const gpuRet = gpuMgr.updateFromXRFrame(
+      gpuViewer,
+      {session: gpuSession},
+      {eye: 'left'},
+      true,
+    );
     const leftLayer = gpuViewer.xrDepthState.layer;
-    gpuMgr.updateFromXRFrame(gpuViewer, {session: gpuSession}, {eye: 'right'}, true);
+    gpuMgr.updateFromXRFrame(
+      gpuViewer,
+      {session: gpuSession},
+      {eye: 'right'},
+      true,
+    );
     const st = gpuViewer.xrDepthState;
     assert(
       gpuRet === null &&
@@ -1240,14 +1289,21 @@ async function runXRLiveTests() {
       'GPU depth: composes the depth camera world-to-clip matrix for reprojection',
     );
     assert(
-      gpuMgr.getLatestDepthInfo() === null && gpuMgr.sampleDepthAndNormal(0.5, 0.5) === null,
+      gpuMgr.getLatestDepthInfo() === null &&
+        gpuMgr.sampleDepthAndNormal(0.5, 0.5) === null,
       'GPU depth: CPU sampling stays unavailable so depth physics falls back to the virtual floor',
     );
     let deletedUaTexture = false;
-    gpuMgr.dispose({...mockGl, deleteTexture: (t: unknown) => {
-      if (t === uaDepthTexture) deletedUaTexture = true;
-    }} as any);
-    assert(!deletedUaTexture, 'GPU depth: dispose never deletes the UA-owned depth texture');
+    gpuMgr.dispose({
+      ...mockGl,
+      deleteTexture: (t: unknown) => {
+        if (t === uaDepthTexture) deletedUaTexture = true;
+      },
+    } as any);
+    assert(
+      !deletedUaTexture,
+      'GPU depth: dispose never deletes the UA-owned depth texture',
+    );
 
     delete gG.XRWebGLBinding;
     const noBindingViewer: any = {
@@ -1255,7 +1311,11 @@ async function runXRLiveTests() {
       xrDepthState: {enabled: true, texture: uaDepthTexture},
     };
     new XRDepthManager().updateFromXRFrame(
-      noBindingViewer, {session: gpuSession}, {eye: 'left'}, true);
+      noBindingViewer,
+      {session: gpuSession},
+      {eye: 'left'},
+      true,
+    );
     assert(
       noBindingViewer.xrDepthState.enabled === false,
       'GPU depth: disables occlusion when XRWebGLBinding is unavailable',
@@ -1269,11 +1329,21 @@ async function runXRLiveTests() {
   const cpuAfterGpuViewer: any = {
     gl: {...mockGl, pixelStorei() {}, texParameteri() {}, texImage2D() {}},
     xrDepthState: {
-      enabled: false, texture: null, textureType: 'texture-array', layer: 1,
-      depthNear: 0.1, depthFar: 1e5, depthViewProj: mat4Create(),
+      enabled: false,
+      texture: null,
+      textureType: 'texture-array',
+      layer: 1,
+      depthNear: 0.1,
+      depthFar: 1e5,
+      depthViewProj: mat4Create(),
     },
   };
-  new XRDepthManager().updateFromXRFrame(cpuAfterGpuViewer, makeDepthFrame(), {eye: 'none'}, true);
+  new XRDepthManager().updateFromXRFrame(
+    cpuAfterGpuViewer,
+    makeDepthFrame(),
+    {eye: 'none'},
+    true,
+  );
   assert(
     cpuAfterGpuViewer.xrDepthState.enabled === true &&
       cpuAfterGpuViewer.xrDepthState.textureType === 'texture' &&

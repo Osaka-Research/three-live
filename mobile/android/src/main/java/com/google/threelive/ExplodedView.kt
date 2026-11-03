@@ -23,7 +23,8 @@ package com.google.threelive
 object ExplodedView {
   const val TWO_HAND_SPAN_METERS: Double = 0.4
   private val MODES = setOf("radial", "axial-x", "axial-y", "axial-z", "hierarchical")
-  private val SECTION_REGEX = Regex("^([+-]?[xyz])\\s*:\\s*([+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?)$")
+  private val SECTION_REGEX =
+    Regex("^([+-]?[xyz])\\s*:\\s*([+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[+-]?\\d+)?)$")
 
   data class SectionPlaneState(
     val enabled: Boolean,
@@ -93,13 +94,19 @@ object ExplodedView {
       val count = Math.max(1, nodeCount)
       val spreadSlot = if (count > 1) (nodeIndex.toDouble() / (count - 1)) * 2.0 - 1.0 else 0.0
       when (resolvedMode) {
-        "axial-x", "axial-y", "axial-z" -> {
-          val axisIdx = if (resolvedMode == "axial-x") 0 else if (resolvedMode == "axial-y") 1 else 2
+        "axial-x",
+        "axial-y",
+        "axial-z" -> {
+          val axisIdx =
+            if (resolvedMode == "axial-x") 0 else if (resolvedMode == "axial-y") 1 else 2
           val comp = rel[axisIdx]
-          val sign = if (Math.abs(comp) > 1e-4) Math.signum(comp) else if (spreadSlot >= 0.0) 1.0 else -1.0
+          val sign =
+            if (Math.abs(comp) > 1e-4) Math.signum(comp) else if (spreadSlot >= 0.0) 1.0 else -1.0
           dir = doubleArrayOf(0.0, 0.0, 0.0)
           dir[axisIdx] = sign
-          val weight = if (Math.abs(comp) > 1e-4) Math.abs(comp) / radius else Math.abs(spreadSlot) * 0.6 + 0.25
+          val weight =
+            if (Math.abs(comp) > 1e-4) Math.abs(comp) / radius
+            else Math.abs(spreadSlot) * 0.6 + 0.25
           maxDist = (trait?.distance ?: (radius * Math.max(0.2, weight))) * scale
         }
         "hierarchical" -> {
@@ -123,8 +130,9 @@ object ExplodedView {
           } else {
             val angle = (nodeIndex.toDouble() / count) * Math.PI * 2.0
             dir =
-              XRSpatialMath.normalizeRayDir(doubleArrayOf(Math.cos(angle), 0.25 * spreadSlot, Math.sin(angle)))
-                ?: doubleArrayOf(0.0, 1.0, 0.0)
+              XRSpatialMath.normalizeRayDir(
+                doubleArrayOf(Math.cos(angle), 0.25 * spreadSlot, Math.sin(angle))
+              ) ?: doubleArrayOf(0.0, 1.0, 0.0)
             maxDist = (trait?.distance ?: (radius * 0.35)) * scale
           }
         }
@@ -163,12 +171,14 @@ object ExplodedView {
       val cx = defaultCenter.getOrElse(0) { 0.0 }.let { if (it.isFinite()) it else 0.0 }
       return SectionPlaneState(true, doubleArrayOf(1.0, 0.0, 0.0), cx, true)
     }
-    val m = SECTION_REGEX.matchEntire(s)
-      ?: return SectionPlaneState(false, doubleArrayOf(1.0, 0.0, 0.0), 0.0, false)
+    val m =
+      SECTION_REGEX.matchEntire(s)
+        ?: return SectionPlaneState(false, doubleArrayOf(1.0, 0.0, 0.0), 0.0, false)
     val axisToken = m.groupValues[1]
     val sign = if (axisToken.startsWith("-")) -1.0 else 1.0
     val axisChar = axisToken.trimStart('+', '-')
-    val value = XRSpatialMath.clampNum(m.groupValues[2].toDoubleOrNull() ?: Double.NaN, -1000.0, 1000.0, 0.0)
+    val value =
+      XRSpatialMath.clampNum(m.groupValues[2].toDoubleOrNull() ?: Double.NaN, -1000.0, 1000.0, 0.0)
     val normal =
       when (axisChar) {
         "x" -> doubleArrayOf(sign, 0.0, 0.0)

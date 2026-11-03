@@ -81,27 +81,18 @@ registerXRTraitSerializer();
 
 // This bundle may load after `<xr-live>` elements already connected; attach
 // element-level listeners now (each plugin's hook is idempotent).
-if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
-  for (const el of Array.from(document.querySelectorAll('xr-live, three-live'))) {
+if (
+  typeof document !== 'undefined' &&
+  typeof document.querySelectorAll === 'function'
+) {
+  for (const el of Array.from(
+    document.querySelectorAll('xr-live, three-live'),
+  )) {
     if (!el.isConnected) continue;
     for (const plugin of xrSpatialPlugins) plugin.onElementConnected?.(el);
   }
 }
 
-export * from './depth-particles';
-export * from './exploded-view';
-export * from './gaze-dwell';
-export * from './gemini-live';
-export * from './head-follow';
-export * from './magnetic-snap';
-export * from './manipulation-handles';
-export * from './persistent-anchors';
-export * from './shared-room';
-export * from './spatial-locomotion';
-export * from './spatial-measure';
-export * from './spatial-paint';
-export * from './splat-loader';
-export * from './world-understanding';
 export {
   buildXRSceneCoreExtension,
   flattenXRTraitsForUsd,
@@ -118,3 +109,17 @@ export {
   registerXRTraitSerializer,
   type NormalizedXRTraits,
 } from '../../../three-live/src/xr-trait-schema';
+export * from './depth-particles';
+export * from './exploded-view';
+export * from './gaze-dwell';
+export * from './gemini-live';
+export * from './head-follow';
+export * from './magnetic-snap';
+export * from './manipulation-handles';
+export * from './persistent-anchors';
+export * from './shared-room';
+export * from './spatial-locomotion';
+export * from './spatial-measure';
+export * from './spatial-paint';
+export * from './splat-loader';
+export * from './world-understanding';

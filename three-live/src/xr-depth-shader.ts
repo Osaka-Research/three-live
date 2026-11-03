@@ -67,7 +67,8 @@ export const xrDepthShader: XRDepthShaderChunk = {
     const i = (n: string, v: number) => u[n] && gl.uniform1i(u[n], v);
     const m = (n: string, v?: Float32Array | null) =>
       u[n] && v && gl.uniformMatrix4fv(u[n], false, v);
-    if (u['uViewport']) gl.uniform4f(u['uViewport'], vp[0], vp[1], vp[2], vp[3]);
+    if (u['uViewport'])
+      gl.uniform4f(u['uViewport'], vp[0], vp[1], vp[2], vp[3]);
     if (u['uCameraFwd']) {
       gl.uniform3f(u['uCameraFwd'], -view[2], -view[6], -view[10]);
     }
@@ -87,7 +88,8 @@ export const xrDepthShader: XRDepthShaderChunk = {
     i('uXrDR', ds.depthViewProj ? 1 : 0);
     m('uXrDVP', ds.depthViewProj);
     m('uXrDepthUVTransform', ds.uvTransform);
-    if (u['uXrNF']) gl.uniform2f(u['uXrNF'], ds.depthNear || 0, ds.depthFar || 0);
+    if (u['uXrNF'])
+      gl.uniform2f(u['uXrNF'], ds.depthNear || 0, ds.depthFar || 0);
     if (u['uXrRawValueToMeters']) {
       gl.uniform1f(u['uXrRawValueToMeters'], ds.rawValueToMeters);
     }

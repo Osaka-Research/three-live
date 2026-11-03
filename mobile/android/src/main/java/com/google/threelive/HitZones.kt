@@ -423,7 +423,7 @@ object HitZones {
       val active = world.bodies.count { it.spawnedFrom == s.key }
       if (active >= opts.maxActive || total >= XRSimWorld.MAX_INSTANCES) continue
       val inst = spawnInstance(world, s) ?: continue
-      sp[1] += 1
+      sp[1] += 1.0
       total++
       world.emit(
         "xrspawn",

@@ -203,7 +203,10 @@ object XRSpatialMath {
     for (c in 0 until 4) {
       for (r in 0 until 4) {
         out[c * 4 + r] =
-          a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]
+          a[r] * b[c * 4] +
+            a[4 + r] * b[c * 4 + 1] +
+            a[8 + r] * b[c * 4 + 2] +
+            a[12 + r] * b[c * 4 + 3]
       }
     }
     return out
@@ -264,7 +267,13 @@ object XRSpatialMath {
 
   /** Transforms point ([x], [y], [z]) by column-major [m] (affine, `w = 1`) into [out]. */
   @JvmStatic
-  fun transformPoint(m: DoubleArray, x: Double, y: Double, z: Double, out: DoubleArray): DoubleArray {
+  fun transformPoint(
+    m: DoubleArray,
+    x: Double,
+    y: Double,
+    z: Double,
+    out: DoubleArray,
+  ): DoubleArray {
     val ox = m[0] * x + m[4] * y + m[8] * z + m[12]
     val oy = m[1] * x + m[5] * y + m[9] * z + m[13]
     val oz = m[2] * x + m[6] * y + m[10] * z + m[14]
@@ -276,7 +285,13 @@ object XRSpatialMath {
 
   /** [transformPoint] for a `FloatArray` matrix. */
   @JvmStatic
-  fun transformPoint(m: FloatArray, x: Double, y: Double, z: Double, out: DoubleArray): DoubleArray {
+  fun transformPoint(
+    m: FloatArray,
+    x: Double,
+    y: Double,
+    z: Double,
+    out: DoubleArray,
+  ): DoubleArray {
     val ox = m[0] * x + m[4] * y + m[8] * z + m[12]
     val oy = m[1] * x + m[5] * y + m[9] * z + m[13]
     val oz = m[2] * x + m[6] * y + m[10] * z + m[14]
@@ -359,9 +374,11 @@ object XRSpatialMath {
 
   internal fun len3(x: Double, y: Double, z: Double): Double = Math.sqrt(x * x + y * y + z * z)
 
-  internal fun dist3(a: DoubleArray, b: DoubleArray): Double = len3(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  internal fun dist3(a: DoubleArray, b: DoubleArray): Double =
+    len3(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
-  internal fun dot3(a: DoubleArray, b: DoubleArray): Double = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  internal fun dot3(a: DoubleArray, b: DoubleArray): Double =
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
   internal fun cross3(
     a: DoubleArray,
@@ -392,7 +409,12 @@ object XRFollowMath {
    * [omega], using the exact closed-form solution so the step is unconditionally stable.
    */
   @JvmStatic
-  fun stepCriticallyDampedSpring(state: SpringState, target: DoubleArray, omega: Double, dt: Double) {
+  fun stepCriticallyDampedSpring(
+    state: SpringState,
+    target: DoubleArray,
+    omega: Double,
+    dt: Double,
+  ) {
     val decay = Math.exp(-omega * dt)
     for (a in 0 until 3) {
       val delta = state.position[a] - target[a]
@@ -472,13 +494,16 @@ object XRFollowMath {
   /** Writes the +Y yaw quaternion that turns +Z from [from] toward [to] into [out]. */
   @JvmStatic
   @JvmOverloads
-  fun yawTowards(from: DoubleArray, to: DoubleArray, out: DoubleArray = DoubleArray(4)): DoubleArray =
-    XRSpatialMath.quatFromYaw(Math.atan2(to[0] - from[0], to[2] - from[2]), out)
+  fun yawTowards(
+    from: DoubleArray,
+    to: DoubleArray,
+    out: DoubleArray = DoubleArray(4),
+  ): DoubleArray = XRSpatialMath.quatFromYaw(Math.atan2(to[0] - from[0], to[2] - from[2]), out)
 
   /**
-   * Writes the billboard (`TurnToFace`) quaternion for `"capsule"`, `"cylindrical"`, or `"spherical"`
-   * billboarding from [from] toward [to] into [out] (port of `computeBillboardQuaternion` in
-   * `xr-live/src/xr-traits.ts`).
+   * Writes the billboard (`TurnToFace`) quaternion for `"capsule"`, `"cylindrical"`, or
+   * `"spherical"` billboarding from [from] toward [to] into [out] (port of
+   * `computeBillboardQuaternion` in `xr-live/src/xr-traits.ts`).
    */
   @JvmStatic
   @JvmOverloads
@@ -576,7 +601,8 @@ object ManipulationHandles {
       corners = corners,
       pedestalStart = ps,
       pedestalEnd = pe,
-      pedestalCenter = doubleArrayOf((ps[0] + pe[0]) * 0.5, (ps[1] + pe[1]) * 0.5, (ps[2] + pe[2]) * 0.5),
+      pedestalCenter =
+        doubleArrayOf((ps[0] + pe[0]) * 0.5, (ps[1] + pe[1]) * 0.5, (ps[2] + pe[2]) * 0.5),
       yaw = XRSpatialMath.yawFromQuat(q[0], q[1], q[2], q[3]),
       handleRadius = XRSpatialMath.clampNum(diag * 0.06, 0.012, 0.08, 0.02),
     )
@@ -594,9 +620,16 @@ object ManipulationHandles {
   /** Returns `(t, miss)`: distance along the ray to its closest approach to [p], and the gap. */
   private fun rayPointDistance(origin: DoubleArray, dir: DoubleArray, p: DoubleArray): DoubleArray {
     val t =
-      Math.max(0.0, (p[0] - origin[0]) * dir[0] + (p[1] - origin[1]) * dir[1] + (p[2] - origin[2]) * dir[2])
+      Math.max(
+        0.0,
+        (p[0] - origin[0]) * dir[0] + (p[1] - origin[1]) * dir[1] + (p[2] - origin[2]) * dir[2],
+      )
     val miss =
-      XRSpatialMath.len3(origin[0] + dir[0] * t - p[0], origin[1] + dir[1] * t - p[1], origin[2] + dir[2] * t - p[2])
+      XRSpatialMath.len3(
+        origin[0] + dir[0] * t - p[0],
+        origin[1] + dir[1] * t - p[1],
+        origin[2] + dir[2] * t - p[2],
+      )
     return doubleArrayOf(t, miss)
   }
 
@@ -662,7 +695,12 @@ object ManipulationHandles {
     maxScale: Double,
   ): Double {
     val t = rayPointDistance(rayOrigin, rayDir, startPoint)[0]
-    val p = doubleArrayOf(rayOrigin[0] + rayDir[0] * t, rayOrigin[1] + rayDir[1] * t, rayOrigin[2] + rayDir[2] * t)
+    val p =
+      doubleArrayOf(
+        rayOrigin[0] + rayDir[0] * t,
+        rayOrigin[1] + rayDir[1] * t,
+        rayOrigin[2] + rayDir[2] * t,
+      )
     val r0 = Math.max(XRSpatialMath.dist3(startPoint, pivot), 1e-4)
     val ratio = XRSpatialMath.dist3(p, pivot) / r0
     return XRSpatialMath.clampNum(startScale * ratio, minScale, maxScale, startScale)
@@ -741,7 +779,8 @@ object ManipulationHandles {
       val dir = XRSpatialMath.normalizeRayDir(rawDir) ?: return false
       if (h is Hit.Corner) {
         val s0 = startScale[0]
-        val s = cornerScale(s0, startPoint, pivot, rayOrigin, dir, options.minScale, options.maxScale)
+        val s =
+          cornerScale(s0, startPoint, pivot, rayOrigin, dir, options.minScale, options.maxScale)
         val k = s / Math.max(s0, 1e-6)
         for (i in 0 until 3) scale[i] = startScale[i] * k
       } else {
@@ -842,20 +881,27 @@ object WorldUnderstanding {
   }
 
   /**
-   * Returns the world-space ray through normalized viewport coordinates `(u, v)` (origin
-   * top-left) for a column-major camera world matrix and projection matrix.
+   * Returns the world-space ray through normalized viewport coordinates `(u, v)` (origin top-left)
+   * for a column-major camera world matrix and projection matrix.
    */
   @JvmStatic
   fun viewportRay(u: Double, v: Double, cameraWorld: FloatArray, proj: FloatArray): Ray {
-    require(cameraWorld.size >= 16 && proj.size >= 16) { "viewportRay: matrices must have 16 elements" }
+    require(cameraWorld.size >= 16 && proj.size >= 16) {
+      "viewportRay: matrices must have 16 elements"
+    }
     val ndcX = u * 2 - 1
     val ndcY = 1 - v * 2
     val p0 = projEntry(proj, 0, 1.0)
     val p5 = projEntry(proj, 5, 1.0)
     val viewDir = doubleArrayOf((ndcX + proj[8]) / p0, (ndcY + proj[9]) / p5, -1.0)
     val origin =
-      doubleArrayOf(cameraWorld[12].toDouble(), cameraWorld[13].toDouble(), cameraWorld[14].toDouble())
-    val far = XRSpatialMath.transformPoint(cameraWorld, viewDir[0], viewDir[1], viewDir[2], DoubleArray(3))
+      doubleArrayOf(
+        cameraWorld[12].toDouble(),
+        cameraWorld[13].toDouble(),
+        cameraWorld[14].toDouble(),
+      )
+    val far =
+      XRSpatialMath.transformPoint(cameraWorld, viewDir[0], viewDir[1], viewDir[2], DoubleArray(3))
     val d = doubleArrayOf(far[0] - origin[0], far[1] - origin[1], far[2] - origin[2])
     val dir = XRSpatialMath.normalizeRayDir(d) ?: doubleArrayOf(0.0, 0.0, -1.0)
     return Ray(origin, dir, viewDir)
@@ -873,7 +919,8 @@ object WorldUnderstanding {
           (plane.center[1] - origin[1]) * plane.normal[1] +
           (plane.center[2] - origin[2]) * plane.normal[2]) / denom
       if (t <= 0.01 || (best != null && t >= best.distance)) continue
-      val point = doubleArrayOf(origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t)
+      val point =
+        doubleArrayOf(origin[0] + dir[0] * t, origin[1] + dir[1] * t, origin[2] + dir[2] * t)
       if (XRSpatialMath.dist3(point, plane.center) > plane.radius) continue
       best = PlaneHit(point, plane.normal.copyOf(), t, plane)
     }
@@ -882,8 +929,7 @@ object WorldUnderstanding {
 
   /**
    * Unprojects a 2D detection box to 3D. Uses [depthMeters] (view-space depth along -Z sampled at
-   * [boxCenter]) when it is finite and > 5 cm, then tracked [planes], then
-   * [FALLBACK_DEPTH_METERS].
+   * [boxCenter]) when it is finite and > 5 cm, then tracked [planes], then [FALLBACK_DEPTH_METERS].
    */
   @JvmStatic
   @JvmOverloads
@@ -972,4 +1018,3 @@ object WorldUnderstanding {
     }
   }
 }
-

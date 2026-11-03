@@ -51,13 +51,22 @@ class XRSpatialFeaturesTest {
     r.listener!!.onFrame(1.0 / 60, IDENTITY)
     // Corner layout of the box (world = node translation (0, 0, -2)).
     val world = DoubleArray(16).also { assertTrue(b.session.nodeWorldMatrix(0, it)) }
-    val layout = ManipulationHandles.computeLayout(doubleArrayOf(-0.5, 0.0, -0.5), doubleArrayOf(0.5, 1.0, 0.5), world)
+    val layout =
+      ManipulationHandles.computeLayout(
+        doubleArrayOf(-0.5, 0.0, -0.5),
+        doubleArrayOf(0.5, 1.0, 0.5),
+        world,
+      )
     val corner = layout.corners[0]
     val origin = doubleArrayOf(0.0, 0.5, 2.0)
-    val toCorner = doubleArrayOf(corner[0] - origin[0], corner[1] - origin[1], corner[2] - origin[2])
-    assertTrue(r.listener!!.onPointerDown(ThreeLivePointer(origin, toCorner, ThreeLivePick(0, null))))
+    val toCorner =
+      doubleArrayOf(corner[0] - origin[0], corner[1] - origin[1], corner[2] - origin[2])
+    assertTrue(
+      r.listener!!.onPointerDown(ThreeLivePointer(origin, toCorner, ThreeLivePick(0, null)))
+    )
     // Drag far outward: scale clamps to the trait max (3).
-    val far = doubleArrayOf(corner[0] * 50 - origin[0], corner[1] * 50 - origin[1], corner[2] - origin[2])
+    val far =
+      doubleArrayOf(corner[0] * 50 - origin[0], corner[1] * 50 - origin[1], corner[2] - origin[2])
     r.listener!!.onPointerMove(ThreeLivePointer(origin, far, null))
     r.listener!!.onPointerUp(ThreeLivePointer(origin, far, null))
     assertEquals(1, changes.size)
@@ -65,7 +74,9 @@ class XRSpatialFeaturesTest {
     assertTrue(changes[0].second > 1.0 && changes[0].second <= 3.0 + 1e-9)
     assertEquals(changes[0].second.toFloat(), r.transforms[0]!![1][0], 1e-5f)
     // A pointer that misses every handle is not captured (paint disabled by default).
-    assertFalse(r.listener!!.onPointerDown(ThreeLivePointer(origin, doubleArrayOf(0.0, 1.0, 0.0), null)))
+    assertFalse(
+      r.listener!!.onPointerDown(ThreeLivePointer(origin, doubleArrayOf(0.0, 1.0, 0.0), null))
+    )
     f.dispose()
     assertTrue(r.meshes.isEmpty())
   }
@@ -81,11 +92,17 @@ class XRSpatialFeaturesTest {
     val world = DoubleArray(16).also { assertTrue(b.session.nodeWorldMatrix(0, it)) }
     assertEquals(-2.0, world[12], 1e-9)
     assertEquals(0.0, world[14], 1e-9)
-    val layout = ManipulationHandles.computeLayout(doubleArrayOf(-0.5, 0.0, -0.5), doubleArrayOf(0.5, 1.0, 0.5), world)
+    val layout =
+      ManipulationHandles.computeLayout(
+        doubleArrayOf(-0.5, 0.0, -0.5),
+        doubleArrayOf(0.5, 1.0, 0.5),
+        world,
+      )
     val corner = layout.corners[0]
     assertTrue(corner[0] < -1.0)
     val origin = doubleArrayOf(0.0, 0.5, 0.0)
-    val toCorner = doubleArrayOf(corner[0] - origin[0], corner[1] - origin[1], corner[2] - origin[2])
+    val toCorner =
+      doubleArrayOf(corner[0] - origin[0], corner[1] - origin[1], corner[2] - origin[2])
     assertTrue(r.listener!!.onPointerDown(ThreeLivePointer(origin, toCorner, null)))
     // Aim beyond the corner, away from the node's pivot, to scale up.
     val pivot = doubleArrayOf(world[12], world[13], world[14])
@@ -106,7 +123,9 @@ class XRSpatialFeaturesTest {
     val b =
       ThreeLiveRuntimeBinding(
         r,
-        glbOf("""{"nodes":[{"name":"Hud","extras":{"xr":{"follow":{"mode":"head","lazy":true,"distance":1.0}}}}],"scenes":[{"nodes":[0]}]}"""),
+        glbOf(
+          """{"nodes":[{"name":"Hud","extras":{"xr":{"follow":{"mode":"head","lazy":true,"distance":1.0}}}}],"scenes":[{"nodes":[0]}]}"""
+        ),
       )
     repeat(120) { r.listener!!.onFrame(1.0 / 60, IDENTITY) }
     val before = DoubleArray(16).also { b.session.nodeWorldMatrix(0, it) }
@@ -120,7 +139,8 @@ class XRSpatialFeaturesTest {
   @Test
   fun emptySpaceDragPaintsStrokeAtScreenDepth() {
     val r = FakeRenderer()
-    val b = ThreeLiveRuntimeBinding(r, glbOf("""{"nodes":[{"name":"A"}],"scenes":[{"nodes":[0]}]}"""))
+    val b =
+      ThreeLiveRuntimeBinding(r, glbOf("""{"nodes":[{"name":"A"}],"scenes":[{"nodes":[0]}]}"""))
     val f = XRSpatialFeatures(b, r)
     f.paintColor = floatArrayOf(1f, 0f, 0f, 1f)
     var summary: Triple<Int, Int, Double>? = null
@@ -131,8 +151,14 @@ class XRSpatialFeaturesTest {
         }
       }
     val origin = doubleArrayOf(0.0, 0.0, 0.0)
-    assertFalse(r.listener!!.onPointerDown(ThreeLivePointer(origin, doubleArrayOf(0.0, 0.0, -1.0), ThreeLivePick(0, null))))
-    assertTrue(r.listener!!.onPointerDown(ThreeLivePointer(origin, doubleArrayOf(0.0, 0.0, -1.0), null)))
+    assertFalse(
+      r.listener!!.onPointerDown(
+        ThreeLivePointer(origin, doubleArrayOf(0.0, 0.0, -1.0), ThreeLivePick(0, null))
+      )
+    )
+    assertTrue(
+      r.listener!!.onPointerDown(ThreeLivePointer(origin, doubleArrayOf(0.0, 0.0, -1.0), null))
+    )
     for (i in 1..6) {
       r.listener!!.onPointerMove(ThreeLivePointer(origin, doubleArrayOf(i * 0.05, 0.0, -1.0), null))
     }
@@ -154,7 +180,9 @@ class XRSpatialFeaturesTest {
     val b =
       ThreeLiveRuntimeBinding(
         r,
-        glbOf("""{"nodes":[{"name":"Snow","translation":[0,1,0],"extras":{"xr":{"particles":{"preset":"snow","count":10}}}}],"scenes":[{"nodes":[0]}]}"""),
+        glbOf(
+          """{"nodes":[{"name":"Snow","translation":[0,1,0],"extras":{"xr":{"particles":{"preset":"snow","count":10}}}}],"scenes":[{"nodes":[0]}]}"""
+        ),
       )
     val f = XRSpatialFeatures(b, r)
     assertEquals(1, f.emitterCount)
@@ -231,12 +259,20 @@ class XRSpatialFeaturesTest {
     assertEquals(SplatParser.DEFAULT_MAX_GPU_SPLATS, gpuFeatures.maxSplats)
     r.listener!!.onFrame(0.1, IDENTITY)
     val gpuMesh = r.splatMeshes.values.single()
-    // Static vertices are in local space (-1 and -3); sorted indices draw splat 1 (vertices 4..7) first.
+    // Static vertices are in local space (-1 and -3); sorted indices draw splat 1 (vertices 4..7)
+    // first.
     assertEquals(-1f, gpuMesh.positions[2], 1e-4f)
     assertEquals(-3f, gpuMesh.positions[14], 1e-4f)
     assertArrayEquals(intArrayOf(4, 5, 6, 4, 6, 7, 0, 1, 2, 0, 2, 3), gpuMesh.indices)
-    // Move camera behind splats (+Z looking toward +Z) so splat 0 (-1) is farther than splat 1 (-3).
-    val flippedCam = IDENTITY.copyOf().also { it[8] = 0f; it[9] = 0f; it[10] = -1f; it[14] = -10f }
+    // Move camera behind splats (+Z looking toward +Z) so splat 0 (-1) is farther than splat 1
+    // (-3).
+    val flippedCam =
+      IDENTITY.copyOf().also {
+        it[8] = 0f
+        it[9] = 0f
+        it[10] = -1f
+        it[14] = -10f
+      }
     r.listener!!.onFrame(0.1, flippedCam)
     assertEquals(1, r.indexOnlyUpdates)
     assertArrayEquals(intArrayOf(0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7), gpuMesh.indices)
@@ -296,7 +332,8 @@ class XRSpatialFeaturesTest {
 
   @Test
   fun magneticSnapQuantizesGridAnglesAndHysteresisSockets() {
-    val gp = MagneticSnap.quantizeGridPosition(doubleArrayOf(0.13, -0.08, 0.26), listOf(0.1, 0.05, 0.25))
+    val gp =
+      MagneticSnap.quantizeGridPosition(doubleArrayOf(0.13, -0.08, 0.26), listOf(0.1, 0.05, 0.25))
     assertArrayEquals(doubleArrayOf(0.1, -0.1, 0.25), gp, 1e-6)
 
     val q38 = XRSpatialMath.quatFromYaw(Math.toRadians(38.0))
@@ -337,23 +374,27 @@ class XRSpatialFeaturesTest {
       }
 
     // 1.5x preview zone (distance 0.26 <= 0.30, > 0.20): preview ring created, no snap yet.
-    val preview = f.applyMagneticSnap(0, doubleArrayOf(1.26, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    val preview =
+      f.applyMagneticSnap(0, doubleArrayOf(1.26, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
     assertEquals(null, preview.matchedSocketId)
     assertEquals("socket#1", preview.previewSocketId)
     assertEquals(1, r.meshes.size)
 
     // Within 0.20 capture radius -> snaps to Dock (node 1).
-    val snapped = f.applyMagneticSnap(0, doubleArrayOf(1.15, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    val snapped =
+      f.applyMagneticSnap(0, doubleArrayOf(1.15, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
     assertEquals("socket", snapped.mode)
     assertEquals("socket#1", snapped.matchedSocketId)
     assertArrayEquals(floatArrayOf(1f, 0.5f, -1f), b.session.nodeTransform(0)!!.translation, 1e-5f)
 
     // 1.25x hysteresis (distance 0.24 <= 0.25) -> stays snapped without duplicate event.
-    val held = f.applyMagneticSnap(0, doubleArrayOf(1.24, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    val held =
+      f.applyMagneticSnap(0, doubleArrayOf(1.24, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
     assertEquals("socket#1", held.matchedSocketId)
 
     // Beyond 1.25x hysteresis (distance 0.28 > 0.25) -> breaks away and emits unsnap.
-    val broken = f.applyMagneticSnap(0, doubleArrayOf(1.28, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
+    val broken =
+      f.applyMagneticSnap(0, doubleArrayOf(1.28, 0.5, -1.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0))!!
     assertEquals(null, broken.matchedSocketId)
     assertEquals(listOf("snap:0:1:socket", "unsnap:0:1"), events)
     f.dispose()
@@ -411,8 +452,11 @@ class XRSpatialFeaturesTest {
     }
     assertTrue(events.contains("leave:0"))
 
-    // Exploded view: layer 1 peels ahead of layer 2, reaching exploded positions and restoring rest at 0.
-    assertTrue(ExplodedView.computeLayerFactor(0.4, 1, 2) > ExplodedView.computeLayerFactor(0.4, 2, 2))
+    // Exploded view: layer 1 peels ahead of layer 2, reaching exploded positions and restoring rest
+    // at 0.
+    assertTrue(
+      ExplodedView.computeLayerFactor(0.4, 1, 2) > ExplodedView.computeLayerFactor(0.4, 2, 2)
+    )
     val sec = ExplodedView.parseSectionPlane("-z:0.2")
     assertTrue(sec.enabled)
     assertEquals(-0.2, sec.constant, 1e-6)
@@ -464,9 +508,20 @@ class XRSpatialFeaturesTest {
     assertEquals("walkable", parsedTraits.first { it.nodeIndex == 1 }.navigable)
     assertEquals("blocked", parsedTraits.first { it.nodeIndex == 2 }.navigable)
     assertNull(XRLiveSceneCoreHelper.safeAnchorId("__proto__"))
-    assertNull(PersistentAnchors.sanitizePose(doubleArrayOf(Double.NaN, 0.0, 0.0), doubleArrayOf(0.0, 0.0, 0.0, 1.0), doubleArrayOf(1.0, 1.0, 1.0)))
+    assertNull(
+      PersistentAnchors.sanitizePose(
+        doubleArrayOf(Double.NaN, 0.0, 0.0),
+        doubleArrayOf(0.0, 0.0, 0.0, 1.0),
+        doubleArrayOf(1.0, 1.0, 1.0),
+      )
+    )
 
-    b1.session.setNodeTransform(0, floatArrayOf(1.25f, 0.8f, -1.5f), floatArrayOf(0f, 0f, 0f, 1f), floatArrayOf(1.3f, 1.3f, 1.3f))
+    b1.session.setNodeTransform(
+      0,
+      floatArrayOf(1.25f, 0.8f, -1.5f),
+      floatArrayOf(0f, 0f, 0f, 1f),
+      floatArrayOf(1.3f, 1.3f, 1.3f),
+    )
     assertEquals(1, f1.savePersistedAnchors())
     val hashToken = f1.exportAnchorState()
     assertTrue(hashToken.isNotEmpty())
@@ -500,7 +555,8 @@ class XRSpatialFeaturesTest {
     assertEquals(1.25f, b2.session.nodeTransform(0)!!.translation[0], 1e-3f)
     assertTrue(events.contains("restored:1:url-hash"))
 
-    // Spatial locomotion: walkable platform landing, blocked surface rejection, snap-turn hysteresis.
+    // Spatial locomotion: walkable platform landing, blocked surface rejection, snap-turn
+    // hysteresis.
     f2.locomotionEnabled = true
     val validArc = f2.aimTeleport(doubleArrayOf(0.0, 1.6, 0.0), doubleArrayOf(0.0, -0.25, -1.0))
     assertTrue(validArc.valid)
@@ -551,34 +607,36 @@ class XRSpatialFeaturesTest {
 
     val rA = FakeRenderer()
     val bA = ThreeLiveRuntimeBinding(rA, glbOf(sceneJson))
-    val fA = XRSpatialFeatures(bA, rA).apply {
-      localPeerId = "peer-alice"
-      peerName = "Alice"
-      peerColor = "#38bdf8"
-    }
+    val fA =
+      XRSpatialFeatures(bA, rA).apply {
+        localPeerId = "peer-alice"
+        peerName = "Alice"
+        peerColor = "#38bdf8"
+      }
 
     val rB = FakeRenderer()
     val bB = ThreeLiveRuntimeBinding(rB, glbOf(sceneJson))
     val eventsB = ArrayList<String>()
-    val fB = XRSpatialFeatures(bB, rB).apply {
-      localPeerId = "peer-bob"
-      peerName = "Bob"
-      peerColor = "#f472b6"
-      listener =
-        object : XRSpatialFeatures.Listener {
-          override fun onPeerJoin(peerId: String, name: String, color: String) {
-            eventsB += "join:$peerId:$name:$color"
-          }
+    val fB =
+      XRSpatialFeatures(bB, rB).apply {
+        localPeerId = "peer-bob"
+        peerName = "Bob"
+        peerColor = "#f472b6"
+        listener =
+          object : XRSpatialFeatures.Listener {
+            override fun onPeerJoin(peerId: String, name: String, color: String) {
+              eventsB += "join:$peerId:$name:$color"
+            }
 
-          override fun onPeerLeave(peerId: String, name: String, color: String) {
-            eventsB += "leave:$peerId:$name"
-          }
+            override fun onPeerLeave(peerId: String, name: String, color: String) {
+              eventsB += "leave:$peerId:$name"
+            }
 
-          override fun onPeerSync(peerId: String, nodeId: String) {
-            eventsB += "sync:$peerId:$nodeId"
+            override fun onPeerSync(peerId: String, nodeId: String) {
+              eventsB += "sync:$peerId:$nodeId"
+            }
           }
-        }
-    }
+      }
 
     // Wire in-memory relay hub between A and B.
     fA.roomSend = { raw -> fB.handleRoomMessage(raw, atMs = 1000L) }
@@ -594,13 +652,24 @@ class XRSpatialFeaturesTest {
         atMs = 1000L,
       )
     )
-    assertTrue(!fA.broadcastPoseTick(doubleArrayOf(0.2, 1.6, 0.5), doubleArrayOf(0.0, 0.0, 0.0, 1.0), atMs = 1020L))
+    assertTrue(
+      !fA.broadcastPoseTick(
+        doubleArrayOf(0.2, 1.6, 0.5),
+        doubleArrayOf(0.0, 0.0, 0.0, 1.0),
+        atMs = 1020L,
+      )
+    )
     assertEquals(1, fB.peerCount)
     assertTrue(eventsB.contains("join:peer-alice:Alice:#38bdf8"))
     assertEquals(2, rB.meshes.size) // visor + laser
 
     // Soft-lock ownership: Alice grabs node 0 -> Bob rejected until lease expires.
-    bA.session.setNodeTransform(0, floatArrayOf(0.65f, 0.8f, -1.2f), floatArrayOf(0f, 0f, 0f, 1f), floatArrayOf(1f, 1f, 1f))
+    bA.session.setNodeTransform(
+      0,
+      floatArrayOf(0.65f, 0.8f, -1.2f),
+      floatArrayOf(0f, 0f, 0f, 1f),
+      floatArrayOf(1f, 1f, 1f),
+    )
     assertTrue(fA.broadcastNodeDelta(0, "grab", atMs = 1000L))
     assertEquals(0.65f, bB.session.nodeTransform(0)!!.translation[0], 1e-3f)
     assertEquals("peer-alice", fB.getNodeOwner("chassis", atMs = 1500L))
@@ -617,7 +686,11 @@ class XRSpatialFeaturesTest {
     assertTrue(
       fA.broadcastPaintStroke(
         "s1",
-        listOf(doubleArrayOf(0.0, 1.0, -0.5), doubleArrayOf(0.1, 1.05, -0.5), doubleArrayOf(0.2, 1.1, -0.5)),
+        listOf(
+          doubleArrayOf(0.0, 1.0, -0.5),
+          doubleArrayOf(0.1, 1.05, -0.5),
+          doubleArrayOf(0.2, 1.1, -0.5),
+        ),
         "#22c55e",
         0.01,
       )
@@ -650,6 +723,7 @@ class XRSpatialFeaturesTest {
       r.copyInto(out)
       return true
     }
+
     val meshes = LinkedHashMap<Int, Mesh>()
     val splatMeshes = LinkedHashMap<Int, Mesh>()
     val transforms = HashMap<Int, List<FloatArray>>()
@@ -659,7 +733,12 @@ class XRSpatialFeaturesTest {
 
     override fun setCameraOptions(options: ThreeLiveCameraOptions) {}
 
-    override fun setNodeTransform(nodeIndex: Int, translation: FloatArray, rotation: FloatArray, scale: FloatArray) {
+    override fun setNodeTransform(
+      nodeIndex: Int,
+      translation: FloatArray,
+      rotation: FloatArray,
+      scale: FloatArray,
+    ) {
       transforms[nodeIndex] = listOf(rotation.copyOf(), scale.copyOf())
     }
 
@@ -673,13 +752,23 @@ class XRSpatialFeaturesTest {
       roughnessFactor: Float,
     ) {}
 
-    override fun addDynamicMesh(positions: FloatArray, normals: FloatArray?, indices: IntArray, color: FloatArray): Int {
+    override fun addDynamicMesh(
+      positions: FloatArray,
+      normals: FloatArray?,
+      indices: IntArray,
+      color: FloatArray,
+    ): Int {
       val id = next++
       meshes[id] = Mesh(positions, indices)
       return id
     }
 
-    override fun updateDynamicMesh(meshId: Int, positions: FloatArray, normals: FloatArray?, indices: IntArray) {
+    override fun updateDynamicMesh(
+      meshId: Int,
+      positions: FloatArray,
+      normals: FloatArray?,
+      indices: IntArray,
+    ) {
       meshes[meshId]?.let {
         it.positions = positions
         it.indices = indices
@@ -691,7 +780,12 @@ class XRSpatialFeaturesTest {
       splatMeshes.remove(meshId)
     }
 
-    override fun addSplatMesh(positions: FloatArray, uvs: FloatArray, colors: ByteArray, indices: IntArray): Int {
+    override fun addSplatMesh(
+      positions: FloatArray,
+      uvs: FloatArray,
+      colors: ByteArray,
+      indices: IntArray,
+    ): Int {
       val id = next++
       splatMeshes[id] = Mesh(positions, indices)
       return id
@@ -737,7 +831,13 @@ class XRSpatialFeaturesTest {
   }
 
   private companion object {
-    val IDENTITY = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
+    val IDENTITY =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[15] = 1f
+      }
 
     const val SCENE =
       """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],

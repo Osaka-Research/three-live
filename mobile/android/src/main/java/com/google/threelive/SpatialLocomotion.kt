@@ -32,10 +32,7 @@ object SpatialLocomotion {
   const val COMFORT_VIGNETTE_MS: Double = 120.0
 
   /** Result of evaluating thumbstick horizontal deflection against snap-turn hysteresis. */
-  data class SnapTurnStep(
-    val deltaYawDeg: Double,
-    val latched: Boolean,
-  )
+  data class SnapTurnStep(val deltaYawDeg: Double, val latched: Boolean)
 
   /** Result of evaluating a parabolic teleport arc against scene geometry and ground fallback. */
   data class TeleportArcHit(

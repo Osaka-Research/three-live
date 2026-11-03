@@ -231,7 +231,8 @@ function buildSceneCoreExtension(xr: XRMeshTraits): Record<string, any> {
   }
   if (xr.follow) {
     comp.follow = {
-      target: typeof xr.follow === 'object' ? (xr.follow.mode ?? 'head') : xr.follow,
+      target:
+        typeof xr.follow === 'object' ? (xr.follow.mode ?? 'head') : xr.follow,
     };
   }
   if (xr.anchor) {
@@ -363,7 +364,9 @@ export function sceneToCanvas3D(
         // The canonical serializer (spatial plugins bundle / compiler engine) upgrades
         // `extras.xr` and `ANDROID_xr_scenecore` to the normalized trait set.
         getSharedRegistry().xrTraitSerializer?.gltfNode(node, obj.userData.xr);
-        nodeExtensionsUsed.add('MOZ_hubs_components').add('ANDROID_xr_scenecore');
+        nodeExtensionsUsed
+          .add('MOZ_hubs_components')
+          .add('ANDROID_xr_scenecore');
       }
     }
 
@@ -1494,14 +1497,25 @@ def Scope "Meshes"
           `prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsCollisionAPI"]`,
         );
       }
-      const xrDictLines: string[] = getSharedRegistry().xrTraitSerializer?.usdLines(
-        xr,
-        sanitizeUsdStringLiteral,
-      ) ?? [];
+      const xrDictLines: string[] =
+        getSharedRegistry().xrTraitSerializer?.usdLines(
+          xr,
+          sanitizeUsdStringLiteral,
+        ) ?? [];
       if (!xrDictLines.length) {
-        for (const k of ['grab', 'billboard', 'follow', 'anchor', 'physics'] as const) {
-          const v: unknown = k === 'follow' && typeof xr.follow === 'object' ? xr.follow.mode ?? 'head' : xr[k];
-          if (v !== undefined) xrDictLines.push(`string ${k} = "${sanitizeUsdStringLiteral(v)}"`);
+        for (const k of [
+          'grab',
+          'billboard',
+          'follow',
+          'anchor',
+          'physics',
+        ] as const) {
+          const v: unknown =
+            k === 'follow' && typeof xr.follow === 'object'
+              ? (xr.follow.mode ?? 'head')
+              : xr[k];
+          if (v !== undefined)
+            xrDictLines.push(`string ${k} = "${sanitizeUsdStringLiteral(v)}"`);
         }
       }
       if (xrDictLines.length > 0) {

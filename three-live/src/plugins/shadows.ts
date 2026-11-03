@@ -281,10 +281,26 @@ export const contactShadowPlugin: ThreeLivePlugin = {
       const sx = Math.max(0.045, whx * 1.45 * spread);
       const sz = Math.max(0.045, whz * 1.45 * spread);
       _quadVerts.set([
-        wx - sx, surfaceY, wz - sz, 0, 0,
-        wx + sx, surfaceY, wz - sz, 1, 0,
-        wx + sx, surfaceY, wz + sz, 1, 1,
-        wx - sx, surfaceY, wz + sz, 0, 1,
+        wx - sx,
+        surfaceY,
+        wz - sz,
+        0,
+        0,
+        wx + sx,
+        surfaceY,
+        wz - sz,
+        1,
+        0,
+        wx + sx,
+        surfaceY,
+        wz + sz,
+        1,
+        1,
+        wx - sx,
+        surfaceY,
+        wz + sz,
+        0,
+        1,
       ]);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, _quadVerts);
       gl.uniform1f(ctx.uIntensity, itemIntensity);

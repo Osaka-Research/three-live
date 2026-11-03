@@ -821,10 +821,7 @@ export class WebXRSessionManager {
           const d = tDist(e),
             a = tAng(e);
           if (lastDist && lastDist > 4 && opts.arScale !== 'fixed') {
-            userScale = Math.max(
-              0.15,
-              Math.min(6, userScale * (d / lastDist)),
-            );
+            userScale = Math.max(0.15, Math.min(6, userScale * (d / lastDist)));
           }
           if (lastAng !== null) {
             let da = a - lastAng;

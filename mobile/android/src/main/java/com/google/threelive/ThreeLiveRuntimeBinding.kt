@@ -19,18 +19,15 @@ package com.google.threelive
 import java.nio.ByteBuffer
 
 /**
- * Connects an [XRLiveRuntimeSession] to a [ThreeLiveSceneRenderer]: behavior-graph and trait changes
- * become renderer calls, taps become `pointer/onSelect`, and every frame steps the session with the
- * camera as the head pose. Host-facing events (mesh clicks, camera changes, graph events) are
- * reported through [Callbacks] with the same payload fields as the web element.
+ * Connects an [XRLiveRuntimeSession] to a [ThreeLiveSceneRenderer]: behavior-graph and trait
+ * changes become renderer calls, taps become `pointer/onSelect`, and every frame steps the session
+ * with the camera as the head pose. Host-facing events (mesh clicks, camera changes, graph events)
+ * are reported through [Callbacks] with the same payload fields as the web element.
  *
  * Use on the main thread. Call `renderer.load(glb)` first, then create one binding per loaded scene
  * and [dispose] it before loading another.
  */
-class ThreeLiveRuntimeBinding(
-  private val renderer: ThreeLiveSceneRenderer,
-  glb: ByteBuffer,
-) {
+class ThreeLiveRuntimeBinding(private val renderer: ThreeLiveSceneRenderer, glb: ByteBuffer) {
   /** Host callbacks; every method is optional. */
   interface Callbacks {
     /**
@@ -38,6 +35,12 @@ class ThreeLiveRuntimeBinding(
      * hit node (the web `meshclick` `mesh` field); [point] is the world hit point if known.
      */
     fun onMeshClick(nodeIndex: Int, nodeName: String?, meshName: String?, point: FloatArray?) {}
+
+    /**
+     * An `xr-live-sim` spawned instance ([ThreeLiveSceneRenderer.instantiateNode] id) was tapped;
+     * [point] is the world hit point if known.
+     */
+    fun onInstanceClick(instanceId: Int, point: FloatArray?) {}
 
     /** The camera moved (web `camera-change` rule: ≥ 1° or ≥ 0.02 zoom). */
     fun onCameraChange(change: ThreeLiveCameraChange) {}
@@ -57,7 +60,8 @@ class ThreeLiveRuntimeBinding(
 
   /** Hierarchy, mesh and material index of the loaded scene. */
   val scene: GltfSceneIndex =
-    GltfSceneIndex.fromGlb(glb) ?: throw IllegalArgumentException("ThreeLiveRuntimeBinding: not a valid .glb")
+    GltfSceneIndex.fromGlb(glb)
+      ?: throw IllegalArgumentException("ThreeLiveRuntimeBinding: not a valid .glb")
 
   /** Host callbacks. */
   var callbacks: Callbacks? = null
@@ -73,13 +77,20 @@ class ThreeLiveRuntimeBinding(
   var handSource: HandJointSource? = null
 
   /**
-   * Extra pointer handler consulted before camera orbiting (spatial features such as handles
-   * and paint plug in here).
+   * Extra pointer handler consulted before camera orbiting (spatial features such as handles and
+   * paint plug in here).
    */
   var pointerHandler: ThreeLiveRendererListener? = null
 
   /** Extra per-frame hook, run after the session step (spatial features plug in here). */
   var frameHandler: ((dtSeconds: Double, cameraWorld: FloatArray) -> Unit)? = null
+
+  /**
+   * Additional per-frame callbacks run after [frameHandler] (for example stepping an [XRSimWorld]).
+   * Safe to modify from callbacks.
+   */
+  val frameListeners: MutableList<(dtSeconds: Double, cameraWorld: FloatArray) -> Unit> =
+    java.util.concurrent.CopyOnWriteArrayList()
 
   private val pendingVisibility = LinkedHashSet<Int>()
   private val gestureTracker = XRHandGestureTracker()
@@ -112,7 +123,13 @@ class ThreeLiveRuntimeBinding(
         metallicFactor: Float,
         roughnessFactor: Float,
       ) {
-        renderer.setMaterialFactors(materialIndex, baseColorFactor, emissiveFactor, metallicFactor, roughnessFactor)
+        renderer.setMaterialFactors(
+          materialIndex,
+          baseColorFactor,
+          emissiveFactor,
+          metallicFactor,
+          roughnessFactor,
+        )
       }
 
       override fun onAlphaCutoffChanged(materialIndex: Int, alphaCutoff: Float) {
@@ -137,10 +154,17 @@ class ThreeLiveRuntimeBinding(
       override fun onPick(pick: ThreeLivePick) {
         if (disposed) return
         val node = pick.nodeIndex
-        if (node in 0 until scene.nodeCount) {
+        if (node < 0 && pick.instanceId >= 0) {
+          callbacks?.onInstanceClick(pick.instanceId, pick.hitPoint)
+        } else if (node in 0 until scene.nodeCount) {
           session.dispatchSelect(node, pick.hitPoint)
           applyPendingVisibility()
-          callbacks?.onMeshClick(node, scene.nodeNames[node], scene.meshNameOfNode(node), pick.hitPoint)
+          callbacks?.onMeshClick(
+            node,
+            scene.nodeNames[node],
+            scene.meshNameOfNode(node),
+            pick.hitPoint,
+          )
         }
       }
 
@@ -176,6 +200,8 @@ class ThreeLiveRuntimeBinding(
         }
         applyPendingVisibility()
         frameHandler?.invoke(dtSeconds, cameraWorld)
+        for (listener in frameListeners) listener(dtSeconds, cameraWorld)
+        applyPendingVisibility()
       }
     }
 
@@ -217,6 +243,7 @@ class ThreeLiveRuntimeBinding(
     if (renderer.listener === rendererListener) renderer.listener = null
     pointerHandler = null
     frameHandler = null
+    frameListeners.clear()
   }
 
   /** Pushes effective visibility for every node whose own flag (or an ancestor's) changed. */
@@ -245,7 +272,8 @@ class ThreeLiveRuntimeBinding(
     rootWasSet = hasRoot
   }
 
-  private fun headPoseOf(cameraWorld: FloatArray): XRPose {
+  /** The head (camera) pose for a renderer camera world matrix. */
+  fun headPoseOf(cameraWorld: FloatArray): XRPose {
     for (k in 0 until 16) m[k] = cameraWorld.getOrElse(k) { if (k % 5 == 0) 1f else 0f }.toDouble()
     XRSpatialMath.extractQuaternion(m, q)
     return XRPose(

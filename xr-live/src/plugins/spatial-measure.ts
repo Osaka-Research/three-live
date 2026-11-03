@@ -28,23 +28,18 @@ import {
   type DimensionsOptions,
   type DimensionUnit,
 } from '../../../three-live/src/xr-trait-schema';
-import {
-  computeBillboardQuaternion,
-  getMeshXRTraits,
-} from '../xr-traits';
+import {computeBillboardQuaternion, getMeshXRTraits} from '../xr-traits';
 import {
   applyWorldMatrix,
   cacheXRFrame,
   claimEvent,
   computeLocalBounds,
   createDynamicMesh,
-  type DynamicGeometry,
   emitPluginEvent,
   isEventClaimed,
   isXRFrameFresh,
   meshWorldMatrix,
   normalizeRayDir,
-  type PluginViewer,
   reattachDynamicMesh,
   removeDynamicMesh,
   resolveHeadPose,
@@ -56,6 +51,8 @@ import {
   vNorm,
   vScale,
   vSub,
+  type DynamicGeometry,
+  type PluginViewer,
   type Vec3,
 } from './common';
 import {parseHexColor} from './spatial-paint';
@@ -188,8 +185,12 @@ export function buildDimensionCallouts(
   tickHalf = CALLOUT_TICK_HALF_METERS,
 ): DimensionCallout[] {
   const out: DimensionCallout[] = [];
-  const off = Number.isFinite(offset) ? Math.max(0.005, offset) : CALLOUT_OFFSET_METERS;
-  const tick = Number.isFinite(tickHalf) ? Math.max(0.003, tickHalf) : CALLOUT_TICK_HALF_METERS;
+  const off = Number.isFinite(offset)
+    ? Math.max(0.005, offset)
+    : CALLOUT_OFFSET_METERS;
+  const tick = Number.isFinite(tickHalf)
+    ? Math.max(0.003, tickHalf)
+    : CALLOUT_TICK_HALF_METERS;
 
   for (const axis of axes) {
     if (axis === 'x') {
@@ -282,7 +283,11 @@ export function buildSegmentBarsGeometry(
   let vOut = 0;
   let iOut = 0;
   for (const [a, b] of valid) {
-    const mid: Vec3 = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5];
+    const mid: Vec3 = [
+      (a[0] + b[0]) * 0.5,
+      (a[1] + b[1]) * 0.5,
+      (a[2] + b[2]) * 0.5,
+    ];
     const diff = vSub(b, a);
     const halfLen = vLen(diff) * 0.5;
     const t = vNorm(diff, [1, 0, 0]);
@@ -354,25 +359,101 @@ export function buildDashedSegments(
  * Compact 2D stroke font in `[0..1] x [0..1]` glyph space for crisp,
  * zero-texture 3D dimension labels (`0-9`, `.`, `-`, `'`, `"`, `m`, `c`, `i`, `n`).
  */
-const GLYPH_STROKES: Readonly<Record<string, ReadonlyArray<readonly [number, number, number, number]>>> = {
-  '0': [[0.1, 0, 0.9, 0], [0.9, 0, 0.9, 1], [0.9, 1, 0.1, 1], [0.1, 1, 0.1, 0]],
-  '1': [[0.5, 0, 0.5, 1], [0.25, 0.8, 0.5, 1], [0.2, 0, 0.8, 0]],
-  '2': [[0.1, 1, 0.9, 1], [0.9, 1, 0.9, 0.5], [0.9, 0.5, 0.1, 0.5], [0.1, 0.5, 0.1, 0], [0.1, 0, 0.9, 0]],
-  '3': [[0.1, 1, 0.9, 1], [0.9, 1, 0.9, 0], [0.1, 0.5, 0.9, 0.5], [0.1, 0, 0.9, 0]],
-  '4': [[0.1, 1, 0.1, 0.5], [0.1, 0.5, 0.9, 0.5], [0.8, 1, 0.8, 0]],
-  '5': [[0.9, 1, 0.1, 1], [0.1, 1, 0.1, 0.5], [0.1, 0.5, 0.9, 0.5], [0.9, 0.5, 0.9, 0], [0.9, 0, 0.1, 0]],
-  '6': [[0.9, 1, 0.1, 1], [0.1, 1, 0.1, 0], [0.1, 0, 0.9, 0], [0.9, 0, 0.9, 0.5], [0.9, 0.5, 0.1, 0.5]],
-  '7': [[0.1, 1, 0.9, 1], [0.9, 1, 0.4, 0]],
-  '8': [[0.1, 0, 0.9, 0], [0.9, 0, 0.9, 1], [0.9, 1, 0.1, 1], [0.1, 1, 0.1, 0], [0.1, 0.5, 0.9, 0.5]],
-  '9': [[0.1, 0, 0.9, 0], [0.9, 0, 0.9, 1], [0.9, 1, 0.1, 1], [0.1, 1, 0.1, 0.5], [0.1, 0.5, 0.9, 0.5]],
-  '.': [[0.4, 0, 0.6, 0], [0.5, 0, 0.5, 0.15]],
+const GLYPH_STROKES: Readonly<
+  Record<string, ReadonlyArray<readonly [number, number, number, number]>>
+> = {
+  '0': [
+    [0.1, 0, 0.9, 0],
+    [0.9, 0, 0.9, 1],
+    [0.9, 1, 0.1, 1],
+    [0.1, 1, 0.1, 0],
+  ],
+  '1': [
+    [0.5, 0, 0.5, 1],
+    [0.25, 0.8, 0.5, 1],
+    [0.2, 0, 0.8, 0],
+  ],
+  '2': [
+    [0.1, 1, 0.9, 1],
+    [0.9, 1, 0.9, 0.5],
+    [0.9, 0.5, 0.1, 0.5],
+    [0.1, 0.5, 0.1, 0],
+    [0.1, 0, 0.9, 0],
+  ],
+  '3': [
+    [0.1, 1, 0.9, 1],
+    [0.9, 1, 0.9, 0],
+    [0.1, 0.5, 0.9, 0.5],
+    [0.1, 0, 0.9, 0],
+  ],
+  '4': [
+    [0.1, 1, 0.1, 0.5],
+    [0.1, 0.5, 0.9, 0.5],
+    [0.8, 1, 0.8, 0],
+  ],
+  '5': [
+    [0.9, 1, 0.1, 1],
+    [0.1, 1, 0.1, 0.5],
+    [0.1, 0.5, 0.9, 0.5],
+    [0.9, 0.5, 0.9, 0],
+    [0.9, 0, 0.1, 0],
+  ],
+  '6': [
+    [0.9, 1, 0.1, 1],
+    [0.1, 1, 0.1, 0],
+    [0.1, 0, 0.9, 0],
+    [0.9, 0, 0.9, 0.5],
+    [0.9, 0.5, 0.1, 0.5],
+  ],
+  '7': [
+    [0.1, 1, 0.9, 1],
+    [0.9, 1, 0.4, 0],
+  ],
+  '8': [
+    [0.1, 0, 0.9, 0],
+    [0.9, 0, 0.9, 1],
+    [0.9, 1, 0.1, 1],
+    [0.1, 1, 0.1, 0],
+    [0.1, 0.5, 0.9, 0.5],
+  ],
+  '9': [
+    [0.1, 0, 0.9, 0],
+    [0.9, 0, 0.9, 1],
+    [0.9, 1, 0.1, 1],
+    [0.1, 1, 0.1, 0.5],
+    [0.1, 0.5, 0.9, 0.5],
+  ],
+  '.': [
+    [0.4, 0, 0.6, 0],
+    [0.5, 0, 0.5, 0.15],
+  ],
   '-': [[0.15, 0.5, 0.85, 0.5]],
   "'": [[0.5, 1, 0.45, 0.68]],
-  '"': [[0.32, 1, 0.28, 0.68], [0.68, 1, 0.64, 0.68]],
-  'c': [[0.85, 0.6, 0.15, 0.6], [0.15, 0.6, 0.15, 0], [0.15, 0, 0.85, 0]],
-  'm': [[0.08, 0, 0.08, 0.6], [0.08, 0.6, 0.5, 0.6], [0.5, 0.6, 0.5, 0], [0.5, 0.6, 0.92, 0.6], [0.92, 0.6, 0.92, 0]],
-  'i': [[0.5, 0, 0.5, 0.58], [0.5, 0.76, 0.5, 0.9]],
-  'n': [[0.15, 0, 0.15, 0.6], [0.15, 0.6, 0.85, 0.6], [0.85, 0.6, 0.85, 0]],
+  '"': [
+    [0.32, 1, 0.28, 0.68],
+    [0.68, 1, 0.64, 0.68],
+  ],
+  'c': [
+    [0.85, 0.6, 0.15, 0.6],
+    [0.15, 0.6, 0.15, 0],
+    [0.15, 0, 0.85, 0],
+  ],
+  'm': [
+    [0.08, 0, 0.08, 0.6],
+    [0.08, 0.6, 0.5, 0.6],
+    [0.5, 0.6, 0.5, 0],
+    [0.5, 0.6, 0.92, 0.6],
+    [0.92, 0.6, 0.92, 0],
+  ],
+  'i': [
+    [0.5, 0, 0.5, 0.58],
+    [0.5, 0.76, 0.5, 0.9],
+  ],
+  'n': [
+    [0.15, 0, 0.15, 0.6],
+    [0.15, 0.6, 0.85, 0.6],
+    [0.85, 0.6, 0.85, 0],
+  ],
 };
 
 /**
@@ -452,7 +533,14 @@ export function buildVectorLabelGeometry(
       v++;
     }
     indices.set(
-      [frontBase, frontBase + 1, frontBase + 2, frontBase, frontBase + 2, frontBase + 3],
+      [
+        frontBase,
+        frontBase + 1,
+        frontBase + 2,
+        frontBase,
+        frontBase + 2,
+        frontBase + 3,
+      ],
       k,
     );
     k += 6;
@@ -466,7 +554,14 @@ export function buildVectorLabelGeometry(
       v++;
     }
     indices.set(
-      [backBase, backBase + 2, backBase + 1, backBase, backBase + 3, backBase + 2],
+      [
+        backBase,
+        backBase + 2,
+        backBase + 1,
+        backBase,
+        backBase + 3,
+        backBase + 2,
+      ],
       k,
     );
     k += 6;
@@ -506,28 +601,68 @@ export interface SpatialMeasureElementConfig {
 
 /** Parses `spatial-measure` and `measure-unit` attributes on `<xr-live>`. */
 // tslint:disable-next-line:no-any Host element is `<xr-live>`.
-export function resolveSpatialMeasureConfig(element: any): SpatialMeasureElementConfig {
-  const hasAttr = typeof element?.hasAttribute === 'function' && element.hasAttribute('spatial-measure');
-  const rawMode = (element?.getAttribute?.('spatial-measure') ?? '').trim().toLowerCase();
-  const rawUnit = (element?.getAttribute?.('measure-unit') ?? 'auto').trim().toLowerCase();
+export function resolveSpatialMeasureConfig(
+  element: any,
+): SpatialMeasureElementConfig {
+  const hasAttr =
+    typeof element?.hasAttribute === 'function' &&
+    element.hasAttribute('spatial-measure');
+  const rawMode = (element?.getAttribute?.('spatial-measure') ?? '')
+    .trim()
+    .toLowerCase();
+  const rawUnit = (element?.getAttribute?.('measure-unit') ?? 'auto')
+    .trim()
+    .toLowerCase();
   const unit: DimensionUnit =
-    rawUnit === 'm' || rawUnit === 'cm' || rawUnit === 'mm' || rawUnit === 'in' || rawUnit === 'ft-in'
+    rawUnit === 'm' ||
+    rawUnit === 'cm' ||
+    rawUnit === 'mm' ||
+    rawUnit === 'in' ||
+    rawUnit === 'ft-in'
       ? rawUnit
       : 'auto';
-  if (hasAttr && (rawMode === 'false' || rawMode === 'none' || rawMode === 'off')) {
-    return {boundsEnabled: false, tapeEnabled: false, defaultUnit: unit, disabled: true};
+  if (
+    hasAttr &&
+    (rawMode === 'false' || rawMode === 'none' || rawMode === 'off')
+  ) {
+    return {
+      boundsEnabled: false,
+      tapeEnabled: false,
+      defaultUnit: unit,
+      disabled: true,
+    };
   }
   if (!hasAttr) {
-    return {boundsEnabled: false, tapeEnabled: false, defaultUnit: unit, disabled: false};
+    return {
+      boundsEnabled: false,
+      tapeEnabled: false,
+      defaultUnit: unit,
+      disabled: false,
+    };
   }
   if (rawMode === 'tape') {
-    return {boundsEnabled: false, tapeEnabled: true, defaultUnit: unit, disabled: false};
+    return {
+      boundsEnabled: false,
+      tapeEnabled: true,
+      defaultUnit: unit,
+      disabled: false,
+    };
   }
   if (rawMode === 'both' || rawMode === 'all') {
-    return {boundsEnabled: true, tapeEnabled: true, defaultUnit: unit, disabled: false};
+    return {
+      boundsEnabled: true,
+      tapeEnabled: true,
+      defaultUnit: unit,
+      disabled: false,
+    };
   }
   // `""`, `"bounds"`, or `"true"` enables bounding-box callouts.
-  return {boundsEnabled: true, tapeEnabled: false, defaultUnit: unit, disabled: false};
+  return {
+    boundsEnabled: true,
+    tapeEnabled: false,
+    defaultUnit: unit,
+    disabled: false,
+  };
 }
 
 function quantKey(v: readonly number[]): string {
@@ -553,7 +688,12 @@ export class XRSpatialMeasureController {
   private lastTapMs = 0;
 
   /** Starts a live tape-measure segment at `start`. */
-  beginTape(viewer: PluginViewer, start: Vec3, hand = 'screen', unit: DimensionUnit = 'auto'): void {
+  beginTape(
+    viewer: PluginViewer,
+    start: Vec3,
+    hand = 'screen',
+    unit: DimensionUnit = 'auto',
+  ): void {
     this.cancelActiveTape(viewer);
     const lineGeo = buildSegmentBarsGeometry([[start, start]], 0.0025);
     const labelGeo = buildVectorLabelGeometry(formatSpatialDimension(0, unit));
@@ -571,7 +711,13 @@ export class XRSpatialMeasureController {
       pickable: false,
       worldSpace: true,
     });
-    setWorldTRS(viewer, labelMesh, [0, 0, 0, 1], [start[0], start[1] + 0.03, start[2]], [1, 1, 1]);
+    setWorldTRS(
+      viewer,
+      labelMesh,
+      [0, 0, 0, 1],
+      [start[0], start[1] + 0.03, start[2]],
+      [1, 1, 1],
+    );
     this.activeTape = {
       hand,
       start: [...start],
@@ -594,7 +740,11 @@ export class XRSpatialMeasureController {
     a.current = [...end];
     const dist = vLen(vSub(a.current, a.start));
     const dashes = buildDashedSegments(a.start, a.current, 0.025, 0.015);
-    updateDynamicMesh(viewer, a.lineMesh, buildSegmentBarsGeometry(dashes, 0.0022));
+    updateDynamicMesh(
+      viewer,
+      a.lineMesh,
+      buildSegmentBarsGeometry(dashes, 0.0022),
+    );
     updateDynamicMesh(
       viewer,
       a.labelMesh,
@@ -620,7 +770,12 @@ export class XRSpatialMeasureController {
     hand?: string,
     unit: DimensionUnit = 'auto',
     nowMs = Date.now(),
-  ): {start: Vec3; end: Vec3; distanceMeters: number; formatted: string} | null {
+  ): {
+    start: Vec3;
+    end: Vec3;
+    distanceMeters: number;
+    formatted: string;
+  } | null {
     const a = this.activeTape;
     if (!a || (hand !== undefined && hand !== a.hand)) return null;
     this.activeTape = null;
@@ -629,7 +784,11 @@ export class XRSpatialMeasureController {
       removeDynamicMesh(viewer, a.lineMesh);
       removeDynamicMesh(viewer, a.labelMesh);
       // Double-pinch / double-tap in empty space clears all tape measurements.
-      if (viewer && nowMs - this.lastTapMs > 0 && nowMs - this.lastTapMs < 320) {
+      if (
+        viewer &&
+        nowMs - this.lastTapMs > 0 &&
+        nowMs - this.lastTapMs < 320
+      ) {
         this.clearMeasurements(viewer);
         this.lastTapMs = 0;
       } else {
@@ -640,7 +799,11 @@ export class XRSpatialMeasureController {
     this.lastTapMs = 0;
     const formatted = formatSpatialDimension(dist, unit);
     const dashes = buildDashedSegments(a.start, a.current, 0.025, 0.015);
-    updateDynamicMesh(viewer, a.lineMesh, buildSegmentBarsGeometry(dashes, 0.0022));
+    updateDynamicMesh(
+      viewer,
+      a.lineMesh,
+      buildSegmentBarsGeometry(dashes, 0.0022),
+    );
     updateDynamicMesh(viewer, a.labelMesh, buildVectorLabelGeometry(formatted));
 
     if (this.tapeSegments.length >= MAX_TAPE_SEGMENTS) {
@@ -699,7 +862,8 @@ export class XRSpatialMeasureController {
     for (const mesh of meshes) {
       if (elemCfg.disabled) break;
       if (!mesh || mesh.isPluginMesh || mesh.visible === false) continue;
-      if (typeof mesh.name === 'string' && mesh.name.startsWith('__xr_')) continue;
+      if (typeof mesh.name === 'string' && mesh.name.startsWith('__xr_'))
+        continue;
       const rawTraits = getMeshXRTraits(mesh);
       const dims =
         parseDimensions(rawTraits?.dimensions) ??
@@ -743,7 +907,11 @@ export class XRSpatialMeasureController {
         const callouts = buildDimensionCallouts(wb.min, wb.max, dims.axes);
         const segs: Array<[Vec3, Vec3]> = [];
         for (const c of callouts) {
-          segs.push([c.start, c.end], [c.tickStartA, c.tickStartB], [c.tickEndA, c.tickEndB]);
+          segs.push(
+            [c.start, c.end],
+            [c.tickStartA, c.tickStartB],
+            [c.tickEndA, c.tickEndB],
+          );
         }
         const barGeo = buildSegmentBarsGeometry(segs, 0.002);
         const rgba = parseHexColor(dims.color);
@@ -842,7 +1010,9 @@ const controllers = new WeakMap<object, XRSpatialMeasureController>();
 const listeners = new WeakMap<object, Array<[string, EventListener]>>();
 
 /** Returns (creating on first use) the `spatial-measure` controller for `key`. */
-export function getSpatialMeasureController(key: object): XRSpatialMeasureController {
+export function getSpatialMeasureController(
+  key: object,
+): XRSpatialMeasureController {
   let c = controllers.get(key);
   if (!c) {
     c = new XRSpatialMeasureController();
@@ -912,10 +1082,15 @@ export const spatialMeasurePlugin: ThreeLivePlugin = {
   onElementConnected(element: any): void {
     if (!element) return;
     const ctrl = getSpatialMeasureController(element);
-    const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
+    const viewerOf = (): PluginViewer | undefined =>
+      element._view ?? element.viewer;
     element.clearMeasurements = () => ctrl.clearMeasurements(viewerOf());
 
-    if (typeof element.addEventListener !== 'function' || listeners.has(element)) return;
+    if (
+      typeof element.addEventListener !== 'function' ||
+      listeners.has(element)
+    )
+      return;
     const onStart = (e: Event): void => {
       const cfg = resolveSpatialMeasureConfig(element);
       const viewer = viewerOf();
@@ -924,7 +1099,11 @@ export const spatialMeasurePlugin: ThreeLivePlugin = {
       // Defer to object grabbing or plugin gizmos when hit.
       if (d?.hit?.mesh?.isPluginMesh) return;
       const hitTraits = d?.hit?.mesh ? getMeshXRTraits(d.hit.mesh) : undefined;
-      if (hitTraits?.grab || (hitTraits as {grabbable?: boolean} | undefined)?.grabbable) return;
+      if (
+        hitTraits?.grab ||
+        (hitTraits as {grabbable?: boolean} | undefined)?.grabbable
+      )
+        return;
       const pt = resolveTapeHitPoint(viewer, element, d);
       if (!pt) return;
       claimEvent(e);
@@ -965,7 +1144,12 @@ export const spatialMeasurePlugin: ThreeLivePlugin = {
     listeners.delete(element);
     controllers.get(element)?.dispose(element?._view ?? element?.viewer);
   },
-  onXRFrame(viewer: unknown, _session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    _session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;

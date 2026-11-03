@@ -201,7 +201,8 @@ public enum PersistentAnchors {
 
   /// Injects or removes `xr-state=<token>` in a URL fragment while preserving other params.
   public static func injectHashToken(existingHash: String?, token: String?) -> String {
-    let clean = (existingHash ?? "").hasPrefix("#")
+    let clean =
+      (existingHash ?? "").hasPrefix("#")
       ? String((existingHash ?? "").dropFirst()) : (existingHash ?? "")
     var parts = clean.split(separator: "&").map(String.init).filter {
       !$0.isEmpty && !$0.hasPrefix("xr-state=")

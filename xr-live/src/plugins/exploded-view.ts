@@ -40,14 +40,11 @@ import {
   claimEvent,
   computeLocalBounds,
   createDynamicMesh,
-  type DynamicGeometry,
   emitPluginEvent,
-  isEventClaimed,
   inverseRootMatrix,
+  isEventClaimed,
   isXRFrameFresh,
   measureFrameDt,
-  type PluginViewer,
-  type Quat,
   quatFromUnitVectors,
   reattachDynamicMesh,
   removeDynamicMesh,
@@ -62,6 +59,9 @@ import {
   vNorm,
   vScale,
   vSub,
+  type DynamicGeometry,
+  type PluginViewer,
+  type Quat,
   type Vec3,
 } from './common';
 import {buildDashedSegments, buildSegmentBarsGeometry} from './spatial-measure';
@@ -102,7 +102,10 @@ export function computeLayerFactor(
   if (f >= 1) return 1;
   const maxL = Math.max(1, Math.round(clampNum(maxLayer, 1, 10, 1)));
   if (maxL <= 1) return f * f * (3 - 2 * f);
-  const clampedL = Math.max(1, Math.min(maxL, Math.round(clampNum(layer, 1, 10, 1))));
+  const clampedL = Math.max(
+    1,
+    Math.min(maxL, Math.round(clampNum(layer, 1, 10, 1))),
+  );
   const stagger = 0.35;
   const span = 1 / (1 + (maxL - 1) * stagger);
   const start = (clampedL - 1) * stagger * span;
@@ -136,9 +139,13 @@ export function computeExplodedNodeOffset(
   const f = clampNum(params.factor, 0, 1, 0);
   if (f <= 1e-6) return [0, 0, 0];
 
-  const mode: ExplodeMode = params.mode && EXPLODE_MODES.has(params.mode) ? params.mode : 'radial';
+  const mode: ExplodeMode =
+    params.mode && EXPLODE_MODES.has(params.mode) ? params.mode : 'radial';
   const scale = clampNum(params.explodeScale, 0, 10, 1.5);
-  const radius = Math.max(0.05, Number.isFinite(params.assemblyRadius) ? params.assemblyRadius : 0.5);
+  const radius = Math.max(
+    0.05,
+    Number.isFinite(params.assemblyRadius) ? params.assemblyRadius : 0.5,
+  );
   const trait = params.trait ?? null;
   const layer = trait?.layer ?? 1;
   const maxLayer = Math.max(layer, params.maxLayer ?? 1);
@@ -166,11 +173,16 @@ export function computeExplodedNodeOffset(
     if (mode === 'axial-x' || mode === 'axial-y' || mode === 'axial-z') {
       const axisIdx = mode === 'axial-x' ? 0 : mode === 'axial-y' ? 1 : 2;
       const comp = rel[axisIdx];
-      const sign = Math.abs(comp) > 1e-4 ? Math.sign(comp) : spreadSlot >= 0 ? 1 : -1;
+      const sign =
+        Math.abs(comp) > 1e-4 ? Math.sign(comp) : spreadSlot >= 0 ? 1 : -1;
       dir = [0, 0, 0];
       dir[axisIdx] = sign;
-      const weight = Math.abs(comp) > 1e-4 ? Math.abs(comp) / radius : Math.abs(spreadSlot) * 0.6 + 0.25;
-      maxDist = (trait ? trait.distance : radius * Math.max(0.2, weight)) * scale;
+      const weight =
+        Math.abs(comp) > 1e-4
+          ? Math.abs(comp) / radius
+          : Math.abs(spreadSlot) * 0.6 + 0.25;
+      maxDist =
+        (trait ? trait.distance : radius * Math.max(0.2, weight)) * scale;
     } else if (mode === 'hierarchical') {
       const depth = Math.max(1, params.hierarchyDepth ?? 1);
       if (relDist > 1e-4) {
@@ -186,12 +198,18 @@ export function computeExplodedNodeOffset(
       // `radial`
       if (relDist > 1e-4) {
         dir = vScale(rel, 1 / relDist);
-        const shellWeight = Math.max(0.25, Math.min(1.6, relDist / radius + 0.25));
+        const shellWeight = Math.max(
+          0.25,
+          Math.min(1.6, relDist / radius + 0.25),
+        );
         maxDist = (trait ? trait.distance : radius * shellWeight) * scale;
       } else {
         // Coincident center parts fan out deterministically in XZ/Y.
         const angle = (idx / count) * Math.PI * 2;
-        dir = vNorm([Math.cos(angle), 0.25 * spreadSlot, Math.sin(angle)], [0, 1, 0]);
+        dir = vNorm(
+          [Math.cos(angle), 0.25 * spreadSlot, Math.sin(angle)],
+          [0, 1, 0],
+        );
         maxDist = (trait ? trait.distance : radius * 0.35) * scale;
       }
     }
@@ -207,7 +225,8 @@ export function computeTwoHandExplodeDelta(
   currentDistance: number,
   spanMeters = TWO_HAND_EXPLODE_SPAN_METERS,
 ): number {
-  if (!Number.isFinite(startDistance) || !Number.isFinite(currentDistance)) return 0;
+  if (!Number.isFinite(startDistance) || !Number.isFinite(currentDistance))
+    return 0;
   const span = Math.max(0.05, spanMeters);
   return Math.max(-1, Math.min(1, (currentDistance - startDistance) / span));
 }
@@ -236,7 +255,8 @@ export function parseSectionPlaneSpec(
     const cx = Number.isFinite(defaultCenter[0]) ? defaultCenter[0] : 0;
     return {enabled: true, normal: [1, 0, 0], constant: cx, interactive: true};
   }
-  const m = /^([+-]?[xyz])\s*:\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)$/.exec(s);
+  const m =
+    /^([+-]?[xyz])\s*:\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)$/.exec(s);
   if (!m) {
     return {enabled: false, normal: [1, 0, 0], constant: 0, interactive: false};
   }
@@ -342,9 +362,12 @@ export interface ExplodedViewElementConfig {
 
 /** Parses `explode`, `explode-mode`, `explode-scale`, and `section-plane` on `<xr-live>`. */
 // tslint:disable-next-line:no-any Host element is `<xr-live>`.
-export function resolveExplodedViewConfig(element: any): ExplodedViewElementConfig {
+export function resolveExplodedViewConfig(
+  element: any,
+): ExplodedViewElementConfig {
   const hasExplodeAttr =
-    typeof element?.hasAttribute === 'function' && element.hasAttribute('explode');
+    typeof element?.hasAttribute === 'function' &&
+    element.hasAttribute('explode');
   const rawExplode = element?.getAttribute?.('explode');
   const targetFactor =
     rawExplode === ''
@@ -352,7 +375,9 @@ export function resolveExplodedViewConfig(element: any): ExplodedViewElementConf
       : rawExplode !== null && rawExplode !== undefined
         ? clampNum(Number(rawExplode), 0, 1, 0)
         : 0;
-  const rawMode = (element?.getAttribute?.('explode-mode') ?? 'radial').trim().toLowerCase();
+  const rawMode = (element?.getAttribute?.('explode-mode') ?? 'radial')
+    .trim()
+    .toLowerCase();
   const mode: ExplodeMode = EXPLODE_MODES.has(rawMode as ExplodeMode)
     ? (rawMode as ExplodeMode)
     : 'radial';
@@ -361,7 +386,9 @@ export function resolveExplodedViewConfig(element: any): ExplodedViewElementConf
     rawScale !== null && rawScale !== undefined && rawScale !== ''
       ? clampNum(Number(rawScale), 0, 10, 1.5)
       : 1.5;
-  const sectionSpec = (element?.getAttribute?.('section-plane') ?? 'none').trim();
+  const sectionSpec = (
+    element?.getAttribute?.('section-plane') ?? 'none'
+  ).trim();
   return {hasExplodeAttr, targetFactor, mode, scale, sectionSpec};
 }
 
@@ -402,7 +429,11 @@ export class XRExplodedViewController {
   // Two-hand spread gesture & interactive section drag state.
   private readonly handPositions = new Map<string, Vec3>();
   private spreadGesture: {startDist: number; startFactor: number} | null = null;
-  private planeDrag: {hand: string; startProj: number; startConst: number} | null = null;
+  private planeDrag: {
+    hand: string;
+    startProj: number;
+    startConst: number;
+  } | null = null;
 
   /** Returns the current interpolated explosion factor in `[0..1]`. */
   get factor(): number {
@@ -468,7 +499,9 @@ export class XRExplodedViewController {
     // every frame whenever a mesh is skipped, baking exploded offsets into the
     // rest pose so parts fly away.
     this.consideredMeshSet = new Set<object>(sceneMeshes);
-    const depthMap = computeNodeDepthMap(gltf ?? (viewer as {gltf?: unknown}).gltf);
+    const depthMap = computeNodeDepthMap(
+      gltf ?? (viewer as {gltf?: unknown}).gltf,
+    );
     const min: Vec3 = [Infinity, Infinity, Infinity];
     const max: Vec3 = [-Infinity, -Infinity, -Infinity];
 
@@ -539,9 +572,14 @@ export class XRExplodedViewController {
 
     // Interactive section-plane drag when pinching near the cut gizmo
     // (plane math runs in scene space).
-    if (this.activeSection.enabled && this.activeSection.interactive && !hasHitMesh) {
+    if (
+      this.activeSection.enabled &&
+      this.activeSection.interactive &&
+      !hasHitMesh
+    ) {
       const local = transformPoint(inverseRootMatrix(viewer), pivot);
-      const signed = vDot(local, this.activeSection.normal) - this.activeSection.constant;
+      const signed =
+        vDot(local, this.activeSection.normal) - this.activeSection.constant;
       if (Math.abs(signed) <= Math.max(0.12, this.assemblyRadius * 0.35)) {
         this.planeDrag = {
           hand,
@@ -560,7 +598,9 @@ export class XRExplodedViewController {
     if (isGrabbingAny) return false;
 
     const worldCenter = transformPoint(rootMatrix(viewer), this.assemblyCenter);
-    if (vLen(vSub(pivot, worldCenter)) > Math.max(0.5, this.assemblyRadius * 2.0)) {
+    if (
+      vLen(vSub(pivot, worldCenter)) > Math.max(0.5, this.assemblyRadius * 2.0)
+    ) {
       return false;
     }
     this.handPositions.set(hand, [...pivot]);
@@ -603,8 +643,15 @@ export class XRExplodedViewController {
       const right = this.handPositions.get('right');
       if (left && right) {
         const dist = vLen(vSub(right, left));
-        const delta = computeTwoHandExplodeDelta(this.spreadGesture.startDist, dist);
-        this.setExplode(this.spreadGesture.startFactor + delta, element, 'gesture');
+        const delta = computeTwoHandExplodeDelta(
+          this.spreadGesture.startDist,
+          dist,
+        );
+        this.setExplode(
+          this.spreadGesture.startFactor + delta,
+          element,
+          'gesture',
+        );
       }
     }
   }
@@ -627,13 +674,21 @@ export class XRExplodedViewController {
     if (!Array.isArray(meshes)) return;
     const cfg = resolveExplodedViewConfig(element);
     const anyNodeExplode = meshes.some(
-      (m) => m && !m.isPluginMesh && Boolean(parseExplode(getMeshXRTraits(m)?.explode)),
+      (m) =>
+        m &&
+        !m.isPluginMesh &&
+        Boolean(parseExplode(getMeshXRTraits(m)?.explode)),
     );
     const desiredTarget =
-      this.apiOverrideFactor !== null ? this.apiOverrideFactor : cfg.targetFactor;
+      this.apiOverrideFactor !== null
+        ? this.apiOverrideFactor
+        : cfg.targetFactor;
     this.targetFactor = desiredTarget;
 
-    const sectionParsed = parseSectionPlaneSpec(cfg.sectionSpec, this.assemblyCenter);
+    const sectionParsed = parseSectionPlaneSpec(
+      cfg.sectionSpec,
+      this.assemblyCenter,
+    );
     if (!sectionParsed.interactive) {
       this.interactivePlaneOffset = null;
     }
@@ -641,7 +696,10 @@ export class XRExplodedViewController {
       sectionParsed.interactive && this.interactivePlaneOffset !== null
         ? {...sectionParsed, constant: this.interactivePlaneOffset}
         : sectionParsed;
-    this.worldSection = sectionPlaneToWorld(this.activeSection, rootMatrix(viewer));
+    this.worldSection = sectionPlaneToWorld(
+      this.activeSection,
+      rootMatrix(viewer),
+    );
 
     const active =
       cfg.hasExplodeAttr ||
@@ -686,7 +744,8 @@ export class XRExplodedViewController {
       }
       for (let i = 0; i < this.parts.length; i++) {
         const part = this.parts[i];
-        if (!part.mesh || part.mesh.visible === false || isGrabbing(part.mesh)) continue;
+        if (!part.mesh || part.mesh.visible === false || isGrabbing(part.mesh))
+          continue;
         const trait = parsedTraits[i];
         const offset = computeExplodedNodeOffset({
           restPosition: part.restCenterLocal,
@@ -705,7 +764,12 @@ export class XRExplodedViewController {
           this.currentFactor <= 1e-4 && this.targetFactor === 0
             ? [...part.restLocalPos]
             : vAdd(part.restLocalPos, offset);
-        setLocalTRS(part.mesh, part.restLocalQuat, nextLocalPos, extractScale(part.mesh.transform));
+        setLocalTRS(
+          part.mesh,
+          part.restLocalQuat,
+          nextLocalPos,
+          extractScale(part.mesh.transform),
+        );
 
         const showLeader = trait ? trait.leaderLine : true;
         if (this.currentFactor > 0.02 && showLeader && vLen(offset) > 0.008) {
@@ -713,7 +777,13 @@ export class XRExplodedViewController {
           // matrix) so it stays attached while the model turns or is placed.
           const restPt = part.restCenterLocal;
           const explodedPt = vAdd(part.restCenterLocal, offset);
-          for (const seg of buildDashedSegments(restPt, explodedPt, 0.022, 0.014, 32)) {
+          for (const seg of buildDashedSegments(
+            restPt,
+            explodedPt,
+            0.022,
+            0.014,
+            32,
+          )) {
             leaderSegments.push(seg);
           }
         }
@@ -756,7 +826,10 @@ export class XRExplodedViewController {
     // Update cross-section plane gizmo frame.
     if (this.activeSection.enabled) {
       const half = Math.max(0.12, this.assemblyRadius * 1.15);
-      if (!this.sectionGizmoMesh || Math.abs(this.sectionGizmoRadius - half) > 1e-3) {
+      if (
+        !this.sectionGizmoMesh ||
+        Math.abs(this.sectionGizmoRadius - half) > 1e-3
+      ) {
         removeDynamicMesh(viewer, this.sectionGizmoMesh);
         this.sectionGizmoMesh = createDynamicMesh(
           viewer,
@@ -808,7 +881,12 @@ export class XRExplodedViewController {
   dispose(viewer: PluginViewer | undefined): void {
     for (const part of this.parts) {
       if (part.mesh?.transform) {
-        setLocalTRS(part.mesh, part.restLocalQuat, part.restLocalPos, part.restLocalScale);
+        setLocalTRS(
+          part.mesh,
+          part.restLocalQuat,
+          part.restLocalPos,
+          part.restLocalScale,
+        );
       }
     }
     this.disposeVisuals(viewer);
@@ -819,21 +897,31 @@ export class XRExplodedViewController {
     this.handPositions.clear();
     this.spreadGesture = null;
     this.planeDrag = null;
-    this.activeSection = {enabled: false, normal: [1, 0, 0], constant: 0, interactive: false};
+    this.activeSection = {
+      enabled: false,
+      normal: [1, 0, 0],
+      constant: 0,
+      interactive: false,
+    };
     this.worldSection = this.activeSection;
   }
 }
 
 const controllers = new WeakMap<object, XRExplodedViewController>();
 const listeners = new WeakMap<object, Array<[string, EventListener]>>();
-const activeSectionByGl = new WeakMap<WebGL2RenderingContext, SectionPlaneState | null>();
+const activeSectionByGl = new WeakMap<
+  WebGL2RenderingContext,
+  SectionPlaneState | null
+>();
 const sectionUniformCache = new WeakMap<
   WebGLProgram,
   {enabled: WebGLUniformLocation | null; plane: WebGLUniformLocation | null}
 >();
 
 /** Returns (creating on first use) the `exploded-view` controller for `key`. */
-export function getExplodedViewController(key: object): XRExplodedViewController {
+export function getExplodedViewController(
+  key: object,
+): XRExplodedViewController {
   let c = controllers.get(key);
   if (!c) {
     c = new XRExplodedViewController();
@@ -855,22 +943,41 @@ export const explodedViewPlugin: ThreeLivePlugin = {
   onElementConnected(element: any): void {
     if (!element) return;
     const ctrl = getExplodedViewController(element);
-    element.setExplode = (factor: number) => ctrl.setExplode(factor, element, 'api');
-    if (typeof element.addEventListener !== 'function' || listeners.has(element)) return;
+    element.setExplode = (factor: number) =>
+      ctrl.setExplode(factor, element, 'api');
+    if (
+      typeof element.addEventListener !== 'function' ||
+      listeners.has(element)
+    )
+      return;
 
-    const viewerOf = (): PluginViewer | undefined => element._view ?? element.viewer;
+    const viewerOf = (): PluginViewer | undefined =>
+      element._view ?? element.viewer;
     const onStart = (e: Event): void => {
       if (isEventClaimed(e)) return;
       const v = viewerOf();
       if (!v) return;
       const d = (e as CustomEvent<SelectDetail>).detail;
-      if (ctrl.handleSelectStart(v, element, d?.hand ?? 'screen', d?.pivotPosition, Boolean(d?.hit?.mesh))) {
+      if (
+        ctrl.handleSelectStart(
+          v,
+          element,
+          d?.hand ?? 'screen',
+          d?.pivotPosition,
+          Boolean(d?.hit?.mesh),
+        )
+      ) {
         claimEvent(e);
       }
     };
     const onMove = (e: Event): void => {
       const d = (e as CustomEvent<SelectDetail>).detail;
-      ctrl.handleSelectMove(element, d?.hand ?? 'screen', d?.pivotPosition, viewerOf());
+      ctrl.handleSelectMove(
+        element,
+        d?.hand ?? 'screen',
+        d?.pivotPosition,
+        viewerOf(),
+      );
     };
     const onEnd = (e: Event): void => {
       const d = (e as CustomEvent<SelectDetail>).detail;
@@ -885,7 +992,12 @@ export const explodedViewPlugin: ThreeLivePlugin = {
     listeners.set(element, bound);
   },
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
-  onAttributeChanged(element: any, name: string, _oldVal: string | null, newVal: string | null): void {
+  onAttributeChanged(
+    element: any,
+    name: string,
+    _oldVal: string | null,
+    newVal: string | null,
+  ): void {
     if (!element) return;
     if (name === 'explode') {
       const ctrl = getExplodedViewController(element);
@@ -911,7 +1023,12 @@ export const explodedViewPlugin: ThreeLivePlugin = {
     const host = viewer?.container;
     controllers.get(host ?? viewer)?.resetForNewModel(viewer, gltf);
   },
-  onXRFrame(viewer: unknown, _session: unknown, frame: unknown, refSpace: unknown): void {
+  onXRFrame(
+    viewer: unknown,
+    _session: unknown,
+    frame: unknown,
+    refSpace: unknown,
+  ): void {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     const host = v?.container;
@@ -927,7 +1044,10 @@ export const explodedViewPlugin: ThreeLivePlugin = {
   onBeforeDrawScene(viewer: any, gl: WebGL2RenderingContext): void {
     const host = viewer?.container;
     const ctrl = controllers.get(host ?? viewer);
-    activeSectionByGl.set(gl, ctrl?.sectionPlane.enabled ? ctrl.sectionPlane : null);
+    activeSectionByGl.set(
+      gl,
+      ctrl?.sectionPlane.enabled ? ctrl.sectionPlane : null,
+    );
   },
   onBeforeDrawPrimitive(
     gl: WebGL2RenderingContext,

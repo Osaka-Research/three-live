@@ -56,7 +56,8 @@ object MagneticSnap {
     val z = if (q.size > 2 && q[2].isFinite()) q[2] else 0.0
     val w = if (q.size > 3 && q[3].isFinite()) q[3] else 1.0
     val len = Math.sqrt(x * x + y * y + z * z + w * w)
-    return if (len > 1e-8) doubleArrayOf(x / len, y / len, z / len, w / len) else doubleArrayOf(0.0, 0.0, 0.0, 1.0)
+    return if (len > 1e-8) doubleArrayOf(x / len, y / len, z / len, w / len)
+    else doubleArrayOf(0.0, 0.0, 0.0, 1.0)
   }
 
   /** Composes a unit quaternion `[x, y, z, w]` from intrinsic YXZ Euler angles (radians). */
@@ -145,7 +146,8 @@ object MagneticSnap {
     bottomOffset: Double = 0.0,
     defaultFloorY: Double = 0.0,
   ): Evaluation {
-    val pos = DoubleArray(3) { i -> position.getOrElse(i) { 0.0 }.let { if (it.isFinite()) it else 0.0 } }
+    val pos =
+      DoubleArray(3) { i -> position.getOrElse(i) { 0.0 }.let { if (it.isFinite()) it else 0.0 } }
     val quat = normalizeQuat(quaternion)
     val bOff = if (bottomOffset.isFinite()) bottomOffset else 0.0
     val floorY = if (defaultFloorY.isFinite()) defaultFloorY else 0.0
@@ -223,7 +225,12 @@ object MagneticSnap {
           ((nextPos[0] - bestPlane.position[0]) * n[0] +
             (nextPos[1] - bestPlane.position[1]) * n[1] +
             (nextPos[2] - bestPlane.position[2]) * n[2]) - (if (n[1] > 0.7) bOff else 0.0)
-        nextPos = doubleArrayOf(nextPos[0] - n[0] * signed, nextPos[1] - n[1] * signed, nextPos[2] - n[2] * signed)
+        nextPos =
+          doubleArrayOf(
+            nextPos[0] - n[0] * signed,
+            nextPos[1] - n[1] * signed,
+            nextPos[2] - n[2] * signed,
+          )
         surfaceApplied = true
       } else if (config.surface == "floor" || config.surface == "any") {
         nextPos = doubleArrayOf(nextPos[0], floorY + bOff, nextPos[2])
@@ -231,7 +238,8 @@ object MagneticSnap {
       }
     }
 
-    val nextQuat = if (config.angleDeg > 0.0) quantizeQuaternionAngle(quat, config.angleDeg) else quat
+    val nextQuat =
+      if (config.angleDeg > 0.0) quantizeQuaternionAngle(quat, config.angleDeg) else quat
     val gridOrAngle = config.grid != null || config.angleDeg > 0.0
     val mode =
       when {
