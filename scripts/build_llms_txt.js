@@ -28,6 +28,7 @@ function stripLeadingLicenseComment(markdown) {
   return markdown
     .replace(/^<!--[\s\S]*?-->\s*/m, '')
     .replace(/^---\n[\s\S]*?\n---\n\s*/m, '')
+    .replace(/^<!-- mdformat (?:off|on).*?-->\n?/gm, '')
     .trim();
 }
 
@@ -42,7 +43,7 @@ function buildLlmsIndex() {
     '- Always include `allow-client-scripts` on any `<three-live>` or `<xr-live>` element that contains an inline `<script type="text/three">`.',
     '- Inside `<script type="text/three">`, `THREE` and `scene` (`THREE.Scene`) are pre-defined globals in an isolated Worker sandbox. Add objects via `scene.add(mesh)`.',
     '- Never instantiate `THREE.WebGLRenderer`, `GLTFLoader`, `TextureLoader`, `ShaderMaterial`, or `requestAnimationFrame` inside `<script type="text/three">`. Load external `.glb` files via `<three-live src="...">` or `<xr-anchor src="...">`.',
-    '- Attach spatial traits via `mesh.userData.xr = { grab, scale, billboard, follow, anchor, physics, orbit, handles, dimensions, snapTo, snapSocket, gaze, explode, navigable, sync, particles, holdToAsk, worldUnderstanding, splatUrl, audio }`.',
+    '- Attach spatial traits via `mesh.userData.xr = { grab, scale, billboard, follow, anchor, physics, orbit, handles, dimensions, snapTo, snapSocket, gaze, explode, navigable, sync, particles, holdToAsk, worldUnderstanding, splatUrl, audio, character, agent, integrity, zone, spawner, objective, audioCues }`.',
     '- Attach declarative `KHR_interactivity` behavior graphs via `mesh.userData.interactivity = { onSelect, onHoverIn, onHoverOut, onStart, onReceive }`.',
     '- Scene quotas: max `1,000` meshes, `100,000` vertices, `300,000` indices, `16` textures (`2048x2048`), `3,000 ms` execution timeout.',
     '',

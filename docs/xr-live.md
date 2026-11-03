@@ -156,6 +156,7 @@ To load all 14 spatial plugins without a bundler, import
 [`<three-live>` attributes](three-live.md#observed-attributes) and adds the
 spatial attributes listed in the following table:
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Element | Attribute | Type and values | Default | Description |
 | :------------ | :-------------------- | :------------------ | :---------- | :------------------------------- |
 | `<xr-live>` | `xr-mode` | `'ar' \| 'vr' \| 'inline' \| 'auto'` | `'auto'` | Target WebXR session mode (`ar` requests `immersive-ar`; `vr` requests `immersive-vr`). |
@@ -190,6 +191,7 @@ spatial attributes listed in the following table:
 | `<xr-live>` | `webmcp-omit-pose` | `boolean` | `false` | Omits `headPosition` from `inspect_xr_scene` responses. |
 | `<xr-anchor>` | `surface` | `'floor' \| 'wall' \| 'table' \| 'ceiling'` | `'floor'` | Target semantic surface for declarative child placement. |
 | `<xr-anchor>` | `magnetic` | `boolean` | `false` | Continuously snaps the child anchor to the nearest matching surface plane. |
+<!-- mdformat on -->
 
 --------------------------------------------------------------------------------
 
@@ -203,6 +205,7 @@ exported into `.glb` (`nodes[i].extras.xr` and
 (`customData = {dictionary xr = {...}}`) so scenes behave identically on Web,
 Android, and iOS or visionOS. The following table describes each trait key:
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Trait key | Type and options | Description |
 | :----------------------- | :----------------- | :--------------------------- |
 | **`grab`** | `'1-hand' \| '2-hand' \| true` | 6DoF single-hand grab and rotate (`'1-hand'`) or two-hand grab, pinch-scale, and twist (`'2-hand'`). Legacy `grabbable: true` is also accepted. |
@@ -226,6 +229,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`splatUrl`** | `string` (`https://` or relative `.splat` or `.spz` URL) | Loads and back-to-front depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2 and v3, up to `1,000,000` splats). |
 | **`audio`** | `string` **or** `{ src: string, refDistance?: number, loop?: boolean }` | Attaches a 3D `PannerNode` HRTF audio source to the mesh. |
 | **`pointerEvents`** | `'none'` | Excludes the mesh from raycast picking so rays pass through it. |
+<!-- mdformat on -->
 
 --------------------------------------------------------------------------------
 
@@ -343,6 +347,7 @@ Load the bundle after the core, or use `xr-live-full.min.js`, which includes it:
 With a bundler, import `xr-live/sim`. Importing the module registers all five
 plugins.
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Plugin | What it does |
 | :--------------------- | :-------------------------------------------------- |
 | `character-controller` | Moves the first `character` node with WASD or arrow keys, a gamepad, or a touch joystick. Jump with Space, sprint with Shift. Slides along `collidable` nodes, follows with the camera, and switches `idle`, `walk`, `run`, and `jump` clips. |
@@ -350,14 +355,17 @@ plugins.
 | `hit-zones` | Tracks `integrity`, fires projectiles or hitscan rays, applies contact amounts, emits zone enter and exit events, and runs `spawner` nodes. |
 | `objectives` | Tracks pickups, checkpoints, keys, time bonuses, and restores, plus score, attempts, a countdown, and the pass, fail, or timeout outcome. |
 | `synth-audio` | Plays procedural cues (no audio files) mapped per node by the `audioCues` trait. |
+<!-- mdformat on -->
 
 ### Simulation traits
 
 Add these keys to `userData.xr` on any mesh or group:
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Trait | Shape |
 | :---------- | :------------------------------------------------- |
 | `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, |
+<!-- mdformat on -->
 
 \: : clips: { idle, walk, run, jump }
 }`. Camera modes: `third-person`, : : :`first-person`, `top-down`, `fixed`. : |`agent`|
@@ -377,6 +385,7 @@ face local +Z.
 
 ### Simulation attributes
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Attribute | Values | Default |
 | :--------------------- | :----------------------- | :----------------------- |
 | `character-controller` | `third-person`, `first-person`, `top-down`, `fixed-camera`, `none` | trait value |
@@ -396,6 +405,7 @@ face local +Z.
 | `sim-hud` | `auto`, `minimal`, `none` | `auto` with `objectives` |
 | `synth-audio` | present enables; `muted` disables | off |
 | `synth-volume` | `0` to `1` | `0.7` |
+<!-- mdformat on -->
 
 To restart a scenario, call `XRSim.resetSimScenario(element)` (or import
 `resetSimScenario` from `xr-live/sim`). The Aether view restarts when its
@@ -405,6 +415,7 @@ To restart a scenario, call `XRSim.resetSimScenario(element)` (or import
 
 All events bubble from the host element:
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Event | `detail` |
 | :----------------- | :----------------------------------------------------- |
 | `characterjump` | `{ nodeId, position }` |
@@ -419,6 +430,7 @@ All events bubble from the host element:
 | `xrobjective` | `{ nodeId, tag, type, amount, totalScore, remainingRequired, outOfOrder }` |
 | `xrscorechange` | `{ score, delta, attemptsLeft, timeRemaining }` |
 | `xrscenarioend` | `{ outcome: 'pass' \| 'fail' \| 'timeout', finalScore, elapsedSec }` |
+<!-- mdformat on -->
 
 ### Example: a timed training drill
 
@@ -530,6 +542,7 @@ interactive textured quad inside WebXR and inline 3D views:
 The `<xr-live>` element dispatches the custom events listed in the following
 table:
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Event | `event.detail` payload | Description |
 | :------------------------- | :--------------- | :------------------------------------ |
 | `xr-select-start`, `xr-select-move`, `xr-select-end` | `{ hand: 'left' \| 'right' \| 'screen', pivotPosition, quaternion, rayOrigin, rayDirection, hit }` | Fired on controller trigger, hand pinch, or screen touch ray. |
@@ -552,6 +565,7 @@ table:
 | `peergrabconflict` | `{ peerId: string, nodeId: string }` | Fired when a remote participant wins a near-simultaneous grab of the same node and the local hold is released. |
 | `peersync` | `{ peerId: string, nodeId: string }` | Fired when `shared-room` applies a remote node transform, explode factor (`__explode__`), or paint stroke (`paint:<id>`). |
 | `xr-webmcp-capture` | `{}` | Fired when a WebMCP agent invokes `capture_xr_view` (sets `data-xr-webmcp-indicator="active"`). |
+<!-- mdformat on -->
 
 --------------------------------------------------------------------------------
 
