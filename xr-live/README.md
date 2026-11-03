@@ -37,30 +37,14 @@ Or load it from a CDN with a classic script tag:
 
 ## Bundles
 
-| File                          | Contents                                     |
-| :---------------------------- | :------------------------------------------- |
-| `dist/xr-live-viewer.min.js`  | Lean `.glb`/`.usdz` WebXR viewer with        |
-:                               : spatial traits                               :
-| `dist/xr-live.min.js`         | Standard: `<xr-live>` + sandboxed `<script   |
-:                               : type="text/three">`                          :
-| `dist/xr-live-extras.min.js`  | Add-on: XR simulator, depth, 25-joint hands, |
-:                               : spatial audio, and WebMCP                    :
-| `dist/xr-live-plugins.min.js` | Add-on: all 14 `XRSpatial` plugins           |
-:                               : (`head-follow`, `manipulation-handles`,      :
-:                               : `world-understanding`, `gemini-live`,        :
-:                               : `spatial-paint`, `depth-particles`,          :
-:                               : `splat-loader`, `spatial-measure`,           :
-:                               : `magnetic-snap`, `gaze-dwell`,               :
-:                               : `exploded-view`, `persistent-anchors`,       :
-:                               : `spatial-locomotion`, `shared-room`)         :
-| `dist/xr-live-sim.min.js`     | Add-on: the 5 `xr-live-sim` simulation       |
-:                               : plugins (`character-controller`,             :
-:                               : `steering-agents`, `hit-zones`,              :
-:                               : `objectives`, `synth-audio`)                 :
-| `dist/xr-live-full.min.js`    | Everything in one bundle                     |
-:                               : (`three-live-full` + `xr-live` +             :
-:                               : `xr-live-extras` + 14 spatial plugins + 5    :
-:                               : simulation plugins)                          :
+| File | Contents |
+| :--- | :--- |
+| `dist/xr-live-viewer.min.js` | Lean `.glb`/`.usdz` WebXR viewer with spatial traits |
+| `dist/xr-live.min.js` | Standard: `<xr-live>` + sandboxed `<script type="text/three">` |
+| `dist/xr-live-extras.min.js` | Add-on: XR simulator, depth, 25-joint hands, spatial audio, and WebMCP |
+| `dist/xr-live-plugins.min.js` | Add-on: all 14 `XRSpatial` plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`) |
+| `dist/xr-live-sim.min.js` | Add-on: the 5 `xr-live-sim` simulation plugins (`character-controller`, `steering-agents`, `hit-zones`, `objectives`, `synth-audio`) |
+| `dist/xr-live-full.min.js` | Everything in one bundle (`three-live-full` + `xr-live` + `xr-live-extras` + 14 spatial plugins + 5 simulation plugins) |
 
 ## Documentation
 
