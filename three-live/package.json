@@ -1,6 +1,6 @@
 {
   "name": "three-live",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Lightweight 3D, WebXR, and procedural Three.js runtime",
   "author": "Google LLC",
   "license": "Apache-2.0",

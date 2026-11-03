@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.2.0] - 2026-11-03
+
+### Added
+
+- **Expanded `XRSpatial` to 14 Spatial Plugins Across Web, Android, and iOS:**
+  - `spatialMeasurePlugin` (`spatial-measure`): Interactive point-to-point tape measure and live bounding-box dimension callouts (`m`, `cm`, `in`, `ft`) across Web, Android (`SpatialMeasure`), and iOS (`SpatialMeasure`).
+  - `magneticSnapPlugin` (`magnetic-snap`): Surface alignment, grid snapping (`snap-grid`), angular increments (`snap-angle`), and named socket/plug snapping (`data-xr-snap-socket`, `data-xr-snap-plug`) across Web, Android (`MagneticSnap`), and iOS (`MagneticSnap`).
+  - `gazeDwellPlugin` (`gaze-dwell`): Hands-free eye-gaze and head-reticle dwell selection with animated progress ring and refractory cooldown across Web, Android (`GazeDwell`), and iOS (`GazeDwell`).
+  - `explodedViewPlugin` (`explode`): Interactive CAD assembly explosion (`radial`, `axial-x`, `axial-y`, `axial-z`, `hierarchy`) with leader lines and live `section-plane` clipping across Web, Android (`ExplodedView`), and iOS (`ExplodedView`).
+  - `persistentAnchorsPlugin` (`persistent-anchors`): Cross-session room anchor persistence via WebXR `XRAnchor`, `localStorage`, and shareable `#xr-anchors=` URL hashes across Web, Android (`PersistentAnchors`), and iOS (`PersistentAnchors`).
+  - `spatialLocomotionPlugin` (`locomotion`): Parabolic teleportation arc, thumbstick snap-turn (`snap-turn-deg`), and comfort vignette (`comfort-vignette`) across Web, Android (`SpatialLocomotion`), and iOS (`SpatialLocomotion`).
+  - `sharedRoomPlugin` (`shared-room`): Multi-user spatial presence, peer avatar frustums, and lamport-clock transform sync across `BroadcastChannel` and WebSocket rooms (`SharedRoom`).
+
+---
+
 ## [1.1.1] - 2026-11-02
 
 ### Changed
