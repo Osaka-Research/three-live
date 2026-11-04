@@ -227,6 +227,69 @@
       visit(rootEntity)
     }
 
+    static let outlineShellName = "__xr_outline_shell"
+
+    /// Renders an `outline` trait as an inverted hull: an unlit, front-face-culled copy of each
+    /// model under `entity`, pushed outward by the trait thickness (pixels, converted at a 1.5 m
+    /// viewing distance) so only its silhouette rim shows. Works on iOS and visionOS.
+    @MainActor
+    public static func applyOutline(_ outline: XRLiveOutline, to entity: Entity) {
+      removeOutline(from: entity)
+      let rgb = XRLivePostProcessing.rgb(fromHex: outline.color)
+      var material = UnlitMaterial(
+        color: XRPlatformColor(
+          red: CGFloat(rgb.x), green: CGFloat(rgb.y), blue: CGFloat(rgb.z), alpha: 1))
+      // Front-face culling (iOS 18 / visionOS 2 SDK) is what turns the shell into a rim; without
+      // it the shell would hide the model, so older systems fall back to a hover highlight.
+      var culled = false
+      #if compiler(>=6.0)
+        if #available(iOS 18.0, macOS 15.0, visionOS 2.0, *) {
+          material.faceCulling = .front
+          culled = true
+        }
+      #endif
+      guard culled else {
+        #if os(visionOS)
+          entity.components.set(HoverEffectComponent())
+        #endif
+        return
+      }
+      let offset = XRLivePostProcessing.outlineShellOffset(thicknessPixels: outline.thickness)
+      var targets: [(Entity, MeshResource)] = []
+      func collect(_ e: Entity) {
+        if e.name == outlineShellName { return }
+        if let model = e.components[ModelComponent.self] { targets.append((e, model.mesh)) }
+        for child in e.children { collect(child) }
+      }
+      collect(entity)
+      for (owner, mesh) in targets {
+        let bounds = mesh.bounds
+        let radius = max(1e-3, simd_length(bounds.extents) / 2)
+        let s = 1 + offset / radius
+        let shell = ModelEntity(mesh: mesh, materials: [material])
+        shell.name = outlineShellName
+        shell.scale = SIMD3<Float>(repeating: s)
+        // Scale about the mesh's bounds center so off-center meshes stay aligned.
+        shell.position = bounds.center * (1 - s)
+        owner.addChild(shell)
+      }
+    }
+
+    /// Removes outline shells previously added by `applyOutline`.
+    @MainActor
+    public static func removeOutline(from entity: Entity) {
+      func visit(_ e: Entity) {
+        for child in Array(e.children) {
+          if child.name == outlineShellName {
+            child.removeFromParent()
+          } else {
+            visit(child)
+          }
+        }
+      }
+      visit(entity)
+    }
+
     /// Configures an individual RealityKit `Entity` with native spatial components corresponding
     /// to its `userData.xr` traits.
     @MainActor
@@ -251,10 +314,11 @@
         #if os(visionOS)
           entity.components.set(HoverEffectComponent())
         #endif
-      } else if traits.outline != nil {
-        #if os(visionOS)
-          entity.components.set(HoverEffectComponent())
-        #endif
+      }
+      if let outline = traits.outline, outline.enabled {
+        applyOutline(outline, to: entity)
+      } else {
+        removeOutline(from: entity)
       }
 
       if let physicsMode = traits.physics, physicsMode != "none" {

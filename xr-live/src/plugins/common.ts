@@ -121,6 +121,11 @@ export interface PluginViewer {
   // tslint:disable-next-line:no-any Host element is `<xr-live>` or `<three-live>`.
   container?: any;
   viewMatrix?: Float32Array;
+  /**
+   * View matrix of the pass currently being rendered (per-eye in WebXR or
+   * side-by-side stereo); equals `viewMatrix` on desktop.
+   */
+  activeViewMatrix?: Float32Array | null;
   projMatrix?: Float32Array;
   /** Root placement matrix applied to every mesh transform when drawing. */
   modelRootMatrix?: Float32Array;

@@ -578,7 +578,10 @@ public struct XRLiveIK: Codable, Sendable, Equatable {
   public var targetName: String?
   /// Literal target position in scene space, or `nil` when `targetName` is used.
   public var targetPoint: SIMD3<Float>?
+  /// Literal scene-space pole position, or `nil`.
   public var pole: SIMD3<Float>?
+  /// Named pole node (resolved like `targetName`), or `nil` when `pole` is used.
+  public var poleName: String?
   /// `"two-bone"` or `"fabrik"`.
   public var solver: String
   public var iterations: Int
@@ -592,6 +595,7 @@ public struct XRLiveIK: Codable, Sendable, Equatable {
     targetName: String? = nil,
     targetPoint: SIMD3<Float>? = nil,
     pole: SIMD3<Float>? = nil,
+    poleName: String? = nil,
     solver: String = "two-bone",
     iterations: Int = 8,
     tolerance: Float = 1e-3,
@@ -603,6 +607,7 @@ public struct XRLiveIK: Codable, Sendable, Equatable {
     self.targetName = targetName
     self.targetPoint = targetPoint
     self.pole = pole
+    self.poleName = poleName
     self.solver = solver == "fabrik" ? "fabrik" : "two-bone"
     self.iterations = Int(XRJSON.clampNum(Double(iterations), 1, 32, 8).rounded())
     self.tolerance = Float(XRJSON.clampNum(Double(tolerance), 1e-5, 0.1, 1e-3))
@@ -936,10 +941,13 @@ public enum XRLiveTraitParser {
     if XRJSON.bool(raw) == true { return XRLiveOutline() }
     guard let r = XRJSON.object(raw) else { return nil }
     if XRJSON.bool(r["enabled"]) == false { return nil }
+    // Pixels; metre-sized values (< 0.25, e.g. the documented 0.025) are converted like web/Android.
+    var rawT: Any? = r["thickness"] ?? r["width"]
+    if let t = XRJSON.number(rawT), t > 0, t < 0.25 { rawT = Swift.max(1.5, t * 140) }
     return XRLiveOutline(
       enabled: true,
       color: XRJSON.safeHexColor(r["color"], fallback: "#38bdf8"),
-      thickness: Float(XRJSON.clampNum(r["thickness"] ?? r["width"], 0.5, 20, 3)),
+      thickness: Float(XRJSON.clampNum(rawT, 0.5, 20, 3)),
       pulse: XRJSON.bool(r["pulse"]) == true
     )
   }
@@ -965,13 +973,18 @@ public enum XRLiveTraitParser {
     } else {
       return nil
     }
+    // `pole` is a scene-space point or a node name; `poleTarget` is accepted as an alias.
+    let rawPole = r["pole"] ?? r["poleTarget"]
     var polePoint: SIMD3<Float>?
-    if let pv = XRJSON.finiteVec3(r["pole"]) {
+    var poleName: String?
+    if let pv = XRJSON.finiteVec3(rawPole) {
       polePoint = SIMD3<Float>(
         Float(XRJSON.clampNum(pv.x, -1000, 1000, 0)),
         Float(XRJSON.clampNum(pv.y, -1000, 1000, 0)),
         Float(XRJSON.clampNum(pv.z, -1000, 1000, 0))
       )
+    } else {
+      poleName = safeAnchorId(rawPole)
     }
     let solverRaw = XRJSON.string(r["solver"])
     let solver: String
@@ -989,6 +1002,7 @@ public enum XRLiveTraitParser {
       targetName: targetName,
       targetPoint: targetPoint,
       pole: polePoint,
+      poleName: poleName,
       solver: solver,
       iterations: Int(XRJSON.clampNum(r["iterations"], 1, 32, 8).rounded()),
       tolerance: Float(XRJSON.clampNum(r["tolerance"], 1e-5, 0.1, 1e-3)),

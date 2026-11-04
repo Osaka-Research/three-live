@@ -923,7 +923,7 @@ limitations under the License.
         <span class="tag-pill">&lt;xr-live&gt;</span>
         Spatial Computing Playground
       </h1>
-      <span class="size-pill"><span data-bundle-size="xr-live.min.js">70.1 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
+      <span class="size-pill"><span data-bundle-size="xr-live.min.js">71.5 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
@@ -1099,7 +1099,7 @@ limitations under the License.
             <button class="action-btn primary" id="btn-studio-measure" onclick="toggleStudioMeasure()">Dimensions: ON</button>
             <button class="action-btn" id="btn-studio-section" onclick="toggleStudioSection()">Section Cut: OFF</button>
             <button class="action-btn purple" id="btn-studio-room" onclick="toggleStudioSharedRoom()">Shared Room: ON</button>
-            <button class="action-btn" id="btn-studio-voice" onclick="toggleStudioVoice()">🎙️ Spatial Voice: OFF</button>
+            <button class="action-btn" id="btn-studio-voice" onclick="toggleStudioVoice()">🎙️ Voice Signaling: OFF</button>
           </div>
 
           <div class="btn-row">
@@ -1422,10 +1422,11 @@ wrist.name = 'WristEffector';
 wrist.position.set(0, 0, 0.19);
 wrist.userData.xr = {
   ik: {
+    root: 'Shoulder',
+    mid: 'Forearm',
+    effector: 'WristEffector',
     target: 'GripperTarget',
-    poleTarget: 'ElbowPole',
-    solver: 'two-bone',
-    chainLength: 2
+    pole: 'ElbowPole'
   }
 };
 forearm.add(wrist);
@@ -2882,7 +2883,7 @@ return scene;`
       studioVoiceOn = !studioVoiceOn;
       const btn = document.getElementById('btn-studio-voice');
       if (btn) {
-        btn.textContent = '🎙️ Spatial Voice: ' + (studioVoiceOn ? 'ON' : 'OFF');
+        btn.textContent = '🎙️ Voice Signaling: ' + (studioVoiceOn ? 'ON' : 'OFF');
         btn.classList.toggle('primary', studioVoiceOn);
       }
       if (studioVoiceOn) {
@@ -2890,7 +2891,7 @@ return scene;`
       } else {
         xrEl.removeAttribute('shared-room-voice');
       }
-      setToast('WebRTC Spatialized Voice Chat: ' + (studioVoiceOn ? 'ON (HRTF PannerNode)' : 'OFF'));
+      setToast('WebRTC voice signaling: ' + (studioVoiceOn ? 'ON (signaling + voiceGain only; app owns RTCPeerConnection)' : 'OFF'));
     }
 
     function saveStudioAnchors() {

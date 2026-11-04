@@ -67,7 +67,7 @@ fragment {
         prepareMaterial(material);
         vec2 d = getUV0() * 2.0 - 1.0;
         float r2 = dot(d, d);
-        float w = (r2 > 1.0) ? 0.0 : exp(-4.0 * r2);
+        float w = (r2 > 1.0) ? 0.0 : exp(-4.5 * r2);
         vec4 c = getColor();
         float alpha = c.a * w;
         material.baseColor = vec4(c.rgb * alpha, alpha);

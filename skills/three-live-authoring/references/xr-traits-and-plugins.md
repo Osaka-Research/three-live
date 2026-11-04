@@ -31,7 +31,7 @@ Attribute             | Values                                                  
 `snap-turn-deg`       | `number` (degrees)                                                                             | `30`        | Horizontal thumbstick snap-turn increment in degrees.
 `comfort-vignette`    | boolean attribute                                                                              | `true`      | Shows a `120ms` peripheral FOV comfort vignette during teleports and snap-turns.
 `shared-room`         | `'<room-id>'` or `'wss://...'`                                                                 | —           | Joins a multi-user room via `BroadcastChannel("xr-live:room:<id>")` or a `wss://` relay (`xr-live-shared-room`).
-`shared-room-voice`   | boolean attribute                                                                              | `false`     | Enables WebRTC peer-to-peer spatialized voice chat (`PannerNode` HRTF 3D audio + inverse-distance attenuation) in `shared-room`.
+`shared-room-voice`   | boolean attribute                                                                              | `false`     | Opts in to voice **signaling** in `shared-room`: relays WebRTC offer/answer/ICE messages (`peerrtcsignal` event, `broadcastRtcSignal()`) and computes per-peer `voiceGain` (`computeSpatialVoiceGain`). Your app owns `getUserMedia`, `RTCPeerConnection`, and audio playback.
 `peer-name`           | `string` (max `32` chars)                                                                      | —           | Local peer display name broadcast in `shared-room`.
 `peer-color`          | `'#rrggbb'`                                                                                    | `'#38bdf8'` | Local peer 3D visor & laser ray tint color in `shared-room`.
 `bloom`               | `boolean \| string`                                                                            | —           | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`).
@@ -210,12 +210,15 @@ mesh.userData.xr = {
     thickness: 0.03,         // [0.002, 0.25] outline width (default: 0.03)
   },
   ik: {
-    target: 'GripperTarget', // required target node name (max 128 chars)
-    solver: 'two-bone',      // 'two-bone' | 'fabrik' (default: 'two-bone')
-    chainLength: 2,          // integer [1, 32] (default: 2)
-    poleTarget: 'ElbowPole', // optional pole hint node name for two-bone solver
-    iterations: 10,          // integer [1, 64] for FABRIK (default: 10)
+    root: 'Shoulder',        // required chain root node name
+    mid: 'Forearm',          // optional middle joint (enables the two-bone solver)
+    effector: 'WristEffector', // required end-effector node name
+    target: 'GripperTarget', // required node name, 'head' / 'hand-left' / 'hand-right', or [x, y, z]
+    pole: 'ElbowPole',       // optional pole node name or [x, y, z] (alias: poleTarget)
+    solver: 'two-bone',      // 'two-bone' | 'fabrik' (default: 'two-bone' with mid, else 'fabrik')
+    iterations: 8,           // integer [1, 32] for FABRIK (default: 8)
     tolerance: 0.001,        // [1e-5, 0.1] convergence tolerance in meters (default: 0.001)
+    weight: 1,               // [0, 1] blend toward the solved pose (default: 1)
   },
   splat: {
     url: '/assets/room.spz', // safe https:// or clean relative .splat/.spz URL

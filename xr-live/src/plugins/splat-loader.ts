@@ -85,6 +85,12 @@ export interface SplatData {
    * (`count * shBasisCountForDegree(shDegree) * 3` floats, RGB-interleaved per basis).
    */
   readonly sh?: Float32Array | null;
+  /**
+   * True when the `.spz` header flags byte (byte 14) has the antialiased bit
+   * (bit 0) set: the cloud was trained with a 0.3 px screen-space blur, so the
+   * renderer applies opacity compensation `sqrt(det(S) / det(S + 0.3 I))`.
+   */
+  readonly antialiased?: boolean;
 }
 
 function allocate(count: number, shDegree = 0): SplatData {
@@ -270,7 +276,8 @@ export function parseSpzPayload(bytes: Uint8Array): SplatData {
       out.sh[j] = (bytes[shStart + j] - 128) / 128;
     }
   }
-  return out;
+  // Header byte 14 is the flags byte; bit 0 marks antialiased training.
+  return (bytes[14] & 1) !== 0 ? {...out, antialiased: true} : out;
 }
 
 /**
@@ -650,18 +657,24 @@ export function sortSplatsByDepth(
       mvp[11] * p[i * 3 + 2] +
       mvp[15];
     depths[i] = w;
-    if (w < min) min = w;
-    if (w > max) max = w;
+    // Use the stored float32 value: a finite double can overflow to ±Infinity.
+    const d = depths[i];
+    if (!Number.isFinite(d)) continue;
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+  if (!(max >= min)) {
+    min = 0;
+    max = 0;
   }
   const buckets = 65536;
   counts.fill(0);
   const range = max - min || 1;
   for (let i = 0; i < n; i++) {
-    // Largest w (farthest) gets key 0 so it is drawn first.
-    const k = Math.min(
-      buckets - 1,
-      Math.floor(((max - depths[i]) / range) * (buckets - 1)),
-    );
+    // Largest w (farthest) gets key 0 so it is drawn first. Non-finite depths
+    // clamp into range (NaN -> farthest) so every index is emitted once.
+    const f = ((max - depths[i]) / range) * (buckets - 1);
+    const k = f >= 0 ? Math.min(buckets - 1, Math.floor(f)) : 0;
     keys[i] = k;
     counts[k]++;
   }
@@ -680,6 +693,7 @@ uniform mat4 uMVP;
 uniform mat4 uMV;
 uniform float uFocalPx;
 uniform int uUseAniso;
+uniform int uAntialias;
 out vec4 vColor;
 out vec3 vConic;
 void main(){
@@ -707,10 +721,11 @@ float mid=0.5*(ca+cc);
 float disc=length(vec2(0.5*(ca-cc),cb));
 float l1=max(0.1,mid+disc);
 float det=max(ca*cc-cb*cb,1e-6);
-gl_PointSize=clamp(3.0*sqrt(l1),1.0,256.0);
+if(uAntialias!=0)vColor.a*=sqrt(clamp(((ca-0.3)*(cc-0.3)-cb*cb)/det,0.0,1.0));
+gl_PointSize=clamp(6.0*sqrt(l1),1.0,512.0);
 vConic=vec3(cc,cb,ca)*(l1/det);
 }else{
-gl_PointSize=clamp(3.0*aRadius*uFocalPx/max(c.w,1e-3),1.0,256.0);
+gl_PointSize=clamp(6.0*aRadius*uFocalPx/max(c.w,1e-3),1.0,512.0);
 vConic=vec3(1.0,0.0,1.0);
 }
 }`;
@@ -723,9 +738,93 @@ void main(){
 vec2 d=gl_PointCoord*2.0-1.0;
 float r=vConic.x*d.x*d.x+2.0*vConic.y*d.x*d.y+vConic.z*d.y*d.y;
 if(r>1.0)discard;
-float a=vColor.a*exp(-4.0*r);
+float a=vColor.a*exp(-4.5*r);
 o=vec4(vColor.rgb*a,a);
 }`;
+
+/**
+ * Writes view-dependent RGBA8 colors for every splat into `out` (length
+ * `count * 4`) for eye position `cameraWorldPos` and world matrix `model`.
+ * SH coefficients live in the splat's local frame, so the camera-to-splat
+ * direction is mapped world -> local with the inverse of `model`'s 3x3 (falls
+ * back to the transpose when singular; `evaluateSplatSH` normalizes).
+ */
+export function computeSplatViewColors(
+  data: SplatData,
+  model: ArrayLike<number>,
+  cameraWorldPos: ArrayLike<number>,
+  out: Uint8Array,
+): Uint8Array {
+  const [m0, m1, m2, m4, m5, m6, m8, m9, m10] = [
+    model[0],
+    model[1],
+    model[2],
+    model[4],
+    model[5],
+    model[6],
+    model[8],
+    model[9],
+    model[10],
+  ];
+  // Rows of inverse(M3) (= adjugate / det), mapping world -> local.
+  let i00 = m5 * m10 - m6 * m9;
+  let i01 = m8 * m6 - m4 * m10;
+  let i02 = m4 * m9 - m8 * m5;
+  let i10 = m9 * m2 - m1 * m10;
+  let i11 = m0 * m10 - m8 * m2;
+  let i12 = m8 * m1 - m0 * m9;
+  let i20 = m1 * m6 - m5 * m2;
+  let i21 = m4 * m2 - m0 * m6;
+  let i22 = m0 * m5 - m4 * m1;
+  const det = m0 * i00 + m1 * i01 + m2 * i02;
+  if (Math.abs(det) > 1e-12 && Number.isFinite(det)) {
+    i00 /= det;
+    i01 /= det;
+    i02 /= det;
+    i10 /= det;
+    i11 /= det;
+    i12 /= det;
+    i20 /= det;
+    i21 /= det;
+    i22 /= det;
+  } else {
+    [i00, i01, i02, i10, i11, i12, i20, i21, i22] = [
+      m0,
+      m1,
+      m2,
+      m4,
+      m5,
+      m6,
+      m8,
+      m9,
+      m10,
+    ];
+  }
+  const cx = cameraWorldPos[0];
+  const cy = cameraWorldPos[1];
+  const cz = cameraWorldPos[2];
+  const pos = data.positions;
+  for (let i = 0; i < data.count; i++) {
+    const lx = pos[i * 3];
+    const ly = pos[i * 3 + 1];
+    const lz = pos[i * 3 + 2];
+    const dx = model[0] * lx + model[4] * ly + model[8] * lz + model[12] - cx;
+    const dy = model[1] * lx + model[5] * ly + model[9] * lz + model[13] - cy;
+    const dz = model[2] * lx + model[6] * ly + model[10] * lz + model[14] - cz;
+    const [r, g, b] = evaluateSplatSH(
+      data,
+      i,
+      i00 * dx + i01 * dy + i02 * dz,
+      i10 * dx + i11 * dy + i12 * dz,
+      i20 * dx + i21 * dy + i22 * dz,
+    );
+    out[i * 4] = r;
+    out[i * 4 + 1] = g;
+    out[i * 4 + 2] = b;
+    out[i * 4 + 3] = data.colors[i * 4 + 3];
+  }
+  return out;
+}
 
 function compile(
   gl: WebGL2RenderingContext,
@@ -754,6 +853,7 @@ export class SplatRenderer {
   private uMV: WebGLUniformLocation | null = null;
   private uFocal: WebGLUniformLocation | null = null;
   private uUseAniso: WebGLUniformLocation | null = null;
+  private uAntialias: WebGLUniformLocation | null = null;
   private order: Uint32Array;
   private readonly scratch: SplatSortScratch;
   private readonly mvp = new Float32Array(16);
@@ -785,6 +885,7 @@ export class SplatRenderer {
     this.uMV = gl.getUniformLocation(prog, 'uMV');
     this.uFocal = gl.getUniformLocation(prog, 'uFocalPx');
     this.uUseAniso = gl.getUniformLocation(prog, 'uUseAniso');
+    this.uAntialias = gl.getUniformLocation(prog, 'uAntialias');
     const radii = new Float32Array(data.count);
     const covA = new Float32Array(data.count * 3);
     const covB = new Float32Array(data.count * 3);
@@ -859,30 +960,12 @@ export class SplatRenderer {
     if (!this.shColors) {
       this.shColors = new Uint8Array(this.data.colors);
     }
-    const cx = cameraWorldPos[0];
-    const cy = cameraWorldPos[1];
-    const cz = cameraWorldPos[2];
-    const pos = this.data.positions;
-    const out = this.shColors;
-    for (let i = 0; i < this.data.count; i++) {
-      const lx = pos[i * 3];
-      const ly = pos[i * 3 + 1];
-      const lz = pos[i * 3 + 2];
-      const wx = model[0] * lx + model[4] * ly + model[8] * lz + model[12];
-      const wy = model[1] * lx + model[5] * ly + model[9] * lz + model[13];
-      const wz = model[2] * lx + model[6] * ly + model[10] * lz + model[14];
-      const [r, g, b] = evaluateSplatSH(
-        this.data,
-        i,
-        wx - cx,
-        wy - cy,
-        wz - cz,
-      );
-      out[i * 4] = r;
-      out[i * 4 + 1] = g;
-      out[i * 4 + 2] = b;
-      out[i * 4 + 3] = this.data.colors[i * 4 + 3];
-    }
+    const out = computeSplatViewColors(
+      this.data,
+      model,
+      cameraWorldPos,
+      this.shColors,
+    );
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, out);
   }
@@ -920,6 +1003,11 @@ export class SplatRenderer {
       gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, this.order);
       if (highQualitySH && cameraPos) {
         this.updateViewColors(cameraPos, model);
+      } else if (this.shColors && this.colorBuffer) {
+        // Quality dropped back to normal: restore the base (DC) colors.
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.data.colors);
+        this.shColors = null;
       }
       this.framesSinceSort = 0;
     }
@@ -932,6 +1020,7 @@ export class SplatRenderer {
       gl.uniform1i?.(this.uUseAniso, 0);
     }
     gl.uniform1f(this.uFocal, focalPx);
+    gl.uniform1i?.(this.uAntialias, this.data.antialiased ? 1 : 0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
@@ -1012,7 +1101,11 @@ export class XRSplatLoader {
     const heightPx = viewport?.[3] || gl.drawingBufferHeight;
     const focalPx = ((resolveProjection(viewer)?.[5] ?? 1.7) * heightPx) / 2;
     const model = new Float32Array(16);
-    const modelView = viewer.viewMatrix ? new Float32Array(16) : null;
+    // Covariance must be projected with the view actually being drawn (per-eye
+    // in WebXR / stereo), not the desktop orbit camera.
+    const view = viewer.activeViewMatrix ?? viewer.viewMatrix;
+    const modelView = view ? new Float32Array(16) : null;
+    const eye = frameEye.get(viewer) ?? null;
     for (const [mesh, entry] of this.entries) {
       if (!entry.renderer || (mesh as {visible?: boolean}).visible === false) {
         continue;
@@ -1023,21 +1116,14 @@ export class XRSplatLoader {
       } else {
         model.set(transform);
       }
-      if (modelView && viewer.viewMatrix) {
-        mat4Multiply(modelView, viewer.viewMatrix, model);
+      if (modelView && view) {
+        mat4Multiply(modelView, view, model);
       }
       const traits = getMeshXRTraits(mesh) as {splatQuality?: string} | null;
       const highQualitySH =
         traits?.splatQuality === 'high' ||
         viewer.container?.getAttribute?.('splat-quality') === 'high';
-      entry.renderer.draw(
-        vp,
-        model,
-        focalPx,
-        modelView,
-        viewer.cameraPos ?? null,
-        highQualitySH,
-      );
+      entry.renderer.draw(vp, model, focalPx, modelView, eye, highQualitySH);
     }
   }
 
@@ -1049,6 +1135,8 @@ export class XRSplatLoader {
 }
 
 const loaders = new WeakMap<object, XRSplatLoader>();
+/** Eye position of the view being drawn, captured in `onBeforeDrawScene`. */
+const frameEye = new WeakMap<object, [number, number, number]>();
 
 /** Returns (creating on first use) the splat loader for `viewer`. */
 export function getSplatLoader(viewer: object): XRSplatLoader {
@@ -1077,6 +1165,16 @@ export const splatLoaderPlugin: ThreeLivePlugin = {
     const v = viewer as PluginViewer;
     cacheXRFrame(v, frame, refSpace);
     if (v && Array.isArray(v.meshes)) getSplatLoader(v).sync(v);
+  },
+  onBeforeDrawScene(
+    viewer: PluginViewer,
+    _gl: WebGL2RenderingContext,
+    _vp: Float32Array,
+    cameraPos: [number, number, number],
+  ): void {
+    if (viewer && cameraPos) {
+      frameEye.set(viewer, [cameraPos[0], cameraPos[1], cameraPos[2]]);
+    }
   },
   onAfterRender(
     _gl: WebGL2RenderingContext,

@@ -1056,6 +1056,163 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertNil(XRLiveRuntimeSession(gltfJSONData: Data(count: size)))
   }
 
+  /// 1-splat `.spz` v3 with `shDegree` SH bytes in the shared golden pattern (see web test).
+  private static func spzV3WithSh(_ shDegree: Int, shBytes: Int? = nil) -> [UInt8] {
+    let basis = SplatParser.shBasisCountForDegree(shDegree)
+    let base = 16 + 9 + 1 + 3 + 3 + 4
+    var out = [UInt8](repeating: 0, count: base + (shBytes ?? basis * 3))
+    out.replaceSubrange(0..<4, with: [0x4E, 0x47, 0x53, 0x50])
+    out[4] = 3
+    out[8] = 1
+    out[12] = UInt8(shDegree)
+    out[13] = 12
+    out[25] = 255
+    out.replaceSubrange(26..<29, with: [128, 128, 128])
+    out[35] = 0xC0  // comp = 3 << 30 (identity quaternion)
+    var k = 0
+    while k < basis && base + k * 3 + 2 < out.count {
+      out[base + k * 3] = UInt8(128 + (k % 2 == 0 ? 4 + k : -(2 + k)))
+      out[base + k * 3 + 1] = UInt8(128 + (k % 3) * 5 - 5)
+      out[base + k * 3 + 2] = 128
+      k += 1
+    }
+    return out
+  }
+
+  func testSplatAuditFixes() throws {
+    // SH degree 2 / 3 golden values (reference 3DGS) along (0.48, 0.6, 0.64).
+    let dir = SIMD3<Float>(0.48, 0.6, 0.64)
+    let g2 = SplatParser.evaluateSplatSH(
+      try SplatParser.parseSpzPayload(Data(Self.spzV3WithSh(2))), index: 0, dir: dir)
+    let g3 = SplatParser.evaluateSplatSH(
+      try SplatParser.parseSpzPayload(Data(Self.spzV3WithSh(3))), index: 0, dir: dir)
+    XCTAssertEqual(g2, SIMD3<UInt8>(105, 130, 128))
+    XCTAssertEqual(g3, SIMD3<UInt8>(93, 125, 128))
+    // Truncated SH block falls back to degree 0; shDegree 4 is rejected.
+    let trunc = try SplatParser.parseSpzPayload(Data(Self.spzV3WithSh(3, shBytes: 44)))
+    XCTAssertEqual(trunc.shDegree, 0)
+    XCTAssertNil(trunc.sh)
+    var deg4 = Self.spzV3WithSh(1)
+    deg4[12] = 4
+    XCTAssertThrowsError(try SplatParser.parseSpzPayload(Data(deg4))) {
+      XCTAssertEqual($0 as? SplatParserError, .invalidShDegree(4))
+    }
+    // v2 rotation decode: (255, 128, 128) -> x ~ 1, w ~ 0.
+    var v2 = Self.spzV2
+    v2.replaceSubrange(32..<35, with: [255, 128, 128])
+    let v2d = try SplatParser.parseSpzPayload(Data(v2))
+    XCTAssertEqual(v2d.rotations[0], 1, accuracy: 0.01)
+    XCTAssertEqual(v2d.rotations[3], 0, accuracy: 0.01)
+
+    // F10: header flags byte 14 bit 0 = antialiased.
+    var aa = Self.spzV3WithSh(0)
+    aa[14] = 1
+    XCTAssertTrue(try SplatParser.parseSpzPayload(Data(aa)).antialiased)
+    XCTAssertFalse(try SplatParser.parseSpzPayload(Data(Self.spzV3WithSh(0))).antialiased)
+
+    // F5: GPU billboard bounds each splat isotropically by its largest axis.
+    var needle = SplatData(count: 1)
+    needle.scales = [0.01, 0.01, 0.5]
+    needle.rotations = [0, 0, 0, 1]
+    let gpu = SplatParser.buildStaticGpuSplatVertices(needle)
+    XCTAssertEqual(gpu.uvs[1].x, 1.5, accuracy: 1e-5)
+    XCTAssertEqual(gpu.uvs[2].y, 1.5, accuracy: 1e-5)
+
+    // F3: SH view direction is mapped into the splat's local frame.
+    var sh1 = Self.spzV3WithSh(1)
+    for j in (sh1.count - 9)..<sh1.count { sh1[j] = 128 }
+    sh1[sh1.count - 9 + 3] = 255  // basis 1 (local +Z), R channel
+    let sh1Data = try SplatParser.parseSpzPayload(Data(sh1))
+    // Columns (0,0,-1), (0,1,0), (1,0,0): local +Z maps to world +X.
+    let yaw90 = simd_float4x4(
+      SIMD4<Float>(0, 0, -1, 0), SIMD4<Float>(0, 1, 0, 0), SIMD4<Float>(1, 0, 0, 0),
+      SIMD4<Float>(0, 0, 0, 1))
+    var cam = matrix_identity_float4x4
+    cam.columns.3 = SIMD4<Float>(-5, 0, 0, 1)
+    let quads = SplatParser.buildSplatQuads(sh1Data, order: [0], nodeWorld: yaw90, cameraWorld: cam)
+    XCTAssertGreaterThan(Int(quads.colors[0]), Int(sh1Data.colors[0]) + 40)
+
+    // F8: redirects must keep the URL policy.
+    let original = URL(string: "https://site.test/room.spz")!
+    XCTAssertTrue(
+      SplatParser.allowsRedirect(
+        from: original, to: URL(string: "https://site.test/cdn/room.spz"),
+        allowCrossOrigin: false))
+    XCTAssertFalse(
+      SplatParser.allowsRedirect(
+        from: original, to: URL(string: "https://evil.test/room.spz"), allowCrossOrigin: false))
+    XCTAssertFalse(
+      SplatParser.allowsRedirect(
+        from: original, to: URL(string: "http://evil.test/room.spz"), allowCrossOrigin: true))
+    XCTAssertFalse(SplatParser.allowsRedirect(from: original, to: nil, allowCrossOrigin: true))
+  }
+
+  func testSplatLoadURLStreamingCapAndErrors() async throws {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [SplatStubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    // Body larger than maxBytes without a Content-Length header.
+    do {
+      _ = try await SplatParser.loadURL(
+        "https://site.test/big.spz", maxBytes: 100, session: session)
+      XCTFail("expected fileTooLarge")
+    } catch {
+      XCTAssertEqual(error as? SplatParserError, .fileTooLarge)
+    }
+    // Declared Content-Length over the cap is rejected up front.
+    do {
+      _ = try await SplatParser.loadURL(
+        "https://site.test/declared.spz", maxBytes: 100, session: session)
+      XCTFail("expected fileTooLarge")
+    } catch {
+      XCTAssertEqual(error as? SplatParserError, .fileTooLarge)
+    }
+    // HTTP errors and rejected URLs map to dedicated error cases.
+    do {
+      _ = try await SplatParser.loadURL("https://site.test/missing.spz", session: session)
+      XCTFail("expected httpStatus")
+    } catch {
+      XCTAssertEqual(error as? SplatParserError, .httpStatus(404))
+    }
+    do {
+      _ = try await SplatParser.loadURL("javascript:alert(1)", session: session)
+      XCTFail("expected urlRejected")
+    } catch {
+      XCTAssertEqual(error as? SplatParserError, .urlRejected)
+    }
+    // A valid payload still decodes.
+    let ok = try await SplatParser.loadURL("https://site.test/ok.spz", session: session)
+    XCTAssertEqual(ok.count, 1)
+  }
+
+  func testSharedRoomIceValidationAndUtf16Lengths() {
+    func ice(_ extra: String) -> SharedRoom.WireMessage? {
+      SharedRoom.parseMessage(
+        #"{"v":1,"type":"rtc","peerId":"peer-a","targetPeerId":"peer-b","signalType":"ice","candidate":"candidate:1 1 UDP 1 192.0.2.1 9 typ host"\#(extra)}"#
+      )
+    }
+    XCTAssertNil(ice(""), "ICE needs sdpMid or sdpMLineIndex")
+    XCTAssertNil(ice(#","sdpMid":"\#(String(repeating: "m", count: 65))""#))
+    guard
+      case .rtc(_, _, _, _, _, let mid, _)? = ice(
+        #","sdpMid":"\#(String(repeating: "m", count: 64))""#)
+    else { return XCTFail("expected 64-char sdpMid to parse") }
+    XCTAssertEqual(mid?.count, 64)
+    XCTAssertNotNil(ice(#","sdpMLineIndex":0"#))
+
+    // F11: SDP length is measured in UTF-16 units (CRLF counts as 2, like web / Android).
+    func offer(_ sdp: String) -> SharedRoom.WireMessage? {
+      SharedRoom.parseMessage(
+        SharedRoom.serializeMessage(
+          .rtc(
+            peerId: "peer-a", targetPeerId: "peer-b", signalType: "offer", sdp: sdp,
+            candidate: nil, sdpMid: nil, sdpMLineIndex: nil)))
+    }
+    // 8193 UTF-16 units but only 8192 grapheme clusters: previously accepted on iOS only.
+    XCTAssertNil(offer(String(repeating: "a", count: 8191) + "\r\n"))
+    XCTAssertNotNil(offer(String(repeating: "a", count: 8190) + "\r\n"))
+  }
+
   func testSplatSortSurvivesHugeAndNonFinitePositions() {
     var data = SplatData(count: 4)
     data.positions = [0, 0, -1, 0, 0, -Float.greatestFiniteMagnitude, 0, 0, .nan, 0, 0, -3]
@@ -1709,6 +1866,220 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertGreaterThan(laserHit.indices.count, laserMiss.indices.count)
   }
 
+  /// Golden vectors from the reference meshoptimizer (scalar build); see three-live/tests/meshopt_test.ts.
+  private static let meshoptGolden: [String: String] = [
+    "vb_37x12_v0_raw":
+      "00070eff1c232aff383f46ff00070f0005252c003b424900000810ff1f272eff3e454dff010911002129310041495100"
+      + "3d0912ff222b33ff444c54ff010a1300242d3500474f5800020b14ff262f38ff4a535cff020b150027313a004d565f00"
+      + "020c16ff29333cff50fb63ff030d17002b353f00535d6700030d18ff2c3741ff56606aff030e19002e39f10059636e00"
+      + "040f1aff303b46ff5c6772ff040f1b00313d48005f6a750004101cff333f4aff626d79ff05111d0035414d0065717d00"
+      + "05111eff36434fff637480ff05121f00384551006b778400061331ff3a4754ff6e7b88ff061321003b495600717e8b00"
+      + "061422ff3d4b58ff31818fff07152300545d5b0077859300071524ff404f5dff7a9e96ff0716250042515f007d8b9a00"
+      + "081726ff445362ff808f9eff08172700455564008392a100081828ff475766ff8695a5ff09192900495969008999a900"
+      + "09192aff4a5b6bff8c9cacff8d1a2b004c5d6d008f9fb0000a1b2cff4e5f70ff92a3b4ff0a1b2d004f61720095a6b700"
+      + "0a1c2eff516374ff98a9bbff0b1d7b00536577009badbf000b1d30ffe76779ff9eb0c2ff0b1e310056697b00a1b3c600"
+      + "0c1f32ff586b7eff56b7caff",
+    "vb_37x12_v0_enc":
+      "a01502f8208278770820823cf7fa20800000150a28a28a28a28a28a2800000152aaaaaaaafaaaaaa241fbe8000009a95"
+      + "152666666666666666664000001a0ff42442442442442d3424424ff4424424422e27ffc000000404d7de042a04444444"
+      + "4444444444444ff444444444241b44444000000000002a04464464464ff4469faa446446446446446446446000000000"
+      + "00152666666666666666664000002a06666666666666663f66ff6666666666107f8c6666f00000000000952a06686686"
+      + "ff668668b5c4668668ff86686686322568668000000000002a0688688688688688688688688688688688688000000000"
+      + "0015266666666666666666400000000000000000000000000000000000000000000000070eff1c232aff383f46ff",
+    "vb_37x12_v1_raw":
+      "00070eff1c232aff383f46ff00070f001d2565003b424900000810ff1f272eff3e454dff010911002129310041495100"
+      + "010912ff222b7dff444c54ff010a1300242d3500474fc400020b14ff263038ff4a535cff020b150027313a004d565f00"
+      + "020c16ff29333cff50a063ff030d17002b353f00535d6700030d18ff2c3741ff56606aff030e19002e39430059636e00"
+      + "070f1aff303b46ff5c67deff040f1b00313d48005f6a750004101cffd9c84aff626d79ff0511050035414d0065717d00"
+      + "05111eff36434fff687480ff05121f0038cf51006b778400061320ff3a2254ff6e7b88ff061321003b495600717e8b00"
+      + "061422ff3d4b58ff74818fff071523003f4d5b0077859300071524ff404f5dff7a8896ff072a250042515f007d8b9a00"
+      + "081726ff445362ff808f9eff08172700965564008392a100081828ff470566ff8695a5ff09192900495969008999a900"
+      + "09192aff055b6bff8c9cacff091a5f004c5d6d008f9fb0000a1b2cff4e5f70ff92a3b4ff0a1b2d004f61720095a6b700"
+      + "0a1c2eff516374ff98a9bbff891d2f00536577009badbf000b1d30ff546779ff9eb0c2ff0b1e310056697b00a1b3c600"
+      + "0c1f32ff586b7effa4b7caff",
+    "vb_37x12_v1_enc":
+      "a155555505020820f20805082082081600fefb02150a28a28a28a3ca282a25a2800000152aaaaaab2deaaaaabe326a65"
+      + "aa800000152666666666666666664000000a02442442442442ffafb8244244244ff4ff42a49d878e1f0004040204040a"
+      + "04444462444444ffe9f24fff444444ff4444e7a64e9fa81f0004040404040a0ff6ff6446446446766d988f4464464464"
+      + "4644641f000406040406152666666666666666664000000a066666666666666666666666666666661f0006060606060a"
+      + "06686686ff668668948566866866866866861f0006080606080a06886ff68868ff88e0cfe0d168868868868868861f00"
+      + "08080608081526666666666666666640000000000000000000000000070eff1c232aff383f46ff000000",
+    "ib_v0_enc":
+      "e0fe1f001f001f001f001f001ffe1f0b1f0a1f091f081f071fff1f071f071f071f071f071fff1f071f071f071f071f07"
+      + "1fff1f071f071f071f071f071fff1f071f071f071f071f071ffffff00e020202020202fb02020202020202f60b0e0202"
+      + "02020202f60b0e020202020202f60b0e020202020202f60b0e020202020202fff00ec50fd6c508ffd9c508000c007687"
+      + "566778a9866589689801690000",
+    "ib_v1_enc":
+      "e1fe1e001e001e001e001e001efe1e0b1e0a1e091e081e071eff1e071e071e071e071e071eff1e071e071e071e071e07"
+      + "1eff1e071e071e071e071e071eff1e071e071e071e071e071efffff00efb02f60b0ef60b0ef60b0ef60b0efff00ec50f"
+      + "d6c508ffd9c508000c007687566778a9866589689801690000",
+    "ib_decoded_u32":
+      "000000000700000001000000010000000700000008000000010000000800000002000000020000000800000009000000"
+      + "02000000090000000300000003000000090000000a000000030000000a00000004000000040000000a0000000b000000"
+      + "040000000b00000005000000050000000b0000000c000000050000000c00000006000000060000000c0000000d000000"
+      + "070000000e00000008000000080000000e0000000f000000080000000f00000009000000090000000f00000010000000"
+      + "09000000100000000a0000000a00000010000000110000000a000000110000000b0000000b0000001100000012000000"
+      + "0b000000120000000c0000000c00000012000000130000000c000000130000000d0000000d0000001300000014000000"
+      + "0e000000150000000f0000000f00000015000000160000000f0000001600000010000000100000001600000017000000"
+      + "100000001700000011000000110000001700000018000000110000001800000012000000120000001800000019000000"
+      + "12000000190000001300000013000000190000001a000000130000001a00000014000000140000001a0000001b000000"
+      + "150000001c00000016000000160000001c0000001d000000160000001d00000017000000170000001d0000001e000000"
+      + "170000001e00000018000000180000001e0000001f000000180000001f00000019000000190000001f00000020000000"
+      + "19000000200000001a0000001a00000020000000210000001a000000210000001b0000001b0000002100000022000000"
+      + "1c000000230000001d0000001d00000023000000240000001d000000240000001e0000001e0000002400000025000000"
+      + "1e000000250000001f0000001f00000025000000260000001f0000002600000020000000200000002600000027000000"
+      + "200000002700000021000000210000002700000028000000210000002800000022000000220000002800000029000000"
+      + "230000002a00000024000000240000002a0000002b000000240000002b00000025000000250000002b0000002c000000"
+      + "250000002c00000026000000260000002c0000002d000000260000002d00000027000000270000002d0000002e000000"
+      + "270000002e00000028000000280000002e0000002f000000280000002f00000029000000290000002f00000030000000"
+      + "e80300000500000070110100030000000300000009000000",
+    "seq_enc":
+      "d1000404041c0404c9011ab9b31802030c001a00000000",
+    "seq_u32":
+      "000000000100000002000000030000000a0000000b0000000c0000003200000005000000a0860100040000009f860100"
+      + "070000000700000000000000",
+    "oct8_enc":
+      "004f7f00594f7f0033117f00a1ad7f00d2cf7f00428f7f003de27f006d607f00",
+    "oct8_dec":
+      "006d42005341b900511b5e00b5caa900b2ac370016a1af0065ce3b002e1b8d00",
+    "oct16_enc":
+      "0000ff4fff7f00004759384fff7f00005433ed10ff7f00006fa02facff7f000062d148ceff7f000094421d8eff7f0000"
+      + "303df5e1ff7f0000b66db760ff7f0000",
+    "oct16_dec":
+      "0000c16ddb4100000b54b64238ba00008d51e41aeb5e0000bbb4c0c874a800009ab051abed350000061622a01aae0000"
+      + "1f6559cec33c0000582e171bce8b0000",
+    "quat_enc":
+      "000000000000ff0700000000ff07fc070000ff070000fd07ff0700000000fe07a705a705a705fc0764039cfcdffefd07",
+    "quat_dec":
+      "000000000000ff7f825a00000000825a0000825a0000825a00000000825a825a0f40fa3ffa3ffa3f39f3367361269fd9",
+    "exp_enc":
+      "003000f300e0fff1803e00fc6e3400e500c4fff4000000fcba3d00f911c9ff06002000f4333300ef333300f09ad9fff1",
+    "exp_dec":
+      "0000c03f000080be00007a4400b8d138000070c00000000000e8f64200bc5bc90000004000cccc3d00cc4c3e009899be",
+    "color8_enc":
+      "407fc1ff7f007fc04081c08066cd00e6ff0000ff",
+    "color8_dec":
+      "fe0100ff00fe00800100ff00336699ccffffffff",
+    "color16_enc":
+      "0004ff0701fcff0fff070000ff07000c000401f800fc00086606cdfc0000660eff0f00000000ff0f",
+    "color16_dec":
+      "efff10000000ffff0000efff0000088010000000ffff0000333366669999ccccffffffffffffffff",
+  ]
+
+  private func goldenBytes(_ name: String) -> [UInt8] {
+    let s = Array(Self.meshoptGolden[name]!.utf8)
+    return stride(from: 0, to: s.count, by: 2).map {
+      UInt8(String(bytes: s[$0..<($0 + 2)], encoding: .ascii)!, radix: 16)!
+    }
+  }
+
+  func testMeshoptSpecDecodersMatchReferenceMeshoptimizer() throws {
+    for v in ["v0", "v1"] {
+      let raw = goldenBytes("vb_37x12_\(v)_raw")
+      let enc = Data(goldenBytes("vb_37x12_\(v)_enc"))
+      XCTAssertEqual(
+        [UInt8](
+          try MeshoptDecoder.decodeBuffer(enc, count: 37, byteStride: 12, mode: "ATTRIBUTES")),
+        raw, "vertex codec \(v)")
+      XCTAssertThrowsError(
+        try MeshoptDecoder.decodeBuffer(
+          enc.prefix(enc.count - 1), count: 37, byteStride: 12, mode: "ATTRIBUTES"))
+      let ours = MeshoptDecoder.encodeBuffer(
+        Data(raw), count: 37, byteStride: 12, mode: "ATTRIBUTES")
+      XCTAssertEqual(
+        [UInt8](
+          try MeshoptDecoder.decodeBuffer(ours, count: 37, byteStride: 12, mode: "ATTRIBUTES")),
+        raw, "encoder \(v) round trip")
+    }
+    let ib = goldenBytes("ib_decoded_u32")
+    for v in ["ib_v0_enc", "ib_v1_enc"] {
+      XCTAssertEqual(
+        [UInt8](
+          try MeshoptDecoder.decodeBuffer(
+            Data(goldenBytes(v)), count: ib.count / 4, byteStride: 4, mode: "TRIANGLES")),
+        ib, v)
+    }
+    let ibOurs = MeshoptDecoder.encodeBuffer(
+      Data(ib), count: ib.count / 4, byteStride: 4, mode: "TRIANGLES")
+    XCTAssertEqual(
+      [UInt8](
+        try MeshoptDecoder.decodeBuffer(
+          ibOurs, count: ib.count / 4, byteStride: 4, mode: "TRIANGLES")
+      ), ib)
+    var legacy = goldenBytes("ib_v1_enc")
+    legacy[0] = 0xb0
+    XCTAssertThrowsError(
+      try MeshoptDecoder.decodeBuffer(
+        Data(legacy), count: ib.count / 4, byteStride: 4, mode: "TRIANGLES"))
+    let seq = goldenBytes("seq_u32")
+    XCTAssertEqual(
+      [UInt8](
+        try MeshoptDecoder.decodeBuffer(
+          Data(goldenBytes("seq_enc")), count: seq.count / 4, byteStride: 4, mode: "INDICES")),
+      seq)
+    let seqOurs = MeshoptDecoder.encodeBuffer(
+      Data(seq), count: seq.count / 4, byteStride: 4, mode: "INDICES")
+    XCTAssertEqual(
+      [UInt8](
+        try MeshoptDecoder.decodeBuffer(
+          seqOurs, count: seq.count / 4, byteStride: 4, mode: "INDICES")),
+      seq)
+    let filters: [(String, Int, Int, String)] = [
+      ("oct8", 8, 4, "OCTAHEDRAL"), ("oct16", 8, 8, "OCTAHEDRAL"), ("quat", 6, 8, "QUATERNION"),
+      ("exp", 4, 12, "EXPONENTIAL"), ("color8", 5, 4, "COLOR"), ("color16", 5, 8, "COLOR"),
+    ]
+    for (name, count, stride, filter) in filters {
+      var buf = Data(goldenBytes("\(name)_enc"))
+      MeshoptDecoder.applyFilter(&buf, count: count, byteStride: stride, filter: filter)
+      XCTAssertEqual([UInt8](buf), goldenBytes("\(name)_dec"), "filter \(name)")
+    }
+  }
+
+  func testIOSPostProcessingHelpers() {
+    XCTAssertEqual(XRLivePostProcessing.normalizeToneMapping(" AgX "), "agx")
+    XCTAssertEqual(XRLivePostProcessing.normalizeToneMapping("bogus"), "neutral")
+    XCTAssertEqual(XRLivePostProcessing.normalizeToneMapping(nil), "neutral")
+    // The inverse PBR Neutral curve round-trips on the grey axis.
+    for x in [0.05, 0.18, 0.5, 1.0, 3.0] {
+      let y = XRLiveTraitParser.evaluateToneMapping(rgb: SIMD3<Double>(x, x, x), mode: "neutral").x
+      XCTAssertEqual(XRLivePostProcessing.inverseNeutral(y), x, accuracy: x * 1e-3 + 1e-4)
+    }
+    // `neutral` is the identity (RealityKit's own look); other curves change mid tones.
+    let grey = SIMD3<Double>(0.5, 0.5, 0.5)
+    XCTAssertEqual(XRLivePostProcessing.retoneMap(srgb: grey, mode: "neutral"), grey)
+    let aces = XRLivePostProcessing.retoneMap(srgb: grey, mode: "aces")
+    let none = XRLivePostProcessing.retoneMap(srgb: SIMD3<Double>(0.9, 0.9, 0.9), mode: "none")
+    let maxShift = ["aces", "agx", "reinhard"].map { mode -> Double in
+      [0.2, 0.5, 0.8, 0.95].map { v in
+        abs(XRLivePostProcessing.retoneMap(srgb: SIMD3<Double>(v, v, v), mode: mode).x - v)
+      }.max() ?? 0
+    }
+    XCTAssertTrue(maxShift.allSatisfy { $0 > 0.02 }, "\(maxShift)")
+    XCTAssertEqual(aces.x, aces.y, accuracy: 1e-9)
+    XCTAssertLessThanOrEqual(none.x, 1.0)
+    XCTAssertEqual(XRLivePostProcessing.retoneMap(srgb: .zero, mode: "agx").x, 0, accuracy: 0.02)
+    let cube = XRLivePostProcessing.toneMappingCube(mode: "reinhard", size: 8)
+    XCTAssertEqual(cube.count, 8 * 8 * 8 * 4)
+    XCTAssertTrue(cube.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
+    XCTAssertEqual(cube[3], 1)
+    // Bloom samples the tone-mapped frame, so the threshold is capped like web.
+    let pass = XRLivePostProcessing.bloomPass(
+      XRLiveBloom(strength: 1.2, threshold: 3, radius: 1), viewportHeight: 1000)
+    XCTAssertEqual(pass.threshold, 0.95, accuracy: 1e-9)
+    XCTAssertEqual(pass.intensity, 1.2, accuracy: 1e-6)
+    XCTAssertEqual(pass.blurRadiusPixels, 20, accuracy: 1e-6)
+    XCTAssertEqual(
+      XRLivePostProcessing.strongestBloom([
+        nil, XRLiveBloom(strength: 0.4), XRLiveBloom(strength: 1.1),
+      ])?
+      .strength ?? 0, 1.1, accuracy: 1e-6)
+    XCTAssertNil(XRLivePostProcessing.strongestBloom([nil]))
+    // 3 px at 1.5 m with a 60° FOV on a 1000 px viewport ≈ 5.2 mm.
+    XCTAssertEqual(
+      XRLivePostProcessing.outlineShellOffset(thicknessPixels: 3), 0.0052, accuracy: 2e-4)
+    XCTAssertEqual(XRLivePostProcessing.rgb(fromHex: "#f80"), SIMD3<Float>(1, 0x88 / 255.0, 0))
+  }
+
   func testMeshoptDecoderAndMaterialVariantsAndGpuInstancing() throws {
     var orig = [UInt8](repeating: 0, count: 16 * 4)
     for i in 0..<orig.count { orig[i] = UInt8((i * 13 + 7) & 0xFF) }
@@ -1738,6 +2109,23 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     let bits =
       UInt32(exp[0]) | (UInt32(exp[1]) << 8) | (UInt32(exp[2]) << 16) | (UInt32(exp[3]) << 24)
     XCTAssertEqual(Float(bitPattern: bits), 0.5, accuracy: 1e-6)
+
+    // QUATERNION: out[(qc+1)&3]=x, out[(qc+2)&3]=y, out[(qc+3)&3]=z, out[qc]=w.
+    for qc in 0..<3 {
+      let words: [Int16] = [16384, 0, -16384, Int16(0x7FFC | qc)]
+      var q = Data()
+      for w in words {
+        q.append(contentsOf: [UInt8(truncatingIfNeeded: w), UInt8(truncatingIfNeeded: w >> 8)])
+      }
+      MeshoptDecoder.applyFilter(&q, count: 1, byteStride: 8, filter: "QUATERNION")
+      func comp(_ k: Int) -> Double {
+        Double(Int16(bitPattern: UInt16(q[k * 2]) | (UInt16(q[k * 2 + 1]) << 8)))
+      }
+      XCTAssertEqual(comp((qc + 1) & 3), 11585, accuracy: 2, "qc=\(qc) x")
+      XCTAssertEqual(comp((qc + 2) & 3), 0, accuracy: 2, "qc=\(qc) y")
+      XCTAssertEqual(comp((qc + 3) & 3), -11585, accuracy: 2, "qc=\(qc) z")
+      XCTAssertEqual(comp(qc), 28378, accuracy: 2, "qc=\(qc) w")
+    }
 
     XCTAssertThrowsError(
       try MeshoptDecoder.decodeBuffer(
@@ -1791,6 +2179,19 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         ]
       }
       """#
+    // Unnamed variants keep their index; a variant named "default" is selectable.
+    let (unnamed, _) = session(
+      #"{"extensions":{"KHR_materials_variants":{"variants":[{},{"name":"Gold"},{"name":"default"}]}},"#
+        + #""materials":[{},{},{}],"meshes":[{"primitives":[{"material":0,"extensions":{"KHR_materials_variants":{"mappings":["#
+        + #"{"material":1,"variants":[1]},{"material":2,"variants":[2]}]}}}]}],"nodes":[{"mesh":0}]}"#
+    )
+    XCTAssertEqual(unnamed.availableVariants, ["Variant_0", "Gold", "default"])
+    XCTAssertTrue(unnamed.selectVariant("Gold"))
+    XCTAssertEqual(unnamed.meshPrimitiveMaterial(meshIndex: 0, primitiveIndex: 0), 1)
+    XCTAssertTrue(unnamed.selectVariant("default"))
+    XCTAssertEqual(unnamed.activeVariantName, "default")
+    XCTAssertEqual(unnamed.meshPrimitiveMaterial(meshIndex: 0, primitiveIndex: 0), 2)
+
     let (s, _) = session(gltfJson)
     XCTAssertEqual(s.availableVariants, ["Midnight", "Solar Gold"])
     XCTAssertEqual(s.meshPrimitiveMaterial(meshIndex: 0, primitiveIndex: 0), 0)
@@ -1816,6 +2217,19 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertTrue(agx.x > 0.6 && agx.x <= 1.0)
     XCTAssertEqual(reinhard.x, 0.8, accuracy: 1e-4)
     XCTAssertEqual(none.x, 1.0, accuracy: 1e-6)
+    // Cross-platform golden values (identical in three_view_test.ts and the Kotlin tests).
+    let goldens: [(SIMD3<Double>, SIMD3<Double>)] = [
+      (neutral, SIMD3(0.983256, 0.554125, 0.339560)),
+      (aces, SIMD3(0.934211, 0.780548, 0.215326)),
+      (agx, SIMD3(0.907921, 0.704809, 0.389573)),
+      (reinhard, SIMD3(0.8, 0.6, 0.2)),
+      (none, SIMD3(1.0, 1.0, 0.25)),
+    ]
+    for (got, want) in goldens {
+      XCTAssertEqual(got.x, want.x, accuracy: 1e-5)
+      XCTAssertEqual(got.y, want.y, accuracy: 1e-5)
+      XCTAssertEqual(got.z, want.z, accuracy: 1e-5)
+    }
 
     let traits = try XCTUnwrap(
       XRLiveTraitParser.normalize([
@@ -1827,6 +2241,16 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(traits.bloom?.radius ?? 0, 0.5, accuracy: 1e-6)
     XCTAssertEqual(traits.outline?.color, "#22c55e")
     XCTAssertEqual(traits.outline?.thickness ?? 0, 4.0, accuracy: 1e-6)
+    // Metre-sized thickness (documented 0.025) converts to pixels like web/Android.
+    let metreOutline: [String: Any] = ["thickness": 0.025]
+    let tinyOutline: [String: Any] = ["width": 0.005]
+    let subPixelOutline: [String: Any] = ["thickness": 0.3]
+    XCTAssertEqual(
+      XRLiveTraitParser.parseOutline(metreOutline)?.thickness ?? 0, 3.5, accuracy: 1e-5)
+    XCTAssertEqual(
+      XRLiveTraitParser.parseOutline(tinyOutline)?.thickness ?? 0, 1.5, accuracy: 1e-5)
+    XCTAssertEqual(
+      XRLiveTraitParser.parseOutline(subPixelOutline)?.thickness ?? 0, 0.5, accuracy: 1e-5)
 
     let usd = try XCTUnwrap(
       XRLiveTraitParser.normalize(usdCustomData: [
@@ -1971,4 +2395,158 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(simd_length(wristPos - elbowPos), 0.5, accuracy: 1e-4)
     XCTAssertGreaterThan(wristPos.x, 0.1)
   }
+
+  func testIKRotatesJointHierarchyAndChildrenFollow() throws {
+    for solver in ["two-bone", "fabrik"] {
+      let json = """
+        {"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[
+        {"name":"Shoulder","translation":[0,0,0],"children":[1,3]},
+        {"name":"Elbow","translation":[0,0.5,0],"children":[2]},
+        {"name":"Wrist","translation":[0,0.5,0],"extras":{"xr":{"ik":{"solver":"\(solver)","root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":[1,0,0]}}}},
+        {"name":"UpperLink","translation":[0,0.25,0]}
+        ]}
+        """
+      let (session, _) = self.session(json)
+      for _ in 0..<3 { session.step(dt: 0.016) }
+      func p(_ i: Int) -> SIMD3<Float> {
+        let m = session.worldMatrix(of: i)
+        return SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+      }
+      let elbow = p(1)
+      let wrist = p(2)
+      let link = p(3)
+      XCTAssertEqual(simd_distance(wrist, SIMD3<Float>(0.5, 0.5, 0)), 0, accuracy: 2e-3, solver)
+      XCTAssertEqual(simd_length(elbow), 0.5, accuracy: 1e-3, solver)
+      XCTAssertEqual(simd_distance(wrist, elbow), 0.5, accuracy: 1e-3, solver)
+      XCTAssertEqual(
+        simd_distance(link, elbow / 2), 0, accuracy: 1e-3, "\(solver) child follows joint")
+      if solver == "two-bone" {
+        XCTAssertGreaterThan(elbow.x, 0.4, "pole bends the elbow toward +X")
+      }
+    }
+  }
+
+  func testIKNamedPoleSceneRootAndEdgeCases() throws {
+    let named = try XCTUnwrap(
+      XRLiveTraitParser.parseIK(["root": "A", "effector": "C", "target": "T", "poleTarget": "P"]))
+    XCTAssertEqual(named.poleName, "P")
+    XCTAssertNil(named.pole)
+    XCTAssertNil(XRLiveTraitParser.parseIK(["target": "T", "poleTarget": "P", "chainLength": 2]))
+
+    // A literal pole goes through the scene root like the target: the elbow bends purely toward +Z.
+    let chain =
+      #"{"name":"Shoulder","translation":[0,0,0]},{"name":"Elbow","translation":[0,0.5,0]},"#
+    let (rootSession, _) = session(
+      #"{"asset":{"version":"2.0"},"nodes":["# + chain
+        + #"{"name":"Wrist","translation":[0,1,0],"extras":{"xr":{"ik":{"root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":[0,0,1]}}}}]}"#
+    )
+    rootSession.rootTransform = XRSpatialMath.compose(
+      translation: SIMD3<Float>(5, 0, 0), rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+      scale: SIMD3<Float>(1, 1, 1))
+    rootSession.step(dt: 0.016)
+    let elbow = translation(rootSession, 1)
+    XCTAssertGreaterThan(elbow.z, 0.1)
+    XCTAssertEqual(elbow.x, elbow.y, accuracy: 1e-3)
+    XCTAssertEqual(
+      simd_length(translation(rootSession, 2) - SIMD3<Float>(0.5, 0.5, 0)), 0, accuracy: 1e-3)
+
+    // A named pole resolves to the node's world position.
+    for pz: Float in [1, -1] {
+      let (s, _) = session(
+        #"{"asset":{"version":"2.0"},"nodes":["# + chain
+          + #"{"name":"ElbowPole","translation":[0,0.25,"# + "\(pz)" + #"]},"#
+          + #"{"name":"Wrist","translation":[0,1,0],"extras":{"xr":{"ik":{"root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":"ElbowPole"}}}}]}"#
+      )
+      s.step(dt: 0.016)
+      XCTAssertEqual(translation(s, 1).z.sign, pz.sign)
+    }
+
+    // Weighted blending of mirrored rest / solved poses never collapses a bone.
+    let (blend, _) = session(
+      #"{"asset":{"version":"2.0"},"nodes":[{"name":"Root","translation":[0,0,0]},"#
+        + #"{"name":"Tip","translation":[0,1,0],"extras":{"xr":{"ik":{"root":"Root","effector":"Tip","target":[0,-5,0],"solver":"fabrik","weight":0.5}}}}]}"#
+    )
+    blend.step(dt: 0.016)
+    XCTAssertEqual(simd_length(translation(blend, 1) - translation(blend, 0)), 1, accuracy: 1e-4)
+
+    // Solver edge cases.
+    let o = SIMD3<Float>(0, 0, 0)
+    let up = SIMD3<Float>(0, 1, 0)
+    let unreach = IKSolver.solveTwoBoneIK(
+      rootPos: o, midPos: SIMD3<Float>(0, 0.5, 0), effectorPos: up, targetPos: SIMD3<Float>(3, 0, 0)
+    )
+    XCTAssertEqual(simd_length(unreach.effectorPos), 1, accuracy: 1e-4)
+    XCTAssertEqual(simd_length(unreach.midPos), 0.5, accuracy: 1e-4)
+    XCTAssertEqual(simd_length(unreach.effectorPos - unreach.midPos), 0.5, accuracy: 1e-4)
+    let atRoot = IKSolver.solveTwoBoneIK(
+      rootPos: o, midPos: SIMD3<Float>(0, 0.6, 0), effectorPos: up, targetPos: o)
+    XCTAssertFalse(atRoot.effectorPos.x.isNaN || atRoot.midPos.x.isNaN)
+    XCTAssertEqual(simd_length(atRoot.effectorPos), 0.2, accuracy: 1e-3)
+    let zero = IKSolver.solveTwoBoneIK(
+      rootPos: o, midPos: o, effectorPos: up, targetPos: SIMD3<Float>(1, 0, 0))
+    XCTAssertEqual(zero.rootRotation.vector, SIMD4<Float>(0, 0, 0, 1))
+    XCTAssertEqual(zero.effectorPos, up)
+    let colinear = IKSolver.solveTwoBoneIK(
+      rootPos: o, midPos: SIMD3<Float>(0, 0.5, 0), effectorPos: up,
+      targetPos: SIMD3<Float>(0.5, 0.5, 0), polePos: SIMD3<Float>(1, 1, 0))
+    XCTAssertGreaterThan(abs(colinear.midPos.z), 0.1)
+    XCTAssertEqual(simd_length(colinear.effectorPos - SIMD3<Float>(0.5, 0.5, 0)), 0, accuracy: 1e-4)
+    let nanT = IKSolver.solveTwoBoneIK(
+      rootPos: o, midPos: SIMD3<Float>(0, 0.5, 0), effectorPos: up,
+      targetPos: SIMD3<Float>(.nan, 0, 0))
+    XCTAssertFalse(nanT.effectorPos.x.isNaN || nanT.rootRotation.vector.w.isNaN)
+    XCTAssertEqual(simd_length(nanT.effectorPos), 0, accuracy: 1e-3)
+
+    let fUnreach = IKSolver.solveFABRIK(
+      positions: [o, up, SIMD3<Float>(0, 2, 0)], targetPos: SIMD3<Float>(5, 0, 0))
+    XCTAssertEqual(fUnreach.iterations, 1)
+    XCTAssertEqual(simd_length(fUnreach.positions[2] - SIMD3<Float>(2, 0, 0)), 0, accuracy: 1e-5)
+    let fZero = IKSolver.solveFABRIK(positions: [o, o], targetPos: SIMD3<Float>(1, 0, 0))
+    XCTAssertTrue(fZero.positions.allSatisfy { simd_length($0) < 1e-6 })
+    let half = SIMD3<Float>(0, 0.5, 0)
+    XCTAssertEqual(
+      IKSolver.solveFABRIK(positions: [o, up], targetPos: half, maxIterations: 0).iterations, 1)
+    XCTAssertEqual(
+      IKSolver.solveFABRIK(positions: [o, up], targetPos: half, maxIterations: 1000).iterations, 32)
+    XCTAssertEqual(
+      IKSolver.solveFABRIK(
+        positions: [o, up, SIMD3<Float>(1, 1, 0)], targetPos: SIMD3<Float>(1, 1, 0)
+      ).iterations, 0)
+  }
+}
+
+/// `URLProtocol` stub serving canned responses (keyed by path) for `SplatParser.loadURL` tests.
+final class SplatStubURLProtocol: URLProtocol {
+  static func respond(_ request: URLRequest) -> (Int, [String: String], Data) {
+    switch request.url?.path {
+    case "/big.spz": return (200, [:], Data(count: 101))  // No Content-Length.
+    case "/declared.spz": return (200, ["Content-Length": "5000"], Data(count: 5000))
+    case "/ok.spz":
+      return (
+        200, [:],
+        // Same bytes as `XRLiveRuntimeSessionTests.spzV2`.
+        Data(
+          [
+            78, 71, 83, 80, 2, 0, 0, 0, 1, 0, 0, 0, 0, 12, 0, 0, 0, 16, 0, 0, 240, 255, 0, 0, 0,
+            255,
+            128, 128, 128, 160, 160, 160, 128, 128, 128,
+          ] as [UInt8])
+      )
+    default: return (404, [:], Data())
+    }
+  }
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    let (status, headers, body) = Self.respond(request)
+    let response = HTTPURLResponse(
+      url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: body)
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
 }

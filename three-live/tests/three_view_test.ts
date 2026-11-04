@@ -13,6 +13,10 @@
 // limitations under the License.
 
 import {
+  HOST_BLOOM_DEFAULT_RADIUS,
+  HOST_BLOOM_DEFAULT_THRESHOLD,
+} from '../src/constants';
+import {
   mat3NormalFromMat4,
   mat4Multiply,
   rayIntersectsTriangle,
@@ -30,13 +34,13 @@ import {
   solveTwoBoneIK,
 } from '../src/plugins/ik';
 import {
-  type AnimationChannel,
   crossFadeTo,
   keyframeAnimationPlugin,
   parseAnimations,
   quatSlerp,
   sampleChannel,
   vec3Lerp,
+  type AnimationChannel,
 } from '../src/plugins/keyframes';
 import {materialsPlugin} from '../src/plugins/materials';
 import {morphPlugin, setMorphTargetWeight} from '../src/plugins/morph';
@@ -45,6 +49,7 @@ import {
   evaluateKawaseBloom,
   parseHexRgb,
   postprocessingPlugin,
+  resolveMeshOutline,
 } from '../src/plugins/postprocessing';
 import {contactShadowPlugin} from '../src/plugins/shadows';
 import {webxrPlugin} from '../src/plugins/webxr';
@@ -56,12 +61,15 @@ import {
   mat4LookAt,
   mat4Perspective,
   MicroViewer,
+  normalizeToneMapping,
   parseGLB,
   registerPlugin,
   resolveNodeWorldMatrices,
   sanitizeTextureUri,
   ThreeView,
   toGLBData,
+  toneMappingShaderIndex,
+  type ToneMappingMode,
 } from '../src/three-view';
 import {
   parseBloomTrait,
@@ -1187,6 +1195,61 @@ async function runThreeViewTests() {
     viewInstance.getToneMapping() === 'agx',
     'ThreeView.setToneMapping("agx") updates toneMapping mode',
   );
+  viewInstance.setToneMapping(' ACES ' as ToneMappingMode);
+  assert(
+    viewInstance.getToneMapping() === 'aces',
+    'ThreeView.setToneMapping normalizes case and whitespace ("ACES" -> "aces")',
+  );
+  viewInstance.setToneMapping('bogus' as ToneMappingMode);
+  assert(
+    viewInstance.getToneMapping() === 'neutral',
+    'ThreeView.setToneMapping falls back to "neutral" for unknown modes',
+  );
+  assert(
+    normalizeToneMapping(null) === 'neutral' &&
+      normalizeToneMapping('Reinhard') === 'reinhard',
+    'normalizeToneMapping maps null to neutral and lowercases known modes',
+  );
+  assert(
+    toneMappingShaderIndex('neutral') === 0 &&
+      toneMappingShaderIndex('reinhard') === 1 &&
+      toneMappingShaderIndex('none') === 2 &&
+      toneMappingShaderIndex('aces') === 3 &&
+      toneMappingShaderIndex('agx') === 4 &&
+      toneMappingShaderIndex('bogus') === 0,
+    'toneMappingShaderIndex pins the applyToneMapping mode indices',
+  );
+  // Cross-platform golden values (identical in the Kotlin and Swift tests).
+  const toneGoldens: Array<[ToneMappingMode, [number, number, number]]> = [
+    ['neutral', [0.983256, 0.554125, 0.33956]],
+    ['aces', [0.934211, 0.780548, 0.215326]],
+    ['agx', [0.907921, 0.704809, 0.389573]],
+    ['reinhard', [0.8, 0.6, 0.2]],
+    ['none', [1.0, 1.0, 0.25]],
+  ];
+  for (const [mode, want] of toneGoldens) {
+    const got = evaluateToneMapping(hdrSample, mode, 1.0);
+    assert(
+      got.every((v, i) => Math.abs(v - want[i]) < 1e-5),
+      `evaluateToneMapping(${mode}) golden value [${got.map((v) => v.toFixed(6))}]`,
+    );
+    const zeros = [
+      evaluateToneMapping([NaN, -1, 0], mode, 1.0),
+      evaluateToneMapping([4, 1.5, 0.25], mode, 0),
+    ];
+    assert(
+      zeros.every((c) => c.every((v) => v === 0)),
+      `evaluateToneMapping(${mode}) maps NaN/negative input and exposure 0 to black`,
+    );
+    let prev = -1;
+    let monotonic = true;
+    for (const x of [0.01, 0.1, 0.18, 0.5, 1, 2, 4, 16]) {
+      const y = evaluateToneMapping([x, x, x], mode, 1.0)[0];
+      if (y < prev - 1e-9) monotonic = false;
+      prev = y;
+    }
+    assert(monotonic, `evaluateToneMapping(${mode}) is monotonic in luminance`);
+  }
 
   // Kawase Bloom & Outline helpers + trait parsers
   const bloomBelow = evaluateKawaseBloom([0.2, 0.25, 0.1], 0.5, 0.8);
@@ -1210,6 +1273,27 @@ async function runThreeViewTests() {
       Math.abs(rgbSky[1] - 0xbd / 255) < 1e-4 &&
       Math.abs(rgbSky[2] - 0xf8 / 255) < 1e-4,
     'parseHexRgb parses 6-digit hex color string into normalized RGB tuple',
+  );
+  const rgbShort = parseHexRgb('#abc');
+  const rgbShortUpper = parseHexRgb('#ABC');
+  assert(
+    Math.abs(rgbShort[0] - 0xaa / 255) < 1e-6 &&
+      Math.abs(rgbShort[1] - 0xbb / 255) < 1e-6 &&
+      Math.abs(rgbShort[2] - 0xcc / 255) < 1e-6 &&
+      rgbShortUpper.every((v, i) => v === rgbShort[i]),
+    'parseHexRgb expands 3-digit #abc / #ABC hex colors',
+  );
+  const rgbBad = parseHexRgb('not-a-color', [0.1, 0.2, 0.3]);
+  assert(
+    rgbBad[0] === 0.1 && rgbBad[1] === 0.2 && rgbBad[2] === 0.3,
+    'parseHexRgb returns the fallback for invalid colors',
+  );
+  assert(
+    parseOutlineTrait({thickness: 0.025})?.thickness === 3.5 &&
+      parseOutlineTrait({width: 0.005})?.thickness === 1.5 &&
+      parseOutlineTrait({thickness: 0.3})?.thickness === 0.5 &&
+      parseOutlineTrait({thickness: 4})?.thickness === 4,
+    'parseOutlineTrait converts metre-sized thickness (< 0.25) to pixels, matching Android and iOS',
   );
   const bloomTrait = parseBloomTrait({
     strength: 1.2,
@@ -1316,6 +1400,285 @@ async function runThreeViewTests() {
       blendFuncSeparateCalled && drawArraysCalls === 6,
       'postprocessingPlugin runs 3-level Dual-Kawase pyramid (6 passes) and preserves transparent canvas background alpha via blendFuncSeparate',
     );
+
+    // Recording mock GL for the outline / bloom / shader-lifecycle tests.
+    // Every test builds a fresh mock because GPU state is cached per context.
+    const makeRecordingGl = (overrides: Record<string, unknown> = {}) => {
+      const rec = {
+        createShader: 0,
+        deleteShader: 0,
+        detachShader: 0,
+        createProgram: 0,
+        deleteProgram: 0,
+        draws: 0,
+        uniform2f: [] as number[][],
+        uniform1f: [] as Array<[string, number]>,
+      };
+      const gl = {
+        VERTEX_SHADER: 35633,
+        FRAGMENT_SHADER: 35632,
+        LINK_STATUS: 35714,
+        VIEWPORT: 2978,
+        TEXTURE_2D: 3553,
+        FRAMEBUFFER: 36160,
+        TRIANGLES: 4,
+        ONE: 1,
+        ONE_MINUS_SRC_ALPHA: 771,
+        createShader: () => (rec.createShader++, {}),
+        deleteShader: () => void rec.deleteShader++,
+        detachShader: () => void rec.detachShader++,
+        shaderSource: () => {},
+        compileShader: () => {},
+        createProgram: () => (rec.createProgram++, {}),
+        deleteProgram: () => void rec.deleteProgram++,
+        attachShader: () => {},
+        linkProgram: () => {},
+        getProgramParameter: () => true,
+        getUniformLocation: (_p: unknown, name: string) => ({name}),
+        createVertexArray: () => ({}),
+        deleteVertexArray: () => {},
+        deleteTexture: () => {},
+        deleteFramebuffer: () => {},
+        bindVertexArray: () => {},
+        createTexture: () => ({}),
+        bindTexture: () => {},
+        texImage2D: () => {},
+        texParameteri: () => {},
+        createFramebuffer: () => ({}),
+        bindFramebuffer: () => {},
+        framebufferTexture2D: () => {},
+        activeTexture: () => {},
+        copyTexSubImage2D: () => {},
+        viewport: () => {},
+        disable: () => {},
+        enable: () => {},
+        cullFace: () => {},
+        depthFunc: () => {},
+        depthMask: () => {},
+        useProgram: () => {},
+        uniform1i: () => {},
+        uniform1f: (loc: {name: string}, v: number) =>
+          void rec.uniform1f.push([loc.name, v]),
+        uniform2f: (_loc: unknown, x: number, y: number) =>
+          void rec.uniform2f.push([x, y]),
+        uniform4f: () => {},
+        uniformMatrix3fv: () => {},
+        uniformMatrix4fv: () => {},
+        blendFunc: () => {},
+        blendFuncSeparate: () => {},
+        getParameter: () => null,
+        drawArrays: () => void rec.draws++,
+        drawElements: () => void rec.draws++,
+        ...overrides,
+      } as unknown as WebGL2RenderingContext;
+      return {gl, rec};
+    };
+    const identity16 = () => {
+      const m = new Float32Array(16);
+      m[0] = m[5] = m[10] = m[15] = 1;
+      return m;
+    };
+    const makeOutlineViewer = (
+      attrs: Record<string, string>,
+      meshes: Array<Record<string, unknown>>,
+      extra: Record<string, unknown> = {},
+    ) =>
+      ({
+        canvas: {width: 400, height: 300},
+        modelRootMatrix: identity16(),
+        container: {
+          getAttribute: (n: string) => attrs[n] ?? null,
+          hasAttribute: (n: string) => n in attrs,
+        },
+        meshes: meshes.map((m) => ({
+          visible: true,
+          transform: identity16(),
+          primitives: [{vao: {}, indices: null, indexCount: 3}],
+          ...m,
+        })),
+        ...extra,
+      }) as unknown as ThreeView;
+
+    // F6: outline thickness uses the current (eye) viewport, not the canvas.
+    {
+      const {gl, rec} = makeRecordingGl({
+        getParameter: (p: number) => (p === 2978 ? [200, 0, 200, 300] : null),
+      });
+      postprocessingPlugin.onAfterRender!(
+        gl,
+        makeOutlineViewer({}, [{name: 'Orb', extras: {xr: {outline: true}}}]),
+        new Float32Array(16),
+      );
+      assert(
+        rec.uniform2f.length > 0 &&
+          rec.uniform2f[0][0] === 200 &&
+          rec.uniform2f[0][1] === 300 &&
+          rec.draws === 1,
+        `outline pass sizes thickness by gl.VIEWPORT (200x300 eye), not the 400x300 canvas: [${rec.uniform2f[0]}]`,
+      );
+    }
+
+    // F7: skinned / morphed primitives are skipped (bind-pose hull).
+    for (const pluginData of [
+      {skinning: {hasSkin: true}},
+      {morph: {hasMorph: true}},
+    ]) {
+      const {gl, rec} = makeRecordingGl();
+      postprocessingPlugin.onAfterRender!(
+        gl,
+        makeOutlineViewer({}, [
+          {
+            name: 'Avatar',
+            extras: {xr: {outline: true}},
+            primitives: [{vao: {}, indices: null, indexCount: 3, pluginData}],
+          },
+        ]),
+        new Float32Array(16),
+      );
+      assert(
+        rec.draws === 0,
+        `outline pass skips ${Object.keys(pluginData)[0]} primitives (no bind-pose hull)`,
+      );
+    }
+
+    // Bloom bypass in WebXR / side-by-side stereo keeps the outline pass.
+    for (const flag of ['xrSessionActive', 'stereoSBS']) {
+      const {gl, rec} = makeRecordingGl();
+      postprocessingPlugin.onAfterRender!(
+        gl,
+        makeOutlineViewer(
+          {bloom: '1'},
+          [{name: 'Orb', extras: {xr: {outline: true}}}],
+          {[flag]: true},
+        ),
+        new Float32Array(16),
+      );
+      assert(
+        rec.draws === 1,
+        `${flag} bypasses the bloom pyramid while the outline still draws (draws=${rec.draws})`,
+      );
+    }
+
+    // F9: empty / junk bloom-threshold falls back to the shared host default.
+    for (const thAttr of ['', '  ', 'abc']) {
+      const {gl, rec} = makeRecordingGl();
+      postprocessingPlugin.onAfterRender!(
+        gl,
+        makeOutlineViewer(
+          {bloom: '1', 'bloom-threshold': thAttr, 'bloom-radius': ''},
+          [{name: 'Orb'}],
+        ),
+        new Float32Array(16),
+      );
+      const th = rec.uniform1f.find(([n]) => n === 'uThreshold')?.[1];
+      const rad = rec.uniform1f.find(([n]) => n === 'uRadius')?.[1];
+      assert(
+        th === HOST_BLOOM_DEFAULT_THRESHOLD &&
+          rad === HOST_BLOOM_DEFAULT_RADIUS,
+        `bloom-threshold="${thAttr}" falls back to the host defaults (threshold=${th}, radius=${rad})`,
+      );
+    }
+
+    // F12: shaders are detached/deleted after linking; link failure disables
+    // the pass; dead programs after context loss are rebuilt.
+    {
+      const {gl, rec} = makeRecordingGl();
+      const viewer = makeOutlineViewer({bloom: '1'}, [
+        {name: 'Orb', extras: {xr: {outline: true}}},
+      ]);
+      postprocessingPlugin.onAfterRender!(gl, viewer, new Float32Array(16));
+      assert(
+        rec.createShader === 6 &&
+          rec.deleteShader === 6 &&
+          rec.detachShader === 6 &&
+          rec.createProgram === 3,
+        `postprocessing frees all 6 shaders after linking 3 programs (created=${rec.createShader}, deleted=${rec.deleteShader})`,
+      );
+      postprocessingPlugin.onDestroy!(gl);
+    }
+    {
+      const {gl, rec} = makeRecordingGl({getProgramParameter: () => false});
+      const viewer = makeOutlineViewer({bloom: '1'}, [
+        {name: 'Orb', extras: {xr: {outline: true}}},
+      ]);
+      postprocessingPlugin.onAfterRender!(gl, viewer, new Float32Array(16));
+      postprocessingPlugin.onAfterRender!(gl, viewer, new Float32Array(16));
+      assert(
+        rec.draws === 0 && rec.createProgram === 3 && rec.deleteProgram === 3,
+        `postprocessing disables itself (no draws, no per-frame recompiles) when shaders fail to link (draws=${rec.draws}, programs=${rec.createProgram})`,
+      );
+    }
+    {
+      let alive = true;
+      const {gl, rec} = makeRecordingGl({isProgram: () => alive});
+      const viewer = makeOutlineViewer({}, [
+        {name: 'Orb', extras: {xr: {outline: true}}},
+      ]);
+      postprocessingPlugin.onAfterRender!(gl, viewer, new Float32Array(16));
+      postprocessingPlugin.onAfterRender!(gl, viewer, new Float32Array(16));
+      const beforeLoss = rec.createProgram;
+      alive = false;
+      postprocessingPlugin.onAfterRender!(gl, viewer, new Float32Array(16));
+      assert(
+        beforeLoss === 3 && rec.createProgram === 6 && rec.draws === 3,
+        `postprocessing rebuilds programs after WebGL context loss/restore (programs ${beforeLoss} -> ${rec.createProgram})`,
+      );
+    }
+
+    // F11 + precedence: resolveMeshOutline.
+    {
+      const mesh = (name: string, xr?: Record<string, unknown>) =>
+        ({name, extras: xr ? {xr} : {}}) as unknown as ThreeView['meshes'][0];
+      const v = (attrs: Record<string, string>, selected = ''): ThreeView =>
+        makeOutlineViewer(attrs, [], {getSelectedMesh: () => selected});
+      assert(
+        resolveMeshOutline(
+          v({outline: 'false'}),
+          mesh('Orb', {outline: '#ff0000'}),
+        ) === null,
+        'resolveMeshOutline: host outline="false" overrides node traits',
+      );
+      assert(
+        resolveMeshOutline(v({}), mesh('Orb', {outline: '#ff0000'}))?.color ===
+          '#ff0000',
+        'resolveMeshOutline: node outline trait applies without host attributes',
+      );
+      const sel = v({'outline-selected': ''}, 'Gear');
+      assert(
+        resolveMeshOutline(sel, mesh('Gear')) !== null &&
+          resolveMeshOutline(sel, mesh('Bolt')) === null,
+        'resolveMeshOutline: selected-mesh + outline-selected outlines only the selected mesh',
+      );
+      assert(
+        resolveMeshOutline(
+          v({'outline-selected': 'false'}, 'Gear'),
+          mesh('Gear'),
+        ) === null,
+        'resolveMeshOutline: outline-selected="false" disables the selection outline',
+      );
+      const host = v({outline: 'true'});
+      const outlined = ['Tablet', 'Vegetable', 'Keypad', 'Launchpad', 'Orb'];
+      const skipped = [
+        'floor_01',
+        'Ground Plane',
+        'GroundPlane',
+        'table',
+        'Grid',
+      ];
+      assert(
+        outlined.every((n) => resolveMeshOutline(host, mesh(n)) !== null) &&
+          skipped.every((n) => resolveMeshOutline(host, mesh(n)) === null),
+        'resolveMeshOutline: host outline skips staging meshes by whole name token only',
+      );
+      const hostThin = resolveMeshOutline(
+        v({outline: '0.02 #00ff00'}),
+        mesh('Orb'),
+      );
+      assert(
+        hostThin !== null && Math.abs(hostThin.thickness - 2.8) < 1e-9,
+        'resolveMeshOutline: metre-sized host outline thickness converts to pixels',
+      );
+    }
 
     // Regression test: mat3NormalFromMat4 must return the column-major
     // inverse-transpose (so a pure rotation R_y(theta) * R_x(-90 deg) maps
@@ -1505,6 +1868,771 @@ async function runThreeViewTests() {
         wrist.modelMatrix[12] > 0.1,
       `ikPlugin.onUpdate preserves bone lengths (${len1.toFixed(3)}, ${len2.toFixed(3)}) across multi-frame weight<1 blending and resolves 'hand-right' target`,
     );
+  }
+
+  // 20b. IK regression and edge-case coverage.
+  {
+    const finite3 = (p: readonly number[]) =>
+      Number.isFinite(p[0]) && Number.isFinite(p[1]) && Number.isFinite(p[2]);
+    const dist = (a: readonly number[], b: readonly number[]) =>
+      Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+    // Named pole (`pole` or `poleTarget` alias) in both parsers.
+    for (const parse of [parseIKTrait, IKSolver.parseIKTrait]) {
+      const named = parse({root: 'A', effector: 'C', target: 'T', pole: 'P'});
+      const alias = parse({
+        root: 'A',
+        effector: 'C',
+        target: 'T',
+        poleTarget: 'P',
+      });
+      const legacy = parse({target: 'T', poleTarget: 'P', chainLength: 2});
+      assert(
+        named?.pole === 'P' && alias?.pole === 'P' && legacy === null,
+        'parseIKTrait accepts a named pole / poleTarget alias and rejects the root-less schema',
+      );
+    }
+
+    const mkBone = (
+      name: string,
+      pos: [number, number, number],
+      xr?: Record<string, unknown>,
+    ) => {
+      const m = new Float32Array(16);
+      m[0] = m[5] = m[10] = m[15] = 1;
+      m[12] = pos[0];
+      m[13] = pos[1];
+      m[14] = pos[2];
+      return {name, modelMatrix: m, extras: xr ? {xr} : {}};
+    };
+    type IKViewer = Parameters<NonNullable<typeof ikPlugin.onUpdate>>[0];
+    const pos = (m: {modelMatrix: Float32Array}) => [
+      m.modelMatrix[12],
+      m.modelMatrix[13],
+      m.modelMatrix[14],
+    ];
+
+    // Named pole resolves through scene meshes and picks the bend side.
+    for (const pz of [1, -1]) {
+      const shoulder = mkBone('Shoulder', [0, 0, 0]);
+      const elbow = mkBone('Elbow', [0, 0.5, 0]);
+      const pole = mkBone('ElbowPole', [0, 0.25, pz]);
+      const wrist = mkBone('Wrist', [0, 1, 0], {
+        ik: {
+          root: 'Shoulder',
+          mid: 'Elbow',
+          effector: 'Wrist',
+          target: [0.5, 0.5, 0],
+          pole: 'ElbowPole',
+        },
+      });
+      ikPlugin.onUpdate?.(
+        {meshes: [shoulder, elbow, pole, wrist]} as unknown as IKViewer,
+        0.016,
+      );
+      assert(
+        Math.sign(elbow.modelMatrix[14]) === pz &&
+          dist(pos(wrist), [0.5, 0.5, 0]) < 1e-3,
+        `ikPlugin resolves named pole 'ElbowPole' (z=${pz}) and bends the elbow toward it`,
+      );
+    }
+
+    // Missing joint names warn once instead of silently doing nothing.
+    {
+      const warnings: string[] = [];
+      const origWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
+      try {
+        const shoulder = mkBone('Shoulder', [0, 0, 0]);
+        const wrist = mkBone('Wrist', [0, 1, 0], {
+          ik: {
+            root: 'Shoulder',
+            mid: 'Elbow',
+            effector: 'Wrist',
+            target: [1, 0, 0],
+          },
+        });
+        const viewer = {meshes: [shoulder, wrist]} as unknown as IKViewer;
+        ikPlugin.onUpdate?.(viewer, 0.016);
+        ikPlugin.onUpdate?.(viewer, 0.016);
+      } finally {
+        console.warn = origWarn;
+      }
+      assert(
+        warnings.length === 1 && warnings[0].includes("'Elbow'"),
+        `ikPlugin warns once when a chain joint is missing (${warnings.length} warnings)`,
+      );
+    }
+
+    // World-space hand targets are mapped into scene space via modelRootMatrix.
+    {
+      const shoulder = mkBone('Shoulder', [0, 0, 0]);
+      const elbow = mkBone('Elbow', [0, 0.5, 0]);
+      const wrist = mkBone('Wrist', [0, 1, 0], {
+        ik: {
+          root: 'Shoulder',
+          mid: 'Elbow',
+          effector: 'Wrist',
+          target: 'hand-right',
+          pole: [0, 1, 0],
+        },
+      });
+      const root = mat4Create();
+      root[12] = 10;
+      ikPlugin.onUpdate?.(
+        {
+          meshes: [shoulder, elbow, wrist],
+          handPoses: {right: [10.5, 0.5, 0]},
+          modelRootMatrix: root,
+        } as unknown as IKViewer,
+        0.016,
+      );
+      assert(
+        dist(pos(wrist), [0.5, 0.5, 0]) < 1e-3,
+        `ikPlugin maps world hand target through inverse modelRootMatrix (wrist=${pos(wrist).map((v) => v.toFixed(3))})`,
+      );
+    }
+
+    // Weighted blending never collapses a bone to zero length.
+    {
+      const root = mkBone('Root', [0, 0, 0]);
+      const tip = mkBone('Tip', [0, 1, 0], {
+        ik: {
+          root: 'Root',
+          effector: 'Tip',
+          target: [0, -5, 0],
+          solver: 'fabrik',
+          weight: 0.5,
+        },
+      });
+      ikPlugin.onUpdate?.({meshes: [root, tip]} as unknown as IKViewer, 0.016);
+      const len = dist(pos(tip), pos(root));
+      assert(
+        Math.abs(len - 1) < 1e-4,
+        `ikPlugin weight=0.5 mirrored blend keeps bone length (${len.toFixed(4)})`,
+      );
+    }
+
+    // solveTwoBoneIK edge cases.
+    const unreach = solveTwoBoneIK(
+      [0, 0, 0],
+      [0, 0.5, 0],
+      [0, 1, 0],
+      [3, 0, 0],
+    );
+    assert(
+      Math.abs(dist(unreach.effectorPos, [0, 0, 0]) - (1 - 1e-5)) < 1e-4 &&
+        Math.abs(dist(unreach.midPos, [0, 0, 0]) - 0.5) < 1e-4 &&
+        Math.abs(dist(unreach.effectorPos, unreach.midPos) - 0.5) < 1e-4 &&
+        unreach.effectorPos[0] > 0.999,
+      'solveTwoBoneIK unreachable target stretches straight toward it with lengths preserved',
+    );
+    const atRoot = solveTwoBoneIK([0, 0, 0], [0, 0.6, 0], [0, 1, 0], [0, 0, 0]);
+    assert(
+      finite3(atRoot.midPos) &&
+        finite3(atRoot.effectorPos) &&
+        Math.abs(dist(atRoot.effectorPos, [0, 0, 0]) - 0.2) < 1e-3,
+      'solveTwoBoneIK target at root folds to |l1-l2| without NaN',
+    );
+    const zeroBone = solveTwoBoneIK([0, 0, 0], [0, 0, 0], [0, 1, 0], [1, 0, 0]);
+    assert(
+      zeroBone.rootRotation.join() === '0,0,0,1' &&
+        zeroBone.midRotation.join() === '0,0,0,1' &&
+        zeroBone.effectorPos.join() === '0,1,0',
+      'solveTwoBoneIK zero-length bone returns identity rotations and unchanged positions',
+    );
+    const colinear = solveTwoBoneIK(
+      [0, 0, 0],
+      [0, 0.5, 0],
+      [0, 1, 0],
+      [0.5, 0.5, 0],
+      [1, 1, 0],
+    );
+    assert(
+      finite3(colinear.midPos) &&
+        Math.abs(colinear.midPos[2]) > 0.1 &&
+        dist(colinear.effectorPos, [0.5, 0.5, 0]) < 1e-4,
+      'solveTwoBoneIK pole colinear with target uses a perpendicular fallback bend',
+    );
+    const nanT = solveTwoBoneIK([0, 0, 0], [0, 0.5, 0], [0, 1, 0], [NaN, 0, 0]);
+    assert(
+      finite3(nanT.midPos) &&
+        finite3(nanT.effectorPos) &&
+        nanT.rootRotation.every(Number.isFinite) &&
+        dist(nanT.effectorPos, [0, 0, 0]) < 1e-3,
+      'solveTwoBoneIK NaN target folds to minDist without NaN output',
+    );
+
+    // solveFABRIK edge cases.
+    const fUnreach = solveFABRIK(
+      [
+        [0, 0, 0],
+        [0, 1, 0],
+        [0, 2, 0],
+      ],
+      [5, 0, 0],
+    );
+    assert(
+      fUnreach.iterations === 1 &&
+        dist(fUnreach.positions[1], [1, 0, 0]) < 1e-6 &&
+        dist(fUnreach.positions[2], [2, 0, 0]) < 1e-6,
+      'solveFABRIK unreachable target yields a straight collinear chain in 1 iteration',
+    );
+    const fZero = solveFABRIK(
+      [
+        [0, 0, 0],
+        [0, 0, 0],
+      ],
+      [1, 0, 0],
+    );
+    assert(
+      fZero.positions.every((p) => dist(p, [0, 0, 0]) < 1e-9) &&
+        fZero.iterations <= 32,
+      'solveFABRIK zero total length collapses to root and terminates',
+    );
+    const stuck: Array<[number, number, number]> = [
+      [0, 0, 0],
+      [0, 1, 0],
+    ];
+    const itersFor = (n: number) =>
+      solveFABRIK(stuck, [0, 0.5, 0], n).iterations;
+    assert(
+      itersFor(0) === 1 && itersFor(1000) === 32 && itersFor(NaN) === 8,
+      `solveFABRIK clamps maxIterations 0/1000/NaN to 1/32/8 (${itersFor(0)}/${itersFor(1000)}/${itersFor(NaN)})`,
+    );
+    assert(
+      solveFABRIK(
+        [
+          [0, 0, 0],
+          [0, 1, 0],
+          [1, 1, 0],
+        ],
+        [1, 1, 0],
+      ).iterations === 0,
+      'solveFABRIK already-converged chain reports iterations === 0',
+    );
+  }
+
+  // 20c. IK on the glTF node graph: mesh-less Group joints, rotations, and
+  // child meshes following their joints.
+  {
+    const ident = () => {
+      const m = new Float32Array(16);
+      m[0] = m[5] = m[10] = m[15] = 1;
+      return m;
+    };
+    type V3 = [number, number, number];
+    const mkViewer = (target: V3, solver: string, weight = 1) => {
+      // 0 Shoulder (group) -> 1 Forearm (group) -> 2 Wrist (mesh); 3 UpperLink (mesh) under Shoulder.
+      const nodes = [
+        {name: 'Shoulder', translation: [0, 0, 0], children: [1, 3]},
+        {name: 'Forearm', translation: [0, 1, 0], children: [2]},
+        {name: 'Wrist', translation: [0, 1, 0], mesh: 0},
+        {name: 'UpperLink', translation: [0, 0.5, 0], mesh: 1},
+      ];
+      const initialNodeTransforms = nodes.map((n) => ({
+        t: n.translation as V3,
+        r: [0, 0, 0, 1] as [number, number, number, number],
+        s: [1, 1, 1] as V3,
+      }));
+      const worldMatrices = [ident(), ident(), ident(), ident()];
+      worldMatrices[1][13] = 1;
+      worldMatrices[2][13] = 2;
+      worldMatrices[3][13] = 0.5;
+      const wrist = {
+        name: 'Wrist',
+        nodeIndex: 2,
+        transform: Float32Array.from(worldMatrices[2]),
+        normalMatrix: new Float32Array(9),
+        userData: {
+          xr: {
+            ik: {
+              root: 'Shoulder',
+              mid: 'Forearm',
+              effector: 'Wrist',
+              target,
+              solver,
+              weight,
+              pole: [1, 0, 0],
+            },
+          },
+        },
+      };
+      const link = {
+        name: 'UpperLink',
+        nodeIndex: 3,
+        transform: Float32Array.from(worldMatrices[3]),
+        normalMatrix: new Float32Array(9),
+      };
+      return {
+        viewer: {
+          gltf: {nodes, scenes: [{nodes: [0]}]},
+          initialNodeTransforms,
+          worldMatrices,
+          meshes: [wrist, link],
+        },
+        wrist,
+        link,
+      };
+    };
+    type IKViewer2 = Parameters<NonNullable<typeof ikPlugin.onUpdate>>[0];
+    const p3 = (m: Float32Array): V3 => [m[12], m[13], m[14]];
+    for (const solver of ['two-bone', 'fabrik']) {
+      const {viewer, wrist, link} = mkViewer([1, 1, 0], solver);
+      const warn = console.warn;
+      let warned = 0;
+      console.warn = () => warned++;
+      ikPlugin.onUpdate?.(viewer as unknown as IKViewer2, 0.016);
+      ikPlugin.onUpdate?.(viewer as unknown as IKViewer2, 0.016);
+      console.warn = warn;
+      const w = p3(wrist.transform);
+      const elbow = p3(viewer.worldMatrices[1]);
+      const l = p3(link.transform);
+      const shoulderRot = viewer.worldMatrices[0];
+      assert(
+        warned === 0 &&
+          Math.hypot(w[0] - 1, w[1] - 1, w[2]) < 2e-3 &&
+          Math.abs(Math.hypot(...elbow) - 1) < 1e-4 &&
+          Math.abs(
+            Math.hypot(w[0] - elbow[0], w[1] - elbow[1], w[2] - elbow[2]) - 1,
+          ) < 1e-4,
+        `${solver}: node-graph IK reaches the target through mesh-less Group joints (wrist ${w.map((v) => v.toFixed(3))})`,
+      );
+      // UpperLink sits halfway along the Shoulder->Forearm bone in rest pose,
+      // so after the Shoulder rotates it must stay halfway along the new bone.
+      assert(
+        Math.hypot(
+          l[0] - elbow[0] / 2,
+          l[1] - elbow[1] / 2,
+          l[2] - elbow[2] / 2,
+        ) < 1e-4 &&
+          // The pole bends the two-bone elbow to +X, so the Shoulder must rotate.
+          (solver !== 'two-bone' || Math.abs(shoulderRot[0] - 1) > 1e-3),
+        `${solver}: child meshes follow the rotated joint (UpperLink ${l.map((v) => v.toFixed(3))})`,
+      );
+    }
+    {
+      const {viewer, wrist} = mkViewer([1, 1, 0], 'two-bone', 0);
+      ikPlugin.onUpdate?.(viewer as unknown as IKViewer2, 0.016);
+      const w = p3(wrist.transform);
+      assert(
+        Math.abs(w[0]) < 1e-6 && Math.abs(w[1] - 2) < 1e-6,
+        'weight 0 leaves the node-graph chain in its rest pose',
+      );
+      const half = mkViewer([1, 1, 0], 'two-bone', 0.5);
+      ikPlugin.onUpdate?.(half.viewer as unknown as IKViewer2, 0.016);
+      const hw = p3(half.wrist.transform);
+      const he = p3(half.viewer.worldMatrices[1]);
+      assert(
+        Math.abs(Math.hypot(...he) - 1) < 1e-4 &&
+          Math.abs(
+            Math.hypot(hw[0] - he[0], hw[1] - he[1], hw[2] - he[2]) - 1,
+          ) < 1e-4 &&
+          hw[0] > 0.05 &&
+          Math.hypot(hw[0] - 1, hw[1] - 1, hw[2]) > 1e-2,
+        'weight 0.5 blends joint rotations by slerp and keeps bone lengths',
+      );
+    }
+  }
+
+  // 21. EXT_mesh_gpu_instancing reader, load cleanup & KHR_materials_variants indexing.
+  {
+    const glCounts = {createTexture: 0, deleteTexture: 0};
+    const countingGl = new Proxy(
+      {
+        canvas: {width: 400, height: 400},
+        getShaderParameter: () => true,
+        getProgramParameter: () => true,
+        getAttribLocation: () => 0,
+        createTexture: () => {
+          glCounts.createTexture++;
+          return {};
+        },
+        deleteTexture: () => {
+          glCounts.deleteTexture++;
+        },
+      },
+      {
+        get(target: Record<string, unknown>, prop: string) {
+          if (prop in target) return target[prop];
+          return () => ({});
+        },
+      },
+    );
+    const instCanvas = {...mockCanvas, getContext: () => countingGl};
+    const instView = new ThreeView(instCanvas, instCanvas, {autoRotate: false});
+
+    // bin: [0,36) triangle positions, then per-test instance data.
+    const mkInstGlb = (
+      instBytes: Uint8Array,
+      accessors: Array<Record<string, unknown>>,
+      attributes: Record<string, number>,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const bin = new Uint8Array(36 + instBytes.byteLength);
+      new Float32Array(bin.buffer, 0, 9).set([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+      bin.set(instBytes, 36);
+      return {
+        gltf: {
+          asset: {version: '2.0'},
+          buffers: [{byteLength: bin.byteLength}],
+          bufferViews: [
+            {buffer: 0, byteOffset: 0, byteLength: 36},
+            {buffer: 0, byteOffset: 36, byteLength: instBytes.byteLength},
+            {
+              buffer: 0,
+              byteOffset: 36,
+              byteLength: instBytes.byteLength,
+              byteStride: 8,
+            },
+          ],
+          accessors: [
+            {
+              bufferView: 0,
+              componentType: 5126,
+              count: 3,
+              type: 'VEC3',
+              min: [0, 0, 0],
+              max: [1, 1, 0],
+            },
+            ...accessors,
+          ],
+          meshes: [{primitives: [{attributes: {POSITION: 0}}]}],
+          nodes: [
+            {mesh: 0, extensions: {EXT_mesh_gpu_instancing: {attributes}}},
+          ],
+          ...extra,
+        },
+        bin: bin.buffer,
+      };
+    };
+    const noNaN = (a?: Float32Array) =>
+      !!a && Array.from(a).every(Number.isFinite);
+    const boundsOk = () =>
+      [
+        ...instView.bounds.min,
+        ...instView.bounds.max,
+        instView.bounds.radius,
+      ].every(Number.isFinite);
+
+    // TRANSLATION float32 @0 (2 x 12 B), ROTATION int16-normalized @24 (2 x 8 B),
+    // _COLOR_0 uint8-normalized VEC4 in a byteStride-8 view @40.
+    const quantBytes = new Uint8Array(56);
+    const qdv = new DataView(quantBytes.buffer);
+    [1, 2, 3, 4, 5, 6].forEach((v, i) => qdv.setFloat32(i * 4, v, true));
+    for (let i = 0; i < 2; i++) qdv.setInt16(24 + i * 8 + 6, 32767, true);
+    quantBytes.set([255, 0, 0, 255], 40);
+    quantBytes.set([0, 255, 0, 255], 48);
+    instView.loadModel(
+      mkInstGlb(
+        quantBytes,
+        [
+          {bufferView: 1, componentType: 5126, count: 2, type: 'VEC3'},
+          {
+            bufferView: 1,
+            byteOffset: 24,
+            componentType: 5122,
+            normalized: true,
+            count: 2,
+            type: 'VEC4',
+          },
+          {
+            bufferView: 2,
+            byteOffset: 40,
+            componentType: 5121,
+            normalized: true,
+            count: 2,
+            type: 'VEC4',
+          },
+        ],
+        {TRANSLATION: 1, ROTATION: 2, _COLOR_0: 3},
+      ),
+    );
+    const qm = instView.meshes[0]?.instanceMatrices;
+    const qc = instView.meshes[0]?.instanceColors;
+    assert(
+      !!qm &&
+        Math.abs(qm[0] - 1) < 1e-4 &&
+        Math.abs(qm[5] - 1) < 1e-4 &&
+        Math.abs(qm[10] - 1) < 1e-4 &&
+        qm[12] === 1 &&
+        qm[28] === 4 &&
+        !!qc &&
+        Math.abs(qc[0] - 1) < 1e-6 &&
+        Math.abs(qc[4] - 1) < 1e-6 &&
+        qc[3] === 0,
+      'instancing reader honors normalized int16 ROTATION, uint8 _COLOR_0 and byteStride',
+    );
+
+    // Real GPU instancing: per-instance attributes with divisor 1 and a single
+    // drawArraysInstanced per primitive instead of one draw per instance.
+    {
+      const calls: Record<string, unknown[][]> = {};
+      const rec =
+        (name: string) =>
+        (...args: unknown[]) => {
+          (calls[name] ??= []).push(args);
+          return {};
+        };
+      const instGl = new Proxy(
+        {
+          canvas: {width: 400, height: 400},
+          getShaderParameter: () => true,
+          getProgramParameter: () => true,
+          getAttribLocation: () => 0,
+          vertexAttribDivisor: rec('vertexAttribDivisor'),
+          drawArraysInstanced: rec('drawArraysInstanced'),
+          drawElementsInstanced: rec('drawElementsInstanced'),
+          drawArrays: rec('drawArrays'),
+          drawElements: rec('drawElements'),
+        },
+        {
+          get(target: Record<string, unknown>, prop: string) {
+            if (prop in target) return target[prop];
+            return () => ({});
+          },
+        },
+      );
+      const c = {...mockCanvas, getContext: () => instGl};
+      const v = new ThreeView(c, c, {autoRotate: false});
+      v.loadModel(
+        mkInstGlb(
+          quantBytes,
+          [
+            {bufferView: 1, componentType: 5126, count: 2, type: 'VEC3'},
+            {
+              bufferView: 1,
+              byteOffset: 24,
+              componentType: 5122,
+              normalized: true,
+              count: 2,
+              type: 'VEC4',
+            },
+          ],
+          {TRANSLATION: 1, ROTATION: 2},
+        ),
+      );
+      for (const k of Object.keys(calls)) calls[k] = [];
+      v.render();
+      const inst = calls['drawArraysInstanced'] ?? [];
+      const divisors = (calls['vertexAttribDivisor'] ?? []).length;
+      assert(
+        v.meshes[0]?.primitives[0]?.instanced === true &&
+          inst.length >= 1 &&
+          inst.every((a) => a[3] === 2) &&
+          (calls['drawArrays'] ?? []).length === 0,
+        `instanced meshes draw once per primitive with drawArraysInstanced (instanced draws: ${inst.length}, plain draws: ${(calls['drawArrays'] ?? []).length}, divisors at load: ${divisors})`,
+      );
+    }
+
+    // Short ROTATION accessor and an out-of-bounds SCALE are skipped, not NaN.
+    const shortBytes = new Uint8Array(48 + 16);
+    for (let i = 0; i < 4; i++) {
+      new DataView(shortBytes.buffer).setFloat32(i * 12, i, true);
+    }
+    instView.loadModel(
+      mkInstGlb(
+        shortBytes,
+        [
+          {bufferView: 1, componentType: 5126, count: 4, type: 'VEC3'},
+          {
+            bufferView: 1,
+            byteOffset: 48,
+            componentType: 5126,
+            count: 2,
+            type: 'VEC4',
+          },
+          {
+            bufferView: 1,
+            byteOffset: 61,
+            componentType: 5126,
+            count: 4,
+            type: 'VEC3',
+          },
+        ],
+        {TRANSLATION: 1, ROTATION: 2, SCALE: 3},
+      ),
+    );
+    const sm = instView.meshes[0]?.instanceMatrices;
+    assert(
+      noNaN(sm) &&
+        sm!.length === 64 &&
+        sm![48 + 12] === 3 &&
+        sm![48] === 1 &&
+        boundsOk(),
+      'instancing skips short / out-of-bounds accessors: identity rotation & scale, no NaN bounds',
+    );
+
+    // A failed load releases every texture it created.
+    glCounts.createTexture = 0;
+    glCounts.deleteTexture = 0;
+    let instThrew = false;
+    try {
+      instView.loadModel(
+        mkInstGlb(
+          new Uint8Array(12),
+          [{bufferView: 1, componentType: 5126, count: 10001, type: 'VEC3'}],
+          {TRANSLATION: 1},
+          {
+            textures: [{source: 0}, {source: 0}],
+            images: [{uri: 'javascript:void(0)'}],
+          },
+        ),
+      );
+    } catch {
+      instThrew = true;
+    }
+    assert(
+      instThrew &&
+        glCounts.createTexture === 2 &&
+        glCounts.deleteTexture === glCounts.createTexture,
+      `buildGpuScene releases textures when it throws (created ${glCounts.createTexture}, deleted ${glCounts.deleteTexture})`,
+    );
+
+    // Unnamed variants keep indices; 'default' is a selectable name; stale
+    // variant names are cleared when the next model lacks them.
+    const variantGlb = (names: Array<string | undefined>) => {
+      const g = mkInstGlb(new Uint8Array(0), [], {});
+      // tslint:disable-next-line:no-any Mutating a loosely-typed glTF fixture.
+      const gltf: any = g.gltf;
+      delete gltf.nodes[0].extensions;
+      gltf.materials = [{}, {}, {}];
+      gltf.extensions = {
+        KHR_materials_variants: {
+          variants: names.map((name) => (name ? {name} : {})),
+        },
+      };
+      gltf.meshes[0].primitives[0].material = 0;
+      gltf.meshes[0].primitives[0].extensions = {
+        KHR_materials_variants: {
+          mappings: [
+            {material: 1, variants: [1]},
+            {material: 2, variants: [2]},
+          ],
+        },
+      };
+      return g;
+    };
+    instView.loadModel(variantGlb([undefined, 'Gold', 'default']));
+    const goldOk =
+      instView.selectVariant('Gold') &&
+      instView.meshes[0].primitives[0].materialIndex === 1;
+    const defaultOk =
+      instView.selectVariant('default') &&
+      instView.getVariantName() === 'default' &&
+      instView.meshes[0].primitives[0].materialIndex === 2;
+    instView.selectVariant('Gold');
+    instView.loadModel(variantGlb(['Silver']));
+    assert(
+      goldOk &&
+        defaultOk &&
+        instView.getAvailableVariants()[0] === 'Silver' &&
+        instView.getVariantName() === null,
+      'variants keep indices for unnamed entries, select "default" by name, and clear stale names on load',
+    );
+
+    // Variant switching re-resolves the shader and transmission per material:
+    // unlit default -> plain PBR variant drops the custom program, and an
+    // opaque variant over a transmissive default is not drawn transmissive.
+    registerPlugin(materialsPlugin);
+    const shaderGlb = variantGlb([undefined, 'Plain', 'Glass']);
+    // tslint:disable-next-line:no-any Mutating a loosely-typed glTF fixture.
+    const sg: any = shaderGlb.gltf;
+    sg.materials = [
+      {extensions: {KHR_materials_unlit: {}}},
+      {},
+      {extensions: {KHR_materials_transmission: {transmissionFactor: 1}}},
+    ];
+    instView.loadModel(shaderGlb);
+    const prim0 = instView.meshes[0].primitives[0];
+    const unlitProgram = prim0.customProgram;
+    instView.selectVariant('Plain');
+    const plainProgram = prim0.customProgram;
+    const plainTrans = prim0.isTransmissive;
+    instView.selectVariant('Glass');
+    const glassTrans = prim0.isTransmissive;
+    instView.selectVariant(null);
+    assert(
+      !!unlitProgram &&
+        plainProgram === null &&
+        plainTrans === false &&
+        glassTrans === true &&
+        prim0.customProgram === unlitProgram,
+      'variant switching re-resolves custom shaders and transmission for the selected material (cached per material)',
+    );
+
+    // Exposure is a pre-tone-mapping multiplier, independent of IBL strength.
+    instView.setExposure(2);
+    const exp2 = instView.getExposure();
+    instView.setExposure(Number.NaN);
+    assert(
+      exp2 === 2 && instView.getExposure() === 1,
+      'setExposure stores a finite linear exposure (NaN -> 1) read back by getExposure',
+    );
+    instView.setExposure(1);
+
+    // WebGL context loss: rendering stops while lost; restore recompiles the
+    // core programs, notifies plugins, and re-uploads the last model.
+    {
+      const listeners: Record<string, (e: Event) => void> = {};
+      let programs = 0;
+      let restoredHooks = 0;
+      registerPlugin({
+        name: 'ctx-restore-probe',
+        onContextRestored: () => {
+          restoredHooks++;
+        },
+      });
+      const lossGl = new Proxy(
+        {
+          canvas: {width: 400, height: 400},
+          getShaderParameter: () => true,
+          getProgramParameter: () => true,
+          getAttribLocation: () => 0,
+          createProgram: () => {
+            programs++;
+            return {};
+          },
+        },
+        {
+          get(target: Record<string, unknown>, prop: string) {
+            if (prop in target) return target[prop];
+            return () => ({});
+          },
+        },
+      );
+      const lossCanvas = {
+        ...mockCanvas,
+        getContext: () => lossGl,
+        addEventListener: (type: string, fn: (e: Event) => void) => {
+          listeners[type] = fn;
+        },
+        removeEventListener: () => {},
+      };
+      const lv = new ThreeView(lossCanvas, lossCanvas, {autoRotate: false});
+      lv.loadModel(variantGlb(['A']));
+      const programsBefore = programs;
+      let prevented = false;
+      listeners['webglcontextlost']?.({
+        preventDefault: () => {
+          prevented = true;
+        },
+      } as unknown as Event);
+      const lostFlag = lv.contextLost;
+      lv.render(); // no-op while lost
+      listeners['webglcontextrestored']?.({} as Event);
+      assert(
+        prevented &&
+          lostFlag &&
+          !lv.contextLost &&
+          programs >= programsBefore + 2 &&
+          restoredHooks === 1 &&
+          lv.meshes.length === 1,
+        `WebGL context loss pauses rendering and restore rebuilds programs, plugins and the last model (programs ${programsBefore} -> ${programs}, hooks ${restoredHooks})`,
+      );
+    }
   }
 
   console.log(

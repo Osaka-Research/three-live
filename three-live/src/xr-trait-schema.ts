@@ -614,10 +614,20 @@ export function parseOutlineTrait(raw: unknown): OutlineTraitOptions | null {
   }
   const r = asRecord(raw);
   if (!r || r['enabled'] === false) return null;
+  const rawT = r['thickness'] ?? r['width'];
   return {
     enabled: true,
     color: safeHexColor(r['color'], '#38bdf8'),
-    thickness: clampNum(r['thickness'] ?? r['width'], 0.5, 20, 3),
+    // Thickness is in pixels; metre-sized values (< 0.25, e.g. the documented
+    // `0.025`) are converted the same way on web, Android, and iOS.
+    thickness: clampNum(
+      typeof rawT === 'number' && rawT > 0 && rawT < 0.25
+        ? Math.max(1.5, rawT * 140)
+        : rawT,
+      0.5,
+      20,
+      3,
+    ),
     pulse: r['pulse'] === true,
   };
 }
@@ -628,7 +638,8 @@ export interface IKTraitOptions {
   readonly mid?: string;
   readonly effector: string;
   readonly target: TraitVec3 | string;
-  readonly pole?: TraitVec3;
+  /** Scene-space pole point, or a node name resolved like `target`. */
+  readonly pole?: TraitVec3 | string;
   readonly solver: 'two-bone' | 'fabrik';
   readonly iterations: number;
   readonly tolerance: number;
@@ -656,14 +667,16 @@ export function parseIKTrait(raw: unknown): IKTraitOptions | null {
     if (!tId) return null;
     target = tId;
   }
-  const rawPole = r['pole'];
-  const pole: TraitVec3 | undefined = isFiniteVec3(rawPole)
+  // `pole` is a scene-space point or a node name resolved like `target`;
+  // `poleTarget` is accepted as an alias.
+  const rawPole = r['pole'] ?? r['poleTarget'];
+  const pole: TraitVec3 | string | undefined = isFiniteVec3(rawPole)
     ? [
         clampNum(rawPole[0], -1000, 1000, 0),
         clampNum(rawPole[1], -1000, 1000, 0),
         clampNum(rawPole[2], -1000, 1000, 0),
       ]
-    : undefined;
+    : safeAnchorId(rawPole);
   const solver: 'two-bone' | 'fabrik' =
     r['solver'] === 'fabrik'
       ? 'fabrik'
@@ -971,7 +984,7 @@ export function buildXRSceneCoreExtension(
     comp['ik'] = {
       ...n.ik,
       ...(Array.isArray(n.ik.target) ? {target: [...n.ik.target]} : {}),
-      ...(n.ik.pole ? {pole: [...n.ik.pole]} : {}),
+      ...(Array.isArray(n.ik.pole) ? {pole: [...n.ik.pole]} : {}),
     };
   }
   if (typeof n.sync === 'boolean') comp['sync'] = {enabled: n.sync};

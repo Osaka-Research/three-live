@@ -61,6 +61,12 @@ interface ThreeLiveSceneRenderer {
    */
   fun setClearColor(rgba: FloatArray?) {}
 
+  /**
+   * Selects the tone-mapping curve (`"neutral"`, `"aces"`, `"agx"`, `"reinhard"`, or `"none"`,
+   * matching the web `tone-mapping` attribute). Renderers without tone mapping ignore it.
+   */
+  fun setToneMapping(mode: String) {}
+
   /** Sets a node's local transform (translation xyz, rotation quaternion xyzw, scale xyz). */
   fun setNodeTransform(
     nodeIndex: Int,

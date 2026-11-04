@@ -475,6 +475,42 @@ function parseBoundedVec3(raw: unknown, maxAbs = 1000): Vec3 | null {
   ];
 }
 
+/**
+ * Whether the host opted in to WebRTC voice (`shared-room-voice`, mirroring
+ * `XRLiveElement.sharedRoomVoice`).
+ */
+// tslint:disable-next-line:no-any Host `<xr-live>` element.
+function isVoiceEnabled(el: any): boolean {
+  return (
+    !!el?.hasAttribute?.('shared-room-voice') &&
+    el.getAttribute?.('shared-room-voice') !== 'false'
+  );
+}
+
+/** Maximum ICE `sdpMid` length (media stream identification tag). */
+const MAX_SDP_MID_CHARS = 64;
+
+/**
+ * Validates an ICE `sdpMid`: `null` when absent or empty, `undefined` when
+ * present but malformed (over {@link MAX_SDP_MID_CHARS} or containing NUL, so
+ * the message is rejected rather than silently corrupted by truncation).
+ */
+function sanitizeSdpMid(raw: unknown): string | null | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  if (raw.length > MAX_SDP_MID_CHARS || raw.includes('\x00')) return undefined;
+  return raw;
+}
+
+/** Validates an ICE `sdpMLineIndex` integer in `[0, 64]` (else `null`). */
+function sanitizeSdpMLineIndex(raw: unknown): number | null {
+  return typeof raw === 'number' &&
+    Number.isInteger(raw) &&
+    raw >= 0 &&
+    raw <= 64
+    ? raw
+    : null;
+}
+
 function parseUnitQuat(raw: unknown): Quat | null {
   if (!Array.isArray(raw) || raw.length < 4) return null;
   const x = raw[0];
@@ -639,21 +675,11 @@ export function parseSharedRoomMessage(
     ) {
       return null;
     }
-    const rawMid = r['sdpMid'];
-    const sdpMid =
-      typeof rawMid === 'string' &&
-      rawMid.length > 0 &&
-      !rawMid.includes('\x00')
-        ? rawMid.slice(0, 64)
-        : null;
-    const rawIdx = r['sdpMLineIndex'];
-    const sdpMLineIndex =
-      typeof rawIdx === 'number' &&
-      Number.isInteger(rawIdx) &&
-      rawIdx >= 0 &&
-      rawIdx <= 64
-        ? rawIdx
-        : null;
+    const sdpMid = sanitizeSdpMid(r['sdpMid']);
+    if (sdpMid === undefined) return null;
+    const sdpMLineIndex = sanitizeSdpMLineIndex(r['sdpMLineIndex']);
+    // RTCIceCandidate() throws when both are null.
+    if (sdpMid === null && sdpMLineIndex === null) return null;
     return {
       v: 1,
       type: 'rtc',
@@ -1267,7 +1293,7 @@ export class XRSharedRoomController {
       sdpMLineIndex?: number | null;
     },
   ): boolean {
-    if (!this.transport) return false;
+    if (!this.transport || !isVoiceEnabled(this.boundHost)) return false;
     const cleanTarget = safeAnchorId(targetPeerId);
     if (!cleanTarget || cleanTarget === this.peerId) return false;
     if (signalType === 'offer' || signalType === 'answer') {
@@ -1303,21 +1329,10 @@ export class XRSharedRoomController {
       ) {
         return false;
       }
-      const rawMid = payload.sdpMid;
-      const sdpMid =
-        typeof rawMid === 'string' &&
-        rawMid.length > 0 &&
-        !rawMid.includes('\x00')
-          ? rawMid.slice(0, 64)
-          : null;
-      const rawIdx = payload.sdpMLineIndex;
-      const sdpMLineIndex =
-        typeof rawIdx === 'number' &&
-        Number.isInteger(rawIdx) &&
-        rawIdx >= 0 &&
-        rawIdx <= 64
-          ? rawIdx
-          : null;
+      const sdpMid = sanitizeSdpMid(payload.sdpMid);
+      if (sdpMid === undefined) return false;
+      const sdpMLineIndex = sanitizeSdpMLineIndex(payload.sdpMLineIndex);
+      if (sdpMid === null && sdpMLineIndex === null) return false;
       this.sendWire({
         v: 1,
         type: 'rtc',
@@ -1463,6 +1478,9 @@ export class XRSharedRoomController {
     }
 
     if (msg.type === 'paint') {
+      // Only joined peers (seen via `pose`, so bounded by MAX_PEERS) may paint;
+      // otherwise rotating peerIds would bypass the rate limit and grow the map.
+      if (!this.peers.has(msg.peerId)) return false;
       // Each stroke allocates GPU buffers; drop floods from a single peer.
       const bucket = this.paintRate.get(msg.peerId);
       if (!bucket || atMs - bucket.windowStart >= 1000) {
@@ -1498,6 +1516,13 @@ export class XRSharedRoomController {
 
     if (msg.type === 'rtc') {
       if (msg.targetPeerId !== this.peerId) {
+        return false;
+      }
+      // Voice is opt-in (`shared-room-voice`), and only joined peers may signal.
+      if (
+        !this.peers.has(msg.peerId) ||
+        !isVoiceEnabled(element ?? this.boundHost)
+      ) {
         return false;
       }
       const bucket = this.rtcRate.get(msg.peerId);
@@ -1652,12 +1677,16 @@ export class XRSharedRoomController {
       headWorldPos,
       [1, 1, 1],
     );
-    const listenerHead = resolveHeadPose(viewer);
-    peer.voiceGain = computeSpatialVoiceGain(
-      listenerHead.position,
-      extractQuaternion(listenerHead.matrix),
-      headWorldPos,
-    );
+    if (isVoiceEnabled(this.boundHost ?? viewer?.container)) {
+      const listenerHead = resolveHeadPose(viewer);
+      peer.voiceGain = computeSpatialVoiceGain(
+        listenerHead.position,
+        extractQuaternion(listenerHead.matrix),
+        headWorldPos,
+      );
+    } else {
+      peer.voiceGain = undefined;
+    }
 
     if (colorChanged && peer.laserMesh) {
       removeDynamicMesh(viewer, peer.laserMesh);
@@ -1715,6 +1744,8 @@ export class XRSharedRoomController {
     }
     this.nodeLeases.clear();
     this.heldMeshes.clear();
+    this.paintRate.clear();
+    this.rtcRate.clear();
   }
 
   /** Disconnects from the room and frees all dynamic peer and stroke GPU meshes. */

@@ -19,11 +19,17 @@
  */
 
 import {
+  HOST_BLOOM_DEFAULT_RADIUS,
+  HOST_BLOOM_DEFAULT_THRESHOLD,
+  parseNumericAttr,
+} from './constants';
+import {
   CLIENT_SCRIPTS_DISABLED_ERROR,
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
 import {getSharedRegistry} from './plugin';
 import {
+  normalizeToneMapping,
   SANDBOX_HOST_SCENE_LIMITS,
   ThreeView,
   toGLBData,
@@ -341,7 +347,7 @@ export class ThreeLiveElement extends BaseElement {
     const src = this.getAttribute('src');
     const scriptSrc = this.getAttribute('script-src');
     if (src) {
-      this.loadModelFromSrc(src).catch(() => {});
+      this.loadModel(src).catch(() => {});
     } else if (scriptSrc) {
       this.loadScriptFromSrc(scriptSrc).catch(() => {});
     } else {
@@ -401,7 +407,7 @@ export class ThreeLiveElement extends BaseElement {
 
     switch (name) {
       case 'src':
-        if (newVal) this.loadModelFromSrc(newVal).catch(() => {});
+        if (newVal) this.loadModel(newVal).catch(() => {});
         break;
 
       case 'camera-target':
@@ -457,9 +463,8 @@ export class ThreeLiveElement extends BaseElement {
         break;
 
       case 'tone-mapping':
-        if (this.viewer && newVal) {
-          this.viewer.setToneMapping(newVal as any);
-        }
+        // Removing the attribute (newVal === null) restores `neutral`.
+        this.viewer?.setToneMapping(normalizeToneMapping(newVal));
         break;
 
       case 'environment-image':
@@ -535,21 +540,21 @@ export class ThreeLiveElement extends BaseElement {
   // Getters and Setters for Properties
   // -------------------------------------------------------------------------
 
-  private getAttr(name: string): string | null {
+  protected getAttr(name: string): string | null {
     return this.getAttribute(name);
   }
-  private setAttr(name: string, val: string | null): void {
+  protected setAttr(name: string, val: string | null): void {
     if (val !== null) this.setAttribute(name, val);
     else this.removeAttribute(name);
   }
-  private getBoolAttr(name: string): boolean {
+  protected getBoolAttr(name: string): boolean {
     return this.hasAttribute(name) && this.getAttribute(name) !== 'false';
   }
-  private setBoolAttr(name: string, val: boolean): void {
+  protected setBoolAttr(name: string, val: boolean): void {
     if (val) this.setAttribute(name, '');
     else this.removeAttribute(name);
   }
-  private getFloatAttr(name: string, fallback: number): number {
+  protected getFloatAttr(name: string, fallback: number): number {
     const val = this.getAttribute(name);
     return val !== null ? parseFloat(val) : fallback;
   }
@@ -738,7 +743,7 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   get toneMapping(): ToneMappingMode {
-    return (this.getAttribute('tone-mapping') as ToneMappingMode) || 'neutral';
+    return normalizeToneMapping(this.getAttribute('tone-mapping'));
   }
   set toneMapping(val: ToneMappingMode) {
     this.setAttribute('tone-mapping', val);
@@ -752,14 +757,20 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   get bloomThreshold(): number {
-    return this.getFloatAttr('bloom-threshold', 0.8);
+    return parseNumericAttr(
+      this.getAttribute('bloom-threshold'),
+      HOST_BLOOM_DEFAULT_THRESHOLD,
+    );
   }
   set bloomThreshold(val: number) {
     this.setAttribute('bloom-threshold', String(val));
   }
 
   get bloomRadius(): number {
-    return this.getFloatAttr('bloom-radius', 0.5);
+    return parseNumericAttr(
+      this.getAttribute('bloom-radius'),
+      HOST_BLOOM_DEFAULT_RADIUS,
+    );
   }
   set bloomRadius(val: number) {
     this.setAttribute('bloom-radius', String(val));
@@ -1545,28 +1556,9 @@ export class ThreeLiveElement extends BaseElement {
         parsed.zoom,
       );
     } catch {
-      const parts = cameraOrbitStr.trim().split(/\s+/);
-      if (parts.length >= 2) {
-        const parseAngle = (str: string) =>
-          str.endsWith('rad')
-            ? (parseFloat(str) * 180) / Math.PI
-            : parseFloat(str.replace(/deg$/, ''));
-        const theta = parts[0] === 'auto' ? undefined : parseAngle(parts[0]);
-        const phi = parts[1] === 'auto' ? undefined : parseAngle(parts[1]);
-        let dist: number | undefined = undefined;
-        if (parts.length >= 3 && parts[2] !== 'auto') {
-          dist = parseFloat(parts[2].replace(/m$/, ''));
-        }
-        if (
-          (theta !== undefined && !isNaN(theta)) ||
-          (phi !== undefined && !isNaN(phi))
-        ) {
-          this.viewer.setInitialCamera(
-            theta !== undefined && !isNaN(theta) ? theta : undefined,
-            phi !== undefined && !isNaN(phi) ? phi : undefined,
-            dist !== undefined && !isNaN(dist) ? dist : undefined,
-          );
-        }
+      const o = this.parseOrbitLimit(cameraOrbitStr);
+      if (o.theta !== undefined || o.phi !== undefined) {
+        this.viewer.setInitialCamera(o.theta, o.phi, o.distance);
       }
     }
   }
@@ -1580,16 +1572,12 @@ export class ThreeLiveElement extends BaseElement {
     const parts = str.trim().split(/\s+/);
     const result: {theta?: number; phi?: number; distance?: number} = {};
     if (parts.length > 0 && parts[0] !== 'auto') {
-      const theta = parts[0].endsWith('rad')
-        ? (parseFloat(parts[0]) * 180) / Math.PI
-        : parseFloat(parts[0].replace(/deg$/, ''));
-      if (!isNaN(theta)) result.theta = theta;
+      const theta = this.parseFieldOfView(parts[0]);
+      if (theta !== undefined) result.theta = theta;
     }
     if (parts.length > 1 && parts[1] !== 'auto') {
-      const phi = parts[1].endsWith('rad')
-        ? (parseFloat(parts[1]) * 180) / Math.PI
-        : parseFloat(parts[1].replace(/deg$/, ''));
-      if (!isNaN(phi)) result.phi = phi;
+      const phi = this.parseFieldOfView(parts[1]);
+      if (phi !== undefined) result.phi = phi;
     }
     if (parts.length > 2 && parts[2] !== 'auto') {
       const dist = parseFloat(parts[2].replace(/m$/, ''));
@@ -1681,10 +1669,6 @@ export class ThreeLiveElement extends BaseElement {
         return;
       }
     }
-  }
-
-  private async loadModelFromSrc(src: string): Promise<void> {
-    await this.loadModel(src);
   }
 
   private runWithScriptRunner(

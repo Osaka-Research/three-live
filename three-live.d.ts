@@ -53,6 +53,7 @@ export {
   installCadExtension,
   MAX_BSP_DEPTH,
   MAX_CSG_TRIANGLES,
+  MAX_SHAPE_POINTS,
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
   type TextGeometryOptions,
@@ -298,7 +299,7 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'peer-name'?: string;
   /** Local avatar visor & laser color (`#rrggbb`) in `shared-room`. */
   'peer-color'?: string;
-  /** Opt-in WebRTC spatial voice chat signaling and HRTF distance attenuation in `shared-room`. */
+  /** Opt-in WebRTC voice signaling relay (offer/answer/ICE) and `voiceGain` helpers in `shared-room`. Apps own `RTCPeerConnection` and audio. */
   'shared-room-voice'?: boolean | string;
   /** xr-live-sim: character camera mode, or `none` to disable the character. */
   'character-controller'?:

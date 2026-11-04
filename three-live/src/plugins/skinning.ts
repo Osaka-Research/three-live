@@ -18,8 +18,9 @@
  * and performs hardware vertex skinning in WebGL2 shaders.
  */
 
-import type {ThreeLivePlugin} from '../plugin';
+import {readAccessorAsFloat32} from '../accessor';
 import {mat4Create, mat4Multiply} from '../math';
+import type {ThreeLivePlugin} from '../plugin';
 
 const MAX_JOINTS = 64;
 
@@ -47,7 +48,9 @@ layout(location=5) in vec4 aWeights;
 uniform mat4 uJointMatrix[${MAX_JOINTS}];`,
     );
 
-    const posVar = skinnedVS.includes('morphedPos') ? 'morphedPos' : 'aPosition';
+    const posVar = skinnedVS.includes('morphedPos')
+      ? 'morphedPos'
+      : 'aPosition';
 
     skinnedVS = skinnedVS
       .replace(
@@ -108,7 +111,10 @@ vec4 world=uModel*(skinMatrix*vec4(${posVar},1.0));`,
 
     const wBuf = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, wBuf);
-    const wData = new Float32Array(bin, wOffset, weightsAcc.count * 4);
+    // WEIGHTS_0 may be normalized UNSIGNED_BYTE/SHORT (glTF / KHR_mesh_quantization).
+    const wData =
+      readAccessorAsFloat32(gltf, bin, weightsAcc, 4) ??
+      new Float32Array(bin, wOffset, weightsAcc.count * 4);
     gl.bufferData(gl.ARRAY_BUFFER, wData, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(5);
     gl.vertexAttribPointer(5, 4, gl.FLOAT, false, 0, 0);

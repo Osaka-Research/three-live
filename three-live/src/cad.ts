@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // Procedural 2D/3D CAD & Vector Text plugin bundle for <three-live> (three-live-cad.min.js).
-// Includes 2D Path & Shape with Earcut Hole Triangulation, ExtrudeGeometry with Beveling,
-// 3D BSP-tree CSG Boolean Operations (union, subtract, intersect), and Hershey Simplex Vector TextGeometry.
+// Includes 2D Path & Shape with ear-clipping hole triangulation, ExtrudeGeometry with Beveling,
+// 3D BSP-tree CSG Boolean Operations (union, subtract, intersect), and built-in stroke-font TextGeometry.
 
 import {registerPlugin} from './plugin';
 import {
@@ -22,6 +22,7 @@ import {
   installCadExtension,
   MAX_BSP_DEPTH,
   MAX_CSG_TRIANGLES,
+  MAX_SHAPE_POINTS,
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
   type TextGeometryOptions,
@@ -35,6 +36,7 @@ export {
   installCadExtension,
   MAX_BSP_DEPTH,
   MAX_CSG_TRIANGLES,
+  MAX_SHAPE_POINTS,
   MAX_TEXT_GEOMETRY_CHARS,
   type ExtrudeGeometryOptions,
   type TextGeometryOptions,

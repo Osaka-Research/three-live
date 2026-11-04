@@ -331,6 +331,26 @@
       #endif
     }
 
+    #if os(iOS)
+      /// Installs full-screen `tone-mapping` and `bloom` post-processing on `arView`, using the
+      /// strongest `bloom` trait in the scene (or `bloom` when given). Returns the processor so
+      /// hosts can change `toneMapping`, `exposure` or `bloom` at runtime.
+      @available(iOS 15.0, *)
+      @MainActor
+      @discardableResult
+      public func enablePostProcessing(
+        on arView: ARView, toneMapping: String = "neutral", exposure: Double = 1,
+        bloom: XRLiveBloom? = nil
+      ) -> XRLivePostProcessor {
+        let sceneBloom = XRLivePostProcessing.strongestBloom(
+          (0..<session.nodeCount).map { session.traits(at: $0)?.bloom })
+        let processor = XRLivePostProcessor(
+          toneMapping: toneMapping, exposure: exposure, bloom: bloom ?? sceneBloom)
+        processor.attach(to: arView)
+        return processor
+      }
+    #endif
+
     #if os(iOS) || os(macOS)
       /// Configures `arView`'s studio environment IBL intensity so PBR materials match Web and
       /// Android without clipping top faces to white.

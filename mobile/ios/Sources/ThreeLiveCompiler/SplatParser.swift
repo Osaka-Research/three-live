@@ -44,6 +44,9 @@ public struct SplatData: Sendable, Equatable {
   /// Optional higher-order SH coefficients in `[-1, 1]`
   /// (`count * SplatParser.shBasisCountForDegree(shDegree) * 3` floats, RGB-interleaved per basis).
   public var sh: [Float]?
+  /// `true` when the `.spz` flags byte (header byte 14) has the antialiased bit (bit 0) set, i.e.
+  /// the cloud was trained with a 0.3 px screen-space blur and needs opacity compensation.
+  public var antialiased: Bool = false
 
   public init(count: Int, shDegree: Int = 0) {
     self.count = count
@@ -71,6 +74,10 @@ public enum SplatParserError: Error, Equatable, LocalizedError {
   case decompressedTooLarge
   case decompressionFailed
   case compressionUnavailable
+  /// The URL (or a redirect target) failed `resolveSplatURL`'s scheme / same-origin policy.
+  case urlRejected
+  /// The server answered with a non-2xx HTTP status.
+  case httpStatus(Int)
 
   public var errorDescription: String? {
     switch self {
@@ -86,6 +93,8 @@ public enum SplatParserError: Error, Equatable, LocalizedError {
     case .decompressedTooLarge: return "decompressed .spz exceeds size limit"
     case .decompressionFailed: return ".spz gzip stream is corrupt"
     case .compressionUnavailable: return "gzip decompression is unavailable on this platform"
+    case .urlRejected: return "splat URL rejected"
+    case .httpStatus(let code): return "splat download failed with HTTP \(code)"
     }
   }
 }
@@ -283,12 +292,17 @@ public enum SplatParser {
         normalizeQuat(&out.rotations, i * 4)
       }
       if hasFullShBlock, var shArr = out.sh {
+        // Drop `out`'s reference first so the writes below mutate the (up to 180 MB) buffer in
+        // place instead of triggering a copy-on-write duplicate.
+        out.sh = nil
         let totalSh = count * shBytesPerSplat
         for j in 0..<totalSh {
           shArr[j] = Float((Double(b[shStart + j]) - 128.0) / 128.0)
         }
         out.sh = shArr
       }
+      // Header byte 14 is the flags byte; bit 0 marks antialiased training.
+      out.antialiased = (b[14] & 1) != 0
       return out
     }
   }
@@ -776,6 +790,18 @@ public enum SplatParser {
     return m
   }
 
+  /// Returns the 3x3 that maps world-space vectors into the local frame of `nodeWorld`: the
+  /// inverse of its upper 3x3, falling back to the transpose when singular. SH coefficients are
+  /// stored in the splat's local frame, so view directions must be mapped before evaluation.
+  static func worldToLocalBasis(_ nodeWorld: simd_float4x4) -> simd_float3x3 {
+    let m = simd_float3x3(
+      SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z),
+      SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z),
+      SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z))
+    let det = m.determinant
+    return (abs(det) > 1e-12 && det.isFinite) ? m.inverse : m.transpose
+  }
+
   /// Builds camera-facing billboard quads in world space for `data` in back-to-front `order`.
   public static func buildSplatQuads(
     _ data: SplatData,
@@ -803,6 +829,7 @@ public enum SplatParser {
     let lRight = SIMD3<Float>(simd_dot(col0, right), simd_dot(col1, right), simd_dot(col2, right))
     let lUp = SIMD3<Float>(simd_dot(col0, up), simd_dot(col1, up), simd_dot(col2, up))
     let hasSH = data.shDegree > 0 && data.sh != nil
+    let toLocal = worldToLocalBasis(nodeWorld)
 
     var positions: [SIMD3<Float>] = []
     positions.reserveCapacity(n * 4)
@@ -867,15 +894,15 @@ public enum SplatParser {
           ex = a >= c ? 1 : 0
           ey = a >= c ? 0 : 1
         }
-        let half1 = Float(min(max(l1.squareRoot() * 1.5, 0.001), 10.0))
-        let half2 = Float(min(max(l2.squareRoot() * 1.5, 0.001), 10.0))
+        let half1 = Float(min(max(l1.squareRoot() * 3.0, 0.001), 10.0))
+        let half2 = Float(min(max(l2.squareRoot() * 3.0, 0.001), 10.0))
         let m1 = right * Float(ex) + up * Float(ey)
         let m2 = right * Float(-ey) + up * Float(ex)
         dr = m1 * half1
         du = m2 * half2
       } else {
         let r0 = max(scx, max(scy, scz))
-        let half = min(max(r0 * nodeScale * 1.5, 0.001), 10.0)
+        let half = min(max(r0 * nodeScale * 3.0, 0.001), 10.0)
         dr = right * half
         du = up * half
       }
@@ -892,7 +919,7 @@ public enum SplatParser {
       let c1: UInt8
       let c2: UInt8
       if hasSH {
-        let shRgb = evaluateSplatSH(data, index: s, dir: wp - camPos)
+        let shRgb = evaluateSplatSH(data, index: s, dir: toLocal * (wp - camPos))
         c0 = shRgb.x
         c1 = shRgb.y
         c2 = shRgb.z
@@ -953,18 +980,12 @@ public enum SplatParser {
       let scx = data.scales[s * 3]
       let scy = data.scales[s * 3 + 1]
       let scz = data.scales[s * 3 + 2]
-      let halfX: Float
-      let halfY: Float
-      if scx > 0 && scy > 0 && scz > 0 && (scx != scy || scy != scz) {
-        let cov6 = computeCovariance3D(data, index: s)
-        halfX = Float(min(max(Double(max(1e-8, cov6[0])).squareRoot() * 1.5, 0.001), 10.0))
-        halfY = Float(min(max(Double(max(1e-8, cov6[3])).squareRoot() * 1.5, 0.001), 10.0))
-      } else {
-        let r0 = max(scx, max(scy, scz))
-        let half = min(max(r0 * 1.5, 0.001), 10.0)
-        halfX = half
-        halfY = half
-      }
+      // The shader expands uv0 along screen right/up, so local-axis variances (Sigma_xx,
+      // Sigma_yy) would ignore rotation and depth extent. Bound each splat isotropically by
+      // 3 * sigma along its largest axis.
+      let half = min(max(max(scx, max(scy, scz)) * 3.0, 0.001), 10.0)
+      let halfX = half
+      let halfY = half
       let base = UInt32(s * 4)
       for _ in 0..<4 { positions.append(lp) }
       uvs.append(SIMD2<Float>(-halfX, -halfY))
@@ -1124,7 +1145,7 @@ public enum SplatParser {
       auto geo = params.geometry();
       float2 d = geo.uv0() * 2.0f - 1.0f;
       float r2 = dot(d, d);
-      float w = (r2 > 1.0f) ? 0.0f : exp(-4.0f * r2);
+      float w = (r2 > 1.0f) ? 0.0f : exp(-4.5f * r2);
       float4 col = geo.custom_attribute();
       if (col.a <= 0.0f && dot(col.rgb, col.rgb) <= 0.0f) {
         col = geo.color();
@@ -1154,7 +1175,7 @@ public enum SplatParser {
     }
   #endif
 
-  /// Generates a `size x size` RGBA8 radial Gaussian falloff image (`exp(-4 * r^2)` for `r <= 1`).
+  /// Generates a `size x size` RGBA8 radial Gaussian falloff image (`exp(-4.5 * r^2)` for `r <= 1`).
   public static func gaussianFalloffRGBA(size: Int = 64) -> [UInt8] {
     let n = max(4, min(size, 256))
     var out = [UInt8](repeating: 255, count: n * n * 4)
@@ -1164,30 +1185,101 @@ public enum SplatParser {
       for x in 0..<n {
         let dx = (Double(x) - half) / half
         let r2 = dx * dx + dy * dy
-        let a = r2 > 1.0 ? 0 : Int((255.0 * exp(-4.0 * r2)).rounded()).clamped(to: 0...255)
+        let a = r2 > 1.0 ? 0 : Int((255.0 * exp(-4.5 * r2)).rounded()).clamped(to: 0...255)
         out[(y * n + x) * 4 + 3] = UInt8(a)
       }
     }
     return out
   }
 
-  /// Downloads and decodes a `.splat` / `.spz` file from `url`, enforcing `resolveSplatURL` and
-  /// `maxFileBytes`.
+  /// Returns whether a redirect from `original` to `target` still satisfies the splat URL policy
+  /// (allowed scheme, and same origin as `original` unless `allowCrossOrigin`).
+  static func allowsRedirect(from original: URL, to target: URL?, allowCrossOrigin: Bool) -> Bool {
+    guard let target = target else { return false }
+    return resolveSplatURL(
+      target.absoluteString, baseURL: original.absoluteString, allowCrossOrigin: allowCrossOrigin)
+      != nil
+  }
+
+  /// Refuses redirects that would leave the splat URL policy (cancelling the request).
+  private final class RedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let original: URL
+    let allowCrossOrigin: Bool
+
+    init(original: URL, allowCrossOrigin: Bool) {
+      self.original = original
+      self.allowCrossOrigin = allowCrossOrigin
+    }
+
+    func urlSession(
+      _ session: URLSession, task: URLSessionTask,
+      willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest
+    ) async -> URLRequest? {
+      if SplatParser.allowsRedirect(
+        from: original, to: request.url, allowCrossOrigin: allowCrossOrigin)
+      {
+        return request
+      }
+      task.cancel()
+      return nil
+    }
+  }
+
+  /// Downloads and decodes a `.splat` / `.spz` file from `url`, enforcing `resolveSplatURL` (also
+  /// for redirects) and `maxBytes` while streaming, so an oversized body is never fully buffered.
   public static func loadURL(
     _ url: String,
     baseURL: String? = nil,
     allowCrossOrigin: Bool = true,
-    maxBytes: Int = maxFileBytes
+    maxBytes: Int = maxFileBytes,
+    session: URLSession = .shared
   ) async throws -> SplatData {
     guard let resolved = resolveSplatURL(url, baseURL: baseURL, allowCrossOrigin: allowCrossOrigin)
     else {
-      throw SplatParserError.badMagic
+      throw SplatParserError.urlRejected
     }
-    let (data, response) = try await URLSession.shared.data(from: resolved)
+    let policy = RedirectPolicy(original: resolved, allowCrossOrigin: allowCrossOrigin)
+    let result: (URLSession.AsyncBytes, URLResponse)
+    do {
+      result = try await session.bytes(from: resolved, delegate: policy)
+    } catch let error as URLError where error.code == .cancelled {
+      throw SplatParserError.urlRejected  // A redirect was refused by `RedirectPolicy`.
+    }
+    let (bytes, response) = result
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-      throw SplatParserError.decompressionFailed
+      bytes.task.cancel()
+      throw SplatParserError.httpStatus(http.statusCode)
     }
-    if data.count > maxBytes { throw SplatParserError.fileTooLarge }
+    // Defense in depth: the final URL must still satisfy the policy.
+    if let finalURL = response.url, finalURL != resolved,
+      !allowsRedirect(from: resolved, to: finalURL, allowCrossOrigin: allowCrossOrigin)
+    {
+      bytes.task.cancel()
+      throw SplatParserError.urlRejected
+    }
+    if response.expectedContentLength > Int64(maxBytes) {
+      bytes.task.cancel()
+      throw SplatParserError.fileTooLarge
+    }
+    var data = Data()
+    if response.expectedContentLength > 0 {
+      data.reserveCapacity(Int(response.expectedContentLength))
+    }
+    var chunk = [UInt8]()
+    chunk.reserveCapacity(64 * 1024)
+    for try await byte in bytes {
+      chunk.append(byte)
+      if chunk.count == 64 * 1024 {
+        if data.count + chunk.count > maxBytes {
+          bytes.task.cancel()
+          throw SplatParserError.fileTooLarge
+        }
+        data.append(contentsOf: chunk)
+        chunk.removeAll(keepingCapacity: true)
+      }
+    }
+    if data.count + chunk.count > maxBytes { throw SplatParserError.fileTooLarge }
+    data.append(contentsOf: chunk)
     return try parse(data, fileName: resolved.lastPathComponent)
   }
 }

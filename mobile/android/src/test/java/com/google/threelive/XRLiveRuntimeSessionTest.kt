@@ -1203,6 +1203,120 @@ class XRLiveRuntimeSessionTest {
     assertEquals(0f, dotAxes, 1e-2f)
   }
 
+  /** 1-splat `.spz` v3 with [shDegree] SH bytes in the shared golden pattern (see web test). */
+  private fun spzV3WithSh(shDegree: Int, shBytes: Int? = null): ByteArray {
+    val basis = SplatParser.shBasisCountForDegree(shDegree)
+    val base = 16 + 9 + 1 + 3 + 3 + 4
+    val out = ByteBuffer.allocate(base + (shBytes ?: (basis * 3))).order(ByteOrder.LITTLE_ENDIAN)
+    out.putInt(0, 0x5053474e)
+    out.putInt(4, 3)
+    out.putInt(8, 1)
+    out.put(12, shDegree.toByte())
+    out.put(13, 12.toByte())
+    putBytes(out, 16 + 9, 255)
+    putBytes(out, 16 + 9 + 1, 128, 128, 128)
+    out.putInt(16 + 9 + 1 + 3 + 3, 3 shl 30)
+    val arr = out.array()
+    var k = 0
+    while (k < basis && base + k * 3 + 2 < arr.size) {
+      arr[base + k * 3] = (128 + (if (k % 2 == 0) 4 + k else -(2 + k))).toByte()
+      arr[base + k * 3 + 1] = (128 + (k % 3) * 5 - 5).toByte()
+      arr[base + k * 3 + 2] = 128.toByte()
+      k++
+    }
+    return arr
+  }
+
+  @Test
+  fun splatAuditFixes() {
+    // SH degree 2 / 3 golden values (reference 3DGS) along (0.48, 0.6, 0.64).
+    val g2 =
+      SplatParser.evaluateSplatSH(
+        SplatParser.parseSpzPayload(spzV3WithSh(2)),
+        0,
+        0.48f,
+        0.6f,
+        0.64f,
+      )
+    val g3 =
+      SplatParser.evaluateSplatSH(
+        SplatParser.parseSpzPayload(spzV3WithSh(3)),
+        0,
+        0.48f,
+        0.6f,
+        0.64f,
+      )
+    assertArrayEquals(intArrayOf(105, 130, 128), g2)
+    assertArrayEquals(intArrayOf(93, 125, 128), g3)
+    // Truncated SH block falls back to degree 0.
+    val trunc = SplatParser.parseSpzPayload(spzV3WithSh(3, 44))
+    assertEquals(0, trunc.shDegree)
+    assertNull(trunc.sh)
+    // shDegree 4 is rejected.
+    assertThrows { SplatParser.parseSpzPayload(spzV3WithSh(1).also { it[12] = 4 }) }
+    // v2 rotation decode: (255, 128, 128) -> x ~ 1, w ~ 0.
+    val v2 = ByteBuffer.allocate(16 + 9 + 1 + 3 + 3 + 3).order(ByteOrder.LITTLE_ENDIAN)
+    v2.putInt(0, 0x5053474e)
+    v2.putInt(4, 2)
+    v2.putInt(8, 1)
+    putBytes(v2, 16 + 9 + 1 + 3 + 3, 255, 128, 128)
+    val v2d = SplatParser.parseSpzPayload(v2.array())
+    assertEquals(1f, v2d.rotations[0], 0.01f)
+    assertEquals(0f, v2d.rotations[3], 0.01f)
+
+    // F10: header flags byte 14 bit 0 = antialiased.
+    assertTrue(SplatParser.parseSpzPayload(spzV3WithSh(0).also { it[14] = 1 }).antialiased)
+    assertFalse(SplatParser.parseSpzPayload(spzV3WithSh(0)).antialiased)
+
+    // F6: decodeSh = false skips the SH block but still decodes the base attributes.
+    val noSh = SplatParser.parseSpzPayload(spzV3WithSh(3), decodeSh = false)
+    assertEquals(0, noSh.shDegree)
+    assertNull(noSh.sh)
+    assertEquals(255, noSh.colors[3].toInt() and 0xFF)
+
+    // F5: GPU billboard bounds each splat isotropically by its largest axis.
+    val needle = SplatData(1)
+    needle.scales[0] = 0.01f
+    needle.scales[1] = 0.01f
+    needle.scales[2] = 0.5f
+    needle.rotations[3] = 1f
+    val gpu = SplatParser.buildStaticGpuSplatVertices(needle)
+    assertEquals(1.5f, gpu.uvs[2], 1e-5f)
+    assertEquals(1.5f, gpu.uvs[5], 1e-5f)
+
+    // F3: SH view direction is mapped into the splat's local frame.
+    val sh1 = spzV3WithSh(1)
+    for (j in sh1.size - 9 until sh1.size) sh1[j] = 128.toByte()
+    sh1[sh1.size - 9 + 3] = 255.toByte() // basis 1 (local +Z), R channel
+    val sh1Data = SplatParser.parseSpzPayload(sh1)
+    // Columns (0,0,-1), (0,1,0), (1,0,0): local +Z maps to world +X.
+    val yaw90 =
+      doubleArrayOf(0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    val cam =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[12] = -5f
+        it[15] = 1f
+      }
+    val quads = SplatParser.buildSplatQuads(sh1Data, intArrayOf(0), yaw90, cam)
+    assertTrue((quads.colors[0].toInt() and 0xFF) > (sh1Data.colors[0].toInt() and 0xFF) + 40)
+  }
+
+  @Test
+  fun sharedRoomIceValidation() {
+    fun ice(extra: String) =
+      SharedRoom.parseMessage(
+        """{"v":1,"type":"rtc","peerId":"peer-a","targetPeerId":"peer-b","signalType":"ice","candidate":"candidate:1 1 UDP 1 192.0.2.1 9 typ host"$extra}"""
+      )
+    assertNull(ice(""))
+    assertNull(ice(""","sdpMid":"${"m".repeat(65)}""""))
+    val mid64 = ice(""","sdpMid":"${"m".repeat(64)}"""") as? SharedRoom.WireMessage.Rtc
+    assertEquals(64, mid64?.sdpMid?.length)
+    assertNotNull(ice(""","sdpMLineIndex":0"""))
+  }
+
   @Test
   fun sortsSplatsBackToFront() {
     val persp =
@@ -1713,6 +1827,162 @@ class XRLiveRuntimeSessionTest {
     )
   }
 
+  /**
+   * Golden vectors from the reference meshoptimizer (scalar build); see
+   * three-live/tests/meshopt_test.ts.
+   */
+  private val meshoptGolden: Map<String, String> =
+    mapOf(
+      "vb_37x12_v0_raw" to
+        "00070eff1c232aff383f46ff00070f0005252c003b424900000810ff1f272eff3e454dff010911002129310041495100" +
+          "3d0912ff222b33ff444c54ff010a1300242d3500474f5800020b14ff262f38ff4a535cff020b150027313a004d565f00" +
+          "020c16ff29333cff50fb63ff030d17002b353f00535d6700030d18ff2c3741ff56606aff030e19002e39f10059636e00" +
+          "040f1aff303b46ff5c6772ff040f1b00313d48005f6a750004101cff333f4aff626d79ff05111d0035414d0065717d00" +
+          "05111eff36434fff637480ff05121f00384551006b778400061331ff3a4754ff6e7b88ff061321003b495600717e8b00" +
+          "061422ff3d4b58ff31818fff07152300545d5b0077859300071524ff404f5dff7a9e96ff0716250042515f007d8b9a00" +
+          "081726ff445362ff808f9eff08172700455564008392a100081828ff475766ff8695a5ff09192900495969008999a900" +
+          "09192aff4a5b6bff8c9cacff8d1a2b004c5d6d008f9fb0000a1b2cff4e5f70ff92a3b4ff0a1b2d004f61720095a6b700" +
+          "0a1c2eff516374ff98a9bbff0b1d7b00536577009badbf000b1d30ffe76779ff9eb0c2ff0b1e310056697b00a1b3c600" +
+          "0c1f32ff586b7eff56b7caff",
+      "vb_37x12_v0_enc" to
+        "a01502f8208278770820823cf7fa20800000150a28a28a28a28a28a2800000152aaaaaaaafaaaaaa241fbe8000009a95" +
+          "152666666666666666664000001a0ff42442442442442d3424424ff4424424422e27ffc000000404d7de042a04444444" +
+          "4444444444444ff444444444241b44444000000000002a04464464464ff4469faa446446446446446446446000000000" +
+          "00152666666666666666664000002a06666666666666663f66ff6666666666107f8c6666f00000000000952a06686686" +
+          "ff668668b5c4668668ff86686686322568668000000000002a0688688688688688688688688688688688688000000000" +
+          "0015266666666666666666400000000000000000000000000000000000000000000000070eff1c232aff383f46ff",
+      "vb_37x12_v1_raw" to
+        "00070eff1c232aff383f46ff00070f001d2565003b424900000810ff1f272eff3e454dff010911002129310041495100" +
+          "010912ff222b7dff444c54ff010a1300242d3500474fc400020b14ff263038ff4a535cff020b150027313a004d565f00" +
+          "020c16ff29333cff50a063ff030d17002b353f00535d6700030d18ff2c3741ff56606aff030e19002e39430059636e00" +
+          "070f1aff303b46ff5c67deff040f1b00313d48005f6a750004101cffd9c84aff626d79ff0511050035414d0065717d00" +
+          "05111eff36434fff687480ff05121f0038cf51006b778400061320ff3a2254ff6e7b88ff061321003b495600717e8b00" +
+          "061422ff3d4b58ff74818fff071523003f4d5b0077859300071524ff404f5dff7a8896ff072a250042515f007d8b9a00" +
+          "081726ff445362ff808f9eff08172700965564008392a100081828ff470566ff8695a5ff09192900495969008999a900" +
+          "09192aff055b6bff8c9cacff091a5f004c5d6d008f9fb0000a1b2cff4e5f70ff92a3b4ff0a1b2d004f61720095a6b700" +
+          "0a1c2eff516374ff98a9bbff891d2f00536577009badbf000b1d30ff546779ff9eb0c2ff0b1e310056697b00a1b3c600" +
+          "0c1f32ff586b7effa4b7caff",
+      "vb_37x12_v1_enc" to
+        "a155555505020820f20805082082081600fefb02150a28a28a28a3ca282a25a2800000152aaaaaab2deaaaaabe326a65" +
+          "aa800000152666666666666666664000000a02442442442442ffafb8244244244ff4ff42a49d878e1f0004040204040a" +
+          "04444462444444ffe9f24fff444444ff4444e7a64e9fa81f0004040404040a0ff6ff6446446446766d988f4464464464" +
+          "4644641f000406040406152666666666666666664000000a066666666666666666666666666666661f0006060606060a" +
+          "06686686ff668668948566866866866866861f0006080606080a06886ff68868ff88e0cfe0d168868868868868861f00" +
+          "08080608081526666666666666666640000000000000000000000000070eff1c232aff383f46ff000000",
+      "ib_v0_enc" to
+        "e0fe1f001f001f001f001f001ffe1f0b1f0a1f091f081f071fff1f071f071f071f071f071fff1f071f071f071f071f07" +
+          "1fff1f071f071f071f071f071fff1f071f071f071f071f071ffffff00e020202020202fb02020202020202f60b0e0202" +
+          "02020202f60b0e020202020202f60b0e020202020202f60b0e020202020202fff00ec50fd6c508ffd9c508000c007687" +
+          "566778a9866589689801690000",
+      "ib_v1_enc" to
+        "e1fe1e001e001e001e001e001efe1e0b1e0a1e091e081e071eff1e071e071e071e071e071eff1e071e071e071e071e07" +
+          "1eff1e071e071e071e071e071eff1e071e071e071e071e071efffff00efb02f60b0ef60b0ef60b0ef60b0efff00ec50f" +
+          "d6c508ffd9c508000c007687566778a9866589689801690000",
+      "ib_decoded_u32" to
+        "000000000700000001000000010000000700000008000000010000000800000002000000020000000800000009000000" +
+          "02000000090000000300000003000000090000000a000000030000000a00000004000000040000000a0000000b000000" +
+          "040000000b00000005000000050000000b0000000c000000050000000c00000006000000060000000c0000000d000000" +
+          "070000000e00000008000000080000000e0000000f000000080000000f00000009000000090000000f00000010000000" +
+          "09000000100000000a0000000a00000010000000110000000a000000110000000b0000000b0000001100000012000000" +
+          "0b000000120000000c0000000c00000012000000130000000c000000130000000d0000000d0000001300000014000000" +
+          "0e000000150000000f0000000f00000015000000160000000f0000001600000010000000100000001600000017000000" +
+          "100000001700000011000000110000001700000018000000110000001800000012000000120000001800000019000000" +
+          "12000000190000001300000013000000190000001a000000130000001a00000014000000140000001a0000001b000000" +
+          "150000001c00000016000000160000001c0000001d000000160000001d00000017000000170000001d0000001e000000" +
+          "170000001e00000018000000180000001e0000001f000000180000001f00000019000000190000001f00000020000000" +
+          "19000000200000001a0000001a00000020000000210000001a000000210000001b0000001b0000002100000022000000" +
+          "1c000000230000001d0000001d00000023000000240000001d000000240000001e0000001e0000002400000025000000" +
+          "1e000000250000001f0000001f00000025000000260000001f0000002600000020000000200000002600000027000000" +
+          "200000002700000021000000210000002700000028000000210000002800000022000000220000002800000029000000" +
+          "230000002a00000024000000240000002a0000002b000000240000002b00000025000000250000002b0000002c000000" +
+          "250000002c00000026000000260000002c0000002d000000260000002d00000027000000270000002d0000002e000000" +
+          "270000002e00000028000000280000002e0000002f000000280000002f00000029000000290000002f00000030000000" +
+          "e80300000500000070110100030000000300000009000000",
+      "seq_enc" to "d1000404041c0404c9011ab9b31802030c001a00000000",
+      "seq_u32" to
+        "000000000100000002000000030000000a0000000b0000000c0000003200000005000000a0860100040000009f860100" +
+          "070000000700000000000000",
+      "oct8_enc" to "004f7f00594f7f0033117f00a1ad7f00d2cf7f00428f7f003de27f006d607f00",
+      "oct8_dec" to "006d42005341b900511b5e00b5caa900b2ac370016a1af0065ce3b002e1b8d00",
+      "oct16_enc" to
+        "0000ff4fff7f00004759384fff7f00005433ed10ff7f00006fa02facff7f000062d148ceff7f000094421d8eff7f0000" +
+          "303df5e1ff7f0000b66db760ff7f0000",
+      "oct16_dec" to
+        "0000c16ddb4100000b54b64238ba00008d51e41aeb5e0000bbb4c0c874a800009ab051abed350000061622a01aae0000" +
+          "1f6559cec33c0000582e171bce8b0000",
+      "quat_enc" to
+        "000000000000ff0700000000ff07fc070000ff070000fd07ff0700000000fe07a705a705a705fc0764039cfcdffefd07",
+      "quat_dec" to
+        "000000000000ff7f825a00000000825a0000825a0000825a00000000825a825a0f40fa3ffa3ffa3f39f3367361269fd9",
+      "exp_enc" to
+        "003000f300e0fff1803e00fc6e3400e500c4fff4000000fcba3d00f911c9ff06002000f4333300ef333300f09ad9fff1",
+      "exp_dec" to
+        "0000c03f000080be00007a4400b8d138000070c00000000000e8f64200bc5bc90000004000cccc3d00cc4c3e009899be",
+      "color8_enc" to "407fc1ff7f007fc04081c08066cd00e6ff0000ff",
+      "color8_dec" to "fe0100ff00fe00800100ff00336699ccffffffff",
+      "color16_enc" to
+        "0004ff0701fcff0fff070000ff07000c000401f800fc00086606cdfc0000660eff0f00000000ff0f",
+      "color16_dec" to
+        "efff10000000ffff0000efff0000088010000000ffff0000333366669999ccccffffffffffffffff",
+    )
+
+  private fun goldenBytes(name: String): ByteArray {
+    val s = meshoptGolden.getValue(name)
+    return ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+  }
+
+  @Test
+  fun meshoptSpecDecodersMatchReferenceMeshoptimizer() {
+    for (v in listOf("v0", "v1")) {
+      val raw = goldenBytes("vb_37x12_${v}_raw")
+      val enc = goldenBytes("vb_37x12_${v}_enc")
+      assertArrayEquals(
+        "vertex codec $v",
+        raw,
+        MeshoptDecoder.decodeBuffer(enc, 37, 12, "ATTRIBUTES"),
+      )
+      assertThrows { MeshoptDecoder.decodeBuffer(enc.copyOf(enc.size - 1), 37, 12, "ATTRIBUTES") }
+      val ours = MeshoptDecoder.encodeBuffer(raw, 37, 12, "ATTRIBUTES")
+      assertArrayEquals(
+        "encoder $v round trip",
+        raw,
+        MeshoptDecoder.decodeBuffer(ours, 37, 12, "ATTRIBUTES"),
+      )
+    }
+    val ib = goldenBytes("ib_decoded_u32")
+    for (v in listOf("ib_v0_enc", "ib_v1_enc")) {
+      assertArrayEquals(
+        v,
+        ib,
+        MeshoptDecoder.decodeBuffer(goldenBytes(v), ib.size / 4, 4, "TRIANGLES"),
+      )
+    }
+    val ibOurs = MeshoptDecoder.encodeBuffer(ib, ib.size / 4, 4, "TRIANGLES")
+    assertArrayEquals(ib, MeshoptDecoder.decodeBuffer(ibOurs, ib.size / 4, 4, "TRIANGLES"))
+    val legacy = goldenBytes("ib_v1_enc").also { it[0] = 0xb0.toByte() }
+    assertThrows { MeshoptDecoder.decodeBuffer(legacy, ib.size / 4, 4, "TRIANGLES") }
+    val seq = goldenBytes("seq_u32")
+    assertArrayEquals(
+      seq,
+      MeshoptDecoder.decodeBuffer(goldenBytes("seq_enc"), seq.size / 4, 4, "INDICES"),
+    )
+    val seqOurs = MeshoptDecoder.encodeBuffer(seq, seq.size / 4, 4, "INDICES")
+    assertArrayEquals(seq, MeshoptDecoder.decodeBuffer(seqOurs, seq.size / 4, 4, "INDICES"))
+    for ((name, count, stride, filter) in
+      listOf(
+        listOf("oct8", 8, 4, "OCTAHEDRAL"),
+        listOf("oct16", 8, 8, "OCTAHEDRAL"),
+        listOf("quat", 6, 8, "QUATERNION"),
+        listOf("exp", 4, 12, "EXPONENTIAL"),
+        listOf("color8", 5, 4, "COLOR"),
+        listOf("color16", 5, 8, "COLOR"),
+      )) {
+      val buf = goldenBytes("${name}_enc")
+      MeshoptDecoder.applyFilter(buf, count as Int, stride as Int, filter as String)
+      assertArrayEquals("filter $name", goldenBytes("${name}_dec"), buf)
+    }
+  }
+
   @Test
   fun meshoptDecoderAndMaterialVariantsAndGpuInstancing() {
     val orig = ByteArray(16 * 4) { ((it * 13 + 7) and 0xFF).toByte() }
@@ -1740,6 +2010,21 @@ class XRLiveRuntimeSessionTest {
     MeshoptDecoder.applyFilter(exp, 1, 4, "EXPONENTIAL")
     val expFloat = ByteBuffer.wrap(exp).order(ByteOrder.LITTLE_ENDIAN).getFloat(0)
     assertEquals(0.5f, expFloat, 1e-6f)
+
+    // QUATERNION: out[(qc+1)&3]=x, out[(qc+2)&3]=y, out[(qc+3)&3]=z, out[qc]=w.
+    for (qc in 0 until 3) {
+      val qb = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+      qb.putShort(0, 16384.toShort()).putShort(2, 0.toShort()).putShort(4, (-16384).toShort())
+      qb.putShort(6, (0x7FFC or qc).toShort())
+      val q = qb.array()
+      MeshoptDecoder.applyFilter(q, 1, 8, "QUATERNION")
+      val out = ByteBuffer.wrap(q).order(ByteOrder.LITTLE_ENDIAN)
+      val comp = { k: Int -> out.getShort(k * 2).toInt() }
+      assertEquals("qc=$qc x", 11585.0, comp((qc + 1) and 3).toDouble(), 2.0)
+      assertEquals("qc=$qc y", 0.0, comp((qc + 2) and 3).toDouble(), 2.0)
+      assertEquals("qc=$qc z", -11585.0, comp((qc + 3) and 3).toDouble(), 2.0)
+      assertEquals("qc=$qc w", 28378.0, comp(qc).toDouble(), 2.0)
+    }
 
     assertThrows {
       MeshoptDecoder.decodeBuffer(
@@ -1806,6 +2091,22 @@ class XRLiveRuntimeSessionTest {
     assertNull(s.activeVariantName)
     assertEquals(0, s.meshPrimitiveMaterial(0, 0))
     assertFalse(s.selectVariant("NonExistent"))
+
+    // Unnamed variants keep their index; a variant named "default" is selectable.
+    val unnamed =
+      XRLiveRuntimeSession(
+        """{"extensions":{"KHR_materials_variants":{"variants":[{},{"name":"Gold"},{"name":"default"}]}},
+        "materials":[{},{},{}],
+        "meshes":[{"primitives":[{"material":0,"extensions":{"KHR_materials_variants":{"mappings":[
+          {"material":1,"variants":[1]},{"material":2,"variants":[2]}]}}}]}],
+        "nodes":[{"mesh":0}]}"""
+      )
+    assertEquals(listOf("Variant_0", "Gold", "default"), unnamed.availableVariants)
+    assertTrue(unnamed.selectVariant("Gold"))
+    assertEquals(1, unnamed.meshPrimitiveMaterial(0, 0))
+    assertTrue(unnamed.selectVariant("default"))
+    assertEquals("default", unnamed.activeVariantName)
+    assertEquals(2, unnamed.meshPrimitiveMaterial(0, 0))
   }
 
   @Test
@@ -1820,6 +2121,12 @@ class XRLiveRuntimeSessionTest {
     assertTrue(agx[0] in 0.6..1.0)
     assertEquals(0.8, reinhard[0], 1e-4)
     assertEquals(1.0, none[0], 1e-6)
+    // Cross-platform golden values (identical in three_view_test.ts and the Swift tests).
+    assertArrayEquals(doubleArrayOf(0.983256, 0.554125, 0.339560), neutral, 1e-5)
+    assertArrayEquals(doubleArrayOf(0.934211, 0.780548, 0.215326), aces, 1e-5)
+    assertArrayEquals(doubleArrayOf(0.907921, 0.704809, 0.389573), agx, 1e-5)
+    assertArrayEquals(doubleArrayOf(0.8, 0.6, 0.2), reinhard, 1e-6)
+    assertArrayEquals(doubleArrayOf(1.0, 1.0, 0.25), none, 1e-6)
 
     val bloom =
       XRLiveSceneCoreHelper.parseBloom(
@@ -1833,6 +2140,18 @@ class XRLiveRuntimeSessionTest {
       XRLiveSceneCoreHelper.parseOutline(mapOf("color" to "#22c55e", "thickness" to 4.0))!!
     assertEquals("#22c55e", outline.color)
     assertEquals(4.0, outline.thickness, 1e-6)
+    // Metre-sized thickness (documented 0.025) converts to pixels like web/iOS.
+    assertEquals(
+      3.5,
+      XRLiveSceneCoreHelper.parseOutline(mapOf("thickness" to 0.025))!!.thickness,
+      1e-6,
+    )
+    assertEquals(1.5, XRLiveSceneCoreHelper.parseOutline(mapOf("width" to 0.005))!!.thickness, 1e-6)
+    assertEquals(
+      0.5,
+      XRLiveSceneCoreHelper.parseOutline(mapOf("thickness" to 0.3))!!.thickness,
+      1e-6,
+    )
 
     val json =
       """{
@@ -1993,6 +2312,172 @@ class XRLiveRuntimeSessionTest {
     assertEquals(0.5, seg1, 1e-4)
     assertEquals(0.5, seg2, 1e-4)
     assertTrue(wristPos[0] > 0.1f)
+  }
+
+  @Test
+  fun ikRotatesJointHierarchyAndChildrenFollow() {
+    for (solver in listOf("two-bone", "fabrik")) {
+      val session =
+        XRLiveRuntimeSession(
+          """{"asset":{"version":"2.0"},"scenes":[{"nodes":[0]}],"nodes":[
+          {"name":"Shoulder","translation":[0,0,0],"children":[1,3]},
+          {"name":"Elbow","translation":[0,0.5,0],"children":[2]},
+          {"name":"Wrist","translation":[0,0.5,0],"extras":{"xr":{"ik":{"solver":"$solver","root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":[1,0,0]}}}},
+          {"name":"UpperLink","translation":[0,0.25,0]}
+        ]}"""
+        )
+      for (f in 0 until 3) session.step(0.016, XRPose())
+      val elbow = session.nodeWorldPosition(1)!!
+      val wrist = session.nodeWorldPosition(2)!!
+      val link = session.nodeWorldPosition(3)!!
+      fun d(a: FloatArray, b: FloatArray) =
+        Math.sqrt(
+          ((a[0] - b[0]) * (a[0] - b[0]) +
+              (a[1] - b[1]) * (a[1] - b[1]) +
+              (a[2] - b[2]) * (a[2] - b[2]))
+            .toDouble()
+        )
+      val origin = floatArrayOf(0f, 0f, 0f)
+      assertEquals(
+        "$solver wrist reaches target",
+        0.0,
+        d(wrist, floatArrayOf(0.5f, 0.5f, 0f)),
+        2e-3,
+      )
+      assertEquals("$solver upper bone length", 0.5, d(elbow, origin), 1e-3)
+      assertEquals("$solver lower bone length", 0.5, d(wrist, elbow), 1e-3)
+      // UpperLink sits halfway along Shoulder->Elbow at rest, so it must follow the rotated joint.
+      val mid = floatArrayOf(elbow[0] / 2, elbow[1] / 2, elbow[2] / 2)
+      assertEquals("$solver child follows joint", 0.0, d(link, mid), 1e-3)
+      if (solver == "two-bone") {
+        assertTrue("pole bends the elbow toward +X: ${elbow.toList()}", elbow[0] > 0.4f)
+        assertTrue(
+          "Shoulder rotated",
+          Math.abs(session.nodeTransform(0)!!.rotation[3] - 1f) > 1e-3f,
+        )
+      }
+    }
+  }
+
+  @Test
+  fun ikNamedPoleSceneRootAndEdgeCases() {
+    val named =
+      XRLiveSceneCoreHelper.parseIK(
+        mapOf("root" to "A", "effector" to "C", "target" to "T", "poleTarget" to "P")
+      )!!
+    assertEquals("P", named.poleName)
+    assertNull(named.pole)
+    assertNull(
+      XRLiveSceneCoreHelper.parseIK(mapOf("target" to "T", "poleTarget" to "P", "chainLength" to 2))
+    )
+
+    fun dist(a: DoubleArray, b: DoubleArray) =
+      Math.sqrt(
+        (a[0] - b[0]) * (a[0] - b[0]) +
+          (a[1] - b[1]) * (a[1] - b[1]) +
+          (a[2] - b[2]) * (a[2] - b[2])
+      )
+    fun pos(s: XRLiveRuntimeSession, i: Int) =
+      s.nodeTransform(i)!!.translation.let {
+        doubleArrayOf(it[0].toDouble(), it[1].toDouble(), it[2].toDouble())
+      }
+
+    // A literal pole goes through the scene root like the target: the elbow bends purely toward +Z.
+    val chain =
+      """{"name":"Shoulder","translation":[0,0,0]},{"name":"Elbow","translation":[0,0.5,0]},"""
+    val rootSession =
+      XRLiveRuntimeSession(
+        """{"asset":{"version":"2.0"},"nodes":[$chain
+        {"name":"Wrist","translation":[0,1,0],"extras":{"xr":{"ik":{"root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":[0,0,1]}}}}]}"""
+      )
+    rootSession.rootTransform = translation(5.0, 0.0, 0.0)
+    rootSession.step(0.016, XRPose())
+    val elbow = pos(rootSession, 1)
+    assertTrue("elbow=${elbow.toList()}", elbow[2] > 0.1)
+    assertEquals(elbow[0], elbow[1], 1e-3)
+    assertEquals(0.0, dist(pos(rootSession, 2), doubleArrayOf(0.5, 0.5, 0.0)), 1e-3)
+
+    // A named pole resolves to the node's world position.
+    for (pz in listOf(1.0, -1.0)) {
+      val s =
+        XRLiveRuntimeSession(
+          """{"asset":{"version":"2.0"},"nodes":[$chain
+          {"name":"ElbowPole","translation":[0,0.25,$pz]},
+          {"name":"Wrist","translation":[0,1,0],"extras":{"xr":{"ik":{"root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":"ElbowPole"}}}}]}"""
+        )
+      s.step(0.016, XRPose())
+      assertEquals(pz, Math.signum(pos(s, 1)[2]), 0.0)
+    }
+
+    // Weighted blending of mirrored rest / solved poses never collapses a bone.
+    val blendSession =
+      XRLiveRuntimeSession(
+        """{"asset":{"version":"2.0"},"nodes":[{"name":"Root","translation":[0,0,0]},
+        {"name":"Tip","translation":[0,1,0],"extras":{"xr":{"ik":{"root":"Root","effector":"Tip","target":[0,-5,0],"solver":"fabrik","weight":0.5}}}}]}"""
+      )
+    blendSession.step(0.016, XRPose())
+    assertEquals(1.0, dist(pos(blendSession, 1), pos(blendSession, 0)), 1e-4)
+
+    // Solver edge cases.
+    val o = doubleArrayOf(0.0, 0.0, 0.0)
+    val unreach =
+      IKSolver.solveTwoBoneIK(
+        o,
+        doubleArrayOf(0.0, 0.5, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+        doubleArrayOf(3.0, 0.0, 0.0),
+      )
+    assertEquals(1.0 - 1e-5, dist(unreach.effectorPos, o), 1e-4)
+    assertEquals(0.5, dist(unreach.midPos, o), 1e-4)
+    assertEquals(0.5, dist(unreach.effectorPos, unreach.midPos), 1e-4)
+    val atRoot =
+      IKSolver.solveTwoBoneIK(o, doubleArrayOf(0.0, 0.6, 0.0), doubleArrayOf(0.0, 1.0, 0.0), o)
+    assertTrue(atRoot.midPos.all { it.isFinite() } && atRoot.effectorPos.all { it.isFinite() })
+    assertEquals(0.2, dist(atRoot.effectorPos, o), 1e-3)
+    val zero =
+      IKSolver.solveTwoBoneIK(o, o, doubleArrayOf(0.0, 1.0, 0.0), doubleArrayOf(1.0, 0.0, 0.0))
+    assertEquals(listOf(0.0, 0.0, 0.0, 1.0), zero.rootRotation.toList())
+    assertEquals(listOf(0.0, 1.0, 0.0), zero.effectorPos.toList())
+    val colinear =
+      IKSolver.solveTwoBoneIK(
+        o,
+        doubleArrayOf(0.0, 0.5, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+        doubleArrayOf(0.5, 0.5, 0.0),
+        doubleArrayOf(1.0, 1.0, 0.0),
+      )
+    assertTrue(Math.abs(colinear.midPos[2]) > 0.1)
+    assertEquals(0.0, dist(colinear.effectorPos, doubleArrayOf(0.5, 0.5, 0.0)), 1e-4)
+    val nanT =
+      IKSolver.solveTwoBoneIK(
+        o,
+        doubleArrayOf(0.0, 0.5, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+        doubleArrayOf(Double.NaN, 0.0, 0.0),
+      )
+    assertTrue(nanT.effectorPos.all { it.isFinite() } && nanT.rootRotation.all { it.isFinite() })
+    assertEquals(0.0, dist(nanT.effectorPos, o), 1e-3)
+
+    val fUnreach =
+      IKSolver.solveFABRIK(
+        listOf(o, doubleArrayOf(0.0, 1.0, 0.0), doubleArrayOf(0.0, 2.0, 0.0)),
+        doubleArrayOf(5.0, 0.0, 0.0),
+      )
+    assertEquals(1, fUnreach.iterations)
+    assertEquals(0.0, dist(fUnreach.positions[2], doubleArrayOf(2.0, 0.0, 0.0)), 1e-9)
+    val fZero = IKSolver.solveFABRIK(listOf(o, o), doubleArrayOf(1.0, 0.0, 0.0))
+    assertTrue(fZero.positions.all { dist(it, o) < 1e-9 })
+    val stuck = listOf(o, doubleArrayOf(0.0, 1.0, 0.0))
+    assertEquals(1, IKSolver.solveFABRIK(stuck, doubleArrayOf(0.0, 0.5, 0.0), 0).iterations)
+    assertEquals(32, IKSolver.solveFABRIK(stuck, doubleArrayOf(0.0, 0.5, 0.0), 1000).iterations)
+    assertEquals(
+      0,
+      IKSolver.solveFABRIK(
+          listOf(o, doubleArrayOf(0.0, 1.0, 0.0), doubleArrayOf(1.0, 1.0, 0.0)),
+          doubleArrayOf(1.0, 1.0, 0.0),
+        )
+        .iterations,
+    )
   }
 
   private fun assertThrows(block: () -> Unit) {

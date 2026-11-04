@@ -83,7 +83,7 @@ bundles and entry points.
 | `script-src` | `string` | `three-live`+ | URL or path to a server-generated procedural Three.js scene script. |
 | `sandbox` | `string` | `three-live`+ | Mandatory sandbox mode (`"worker"` or `"iframe"`). Default: `"worker"`. |
 | `allow-client-scripts` | `boolean` | `three-live`+ | Explicit opt-in allowing client-modified script strings via `executeScript()` or inline `<script>`. |
-| `exposure` | `number` | `three-live-viewer`+ | Exposure / lighting multiplier for ambient/environment light intensity (default: `1.0`). |
+| `exposure` | `number` | `three-live-viewer`+ | Linear exposure applied to all lighting before tone mapping, like model-viewer (default: `1.0`). |
 | `environment-image` | `string` | `three-live-studio` | Equirectangular `.hdr`/`.pic` radiance map or LDR environment image for ambient reflections and SH irradiance. |
 | `skybox-image` | `string` | `three-live-studio` | Visible background equirectangular skybox image URL rendered behind the 3D scene. |
 | `shadow-intensity` | `number` | `three-live`+ | Ground contact shadow opacity from `0.0` (off) to `1.0` (default: `0.7`). |
@@ -194,11 +194,11 @@ position, normal })`.
         `"neutral"` (default Khronos PBR Neutral for accurate e-commerce
         colors), `"aces"` (Narkowicz ACES Filmic), `"agx"` (Sobotka AgX Filmic
         with smooth highlight chroma desaturation), `"reinhard"`, and `"none"`.
-    -   **Hardware GPU Instancing (`EXT_mesh_gpu_instancing` /
-        `THREE.InstancedMesh`):** Renders up to `MAX_INSTANCE_COUNT = 10,000`
-        instances per mesh in a single `gl.drawElementsInstanced` call with
-        per-instance `MAT4` transforms and optional per-instance `COLOR_0`
-        tints, exporting to glTF `EXT_mesh_gpu_instancing` and USDZ
+    -   **GPU Instancing (`EXT_mesh_gpu_instancing` / `THREE.InstancedMesh`):**
+        Renders up to `MAX_INSTANCE_COUNT = 10,000` instances per mesh with
+        per-instance `MAT4` transforms and optional per-instance `COLOR_0` tints
+        (one `drawElementsInstanced` call per primitive, with per-instance
+        vertex attributes), exporting to glTF `EXT_mesh_gpu_instancing` and USDZ
         `PointInstancer`.
 -   **HDR Emissive Bloom & Silhouette Outlines (`three-live/studio` /
     `postprocessingPlugin`):**
@@ -235,11 +235,12 @@ position, normal })`.
     cross-fading (`el.crossFadeTo('Walk', 0.3)`).
 -   **Analytical 2-Bone & FABRIK Inverse Kinematics (`ikPlugin` /
     `userData.xr.ik` / `THREE.IKSolver`):** Attach `mesh.userData.xr.ik = {
-    target: 'TargetNode', solver: 'two-bone' | 'fabrik', chainLength: 2,
-    poleTarget: 'ElbowPole', iterations: 10 }` to solve robotic arms, mechanical
-    linkages, and character limbs at runtime across Web, Android, and iOS, or
-    call `THREE.IKSolver.solveTwoBone(...)` / `THREE.IKSolver.solveFABRIK(...)`
-    directly inside `<script type="text/three">`.
+    root: 'Shoulder', mid: 'Forearm', effector: 'Wrist', target: 'TargetNode',
+    pole: 'ElbowPole', solver: 'two-bone' | 'fabrik', iterations: 10 }` to solve
+    robotic arms, mechanical linkages, and character limbs at runtime across
+    Web, Android, and iOS, or call `THREE.IKSolver.solveTwoBone(...)` /
+    `THREE.IKSolver.solveFABRIK(...)` directly inside
+    `<script type="text/three">`.
 
 ### Declarative `KHR_interactivity` Behavior Graphs (`userData.interactivity`)
 
@@ -294,11 +295,17 @@ Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` 
 
 ### Built-in `EXT_meshopt_compression` & Pluggable Decoders
 
-`EXT_meshopt_compression` (`VERTEX`, `INDEX`, and `GENERIC` bufferView modes and
-`OCTAHEDRAL`, `QUATERNION`, and `EXPONENTIAL` filters) is decoded **out of the
-box** in pure TypeScript with zero WASM dependencies
-(`decodeMeshoptBufferView`). For Draco or KTX2 Basis Universal textures,
-register external decoders on demand:
+`EXT_meshopt_compression` and `KHR_meshopt_compression` (`ATTRIBUTES` vertex
+codec v0/v1, `TRIANGLES` index codec, and `INDICES` index-sequence codec, plus
+the `OCTAHEDRAL`, `QUATERNION`, `EXPONENTIAL`, and `COLOR` filters) are decoded
+**out of the box** in pure TypeScript with zero WASM dependencies
+(`decodeMeshoptBuffer` / `decodeMeshoptGLB` in
+`three-live/src/plugins/meshopt.ts`). The decoders are byte-exact with the
+reference meshoptimizer library, so `gltfpack` output loads directly, including
+its `KHR_mesh_quantization` attributes (normalized / integer positions, normals,
+UVs, skin weights, morph deltas and animation outputs) and the
+`KHR_texture_transform` it uses to dequantize UVs. For Draco or KTX2 Basis
+Universal textures, register external decoders on demand:
 
 ```javascript
 import { ThreeLiveElement } from 'three-live';

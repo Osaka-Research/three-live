@@ -125,6 +125,10 @@ export const environmentMapPlugin: ThreeLivePlugin & {
 } = {
   name: 'environment-map',
 
+  onContextRestored(gl: WebGL2RenderingContext): void {
+    skyboxProgMap.delete(gl);
+  },
+
   setEnvironmentImage(viewer, imageOrUrl) {
     return setTex(viewer, 'environmentTexture', imageOrUrl);
   },

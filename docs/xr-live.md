@@ -61,8 +61,8 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 
 `<xr-live>` addresses both web and native apps from a single scene definition:
 
-*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 50 KB gz`
-    for `xr-live-viewer.min.js`, or `< 83 KB gz` for `xr-live.min.js` with live
+*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 51 KB gz`
+    for `xr-live-viewer.min.js`, or `< 72 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
     each, or `< 56 KB gz` for all 14 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
@@ -126,8 +126,8 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 ### Register optional plugins for advanced features
 
 When bundling with Vite, Rollup, esbuild, or Webpack, you can pair the
-`<xr-live>` core (`three-live/xr-live` at `< 83 KB gz`, or
-`three-live/xr-live-viewer` at `< 50 KB gz`) with only the specific plugins your
+`<xr-live>` core (`three-live/xr-live` at `< 72 KB gz`, or
+`three-live/xr-live-viewer` at `< 51 KB gz`) with only the specific plugins your
 application uses:
 
 ```ts
@@ -146,7 +146,7 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 
 To load all 14 spatial plugins without a bundler, import
 `/dist/xr-live-spatial.min.js` (`< 56 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 177 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
+(`< 184 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
 simulation plugins).
 
 --------------------------------------------------------------------------------
@@ -185,7 +185,7 @@ spatial attributes listed in the following table:
 | `<xr-live>` | `snap-turn-deg` | `number` (degrees) | `30` | Horizontal thumbstick snap-turn angle in degrees. |
 | `<xr-live>` | `comfort-vignette` | `boolean` | `true` | Renders a `120ms` peripheral FOV comfort vignette during teleports and snap-turns. |
 | `<xr-live>` | `shared-room` | `'<room-id>'` or `'wss://...'` | — | Enables `xr-live-shared-room` multi-user co-presence via `BroadcastChannel` or WebSocket relay. |
-| `<xr-live>` | `shared-room-voice` | `boolean` | `false` | Enables WebRTC peer-to-peer spatialized voice chat (`PannerNode` HRTF 3D audio + inverse-distance attenuation) in `shared-room`. |
+| `<xr-live>` | `shared-room-voice` | `boolean` | `false` | Opts in to voice **signaling** in `shared-room`: relays WebRTC offer/answer/ICE messages (`peerrtcsignal` event, `broadcastRtcSignal()`) and computes per-peer `voiceGain` (`computeSpatialVoiceGain`). Your app owns `getUserMedia`, `RTCPeerConnection`, and audio playback. |
 | `<xr-live>` | `peer-name` | `string` (max `32` chars) | — | Local peer display name broadcast to room participants. |
 | `<xr-live>` | `peer-color` | `'#rrggbb'` | `'#38bdf8'` | Local peer 3D visor and laser ray tint color in `shared-room`. |
 | `<xr-live>` | `bloom` | `boolean \| string` | — | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`). |
@@ -235,7 +235,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`splat`** | `string` **or** `{ url: string, shDegree?: 0 \| 1 \| 2 \| 3, maxSplats?: number }` | Structured 3D Gaussian Splat trait controlling Spherical Harmonics evaluation degree (`0..3`) and splat cap. |
 | **`bloom`** | `{ strength?: number, threshold?: number, radius?: number } \| boolean \| number` | Enables HDR emissive bloom on the scene/node (`strength` in `[0, 5]`, `threshold` in `[0, 2]`, `radius` in `[0, 1]`). |
 | **`outline`** | `{ color?: string, thickness?: number } \| boolean \| string` | Renders an inverted-hull / screen-space silhouette outline (`thickness` in `[0.002, 0.25]`) around the node. |
-| **`ik`** | `{ target: string, solver?: 'two-bone' \| 'fabrik', chainLength?: number, poleTarget?: string, iterations?: number, tolerance?: number }` | Solves analytical 2-bone or multi-joint FABRIK inverse kinematics toward `target` (and optional `poleTarget`) every frame. |
+| **`ik`** | `{ root: string, mid?: string, effector: string, target: string \| [x, y, z], pole?: string \| [x, y, z], solver?: 'two-bone' \| 'fabrik', iterations?: number, tolerance?: number, weight?: number }` | Solves analytical 2-bone (`root` → `mid` → `effector`) or FABRIK inverse kinematics toward `target` (and optional `pole`, alias `poleTarget`) every frame. |
 | **`text`** | `{ text: string, size?: number, depth?: number, bevelEnabled?: boolean, bevelThickness?: number, bevelSize?: number }` | Extruded 3D vector text metadata exported to glTF `extras.xr.text` and USDZ `customData.xr`. |
 | **`audio`** | `string` **or** `{ src: string, refDistance?: number, loop?: boolean }` | Attaches a 3D `PannerNode` HRTF audio source to the mesh. |
 | **`pointerEvents`** | `'none'` | Excludes the mesh from raycast picking so rays pass through it. |
@@ -339,10 +339,12 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     node another peer holds are refused; near-simultaneous grabs resolve to the
     lowest `peerId` on every peer), synchronizes `exploded-view` factors and
     `spatial-paint` 3D tube strokes (`MAX_REMOTE_STROKES = 64`), and supports
-    optional WebRTC peer-to-peer spatialized voice chat (`shared-room-voice`,
-    routing each peer's audio stream through a 3D HRTF `PannerNode` and
-    `computeSpatialVoiceGain` inverse-distance attenuation). Dispatches
-    `peerjoin`, `peerleave`, `peersync`, and `peergrabconflict`.
+    opt-in WebRTC voice **signaling** (`shared-room-voice`: relays
+    offer/answer/ICE via `broadcastRtcSignal()` / `peerrtcsignal` and computes
+    per-peer `voiceGain` + stereo pan with `computeSpatialVoiceGain`; your app
+    creates the `RTCPeerConnection`s and plays the audio, and signaling is
+    visible to every room member). Dispatches `peerjoin`, `peerleave`,
+    `peersync`, and `peergrabconflict`.
 
 --------------------------------------------------------------------------------
 

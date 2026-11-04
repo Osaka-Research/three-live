@@ -58,7 +58,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "hands-mediapipe"
-      version = "1.2.2"
+      version = "1.2.3"
       afterEvaluate { from(components["release"]) }
 
       pom {

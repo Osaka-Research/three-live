@@ -204,6 +204,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private val billboards: IntArray
   private val ikNodes: IntArray
   private val ikRestOffsets = HashMap<Int, List<DoubleArray>>()
+  private val ikRestRotations = HashMap<String, List<DoubleArray>>()
   private val dynamicBodies: Array<PhysicsBody>
   private val staticColliders: Array<DoubleArray>
   private val physicsFloorY: Double
@@ -297,9 +298,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val rawVariantsExt = MiniJson.asMap(rawRootExts?.get("KHR_materials_variants"))
     val rawVariantList = MiniJson.asList(rawVariantsExt?.get("variants")) ?: emptyList()
     val parsedVariants = ArrayList<String>(rawVariantList.size)
-    for (vObj in rawVariantList) {
+    // Keep variant indices aligned with mappings: unnamed variants get a `Variant_<i>` placeholder.
+    for ((i, vObj) in rawVariantList.withIndex()) {
       val vName = MiniJson.asMap(vObj)?.get("name") as? String
-      if (!vName.isNullOrEmpty()) parsedVariants.add(vName)
+      parsedVariants.add(if (!vName.isNullOrEmpty()) vName else "Variant_$i")
     }
     availableVariants = parsedVariants
 
@@ -798,10 +800,11 @@ class XRLiveRuntimeSession(gltfJson: String) {
 
   /**
    * Selects a `KHR_materials_variants` material variant by name, or resets to default when [name]
-   * is `null`, `""`, or `"default"`. Returns `true` if the variant was applied.
+   * is `null` or `""` (a variant literally named `"default"` is selectable). Returns `true` if the
+   * variant was applied.
    */
   fun selectVariant(name: String?): Boolean {
-    val isReset = name.isNullOrEmpty() || name == "default"
+    val isReset = name.isNullOrEmpty()
     val variantIdx: Int
     if (isReset) {
       variantIdx = -1
@@ -1960,7 +1963,59 @@ class XRLiveRuntimeSession(gltfJson: String) {
       val s = segLen / d
       return doubleArrayOf(parentPos[0] + dx * s, parentPos[1] + dy * s, parentPos[2] + dz * s)
     }
+    // Rest and solved children mirror each other about the parent, so the lerp collapsed onto it:
+    // keep the bone length by following the solved direction.
+    val sx = solvedChildPos[0] - parentPos[0]
+    val sy = solvedChildPos[1] - parentPos[1]
+    val sz = solvedChildPos[2] - parentPos[2]
+    val sl = Math.sqrt(sx * sx + sy * sy + sz * sz)
+    if (sl > 1e-6 && segLen > 1e-6) {
+      val s = segLen / sl
+      return doubleArrayOf(parentPos[0] + sx * s, parentPos[1] + sy * s, parentPos[2] + sz * s)
+    }
     return doubleArrayOf(bx, by, bz)
+  }
+
+  /**
+   * Resolves an IK target or pole into world space: a literal scene-space point goes through the
+   * scene root; a name resolves to a node, `head`, `hand-left` or `hand-right`. Returns `false`
+   * when it cannot be resolved.
+   */
+  private fun resolveIKPoint(
+    literal: List<Double>?,
+    name: String?,
+    headPose: XRPose,
+    handPoses: Map<String, XRPose>,
+    out: DoubleArray,
+  ): Boolean {
+    if (literal != null && literal.size >= 3) {
+      if (rootIsIdentity) {
+        out[0] = literal[0]
+        out[1] = literal[1]
+        out[2] = literal[2]
+      } else {
+        XRSpatialMath.transformPoint(root, literal[0], literal[1], literal[2], out)
+      }
+      return true
+    }
+    if (name == null) return false
+    val ref = firstNodeByName[name]
+    if (ref != null) {
+      worldMatrix(ref, mA)
+      out[0] = mA[12]
+      out[1] = mA[13]
+      out[2] = mA[14]
+      return true
+    }
+    val pose =
+      when (name) {
+        "head" -> headPose
+        "hand-left" -> handPoses["left"]
+        "hand-right" -> handPoses["right"]
+        else -> null
+      } ?: return false
+    for (k in 0 until 3) out[k] = pose.position[k].toDouble()
+    return true
   }
 
   private fun stepIK(
@@ -1977,35 +2032,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
       if (midIdx != null) intArrayOf(rootIdx, midIdx, effIdx) else intArrayOf(rootIdx, effIdx)
 
     val targetPos = DoubleArray(3)
-    val tPos = ik.targetPosition
-    val tName = ik.targetName
-    if (tPos != null && tPos.size >= 3) {
-      if (rootIsIdentity) {
-        targetPos[0] = tPos[0]
-        targetPos[1] = tPos[1]
-        targetPos[2] = tPos[2]
-      } else {
-        XRSpatialMath.transformPoint(root, tPos[0], tPos[1], tPos[2], targetPos)
-      }
-    } else if (tName != null) {
-      val ref = firstNodeByName[tName]
-      if (ref != null) {
-        worldMatrix(ref, mA)
-        targetPos[0] = mA[12]
-        targetPos[1] = mA[13]
-        targetPos[2] = mA[14]
-      } else if (tName == "head") {
-        for (k in 0 until 3) targetPos[k] = headPose.position[k].toDouble()
-      } else if (tName == "hand-left") {
-        val hp = handPoses["left"] ?: return
-        for (k in 0 until 3) targetPos[k] = hp.position[k].toDouble()
-      } else if (tName == "hand-right") {
-        val hp = handPoses["right"] ?: return
-        for (k in 0 until 3) targetPos[k] = hp.position[k].toDouble()
-      } else {
-        return
-      }
-    } else {
+    if (!resolveIKPoint(ik.targetPosition, ik.targetName, headPose, handPoses, targetPos)) return
+
+    if (isJointHierarchy(chainIndices)) {
+      stepIKHierarchy(nodeIndex, ik, chainIndices, midIdx, targetPos, headPose, handPoses)
       return
     }
 
@@ -2037,7 +2067,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
     }
 
     if (ik.solver == "two-bone" && midIdx != null && restChain.size == 3) {
-      val poleArr = ik.pole?.takeIf { it.size >= 3 }?.let { doubleArrayOf(it[0], it[1], it[2]) }
+      // The pole goes through the scene root like the target, since joints are in world space.
+      val poleArr =
+        DoubleArray(3).takeIf { resolveIKPoint(ik.pole, ik.poleName, headPose, handPoses, it) }
       val solved =
         IKSolver.solveTwoBoneIK(restChain[0], restChain[1], restChain[2], targetPos, poleArr)
       val blendedMid =
@@ -2077,6 +2109,83 @@ class XRLiveRuntimeSession(gltfJson: String) {
         parentPos = blended
       }
     }
+  }
+
+  /**
+   * IK on a proper joint hierarchy (each joint an ancestor of the next): restores the chain's rest
+   * local rotations, solves in world space, then rotates each joint so children follow.
+   */
+  private fun stepIKHierarchy(
+    nodeIndex: Int,
+    ik: XRIKTrait,
+    chainIndices: IntArray,
+    midIdx: Int?,
+    targetPos: DoubleArray,
+    headPose: XRPose,
+    handPoses: Map<String, XRPose>,
+  ) {
+    // Rest local rotations of the chain joints, captured on first use and restored every frame
+    // so the solved delta rotations never accumulate. Keyed by the trait node and chain names.
+    val cacheKey = "$nodeIndex:${ik.root}>${ik.mid ?: ""}>${ik.effector}"
+    val restRotations =
+      ikRestRotations.getOrPut(cacheKey) {
+        chainIndices.map { idx -> DoubleArray(4) { k -> rotation[idx * 4 + k] } }
+      }
+    for (j in chainIndices.indices) {
+      val idx = chainIndices[j]
+      for (k in 0 until 4) rotation[idx * 4 + k] = restRotations[j][k]
+      markTransform(idx)
+    }
+
+    val restChain = chainIndices.map { readNodeWorldPos(it) }
+    val solvedChain: List<DoubleArray> =
+      if (ik.solver == "two-bone" && midIdx != null && restChain.size == 3) {
+        // The pole goes through the scene root like the target, since joints are in world space.
+        val poleArr =
+          DoubleArray(3).takeIf { resolveIKPoint(ik.pole, ik.poleName, headPose, handPoses, it) }
+        val solved =
+          IKSolver.solveTwoBoneIK(restChain[0], restChain[1], restChain[2], targetPos, poleArr)
+        listOf(restChain[0], solved.midPos, solved.effectorPos)
+      } else {
+        IKSolver.solveFABRIK(restChain, targetPos, ik.iterations, ik.tolerance).positions
+      }
+
+    // Rotate each joint (root first) by the weighted shortest arc that aligns its bone with the
+    // solved bone direction; children (including attached geometry) follow through the hierarchy,
+    // so bone lengths are preserved and joints turn instead of sliding.
+    val weight = XRSpatialMath.clampNum(ik.weight, 0.0, 1.0, 1.0)
+    val identity = doubleArrayOf(0.0, 0.0, 0.0, 1.0)
+    for (j in 0 until chainIndices.size - 1) {
+      val a = readNodeWorldPos(chainIndices[j])
+      val b = readNodeWorldPos(chainIndices[j + 1])
+      val cur = unitDir(a, b) ?: continue
+      val want = unitDir(solvedChain[j], solvedChain[j + 1]) ?: continue
+      val full = IKSolver.quatFromUnitVectors(cur, want)
+      val delta = XRSpatialMath.quatSlerp(DoubleArray(4), identity, full, weight)
+      worldMatrix(chainIndices[j], mA)
+      val worldRot = XRSpatialMath.extractQuaternion(mA, DoubleArray(4))
+      val newRot = XRSpatialMath.quatMultiply(delta, worldRot, DoubleArray(4))
+      normalizeQuatInto(newRot)
+      setWorldPose(chainIndices[j], a, newRot)
+    }
+  }
+
+  private fun isJointHierarchy(chain: IntArray): Boolean {
+    for (k in 1 until chain.size) {
+      var p = parent[chain[k]]
+      var guard = 0
+      while (p >= 0 && p != chain[k - 1] && guard++ < 256) p = parent[p]
+      if (p != chain[k - 1]) return false
+    }
+    return true
+  }
+
+  private fun unitDir(a: DoubleArray, b: DoubleArray): DoubleArray? {
+    val dx = b[0] - a[0]
+    val dy = b[1] - a[1]
+    val dz = b[2] - a[2]
+    val l = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    return if (l > 1e-9) doubleArrayOf(dx / l, dy / l, dz / l) else null
   }
 
   private fun stepPhysics(dt: Double) {

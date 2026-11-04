@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Procedural CAD, 2D Contours & Earcut Triangulation, ExtrudeGeometry, 3D BSP
-// CSG Booleans, and Hershey Vector Font TextGeometry plugin (`cadPlugin`).
+// Procedural CAD, 2D Contours & ear-clipping hole triangulation, ExtrudeGeometry,
+// 3D BSP CSG Booleans, and built-in stroke-font TextGeometry plugin (`cadPlugin`).
+// CSG output is a polygon soup (it may contain T-junctions); it is not
+// guaranteed to be a closed manifold.
 
 import {
   getSharedRegistry,
@@ -21,7 +23,13 @@ import {
   type ThreeLivePlugin,
 } from '../plugin';
 
-/** Options for `THREE.ExtrudeGeometry`. */
+/**
+ * Options for `THREE.ExtrudeGeometry`.
+ *
+ * Defaults differ from three.js: `bevelEnabled` is false, `bevelThickness`
+ * 0.06, `bevelSize` 0.8 x `bevelThickness`, `bevelSegments` 2, and cap UVs are
+ * normalized to the shape's bounding box. Non-finite values use the defaults.
+ */
 export interface ExtrudeGeometryOptions {
   depth?: number;
   amount?: number;
@@ -34,7 +42,15 @@ export interface ExtrudeGeometryOptions {
   bevelSegments?: number;
 }
 
-/** Options for `THREE.TextGeometry`. */
+/**
+ * Options for `THREE.TextGeometry`.
+ *
+ * Uses a built-in stroke font (digits, A-Z, and common punctuation; lowercase
+ * is drawn as scaled uppercase and unknown glyphs as `?`), not a Hershey or
+ * typeface font. Unlike three.js the result is centered by default (set
+ * `center: false` for a baseline-left origin), depth is centered on z = 0, and
+ * `bevelEnabled` only thickens the strokes. Non-finite values use the defaults.
+ */
 export interface TextGeometryOptions {
   size?: number;
   height?: number;
@@ -50,10 +66,13 @@ export interface TextGeometryOptions {
 export const MAX_CSG_TRIANGLES = 8192;
 
 /** Maximum BSP tree recursion depth permitted during CSG evaluation. */
-export const MAX_BSP_DEPTH = 512;
+export const MAX_BSP_DEPTH = 2048;
 
 /** Maximum string length rendered by `TextGeometry` (prevents geometry amplification). */
 export const MAX_TEXT_GEOMETRY_CHARS = 128;
+
+/** Maximum total outer + hole contour points per `Shape` (bounds ear-clipping cost). */
+export const MAX_SHAPE_POINTS = 4096;
 
 /**
  * Self-contained installer that attaches `Path`, `Shape`, `ShapeGeometry`,
@@ -73,6 +92,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   const Vector3 = threeNs.Vector3;
   const Quaternion = threeNs.Quaternion;
   const Matrix4 = threeNs.Matrix4;
+  const Matrix3 = threeNs.Matrix3;
   const Color = threeNs.Color;
   const BufferAttribute = threeNs.BufferAttribute;
   const BufferGeometry = threeNs.BufferGeometry;
@@ -81,8 +101,16 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   const Mesh = threeNs.Mesh;
 
   const maxCsgTriangles = 8192;
-  const maxBspDepth = 512;
+  const maxBspDepth = 2048;
   const maxTextGeometryChars = 128;
+  const maxShapePoints = 4096;
+
+  // Numeric option coercion: missing, NaN, or non-finite values fall back to
+  // the default instead of propagating NaN into positions or loop bounds.
+  const num = (v: unknown, d: number): number => {
+    const n = v == null ? NaN : Number(v);
+    return Number.isFinite(n) ? n : d;
+  };
 
   interface PathSegment {
     type: 'move' | 'line' | 'quad' | 'cubic' | 'arc';
@@ -499,18 +527,60 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
     validHoles.sort((a, b) => b.maxX - a.maxX);
 
-    for (const hole of validHoles) {
-      const hx = hole.pts[hole.maxIdx].x;
-      const hy = hole.pts[hole.maxIdx].y;
-      let bestContourPos = 0;
-      let bestDist = Infinity;
+    const cr = (o: Vec2Like, a: Vec2Like, b: Vec2Like): number =>
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    // True if segment a-b properly crosses any edge of the closed ring
+    // (shared endpoints and touching do not count).
+    const ringBlocks = (
+      a: Vec2Like,
+      b: Vec2Like,
+      ring: Vec2Like[],
+    ): boolean => {
+      for (let k = 0; k < ring.length; k++) {
+        const c = ring[k];
+        const d = ring[(k + 1) % ring.length];
+        if (cr(a, b, c) * cr(a, b, d) < 0 && cr(c, d, a) * cr(c, d, b) < 0) {
+          return true;
+        }
+      }
+      return false;
+    };
 
-      for (let i = 0; i < contour.length; i++) {
-        const p = allVertices[contour[i]];
-        const d = Math.hypot(p.x - hx, p.y - hy) + (p.x >= hx ? 0 : 1000);
-        if (d < bestDist) {
-          bestDist = d;
+    for (const hole of validHoles) {
+      const h = hole.pts[hole.maxIdx];
+      const hx = h.x;
+      const n = contour.length;
+      const ring = contour.map((idx) => allVertices[idx]);
+      // Candidates: right of the hole first (no unit-dependent penalty), then
+      // by distance. Take the first one that lies inside the contour's corner
+      // sector at that vertex and whose bridge crosses no contour/hole edge.
+      const dist = (i: number): number =>
+        Math.hypot(ring[i].x - hx, ring[i].y - h.y);
+      const order = ring
+        .map((_, i) => i)
+        .sort(
+          (i, j) =>
+            Number(ring[i].x < hx) - Number(ring[j].x < hx) ||
+            dist(i) - dist(j),
+        );
+      let bestContourPos = order[0];
+      for (const i of order) {
+        const p = ring[i];
+        const prev = ring[(i + n - 1) % n];
+        const next = ring[(i + 1) % n];
+        const leftOfNext = cr(p, next, h) >= 0;
+        const leftOfPrev = cr(prev, p, h) >= 0;
+        const inSector =
+          cr(prev, p, next) >= 0
+            ? leftOfNext && leftOfPrev
+            : leftOfNext || leftOfPrev;
+        if (
+          inSector &&
+          !ringBlocks(h, p, ring) &&
+          !validHoles.some((o) => ringBlocks(h, p, o.pts))
+        ) {
           bestContourPos = i;
+          break;
         }
       }
 
@@ -569,13 +639,11 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           }
           const p = vertices[testIdx];
           if (
-            Math.hypot(p.x - a.x, p.y - a.y) < 1e-6 ||
-            Math.hypot(p.x - b.x, p.y - b.y) < 1e-6 ||
-            Math.hypot(p.x - c.x, p.y - c.y) < 1e-6
+            pointInTriangle2D(p.x, p.y, a.x, a.y, b.x, b.y, c.x, c.y) &&
+            Math.hypot(p.x - a.x, p.y - a.y) >= 1e-6 &&
+            Math.hypot(p.x - b.x, p.y - b.y) >= 1e-6 &&
+            Math.hypot(p.x - c.x, p.y - c.y) >= 1e-6
           ) {
-            continue;
-          }
-          if (pointInTriangle2D(p.x, p.y, a.x, a.y, b.x, b.y, c.x, c.y)) {
             ear = false;
             break;
           }
@@ -583,18 +651,42 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         if (ear) {
           triangles.push([prevIdx, currIdx, nextIdx]);
           poly.splice(i % n, 1);
-          i = 0;
+          // Re-test the previous vertex (it may have become an ear) instead of
+          // rescanning from 0, which made clipping O(n^3).
+          i = Math.max(0, (i % n) - 1);
           continue;
         }
       }
       i++;
       if (i >= n * 2) {
+        // No ear found in a full pass: force-clip the vertex just tested
+        // (prev/curr/next were computed for i - 1).
         triangles.push([prevIdx, currIdx, nextIdx]);
-        poly.splice(i % n, 1);
+        poly.splice((i - 1) % n, 1);
         i = 0;
       }
     }
     return triangles;
+  }
+
+  // Extracts outer/hole contours and enforces MAX_SHAPE_POINTS (ear clipping
+  // is O(n^2), so unbounded author-supplied contours could hang the worker).
+  function extractShapePoints(
+    shape: Path,
+    curveSegments: number,
+  ): {shape: Vec2Like[]; holes: Vec2Like[][]} {
+    const extracted =
+      shape instanceof Shape
+        ? shape.extractPoints(curveSegments)
+        : {shape: shape.getPoints(curveSegments), holes: []};
+    let total = extracted.shape.length;
+    for (const h of extracted.holes) total += h.length;
+    if (total > maxShapePoints) {
+      throw new RangeError(
+        `SecurityError: shape point count (${total}) exceeds MAX_SHAPE_POINTS (${maxShapePoints})`,
+      );
+    }
+    return extracted;
   }
 
   class ShapeGeometry extends BufferGeometry {
@@ -608,10 +700,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
       for (const shape of shapeList) {
         if (!(shape instanceof Path)) continue;
-        const extracted =
-          shape instanceof Shape
-            ? shape.extractPoints(curveSegments)
-            : {shape: shape.getPoints(curveSegments), holes: []};
+        const extracted = extractShapePoints(shape, curveSegments);
         if (extracted.shape.length < 3) continue;
         const {mergedIndices, allVertices} = mergeHolesIntoContour(
           extracted.shape,
@@ -699,28 +788,23 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const shapeList = Array.isArray(shapes) ? shapes : [shapes];
       const curveSegments = Math.max(
         1,
-        Math.min(64, Math.floor(Number(options.curveSegments ?? 12))),
+        Math.min(64, Math.floor(num(options.curveSegments, 12))),
       );
-      const depth = Number.isFinite(Number(options.depth ?? options.amount))
-        ? Number(options.depth ?? options.amount)
-        : 1;
+      const depth = num(options.depth ?? options.amount, 1);
       const steps = Math.max(
         1,
-        Math.min(32, Math.floor(Number(options.steps ?? 1))),
+        Math.min(32, Math.floor(num(options.steps, 1))),
       );
       const bevelEnabled = Boolean(options.bevelEnabled ?? false);
       const bevelThickness = bevelEnabled
-        ? Math.max(0, Number(options.bevelThickness ?? 0.06))
+        ? Math.max(0, num(options.bevelThickness, 0.06))
         : 0;
       const bevelSize = bevelEnabled
-        ? Math.max(0, Number(options.bevelSize ?? bevelThickness * 0.8))
+        ? Math.max(0, num(options.bevelSize, bevelThickness * 0.8))
         : 0;
-      const bevelOffset = bevelEnabled ? Number(options.bevelOffset ?? 0) : 0;
+      const bevelOffset = bevelEnabled ? num(options.bevelOffset, 0) : 0;
       const bevelSegments = bevelEnabled
-        ? Math.max(
-            1,
-            Math.min(8, Math.floor(Number(options.bevelSegments ?? 2))),
-          )
+        ? Math.max(1, Math.min(8, Math.floor(num(options.bevelSegments, 2))))
         : 0;
 
       const positions: number[] = [];
@@ -730,10 +814,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
       for (const shape of shapeList) {
         if (!(shape instanceof Path)) continue;
-        const extracted =
-          shape instanceof Shape
-            ? shape.extractPoints(curveSegments)
-            : {shape: shape.getPoints(curveSegments), holes: []};
+        const extracted = extractShapePoints(shape, curveSegments);
         if (extracted.shape.length < 3) continue;
 
         const outer = extracted.shape.slice();
@@ -1089,14 +1170,11 @@ export function installCadExtension(threeNs: any, reg?: any): any {
             b.push(csgCloneVertex(vMid));
           }
         }
-        if (f.length >= 3) {
-          const pf = csgMakePolygon(f);
-          if (pf) front.push(pf);
-        }
-        if (b.length >= 3) {
-          const pb = csgMakePolygon(b);
-          if (pb) back.push(pb);
-        }
+        // Fragments of a convex polygon stay on the parent plane; recomputing
+        // it from 3 possibly near-collinear vertices could drop the fragment.
+        const {nx, ny, nz, w} = polygon;
+        if (f.length >= 3) front.push({vertices: f, nx, ny, nz, w});
+        if (b.length >= 3) back.push({vertices: b, nx, ny, nz, w});
         break;
       }
       default:
@@ -1144,8 +1222,15 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     }
 
     clipPolygons(polygons: CSGPolygon[], depth = 0): CSGPolygon[] {
-      if (!this.hasPlane || polygons.length === 0 || depth >= maxBspDepth) {
+      if (!this.hasPlane || polygons.length === 0) {
         return polygons.slice();
+      }
+      // Never return unclipped polygons at the depth cap: that silently keeps
+      // fragments which should have been removed.
+      if (depth >= maxBspDepth) {
+        throw new RangeError(
+          `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
+        );
       }
       let front: CSGPolygon[] = [];
       let back: CSGPolygon[] = [];
@@ -1202,11 +1287,12 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         this.w = splitPoly.w;
         this.hasPlane = true;
       }
+      // Convex meshes build a chain as deep as their plane count. Dumping the
+      // remainder into one node here would give wrong booleans, so fail loudly.
       if (depth >= maxBspDepth) {
-        for (let i = 0; i < polygons.length; i++) {
-          this.polygons.push(polygons[i]);
-        }
-        return;
+        throw new RangeError(
+          `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
+        );
       }
       const front: CSGPolygon[] = [];
       const back: CSGPolygon[] = [];
@@ -1257,23 +1343,29 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           m[8] * (m[1] * m[6] - m[5] * m[2]) <
         0
       : false;
+    // Normals transform by the normal matrix (inverse transpose of the upper
+    // 3x3, column-major), not by the plain matrix.
+    const nm: ArrayLike<number> | null = m
+      ? new Matrix3().getNormalMatrix(matrix).elements
+      : null;
     const readVert = (vi: number): CSGVertex => {
       let x = pos.getX(vi);
       let y = pos.getY(vi);
       let z = pos.getZ(vi);
-      let nx = norm ? norm.getX(vi) : 0;
-      let ny = norm ? norm.getY(vi) : 0;
-      let nz = norm ? norm.getZ(vi) : 1;
-      if (m) {
+      // Without a normal attribute, NaN marks "use the face normal" on output.
+      let nx = norm ? norm.getX(vi) : NaN;
+      let ny = norm ? norm.getY(vi) : NaN;
+      let nz = norm ? norm.getZ(vi) : NaN;
+      if (m && nm) {
         const tx = m[0] * x + m[4] * y + m[8] * z + m[12];
         const ty = m[1] * x + m[5] * y + m[9] * z + m[13];
         const tz = m[2] * x + m[6] * y + m[10] * z + m[14];
         x = tx;
         y = ty;
         z = tz;
-        const tnx = m[0] * nx + m[4] * ny + m[8] * nz;
-        const tny = m[1] * nx + m[5] * ny + m[9] * nz;
-        const tnz = m[2] * nx + m[6] * ny + m[10] * nz;
+        const tnx = nm[0] * nx + nm[3] * ny + nm[6] * nz;
+        const tny = nm[1] * nx + nm[4] * ny + nm[7] * nz;
+        const tnz = nm[2] * nx + nm[5] * ny + nm[8] * nz;
         const nLen = Math.hypot(tnx, tny, tnz) || 1;
         nx = tnx / nLen;
         ny = tny / nLen;
@@ -1312,7 +1404,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const base = positions.length / 3;
       for (const v of verts) {
         positions.push(v.x, v.y, v.z);
-        normals.push(poly.nx, poly.ny, poly.nz);
+        // Keep interpolated vertex normals (smooth surfaces stay smooth); fall
+        // back to the polygon's plane normal when missing or degenerate.
+        const hasN =
+          Number.isFinite(v.nx) &&
+          v.nx * v.nx + v.ny * v.ny + v.nz * v.nz > 0.5;
+        if (hasN) normals.push(v.nx, v.ny, v.nz);
+        else normals.push(poly.nx, poly.ny, poly.nz);
         uvs.push(v.u, v.v);
       }
       for (let i = 1; i < verts.length - 1; i++) {
@@ -2097,21 +2195,18 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     constructor(text = '', options: TextGeometryOptions = {}) {
       super();
       const cleanText = String(text ?? '').slice(0, maxTextGeometryChars);
-      const size = Math.max(0.005, Math.min(100, Number(options.size ?? 0.2)));
+      const size = Math.max(0.005, Math.min(100, num(options.size, 0.2)));
       const bevelEnabled = Boolean(options.bevelEnabled ?? false);
       const bevelThickness = bevelEnabled
-        ? Math.max(
-            0,
-            Math.min(2, Number(options.bevelThickness ?? size * 0.04)),
-          )
+        ? Math.max(0, Math.min(2, num(options.bevelThickness, size * 0.04)))
         : 0;
       const bevelSize = bevelEnabled
-        ? Math.max(0, Math.min(2, Number(options.bevelSize ?? size * 0.03)))
+        ? Math.max(0, Math.min(2, num(options.bevelSize, size * 0.03)))
         : 0;
       const depth =
         Math.max(
           0.001,
-          Math.min(20, Number(options.depth ?? options.height ?? size * 0.2)),
+          Math.min(20, num(options.depth ?? options.height, size * 0.2)),
         ) +
         bevelThickness * 2;
       const strokeRadius = size * 0.085 + bevelSize;
@@ -2225,8 +2320,8 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           [cx, cy, z0],
           [cx, cy, z1],
           [bx, by, z1],
-          -uy,
-          ux,
+          uy,
+          -ux,
           0,
         );
         pushQuad(
@@ -2234,8 +2329,8 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           [ax, ay, z0],
           [ax, ay, z1],
           [dxp, dyp, z1],
-          uy,
-          -ux,
+          -uy,
+          ux,
           0,
         );
       };
@@ -2249,10 +2344,12 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           cursorY -= size * 1.35;
           continue;
         }
-        if (ch === ' ') {
-          cursorX += charAdvance * 0.75;
+        if (ch === ' ' || ch === '\t') {
+          // A tab advances like four spaces.
+          cursorX += charAdvance * (ch === ' ' ? 0.75 : 3);
           continue;
         }
+        if (ch === '\r') continue;
         const upper = ch.toUpperCase();
         const isLower = ch !== upper && ch >= 'a' && ch <= 'z';
         const strokes = vectorGlyphStrokes[upper] ?? vectorGlyphStrokes['?'];
@@ -2303,7 +2400,12 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const rawText = node.userData?.xr?.text;
     if (rawText !== undefined && rawText !== null && rawText !== false) {
       const existingPos = meshLike.geometry?.attributes?.position;
-      if (!existingPos || existingPos.count === 0) {
+      // `_textApplied` stops a rebuild on every updateMatrixWorld when the
+      // built text has no vertices (e.g. only whitespace in the first 128 chars).
+      if (
+        (!existingPos || existingPos.count === 0) &&
+        node.userData['_textApplied'] !== true
+      ) {
         let textStr = '';
         let size = 0.08;
         let depth = 0.015;
@@ -2326,6 +2428,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         }
         if (textStr.trim().length > 0) {
           meshLike.geometry = new TextGeometry(textStr, {size, depth});
+          node.userData['_textApplied'] = true;
           if (!(meshLike.material instanceof Material)) {
             meshLike.material = new MeshStandardMaterial({
               color: colorVal ?? 0xf8fafc,
@@ -2351,6 +2454,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     ) {
       node.userData['_csgApplied'] = true;
       const ops = Array.isArray(rawCsg) ? rawCsg : [rawCsg];
+      const original = meshLike.geometry;
       for (const item of ops) {
         if (!item || typeof item !== 'object') continue;
         const rec = item as Record<string, unknown>;
@@ -2359,13 +2463,24 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           opRaw === 'union' || opRaw === 'intersect' ? opRaw : 'subtract';
         const target = rec['target'] ?? rec['mesh'] ?? rec['geometry'];
         if (target instanceof Mesh || target instanceof BufferGeometry) {
-          const res =
-            op === 'union'
-              ? CSG.union(meshLike, target)
-              : op === 'intersect'
-                ? CSG.intersect(meshLike, target)
-                : CSG.subtract(meshLike, target);
-          meshLike.geometry = res.geometry;
+          // One over-limit op must not abort the whole scene export: warn and
+          // keep the current geometry.
+          try {
+            const res =
+              op === 'union'
+                ? CSG.union(meshLike, target)
+                : op === 'intersect'
+                  ? CSG.intersect(meshLike, target)
+                  : CSG.subtract(meshLike, target);
+            // Dispose intermediate results we created; the author's original
+            // geometry may be shared by other meshes.
+            if (meshLike.geometry !== original) meshLike.geometry.dispose?.();
+            meshLike.geometry = res.geometry;
+          } catch (e) {
+            if (typeof console !== 'undefined') {
+              console.warn('[three-live] userData.csg skipped:', e);
+            }
+          }
         }
       }
     }
@@ -2381,6 +2496,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     MAX_CSG_TRIANGLES: maxCsgTriangles,
     MAX_BSP_DEPTH: maxBspDepth,
     MAX_TEXT_GEOMETRY_CHARS: maxTextGeometryChars,
+    MAX_SHAPE_POINTS: maxShapePoints,
     materializeDeclarativeGeometry,
   };
 
@@ -2396,9 +2512,9 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 }
 
 /**
- * `<three-live>` and `<xr-live>` plugin registering 2D `Path`/`Shape`, Earcut
- * triangulation (`ShapeGeometry`), `ExtrudeGeometry`, 3D BSP `CSG` booleans,
- * and Hershey vector font `TextGeometry` onto `THREE` and worker sandboxes.
+ * `<three-live>` and `<xr-live>` plugin registering 2D `Path`/`Shape`,
+ * ear-clipping triangulation (`ShapeGeometry`), `ExtrudeGeometry`, 3D BSP `CSG`
+ * booleans, and stroke-font `TextGeometry` onto `THREE` and worker sandboxes.
  */
 export const cadPlugin: ThreeLivePlugin = {
   name: 'cad',

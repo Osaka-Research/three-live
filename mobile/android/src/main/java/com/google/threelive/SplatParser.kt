@@ -58,6 +58,11 @@ constructor(
    * SplatParser.shBasisCountForDegree(shDegree) * 3` floats, RGB-interleaved per basis).
    */
   val sh: FloatArray? = null,
+  /**
+   * `true` when the `.spz` flags byte (header byte 14) has the antialiased bit (bit 0) set, i.e.
+   * the cloud was trained with a 0.3 px screen-space blur and needs opacity compensation.
+   */
+  val antialiased: Boolean = false,
 ) {
   internal constructor(
     count: Int,
@@ -227,10 +232,12 @@ object SplatParser {
    * Parses a decompressed `.spz` payload (versions 2 and 3): 16-byte header, then SoA blocks of
    * 24-bit fixed-point positions, alphas, colors (SH DC), log scales, rotations (3-byte xyz for v2,
    * 4-byte smallest-three for v3), and optional trailing Spherical Harmonics (bands 1–3, header
-   * byte 12).
+   * byte 12). When [decodeSh] is `false` the SH block is skipped (no SH array is allocated), which
+   * saves up to 180 MB for renderers that never evaluate SH (the Filament GPU billboard path).
    */
   @JvmStatic
-  fun parseSpzPayload(bytes: ByteArray): SplatData {
+  @JvmOverloads
+  fun parseSpzPayload(bytes: ByteArray, decodeSh: Boolean = true): SplatData {
     require(bytes.size >= 16) { "splat-loader: .spz header truncated" }
     require(u32(bytes, 0) == SPZ_MAGIC.toLong()) { "splat-loader: bad .spz magic" }
     val version = u32(bytes, 4)
@@ -248,7 +255,7 @@ object SplatParser {
     val shBasisCount = shBasisCountForDegree(rawShDegree)
     val shBytesPerSplat = shBasisCount * 3
     val hasFullShBlock =
-      shBytesPerSplat > 0 && bytes.size >= needed + count.toLong() * shBytesPerSplat
+      decodeSh && shBytesPerSplat > 0 && bytes.size >= needed + count.toLong() * shBytesPerSplat
     val out = allocate(count, if (hasFullShBlock) rawShDegree else 0)
     val fixed = Math.pow(2.0, -fractionalBits.toDouble())
     var o = 16
@@ -305,7 +312,18 @@ object SplatParser {
         shArr[j] = ((u8(bytes, shStart + j) - 128) / 128.0).toFloat()
       }
     }
-    return out
+    // Header byte 14 is the flags byte; bit 0 marks antialiased training.
+    if ((u8(bytes, 14) and 1) == 0) return out
+    return SplatData(
+      out.count,
+      out.positions,
+      out.scales,
+      out.colors,
+      out.rotations,
+      out.shDegree,
+      out.sh,
+      antialiased = true,
+    )
   }
 
   /**
@@ -545,18 +563,56 @@ object SplatParser {
 
   /** Parses `.spz` bytes, transparently gunzipping when gzip-compressed. */
   @JvmStatic
-  fun parseSpz(bytes: ByteArray): SplatData {
+  @JvmOverloads
+  fun parseSpz(bytes: ByteArray, decodeSh: Boolean = true): SplatData {
     val gz = bytes.size >= 2 && u8(bytes, 0) == 0x1f && u8(bytes, 1) == 0x8b
-    return parseSpzPayload(if (gz) gunzip(bytes) else bytes)
+    return parseSpzPayload(if (gz) gunzip(bytes) else bytes, decodeSh)
   }
 
   /** Detects `.spz` (gzip or raw magic) versus `.splat` and decodes accordingly. */
   @JvmStatic
-  fun parseAuto(bytes: ByteArray): SplatData {
+  @JvmOverloads
+  fun parseAuto(bytes: ByteArray, decodeSh: Boolean = true): SplatData {
     val isSpz =
       (bytes.size >= 2 && u8(bytes, 0) == 0x1f && u8(bytes, 1) == 0x8b) ||
         (bytes.size >= 4 && u32(bytes, 0) == SPZ_MAGIC.toLong())
-    return if (isSpz) parseSpz(bytes) else parseSplat(bytes)
+    return if (isSpz) parseSpz(bytes, decodeSh) else parseSplat(bytes)
+  }
+
+  /**
+   * Returns the row-major 3x3 that maps world-space vectors into the local frame of column-major
+   * [nodeWorld]: the inverse of its upper 3x3 (falling back to the transpose when singular). SH
+   * coefficients are stored in the splat's local frame, so view directions must be mapped first.
+   */
+  internal fun worldToLocalBasis(nodeWorld: DoubleArray): DoubleArray {
+    val m0 = nodeWorld[0]
+    val m1 = nodeWorld[1]
+    val m2 = nodeWorld[2]
+    val m4 = nodeWorld[4]
+    val m5 = nodeWorld[5]
+    val m6 = nodeWorld[6]
+    val m8 = nodeWorld[8]
+    val m9 = nodeWorld[9]
+    val m10 = nodeWorld[10]
+    // Rows of inverse(M3) = adjugate / det.
+    val inv =
+      doubleArrayOf(
+        m5 * m10 - m6 * m9,
+        m8 * m6 - m4 * m10,
+        m4 * m9 - m8 * m5,
+        m9 * m2 - m1 * m10,
+        m0 * m10 - m8 * m2,
+        m8 * m1 - m0 * m9,
+        m1 * m6 - m5 * m2,
+        m4 * m2 - m0 * m6,
+        m0 * m5 - m4 * m1,
+      )
+    val det = m0 * inv[0] + m1 * inv[1] + m2 * inv[2]
+    if (Math.abs(det) > 1e-12 && det.isFinite()) {
+      for (i in 0 until 9) inv[i] /= det
+      return inv
+    }
+    return doubleArrayOf(m0, m1, m2, m4, m5, m6, m8, m9, m10)
   }
 
   /**
@@ -753,8 +809,8 @@ object SplatParser {
 
   /**
    * Builds camera-facing billboard quads in world space for [data] in back-to-front [order]. Each
-   * splat is sized to `1.5 * max(scale.x, scale.y, scale.z) * maxAxisScale(nodeWorld)` (matching
-   * the web `3.0 * radius` diameter) and oriented along the camera's right and up axes.
+   * splat is sized to `3 * max(scale.x, scale.y, scale.z) * maxAxisScale(nodeWorld)` (matching the
+   * web `3.0 * radius` diameter) and oriented along the camera's right and up axes.
    */
   @JvmStatic
   fun buildSplatQuads(
@@ -802,6 +858,7 @@ object SplatParser {
     val luz = (nodeWorld[8] * ux + nodeWorld[9] * uy + nodeWorld[10] * uz).toFloat()
     val cov6 = FloatArray(6)
     val hasSH = data.shDegree > 0 && data.sh != null
+    val toLocal = if (hasSH) worldToLocalBasis(nodeWorld) else null
 
     for (k in 0 until n) {
       val s = order[k]
@@ -854,8 +911,8 @@ object SplatParser {
           ex = if (a >= c) 1.0 else 0.0
           ey = if (a >= c) 0.0 else 1.0
         }
-        val half1 = (Math.sqrt(l1) * 1.5).toFloat().coerceIn(0.001f, 10f)
-        val half2 = (Math.sqrt(l2) * 1.5).toFloat().coerceIn(0.001f, 10f)
+        val half1 = (Math.sqrt(l1) * 3.0).toFloat().coerceIn(0.001f, 10f)
+        val half2 = (Math.sqrt(l2) * 3.0).toFloat().coerceIn(0.001f, 10f)
         val m1x = (rx * ex + ux * ey).toFloat()
         val m1y = (ry * ex + uy * ey).toFloat()
         val m1z = (rz * ex + uz * ey).toFloat()
@@ -870,7 +927,7 @@ object SplatParser {
         duz = m2z * half2
       } else {
         val r0 = maxOf(scx, scy, scz)
-        val half = (r0 * nodeScale * 1.5f).coerceIn(0.001f, 10f)
+        val half = (r0 * nodeScale * 3.0f).coerceIn(0.001f, 10f)
         drx = rx * half
         dry = ry * half
         drz = rz * half
@@ -907,8 +964,18 @@ object SplatParser {
       val c0: Byte
       val c1: Byte
       val c2: Byte
-      if (hasSH) {
-        val shRgb = evaluateSplatSH(data, s, wx - camX, wy - camY, wz - camZ)
+      if (hasSH && toLocal != null) {
+        val dx = (wx - camX).toDouble()
+        val dy = (wy - camY).toDouble()
+        val dz = (wz - camZ).toDouble()
+        val shRgb =
+          evaluateSplatSH(
+            data,
+            s,
+            (toLocal[0] * dx + toLocal[1] * dy + toLocal[2] * dz).toFloat(),
+            (toLocal[3] * dx + toLocal[4] * dy + toLocal[5] * dz).toFloat(),
+            (toLocal[6] * dx + toLocal[7] * dy + toLocal[8] * dz).toFloat(),
+          )
         c0 = shRgb[0].toByte()
         c1 = shRgb[1].toByte()
         c2 = shRgb[2].toByte()
@@ -951,7 +1018,6 @@ object SplatParser {
     val uvs = FloatArray(n * 8)
     val colors = ByteArray(n * 16)
     val indices = IntArray(n * 6)
-    val cov6 = FloatArray(6)
     for (s in 0 until n) {
       val lx = data.positions[s * 3]
       val ly = data.positions[s * 3 + 1]
@@ -959,20 +1025,12 @@ object SplatParser {
       val scx = data.scales[s * 3]
       val scy = data.scales[s * 3 + 1]
       val scz = data.scales[s * 3 + 2]
-      val halfX: Float
-      val halfY: Float
-      if (scx > 0f && scy > 0f && scz > 0f && (scx != scy || scy != scz)) {
-        computeCovariance3D(data.scales, data.rotations, s, cov6, 0)
-        halfX =
-          (Math.sqrt(Math.max(1e-8, cov6[0].toDouble())) * 1.5).toFloat().coerceIn(0.001f, 10f)
-        halfY =
-          (Math.sqrt(Math.max(1e-8, cov6[3].toDouble())) * 1.5).toFloat().coerceIn(0.001f, 10f)
-      } else {
-        val r0 = maxOf(scx, scy, scz)
-        val half = (r0 * 1.5f).coerceIn(0.001f, 10f)
-        halfX = half
-        halfY = half
-      }
+      // The shader expands uv0 along screen right/up, so local-axis variances (Sigma_xx,
+      // Sigma_yy) would ignore rotation and depth extent. Bound each splat isotropically by
+      // 3 * sigma along its largest axis.
+      val half = (maxOf(scx, scy, scz) * 3.0f).coerceIn(0.001f, 10f)
+      val halfX = half
+      val halfY = half
 
       val po = s * 12
       for (v in 0 until 4) {
@@ -1043,7 +1101,7 @@ object SplatParser {
 
   /**
    * Generates a `[size] x [size]` RGBA8 radial Gaussian falloff texture (`RGB = 255`, `A =
-   * round(255 * exp(-4 * r^2))` for `r <= 1`, `0` outside) matching the web fragment shader.
+   * round(255 * exp(-4.5 * r^2))` for `r <= 1`, `0` outside) matching the web fragment shader.
    */
   @JvmStatic
   @JvmOverloads
@@ -1057,7 +1115,7 @@ object SplatParser {
         val dx = (x - half) / half
         val r2 = dx * dx + dy * dy
         val a =
-          if (r2 > 1.0) 0 else Math.round(255.0 * Math.exp(-4.0 * r2)).toInt().coerceIn(0, 255)
+          if (r2 > 1.0) 0 else Math.round(255.0 * Math.exp(-4.5 * r2)).toInt().coerceIn(0, 255)
         buf.put(0xFF.toByte())
         buf.put(0xFF.toByte())
         buf.put(0xFF.toByte())
@@ -1079,6 +1137,7 @@ object SplatParser {
     baseUrl: String? = null,
     allowCrossOrigin: Boolean = true,
     maxBytes: Int = MAX_SPLAT_FILE_BYTES,
+    decodeSh: Boolean = true,
   ): SplatData {
     val resolved =
       resolveSplatUrl(url, baseUrl, allowCrossOrigin)
@@ -1107,7 +1166,7 @@ object SplatParser {
           out.toByteArray()
         }
       val path = URI(resolved).path?.lowercase() ?: ""
-      return if (path.endsWith(".spz")) parseSpz(bytes) else parseAuto(bytes)
+      return if (path.endsWith(".spz")) parseSpz(bytes, decodeSh) else parseAuto(bytes, decodeSh)
     } catch (e: IOException) {
       throw IllegalArgumentException("splat-loader: download failed", e)
     } finally {

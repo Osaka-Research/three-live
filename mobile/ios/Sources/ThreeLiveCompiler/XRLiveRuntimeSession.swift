@@ -310,6 +310,7 @@ public final class XRLiveRuntimeSession {
   private var followStates: [Int: FollowState] = [:]
   private var orbitTimes: [Int: Double] = [:]
   private var ikRestOffsets: [Int: [SIMD3<Float>]] = [:]
+  private var ikRestRotations: [String: [SIMD4<Double>]] = [:]
   private var physicsStates: [Int: PhysicsBodyState] = [:]
   private var staticColliders: [StaticAabb] = []
   private var collidersInitialized = false
@@ -423,9 +424,12 @@ public final class XRLiveRuntimeSession {
       let varExt = XRJSON.object(rootExts["KHR_materials_variants"]),
       let rawVars = XRJSON.array(varExt["variants"])
     {
-      for rv in rawVars {
+      // Keep variant indices aligned with mappings: unnamed variants get a `Variant_<i>` placeholder.
+      for (i, rv) in rawVars.enumerated() {
         if let vo = XRJSON.object(rv), let vName = XRJSON.string(vo["name"]), !vName.isEmpty {
           availableVariants.append(vName)
+        } else {
+          availableVariants.append("Variant_\(i)")
         }
       }
     }
@@ -649,10 +653,11 @@ public final class XRLiveRuntimeSession {
   }
 
   /// Selects a `KHR_materials_variants` material variant by name, or resets to default when
-  /// `name` is `nil`, `""`, or `"default"`. Returns `true` if the variant was applied.
+  /// `name` is `nil` or `""` (a variant literally named `"default"` is selectable). Returns `true`
+  /// if the variant was applied.
   @discardableResult
   public func selectVariant(_ name: String?) -> Bool {
-    let isReset = name == nil || name == "" || name == "default"
+    let isReset = name == nil || name == ""
     let variantIdx: Int
     if isReset {
       variantIdx = -1
@@ -1947,7 +1952,38 @@ public final class XRLiveRuntimeSession {
     if d > 1e-6 && segLen > 1e-6 {
       return parentPos + delta * (segLen / d)
     }
+    // Rest and solved children mirror each other about the parent, so the lerp collapsed onto it:
+    // keep the bone length by following the solved direction.
+    let solvedDelta = solvedChildPos - parentPos
+    let sl = simd_length(solvedDelta)
+    if sl > 1e-6 && segLen > 1e-6 {
+      return parentPos + solvedDelta * (segLen / sl)
+    }
     return blended
+  }
+
+  /// Resolves an IK target or pole into world space: a literal scene-space point goes through the
+  /// scene root; a name resolves to a node, `head`, `hand-left` or `hand-right`.
+  private func resolveIKPoint(
+    point: SIMD3<Float>?,
+    name: String?,
+    headPose: XRPose?,
+    handPoses: [XRHand: XRPose]
+  ) -> SIMD3<Float>? {
+    if let pt = point {
+      return XRSpatialMath.transformPoint(rootTransform, pt)
+    }
+    guard let name = name else { return nil }
+    if let ref = nodeIndexByName[name] {
+      return readNodeWorldPosition(ref)
+    } else if name == "head", let head = headPose {
+      return head.position
+    } else if name == "hand-left", let hp = handPoses[.left] {
+      return hp.position
+    } else if name == "hand-right", let hp = handPoses[.right] {
+      return hp.position
+    }
+    return nil
   }
 
   private func stepIK(
@@ -1963,22 +1999,15 @@ public final class XRLiveRuntimeSession {
     let midIdx = ik.mid.flatMap { nodeIndexByName[$0] }
     let chainIndices = midIdx != nil ? [rootIdx, midIdx!, effIdx] : [rootIdx, effIdx]
 
-    let targetPos: SIMD3<Float>
-    if let pt = ik.targetPoint {
-      targetPos = XRSpatialMath.transformPoint(rootTransform, pt)
-    } else if let name = ik.targetName {
-      if let ref = nodeIndexByName[name] {
-        targetPos = readNodeWorldPosition(ref)
-      } else if name == "head", let head = headPose {
-        targetPos = head.position
-      } else if name == "hand-left", let hp = handPoses[.left] {
-        targetPos = hp.position
-      } else if name == "hand-right", let hp = handPoses[.right] {
-        targetPos = hp.position
-      } else {
-        return
-      }
-    } else {
+    guard
+      let targetPos = resolveIKPoint(
+        point: ik.targetPoint, name: ik.targetName, headPose: headPose, handPoses: handPoses)
+    else { return }
+
+    if isJointHierarchy(chainIndices) {
+      stepIKHierarchy(
+        nodeIndex, ik: ik, chainIndices: chainIndices, midIdx: midIdx, targetPos: targetPos,
+        headPose: headPose, handPoses: handPoses)
       return
     }
 
@@ -2010,7 +2039,9 @@ public final class XRLiveRuntimeSession {
         midPos: restChain[1],
         effectorPos: restChain[2],
         targetPos: targetPos,
-        polePos: ik.pole
+        // The pole goes through the scene root like the target, since joints are in world space.
+        polePos: resolveIKPoint(
+          point: ik.pole, name: ik.poleName, headPose: headPose, handPoses: handPoses)
       )
       let blendedMid = blendSegmentPosition(
         parentPos: restChain[0],
@@ -2057,6 +2088,88 @@ public final class XRLiveRuntimeSession {
         parentPos = blended
       }
     }
+  }
+
+  /// IK on a proper joint hierarchy (each joint an ancestor of the next): restores the chain's rest
+  /// local rotations, solves in world space, then rotates each joint so children follow.
+  private func stepIKHierarchy(
+    _ nodeIndex: Int,
+    ik: XRLiveIK,
+    chainIndices: [Int],
+    midIdx: Int?,
+    targetPos: SIMD3<Float>,
+    headPose: XRPose?,
+    handPoses: [XRHand: XRPose]
+  ) {
+    // Rest local rotations of the chain joints, captured on first use and restored every frame
+    // so the solved delta rotations never accumulate. Keyed by the trait node and chain names.
+    let cacheKey = "\(nodeIndex):\(ik.root)>\(ik.mid ?? "")>\(ik.effector)"
+    let restRotations: [SIMD4<Double>]
+    if let cached = ikRestRotations[cacheKey] {
+      restRotations = cached
+    } else {
+      restRotations = chainIndices.map { nodes[$0].rotation }
+      ikRestRotations[cacheKey] = restRotations
+    }
+    for (j, idx) in chainIndices.enumerated() {
+      nodes[idx].rotation = restRotations[j]
+      dirtyTransforms.insert(idx)
+    }
+
+    let restChain = chainIndices.map { readNodeWorldPosition($0) }
+    let solvedChain: [SIMD3<Float>]
+    if ik.solver == "two-bone", midIdx != nil, restChain.count == 3 {
+      let solved = IKSolver.solveTwoBoneIK(
+        rootPos: restChain[0],
+        midPos: restChain[1],
+        effectorPos: restChain[2],
+        targetPos: targetPos,
+        // The pole goes through the scene root like the target, since joints are in world space.
+        polePos: resolveIKPoint(
+          point: ik.pole, name: ik.poleName, headPose: headPose, handPoses: handPoses)
+      )
+      solvedChain = [restChain[0], solved.midPos, solved.effectorPos]
+    } else {
+      solvedChain =
+        IKSolver.solveFABRIK(
+          positions: restChain,
+          targetPos: targetPos,
+          maxIterations: ik.iterations,
+          tolerance: ik.tolerance
+        ).positions
+    }
+
+    // Rotate each joint (root first) by the weighted shortest arc that aligns its bone with the
+    // solved bone direction; children (including attached geometry) follow through the hierarchy,
+    // so bone lengths are preserved and joints turn instead of sliding.
+    let weight = max(Float(0), min(Float(1), ik.weight))
+    let identity = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    for j in 0..<(chainIndices.count - 1) {
+      let a = readNodeWorldPosition(chainIndices[j])
+      let b = readNodeWorldPosition(chainIndices[j + 1])
+      let cur = b - a
+      let want = solvedChain[j + 1] - solvedChain[j]
+      guard simd_length(cur) > 1e-9, simd_length(want) > 1e-9 else { continue }
+      let full = IKSolver.quatFromUnitVectors(simd_normalize(cur), simd_normalize(want))
+      let delta = weight >= 1 ? full : simd_slerp(identity, full, weight)
+      let world = XRSpatialMath.decompose(worldMatrix(of: chainIndices[j]))
+      setWorldTRS(
+        chainIndices[j], rotation: simd_normalize(delta * world.rotation), position: a,
+        scale: world.scale)
+    }
+  }
+
+  private func isJointHierarchy(_ chain: [Int]) -> Bool {
+    for k in 1..<chain.count {
+      var p = parentOf[chain[k]] ?? -1
+      var guardCount = 0
+      while p >= 0 && p != chain[k - 1] && guardCount < 256 {
+        p = parentOf[p] ?? -1
+        guardCount += 1
+      }
+      if p != chain[k - 1] { return false }
+    }
+    return true
   }
 
   private func stepBillboard(_ i: Int, mode: String, headPose: XRPose, dt: Float) {

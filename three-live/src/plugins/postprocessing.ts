@@ -23,6 +23,11 @@
 //   outline pass around `selected-mesh` (when `outline-selected` is set) or
 //   any node declaring `userData.xr.outline`.
 
+import {
+  HOST_BLOOM_DEFAULT_RADIUS,
+  HOST_BLOOM_DEFAULT_THRESHOLD,
+  parseNumericAttr,
+} from '../constants';
 import {mat3NormalFromMat4, mat4Create, mat4Multiply} from '../math';
 import type {ThreeLivePlugin} from '../plugin';
 import type {ThreeView} from '../three-view';
@@ -98,6 +103,14 @@ c+=prefilter(texture(uSourceTex,vUV+vec2(h.x,h.y)).rgb)*0.125;
 fragColor=vec4(c,1.0);
 }`;
 
+// The final composite writes `alpha = min(r, g, b)` with
+// `blendFuncSeparate(ONE, ONE, ONE, ONE_MINUS_SRC_ALPHA)`. Over the default
+// transparent canvas this deliberately keeps coloured glow additive on top of
+// the page backdrop (premultiplied `rgb > alpha`): using `max(r, g, b)` would
+// make the browser scale the CSS backdrop by `1 - max` wherever the wide
+// low-level halo lands, visibly darkening/tinting the background when bloom is
+// toggled (the regression fixed in cl/1013876464). White glow still gains
+// coverage alpha.
 const FS_KAWASE_UP = `#version 300 es
 precision highp float;
 in vec2 vUV;
@@ -238,27 +251,65 @@ function compileProgram(
   gl: WebGL2RenderingContext,
   vsSrc: string,
   fsSrc: string,
-): WebGLProgram {
-  const mk = (type: number, src: string): WebGLShader => {
-    const sh = gl.createShader(type)!;
+): WebGLProgram | null {
+  const prog = gl.createProgram();
+  if (!prog) return null;
+  const shaders: WebGLShader[] = [];
+  for (const [type, src] of [
+    [gl.VERTEX_SHADER, vsSrc],
+    [gl.FRAGMENT_SHADER, fsSrc],
+  ] as const) {
+    const sh = gl.createShader(type);
+    if (!sh) continue;
     gl.shaderSource(sh, src);
     gl.compileShader(sh);
-    return sh;
-  };
-  const prog = gl.createProgram()!;
-  gl.attachShader(prog, mk(gl.VERTEX_SHADER, vsSrc));
-  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fsSrc));
+    gl.attachShader(prog, sh);
+    shaders.push(sh);
+  }
   gl.linkProgram(prog);
+  // Shaders are no longer needed once linked; free them so `deleteProgram`
+  // in `onDestroy` releases everything.
+  for (const sh of shaders) {
+    gl.detachShader?.(prog, sh);
+    gl.deleteShader?.(sh);
+  }
+  if (
+    shaders.length < 2 ||
+    (typeof gl.getProgramParameter === 'function' &&
+      !gl.getProgramParameter(prog, gl.LINK_STATUS))
+  ) {
+    gl.deleteProgram?.(prog);
+    return null;
+  }
   return prog;
 }
 
-function getPostprocContext(gl: WebGL2RenderingContext): PostprocGpuContext {
+/** Contexts whose postprocessing shaders failed to link (pass disabled). */
+const failedPostprocContexts = new WeakSet<WebGL2RenderingContext>();
+
+function getPostprocContext(
+  gl: WebGL2RenderingContext,
+): PostprocGpuContext | null {
   let ctx = postprocContexts.get(gl);
-  if (ctx) return ctx;
+  if (ctx) {
+    // After a WebGL context loss/restore the cached handles are dead.
+    if (typeof gl.isProgram !== 'function' || gl.isProgram(ctx.outlineProg)) {
+      return ctx;
+    }
+    postprocContexts.delete(gl);
+  }
+  if (failedPostprocContexts.has(gl) || gl.isContextLost?.()) return null;
 
   const outlineProg = compileProgram(gl, VS_OUTLINE, FS_OUTLINE);
   const downProg = compileProgram(gl, VS_FULLSCREEN, FS_KAWASE_DOWN);
   const upProg = compileProgram(gl, VS_FULLSCREEN, FS_KAWASE_UP);
+  if (!outlineProg || !downProg || !upProg) {
+    for (const p of [outlineProg, downProg, upProg]) {
+      if (p) gl.deleteProgram(p);
+    }
+    failedPostprocContexts.add(gl);
+    return null;
+  }
   const fsVao =
     typeof gl.createVertexArray === 'function' ? gl.createVertexArray() : null;
 
@@ -390,12 +441,16 @@ function resolveViewerBloom(viewer: ThreeView): BloomTraitOptions | null {
       if (!Number.isFinite(parsedVal) || parsedVal <= 0) {
         return null;
       }
-      const thAttr = el.getAttribute('bloom-threshold');
-      const radAttr = el.getAttribute('bloom-radius');
       const trait = parseBloomTrait({
         strength: parsedVal,
-        threshold: thAttr !== null ? Number(thAttr) : 0.62,
-        radius: radAttr !== null ? Number(radAttr) : 0.75,
+        threshold: parseNumericAttr(
+          el.getAttribute('bloom-threshold'),
+          HOST_BLOOM_DEFAULT_THRESHOLD,
+        ),
+        radius: parseNumericAttr(
+          el.getAttribute('bloom-radius'),
+          HOST_BLOOM_DEFAULT_RADIUS,
+        ),
       });
       if (trait) return trait;
     }
@@ -438,7 +493,8 @@ function parseHostOutlineAttribute(
       } else {
         const num = Number(token);
         if (Number.isFinite(num) && num > 0) {
-          thickness = num < 0.25 ? Math.max(1.5, num * 140) : num;
+          // Metre-sized values (< 0.25) are converted by `parseOutlineTrait`.
+          thickness = num;
         }
       }
     }
@@ -446,7 +502,36 @@ function parseHostOutlineAttribute(
   return parseOutlineTrait({color, thickness, pulse});
 }
 
-function resolveMeshOutline(
+/**
+ * Mesh name tokens skipped by the host `outline` attribute when no mesh is
+ * selected (staging geometry such as floors and pedestals). Names are split
+ * into whole tokens on separators, digits, and camelCase boundaries, so
+ * `"floor_01"` and `"GroundPlane"` are skipped but `"Tablet"` or `"Keypad"`
+ * are outlined.
+ */
+const HOST_OUTLINE_SKIP_TOKENS = new Set([
+  'floor',
+  'pedestal',
+  'ground',
+  'table',
+  'grid',
+  'pad',
+]);
+
+function isHostOutlineStagingMesh(name: string): boolean {
+  return name
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .some((t) => HOST_OUTLINE_SKIP_TOKENS.has(t));
+}
+
+/**
+ * Resolves the outline for `mesh`: host `outline="false"` wins, then the
+ * node's `outline` trait, then `selected-mesh` with the host `outline` /
+ * `outline-selected` attributes, then the host `outline` attribute.
+ */
+export function resolveMeshOutline(
   viewer: ThreeView,
   mesh: ThreeView['meshes'][number],
 ): OutlineTraitOptions | null {
@@ -490,7 +575,7 @@ function resolveMeshOutline(
 
   if (hostTrait) {
     const meshName = mesh.name || '';
-    if (/floor|pedestal|ground|table|grid|pad/i.test(meshName)) {
+    if (isHostOutlineStagingMesh(meshName)) {
       return null;
     }
     return hostTrait;
@@ -542,18 +627,28 @@ export const postprocessingPlugin: ThreeLivePlugin = {
       }
     }
 
-    if (outlinedMeshes.length > 0) {
-      const ctx = getPostprocContext(gl);
+    const outlineCtx =
+      outlinedMeshes.length > 0 ? getPostprocContext(gl) : null;
+    if (outlineCtx) {
+      const ctx = outlineCtx;
       const modelMat = mat4Create();
       const mvpMat = mat4Create();
       const normalMat = new Float32Array(9);
       const nowSec =
         (typeof performance !== 'undefined' ? performance.now() : Date.now()) *
         0.001;
+      // Thickness is in pixels of the current eye/XR viewport, not the canvas
+      // (side-by-side stereo eyes are half-width; XR framebuffers differ).
+      const vpArr =
+        typeof gl.getParameter === 'function'
+          ? (gl.getParameter(gl.VIEWPORT) as ArrayLike<number> | null)
+          : null;
+      const ow = Math.max(1, vpArr?.[2] || w);
+      const oh = Math.max(1, vpArr?.[3] || h);
 
       gl.useProgram(ctx.outlineProg);
       if (ctx.uOutlineViewportSize) {
-        gl.uniform2f(ctx.uOutlineViewportSize, w, h);
+        gl.uniform2f(ctx.uOutlineViewportSize, ow, oh);
       }
       if (ctx.uOutlineVP) {
         gl.uniformMatrix4fv(ctx.uOutlineVP, false, vpMatrix);
@@ -584,6 +679,14 @@ export const postprocessingPlugin: ThreeLivePlugin = {
 
         const instMats = mesh.instanceMatrices;
         for (const prim of mesh.primitives) {
+          // VS_OUTLINE has no skinning/morph code, so its hull would stay in
+          // the bind pose and drift from the animated mesh; skip for now.
+          if (
+            prim.pluginData?.skinning?.hasSkin ||
+            prim.pluginData?.morph?.hasMorph
+          ) {
+            continue;
+          }
           gl.bindVertexArray(prim.vao);
           if (instMats && instMats.length >= 16) {
             const instCount = instMats.length >> 4;
@@ -636,7 +739,7 @@ export const postprocessingPlugin: ThreeLivePlugin = {
     if (!bloom || bloom.strength <= 0) return;
 
     const ctx = getPostprocContext(gl);
-    if (!ensureBloomTargets(gl, ctx, w, h) || !ctx.fsVao) return;
+    if (!ctx || !ensureBloomTargets(gl, ctx, w, h) || !ctx.fsVao) return;
 
     // Copy current rendered frame into sceneTex
     gl.activeTexture(gl.TEXTURE0);

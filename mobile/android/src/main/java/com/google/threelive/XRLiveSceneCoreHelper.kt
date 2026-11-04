@@ -150,7 +150,10 @@ data class XRIKTrait(
   val targetName: String? = null,
   /** Literal target position `(x, y, z)`, or `null` when [targetName] is used. */
   val targetPosition: List<Double>? = null,
+  /** Literal scene-space pole position `(x, y, z)`, or `null`. */
   val pole: List<Double>? = null,
+  /** Named pole node (resolved like [targetName]), or `null` when [pole] is used. */
+  val poleName: String? = null,
   /** `"two-bone"` or `"fabrik"`. */
   val solver: String = "two-bone",
   val iterations: Int = 8,
@@ -847,10 +850,20 @@ object XRLiveSceneCoreHelper {
     if (raw == true) return XROutlineTrait()
     val r = MiniJson.asMap(raw) ?: return null
     if (r["enabled"] == false) return null
+    val rawT = r["thickness"] ?: r["width"]
+    val rawTNum = (rawT as? Number)?.toDouble()
     return XROutlineTrait(
       enabled = true,
       color = safeHexColor(r["color"], "#38bdf8"),
-      thickness = clampNum(r["thickness"] ?: r["width"], 0.5, 20.0, 3.0),
+      // Pixels; metre-sized values (< 0.25, e.g. the documented 0.025) are converted like web/iOS.
+      thickness =
+        clampNum(
+          if (rawTNum != null && rawTNum > 0.0 && rawTNum < 0.25) maxOf(1.5, rawTNum * 140.0)
+          else rawT,
+          0.5,
+          20.0,
+          3.0,
+        ),
       pulse = r["pulse"] == true,
     )
   }
@@ -867,7 +880,10 @@ object XRLiveSceneCoreHelper {
     val targetVec = finiteVec3(rawTarget)?.map { clampNum(it, -1000.0, 1000.0, 0.0) }
     val targetName = if (targetVec == null) safeAnchorId(rawTarget) else null
     if (targetVec == null && targetName == null) return null
-    val poleVec = finiteVec3(r["pole"])?.map { clampNum(it, -1000.0, 1000.0, 0.0) }
+    // `pole` is a scene-space point or a node name; `poleTarget` is accepted as an alias.
+    val rawPole = r["pole"] ?: r["poleTarget"]
+    val poleVec = finiteVec3(rawPole)?.map { clampNum(it, -1000.0, 1000.0, 0.0) }
+    val poleName = if (poleVec == null) safeAnchorId(rawPole) else null
     val solverRaw = r["solver"]
     val solver =
       when (solverRaw) {
@@ -882,6 +898,7 @@ object XRLiveSceneCoreHelper {
       targetName = targetName,
       targetPosition = targetVec,
       pole = poleVec,
+      poleName = poleName,
       solver = solver,
       iterations = jsRound(clampNum(r["iterations"], 1.0, 32.0, 8.0)).toInt(),
       tolerance = clampNum(r["tolerance"], 1e-5, 0.1, 1e-3),

@@ -349,12 +349,9 @@ object SharedRoom {
             return null
           }
           val rawMid = root["sdpMid"] as? String
-          val sdpMid =
-            if (!rawMid.isNullOrEmpty() && !rawMid.contains('\u0000')) {
-              if (rawMid.length > 64) rawMid.substring(0, 64) else rawMid
-            } else {
-              null
-            }
+          // Reject (rather than truncate, which corrupts it) an overlong or NUL-bearing mid.
+          if (rawMid != null && (rawMid.length > 64 || rawMid.contains('\u0000'))) return null
+          val sdpMid = if (rawMid.isNullOrEmpty()) null else rawMid
           val rawIdx = (root["sdpMLineIndex"] as? Number)?.toDouble()
           val sdpMLineIndex =
             if (
@@ -368,6 +365,8 @@ object SharedRoom {
             } else {
               null
             }
+          // RTCIceCandidate() throws when both are null.
+          if (sdpMid == null && sdpMLineIndex == null) return null
           WireMessage.Rtc(
             peerId = peerId,
             targetPeerId = targetPeerId,

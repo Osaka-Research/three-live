@@ -20,8 +20,8 @@
  * WebGL2 vertex attribute slots.
  */
 
+import {readAccessorAsFloat32} from '../accessor';
 import type {ThreeLivePlugin} from '../plugin';
-import {readFloat32Array} from './keyframes';
 
 const MAX_MORPH_TARGETS = 64;
 
@@ -116,8 +116,9 @@ vec4 world=uModel*vec4(morphedPos,1.0);`,
       const tBv = gltf.bufferViews?.[tAcc?.bufferView];
       if (!tAcc || !tBv) continue;
 
-      const byteOffset = (tBv.byteOffset || 0) + (tAcc.byteOffset || 0);
-      const deltas = readFloat32Array(bin, byteOffset, vertexCount * 3);
+      // Morph deltas may be quantized (normalized or integer) by gltfpack.
+      const deltas = readAccessorAsFloat32(gltf, bin, tAcc, 3);
+      if (!deltas || deltas.length < vertexCount * 3) continue;
       const rowOffset = t * vertexCount * 4;
       for (let v = 0; v < vertexCount; v++) {
         data[rowOffset + v * 4] = deltas[v * 3];

@@ -83,6 +83,35 @@ export interface OrbitLimits {
 /** Supported tone mapping curves for `<three-live>` and `ThreeView`. */
 export type ToneMappingMode = 'neutral' | 'aces' | 'agx' | 'reinhard' | 'none';
 
+const TONE_MAPPING_MODES: readonly ToneMappingMode[] = [
+  'neutral',
+  'reinhard',
+  'none',
+  'aces',
+  'agx',
+];
+
+/**
+ * Normalizes a host-supplied tone-mapping value (case-insensitive, trimmed).
+ * Unknown, empty, or missing values fall back to `'neutral'`, matching the
+ * Kotlin and Swift evaluators.
+ */
+export function normalizeToneMapping(v: unknown): ToneMappingMode {
+  const s = String(v ?? '')
+    .trim()
+    .toLowerCase() as ToneMappingMode;
+  return TONE_MAPPING_MODES.includes(s) ? s : 'neutral';
+}
+
+/**
+ * Maps a tone-mapping mode to the `uToneMapping` index used by
+ * `applyToneMapping` in `FS_RENDER` (`neutral=0`, `reinhard=1`, `none=2`,
+ * `aces=3`, `agx=4`).
+ */
+export function toneMappingShaderIndex(mode: unknown): number {
+  return TONE_MAPPING_MODES.indexOf(normalizeToneMapping(mode));
+}
+
 export interface ViewOptions {
   canvas?: HTMLCanvasElement;
   clearColor?: [number, number, number, number];
@@ -116,6 +145,11 @@ export interface ViewOptions {
 // 1. Minimal Self-Contained Matrix Math
 // =========================================================================
 
+import {
+  applyTextureTransform,
+  readAccessorAsFloat32,
+  type TextureTransformLike,
+} from './accessor';
 import {
   mat3NormalFromMat4,
   mat4Create,
@@ -167,11 +201,11 @@ export function decodeUtf8(bytes: Uint8Array): string {
 }
 
 import {
-  type ThreeLivePlugin,
   getRegisteredPlugins,
   getSharedRegistry,
   registerPlugin,
   registeredPlugins,
+  type ThreeLivePlugin,
 } from './plugin';
 export {getRegisteredPlugins, registerPlugin, type ThreeLivePlugin};
 
@@ -256,11 +290,10 @@ export function parseGLB(input: ArrayBuffer | ArrayBufferView): GLBData {
       );
     }
   }
-  if (extensionsRequired.includes('EXT_meshopt_compression')) {
-    const decoder = getDecoder('meshopt');
-    if (!decoder) {
+  for (const ext of ['EXT_meshopt_compression', 'KHR_meshopt_compression']) {
+    if (extensionsRequired.includes(ext) && !getDecoder('meshopt')) {
       throw new Error(
-        "Model requires EXT_meshopt_compression. Register a decoder via ThreeLiveElement.registerDecoder('meshopt', decoder).",
+        `Model requires ${ext}. Register a decoder via ThreeLiveElement.registerDecoder('meshopt', decoder).`,
       );
     }
   }
@@ -341,9 +374,24 @@ layout(location=2) in vec2 aUV;
 uniform mat4 uMVP,uModel;
 uniform mat3 uNormalMatrix;
 uniform vec4 uUvTransform;
+layout(location=8) in vec4 aInst0;
+layout(location=9) in vec4 aInst1;
+layout(location=10) in vec4 aInst2;
+layout(location=11) in vec4 aInst3;
+layout(location=12) in vec4 aInstColor;
+uniform int uInstanced;
+uniform mat4 uViewProj;
+out vec4 vInstTint;
+mat4 xrModel(){return uInstanced==1?uModel*mat4(aInst0,aInst1,aInst2,aInst3):uModel;}
+mat4 xrMVP(){return uInstanced==1?uViewProj*xrModel():uMVP;}
+mat3 xrNormalMatrix(){return uInstanced==1?transpose(inverse(mat3(xrModel()))):uNormalMatrix;}
+#define uModel xrModel()
+#define uMVP xrMVP()
+#define uNormalMatrix xrNormalMatrix()
 out vec3 vNormal,vWorldPos;
 out vec2 vUV;
 void main(){
+vInstTint=uInstanced==1?aInstColor:vec4(1.0);
 vec3 rawN=uNormalMatrix*aNormal;
 vNormal=length(rawN)>1e-5?normalize(rawN):vec3(0.0);
 vec4 world=uModel*vec4(aPosition,1.0);
@@ -359,7 +407,9 @@ precision highp float;
 in vec3 vNormal,vWorldPos;
 in vec2 vUV;
 uniform vec4 uBaseColor;
-uniform float uMetallic,uRoughness,uEmissive,uEnvIntensity;
+in vec4 vInstTint;
+#define uBaseColor (uBaseColor*vInstTint)
+uniform float uMetallic,uRoughness,uEmissive,uEnvIntensity,uExposure;
 uniform vec2 uClearcoat;
 uniform vec3 uCameraPos,uAmbientColor;
 uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap;
@@ -540,6 +590,7 @@ if(uClearcoat.x>0.0){
 vec3 ccF=F_SchlickRoughness(vec3(0.04),uClearcoat.y,NoV)*uClearcoat.x;
 color=color*(vec3(1.0)-ccF)+getStudioRadiance(R,uClearcoat.y)*ccF*uEnvIntensity;
 }
+color*=uExposure;
 color=applyToneMapping(color,uToneMapping);
 float outAlpha=base.a;
 /*XRD_O*/
@@ -556,6 +607,7 @@ export function evaluateToneMapping(
   mode: ToneMappingMode,
   exposure = 1.0,
 ): [number, number, number] {
+  mode = normalizeToneMapping(mode);
   const exp = Number.isFinite(exposure) ? Math.max(0, exposure) : 1.0;
   let r = Math.max(0, (Number(rgb[0]) || 0) * exp);
   let g = Math.max(0, (Number(rgb[1]) || 0) * exp);
@@ -692,6 +744,8 @@ function getUniforms<T extends string>(
 const RENDER_UNIFORMS = [
   'uMVP',
   'uModel',
+  'uInstanced',
+  'uViewProj',
   'uNormalMatrix',
   'uUvTransform',
   'uBaseColor',
@@ -721,6 +775,7 @@ const RENDER_UNIFORMS = [
   'uPointLightPos',
   'uPointLightColor',
   'uEnvIntensity',
+  'uExposure',
   'uViewportSize',
   'uSectionPlane',
   'uSectionEnabled',
@@ -745,6 +800,8 @@ function renderShaderSpec(): {fs: string; uniforms: readonly string[]} {
 
 interface PrimitiveGpu {
   vao: WebGLVertexArrayObject;
+  /** True when the VAO carries per-instance attributes (EXT_mesh_gpu_instancing). */
+  instanced?: boolean;
   indexCount: number;
   indexType: number;
   baseColor: [number, number, number, number];
@@ -767,6 +824,10 @@ interface PrimitiveGpu {
   pluginData?: Record<string, any>;
   customProgram?: WebGLProgram | null;
   customUniforms?: Record<string, WebGLUniformLocation | null> | null;
+  /** Source glTF primitive, used to re-resolve shaders when the material changes. */
+  primitiveDef?: any;
+  /** Programs resolved per material index (KHR_materials_variants switching). */
+  programCache?: Map<number, ResolvedProgram>;
   isTransmissive?: boolean;
 }
 
@@ -822,30 +883,16 @@ function bindBufferAttribute(
   loc: number,
   size: number,
   buffers: WebGLBuffer[],
+  uvTransform?: TextureTransformLike | null,
 ): Float32Array | null {
   if (accIdx === undefined || !gltf.accessors?.[accIdx]) return null;
-  const acc = gltf.accessors[accIdx];
-  const bv = gltf.bufferViews[acc.bufferView];
-  const offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-  const strideFloats =
-    bv.byteStride && bv.byteStride > size * 4 ? bv.byteStride >> 2 : size;
-  let data: Float32Array;
-  if (strideFloats === size) {
-    data = new Float32Array(bin, offset, acc.count * size);
-  } else {
-    data = new Float32Array(acc.count * size);
-    const src = new Float32Array(
-      bin,
-      bv.byteOffset || 0,
-      Math.floor(bv.byteLength / 4),
-    );
-    const startFloat = (acc.byteOffset || 0) >> 2;
-    for (let i = 0; i < acc.count; i++) {
-      const base = startFloat + i * strideFloats;
-      for (let c = 0; c < size; c++) {
-        data[i * size + c] = src[base + c];
-      }
-    }
+  // Dequantizes KHR_mesh_quantization / normalized integer attributes and
+  // honors byteStride, so CPU-side copies (bounds, picking) stay in floats.
+  let data = readAccessorAsFloat32(gltf, bin, gltf.accessors[accIdx], size);
+  if (!data) return null;
+  if (uvTransform) {
+    data = data.slice();
+    applyTextureTransform(data, uvTransform);
   }
   const vbo = gl.createBuffer()!;
   buffers.push(vbo);
@@ -854,6 +901,118 @@ function bindBufferAttribute(
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
   return data;
+}
+
+/** Clamps an exposure value to a finite, non-negative number (default 1). */
+function sanitizeExposure(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, n) : 1.0;
+}
+
+interface ResolvedProgram {
+  program: WebGLProgram | null;
+  uniforms: Record<string, WebGLUniformLocation | null> | null;
+}
+
+/**
+ * Runs every plugin's `onResolveShader` for a glTF primitive and material and
+ * compiles the resulting custom program (null when no plugin customizes it).
+ */
+function resolvePrimitiveProgram(
+  gl: WebGL2RenderingContext,
+  // tslint:disable-next-line:no-any glTF primitive / material JSON.
+  primDef: any,
+  // tslint:disable-next-line:no-any
+  mat: any,
+): ResolvedProgram {
+  const spec = renderShaderSpec();
+  let vsSource = VS_RENDER;
+  let fsSource = spec.fs;
+  let hasCustomShader = false;
+  for (const plugin of registeredPlugins) {
+    if (plugin.onResolveShader) {
+      const shaders = plugin.onResolveShader(primDef, mat, vsSource, fsSource);
+      if (shaders) {
+        vsSource = shaders.vs;
+        fsSource = shaders.fs;
+        hasCustomShader = true;
+      }
+    }
+  }
+  const program = hasCustomShader
+    ? createProgram(gl, vsSource, fsSource)
+    : null;
+  return {
+    program,
+    uniforms: program ? getUniforms(gl, program, spec.uniforms) : null,
+  };
+}
+
+/**
+ * Uploads `EXT_mesh_gpu_instancing` matrices and colors as per-instance vertex
+ * attributes (locations 8-11 = model matrix columns, 12 = color, divisor 1) on
+ * the currently bound VAO, so the mesh draws with one `drawElementsInstanced`.
+ * Returns false when the context cannot draw instanced geometry.
+ */
+function bindInstanceAttributes(
+  gl: WebGL2RenderingContext,
+  mesh: {instanceMatrices?: Float32Array; instanceColors?: Float32Array},
+  buffers: WebGLBuffer[],
+): boolean {
+  const mats = mesh.instanceMatrices;
+  if (
+    !mats ||
+    mats.length < 16 ||
+    typeof gl.vertexAttribDivisor !== 'function' ||
+    typeof gl.drawElementsInstanced !== 'function'
+  ) {
+    return false;
+  }
+  const n = mats.length >> 4;
+  const cols = mesh.instanceColors;
+  const data = new Float32Array(n * 20);
+  for (let i = 0; i < n; i++) {
+    data.set(mats.subarray(i * 16, i * 16 + 16), i * 20);
+    data[i * 20 + 16] = cols ? cols[i * 3] : 1;
+    data[i * 20 + 17] = cols ? cols[i * 3 + 1] : 1;
+    data[i * 20 + 18] = cols ? cols[i * 3 + 2] : 1;
+    data[i * 20 + 19] = 1;
+  }
+  const vbo = gl.createBuffer()!;
+  buffers.push(vbo);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  for (let c = 0; c < 5; c++) {
+    gl.enableVertexAttribArray(8 + c);
+    gl.vertexAttribPointer(8 + c, 4, gl.FLOAT, false, 80, c * 16);
+    gl.vertexAttribDivisor(8 + c, 1);
+  }
+  return true;
+}
+
+/**
+ * Returns the `KHR_texture_transform` of the primitive's material (base color
+ * first, then the other PBR textures). gltfpack uses it to dequantize
+ * normalized TEXCOORD_0 attributes, so it is baked into the uploaded UVs.
+ */
+function primitiveTextureTransform(
+  gltf: any,
+  prim: any,
+): TextureTransformLike | null {
+  const mat = gltf.materials?.[prim?.material];
+  if (!mat) return null;
+  const infos = [
+    mat.pbrMetallicRoughness?.baseColorTexture,
+    mat.pbrMetallicRoughness?.metallicRoughnessTexture,
+    mat.normalTexture,
+    mat.occlusionTexture,
+    mat.emissiveTexture,
+  ];
+  for (const info of infos) {
+    const t = info?.extensions?.KHR_texture_transform;
+    if (t && typeof t === 'object') return t as TextureTransformLike;
+  }
+  return null;
 }
 
 /**
@@ -886,11 +1045,149 @@ const UNBOUNDED_HOST_SCENE_LIMITS: HostSceneLimits = Object.freeze({
   maxIndices: Infinity,
 });
 
+/** GL objects created so far by `buildGpuScene`, released if it throws. */
+interface GpuBuildTrack {
+  meshes: MeshGpu[];
+  mesh: MeshGpu | null;
+  gpuTextures: Array<WebGLTexture | null>;
+  vao: WebGLVertexArrayObject | null;
+  buffers: WebGLBuffer[];
+}
+
+function drawPrim(gl: WebGL2RenderingContext, prim: PrimitiveGpu): void {
+  if (prim.indices) {
+    gl.drawElements(gl.TRIANGLES, prim.indexCount, prim.indexType, 0);
+  } else {
+    gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
+  }
+}
+
+function extractMaterialProps(
+  // tslint:disable-next-line:no-any glTF material JSON.
+  mat: any,
+  gpuTextures: Array<WebGLTexture | null>,
+): Pick<
+  PrimitiveGpu,
+  | 'baseColor'
+  | 'metallic'
+  | 'roughness'
+  | 'clearcoat'
+  | 'clearcoatRoughness'
+  | 'texture'
+  | 'metallicRoughnessTexture'
+  | 'normalTexture'
+  | 'normalScale'
+  | 'occlusionTexture'
+  | 'occlusionStrength'
+  | 'isTransmissive'
+> {
+  const pbr = mat?.pbrMetallicRoughness;
+  const bcf = pbr?.baseColorFactor;
+  const ccExt = mat?.extensions?.KHR_materials_clearcoat;
+  const tex = (info: {index: number} | undefined) =>
+    info !== undefined && gpuTextures[info.index]
+      ? gpuTextures[info.index]
+      : null;
+  return {
+    baseColor: bcf
+      ? [bcf[0], bcf[1], bcf[2], bcf[3] ?? 1.0]
+      : [0.8, 0.8, 0.8, 1.0],
+    metallic: pbr?.metallicFactor ?? 0.1,
+    roughness: pbr?.roughnessFactor ?? 0.5,
+    clearcoat: ccExt ? (ccExt.clearcoatFactor ?? 1.0) : 0.0,
+    clearcoatRoughness: Math.max(0.04, ccExt?.clearcoatRoughnessFactor ?? 0.04),
+    texture: tex(pbr?.baseColorTexture),
+    metallicRoughnessTexture: tex(pbr?.metallicRoughnessTexture),
+    normalTexture: tex(mat?.normalTexture),
+    normalScale: mat?.normalTexture?.scale ?? 1.0,
+    occlusionTexture: tex(mat?.occlusionTexture),
+    occlusionStrength: mat?.occlusionTexture?.strength ?? 1.0,
+    isTransmissive:
+      (mat?.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0) >
+      0,
+  };
+}
+
+/**
+ * Deletes the VAOs, buffers, textures and custom programs owned by `list`
+ * (plus `extraTextures`), deleting each texture once.
+ */
+function deleteMeshListGl(
+  gl: WebGL2RenderingContext,
+  list: MeshGpu[],
+  extraTextures?: Array<WebGLTexture | null>,
+): void {
+  const deletedTextures = new Set<WebGLTexture>();
+  const deleteTex = (tex: WebGLTexture | null | undefined) => {
+    if (tex && !deletedTextures.has(tex)) {
+      deletedTextures.add(tex);
+      gl.deleteTexture(tex);
+    }
+  };
+  for (const mesh of list) {
+    for (const prim of mesh.primitives) {
+      if (prim.vao) {
+        gl.deleteVertexArray(prim.vao);
+      }
+      if (prim.buffers) {
+        for (const buf of prim.buffers) {
+          gl.deleteBuffer(buf);
+        }
+      }
+      deleteTex(prim.texture);
+      deleteTex(prim.metallicRoughnessTexture);
+      deleteTex(prim.normalTexture);
+      deleteTex(prim.occlusionTexture);
+      const programs = new Set<WebGLProgram>();
+      if (prim.customProgram) programs.add(prim.customProgram);
+      for (const entry of prim.programCache?.values() ?? []) {
+        if (entry.program) programs.add(entry.program);
+      }
+      for (const p of programs) gl.deleteProgram(p);
+    }
+  }
+  if (extraTextures) {
+    for (const tex of extraTextures) {
+      deleteTex(tex);
+    }
+  }
+}
+
 function buildGpuScene(
   gl: WebGL2RenderingContext,
   data: GLBData,
   limits: HostSceneLimits = UNBOUNDED_HOST_SCENE_LIMITS,
   onTextureLoad?: () => void,
+): ReturnType<typeof buildGpuSceneUnchecked> {
+  const track: GpuBuildTrack = {
+    meshes: [],
+    mesh: null,
+    gpuTextures: [],
+    vao: null,
+    buffers: [],
+  };
+  try {
+    return buildGpuSceneUnchecked(gl, data, limits, onTextureLoad, track);
+  } catch (e) {
+    // Release everything created before the failure (textures, finished
+    // meshes, and the in-progress mesh / primitive) so a bad GLB can't leak.
+    const list =
+      track.mesh && !track.meshes.includes(track.mesh)
+        ? [...track.meshes, track.mesh]
+        : track.meshes;
+    deleteMeshListGl(gl, list, track.gpuTextures);
+    if (track.vao) gl.deleteVertexArray(track.vao);
+    for (const buf of track.buffers) gl.deleteBuffer(buf);
+    throw e;
+  }
+}
+
+function buildGpuSceneUnchecked(
+  gl: WebGL2RenderingContext,
+  data: GLBData,
+  limits: HostSceneLimits,
+  onTextureLoad: (() => void) | undefined,
+  track: GpuBuildTrack,
 ): {
   meshes: MeshGpu[];
   bounds: {
@@ -917,15 +1214,18 @@ function buildGpuScene(
   }
   const bin = data.bin;
   const meshes: MeshGpu[] = [];
+  track.meshes = meshes;
 
   const availableVariants: string[] = [];
   const rootVarExt = gltf.extensions?.KHR_materials_variants;
   if (rootVarExt && Array.isArray(rootVarExt.variants)) {
-    for (const v of rootVarExt.variants) {
-      if (v && typeof v.name === 'string') {
-        availableVariants.push(v.name);
-      }
-    }
+    // Keep variant indices aligned with mappings: unnamed variants get a
+    // `Variant_<i>` placeholder (matching `extractMaterialVariants`).
+    rootVarExt.variants.forEach((v: {name?: unknown} | null, i: number) => {
+      availableVariants.push(
+        typeof v?.name === 'string' && v.name ? v.name : `Variant_${i}`,
+      );
+    });
   }
 
   // 1. Resolve node world transforms from glTF hierarchy
@@ -995,6 +1295,7 @@ function buildGpuScene(
 
   // Load Textures from glTF
   const gpuTextures: (WebGLTexture | null)[] = [];
+  track.gpuTextures = gpuTextures;
   if (gltf.textures && gltf.images) {
     if (gltf.textures.length > limits.maxTextures) {
       throw new Error(
@@ -1104,6 +1405,7 @@ function buildGpuScene(
       primitives: [],
       extras: item.node.extras || m.extras,
     };
+    track.mesh = meshGpu;
 
     const instExt = item.node?.extensions?.EXT_mesh_gpu_instancing;
     if (
@@ -1135,9 +1437,19 @@ function buildGpuScene(
         );
       }
       if (rawInstCount > 0) {
+        // Reads `rawInstCount` elements honoring componentType, normalized and
+        // byteStride. Returns null (attribute skipped, with a warning) when the
+        // accessor is short, out of bounds, or yields non-finite values.
         const readAccFloats = (
           acc:
-            | {bufferView?: number; byteOffset?: number; type?: string}
+            | {
+                bufferView?: number;
+                byteOffset?: number;
+                componentType?: number;
+                normalized?: boolean;
+                count?: number;
+                type?: string;
+              }
             | null
             | undefined,
           comps: number,
@@ -1149,9 +1461,40 @@ function buildGpuScene(
           ) {
             return null;
           }
-          const bv = gltf.bufferViews[acc.bufferView];
-          const offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-          return readFloat32Array(bin, offset, rawInstCount * comps);
+          const ct = acc.componentType ?? 5126;
+          const skip = (why: string): null => {
+            console.warn(
+              `[three-live] EXT_mesh_gpu_instancing: skipping accessor (${why})`,
+            );
+            return null;
+          };
+          if (
+            ct !== 5120 &&
+            ct !== 5121 &&
+            ct !== 5122 &&
+            ct !== 5123 &&
+            ct !== 5126
+          ) {
+            return skip(`componentType ${ct}`);
+          }
+          if (!(Number(acc.count) >= rawInstCount)) {
+            return skip(`count ${acc.count} < ${rawInstCount}`);
+          }
+          let out: Float32Array | null = null;
+          try {
+            out = readAccessorAsFloat32(
+              gltf,
+              bin,
+              {...acc, count: rawInstCount},
+              comps,
+            );
+          } catch {
+            return skip('out of bounds');
+          }
+          if (!out || !out.every(Number.isFinite)) {
+            return skip('non-finite value');
+          }
+          return out;
         };
         const tData = readAccFloats(tAcc, 3);
         const rData = readAccFloats(rAcc, 4);
@@ -1200,7 +1543,10 @@ function buildGpuScene(
       }
       const buffers: WebGLBuffer[] = [];
       const vao = gl.createVertexArray()!;
+      track.vao = vao;
+      track.buffers = buffers;
       gl.bindVertexArray(vao);
+      const instancedVao = bindInstanceAttributes(gl, meshGpu, buffers);
 
       // 1. POSITION (required)
       const posAcc = gltf.accessors[prim.attributes.POSITION];
@@ -1265,6 +1611,7 @@ function buildGpuScene(
         2,
         2,
         buffers,
+        primitiveTextureTransform(gltf, prim),
       );
 
       // 3. INDICES
@@ -1297,8 +1644,19 @@ function buildGpuScene(
         if (idxAcc.componentType === 5125) {
           idxDataRaw = new Uint32Array(bin, idxOffset, idxAcc.count);
           gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
+        } else if (idxAcc.componentType === 5121) {
+          // UNSIGNED_BYTE indices (valid glTF) are widened to 16-bit.
+          idxDataRaw = Uint16Array.from(
+            new Uint8Array(bin, idxOffset, idxAcc.count),
+          );
+          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
         } else {
-          idxDataRaw = new Uint16Array(bin, idxOffset, idxAcc.count);
+          idxDataRaw =
+            idxOffset % 2 === 0
+              ? new Uint16Array(bin, idxOffset, idxAcc.count)
+              : new Uint16Array(
+                  bin.slice(idxOffset, idxOffset + idxAcc.count * 2),
+                );
           gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
         }
       } else {
@@ -1321,60 +1679,10 @@ function buildGpuScene(
           ? gltf.materials[prim.material]
           : null;
 
-      const spec = renderShaderSpec();
-      let vsSource = VS_RENDER;
-      let fsSource = spec.fs;
-      let hasCustomShader = false;
-      for (const plugin of registeredPlugins) {
-        if (plugin.onResolveShader) {
-          const shaders = plugin.onResolveShader(prim, mat, vsSource, fsSource);
-          if (shaders) {
-            vsSource = shaders.vs;
-            fsSource = shaders.fs;
-            hasCustomShader = true;
-          }
-        }
-      }
-      const customProgram = hasCustomShader
-        ? createProgram(gl, vsSource, fsSource)
-        : null;
-      const customUniforms = customProgram
-        ? getUniforms(gl, customProgram, spec.uniforms)
-        : null;
+      const {program: customProgram, uniforms: customUniforms} =
+        resolvePrimitiveProgram(gl, prim, mat);
 
-      const pbr = mat?.pbrMetallicRoughness;
-      const baseColor: [number, number, number, number] =
-        pbr?.baseColorFactor || [0.8, 0.8, 0.8, 1.0];
-      const metallic = pbr?.metallicFactor ?? 0.1;
-      const roughness = pbr?.roughnessFactor ?? 0.5;
-      const ccExt = mat?.extensions?.KHR_materials_clearcoat;
-      const clearcoat = ccExt ? (ccExt.clearcoatFactor ?? 1.0) : 0.0;
-      const clearcoatRoughness = Math.max(
-        0.04,
-        ccExt?.clearcoatRoughnessFactor ?? 0.04,
-      );
-      const texture =
-        pbr?.baseColorTexture !== undefined &&
-        gpuTextures[pbr.baseColorTexture.index]
-          ? gpuTextures[pbr.baseColorTexture.index]
-          : null;
-      const metallicRoughnessTexture =
-        pbr?.metallicRoughnessTexture !== undefined &&
-        gpuTextures[pbr.metallicRoughnessTexture.index]
-          ? gpuTextures[pbr.metallicRoughnessTexture.index]
-          : null;
-      const normalTexture =
-        mat?.normalTexture !== undefined && gpuTextures[mat.normalTexture.index]
-          ? gpuTextures[mat.normalTexture.index]
-          : null;
-      const normalScale = mat?.normalTexture?.scale ?? 1.0;
-      const occlusionTexture =
-        mat?.occlusionTexture !== undefined &&
-        gpuTextures[mat.occlusionTexture.index]
-          ? gpuTextures[mat.occlusionTexture.index]
-          : null;
-      const occlusionStrength = mat?.occlusionTexture?.strength ?? 1.0;
-
+      const matProps = extractMaterialProps(mat, gpuTextures);
       const isTransmissive = Boolean(
         mat?.extensions?.KHR_materials_transmission ||
           pluginData.materials?.isTransmissive,
@@ -1399,25 +1707,23 @@ function buildGpuScene(
 
       meshGpu.primitives.push({
         vao,
+        instanced: instancedVao,
         indexCount,
         indexType,
-        baseColor,
-        metallic,
-        roughness,
-        clearcoat,
-        clearcoatRoughness,
+        ...matProps,
         positions: posData,
         indices: idxDataRaw,
-        texture,
-        metallicRoughnessTexture,
-        normalTexture,
-        occlusionTexture,
-        normalScale,
-        occlusionStrength,
         buffers,
         materialIndex: prim.material,
         defaultMaterialIndex: prim.material,
         variantMappings,
+        primitiveDef: prim,
+        programCache: new Map([
+          [
+            prim.material ?? -1,
+            {program: customProgram, uniforms: customUniforms},
+          ],
+        ]),
         pluginData,
         customProgram,
         customUniforms,
@@ -1468,6 +1774,22 @@ function buildGpuScene(
 // 4. Arcball Interaction & GPU Color-ID MicroViewer
 // =========================================================================
 
+function getOrbitEye(v: {
+  customTarget: [number, number, number] | null;
+  bounds: {center: [number, number, number]};
+  currDistance: number;
+  currPhi: number;
+  currTheta: number;
+}): [number, number, number] {
+  const c = v.customTarget || v.bounds.center;
+  const cosPhi = v.currDistance * Math.cos(v.currPhi);
+  return [
+    c[0] + cosPhi * Math.sin(v.currTheta),
+    c[1] + v.currDistance * Math.sin(v.currPhi),
+    c[2] + cosPhi * Math.cos(v.currTheta),
+  ];
+}
+
 export class ThreeView {
   public gl: WebGL2RenderingContext;
   public canvas: HTMLCanvasElement;
@@ -1489,6 +1811,8 @@ export class ThreeView {
   public modelRootMatrix = mat4Create();
   private clearColor: [number, number, number, number] = [0, 0, 0, 0];
   private envIntensity = 1.0;
+  /** Linear pre-tone-mapping exposure multiplier (model-viewer `exposure`). */
+  private exposure = 1.0;
   public shadowIntensity = 0.0;
   public shadowSoftness = 0.5;
   private toneMapping: ToneMappingMode = 'neutral';
@@ -1515,6 +1839,8 @@ export class ThreeView {
 
   private projMatrix = mat4Create();
   private viewMatrix = mat4Create();
+  /** View matrix of the pass being rendered (per-eye in XR / stereo). */
+  activeViewMatrix: Float32Array | null = null;
   private modelMatrix = mat4Create();
   private mvpMatrix = mat4Create();
   private normalMatrix = new Float32Array(9);
@@ -1651,7 +1977,7 @@ export class ThreeView {
       );
     }
     if (this.opts.exposure !== undefined) {
-      this.envIntensity = Math.max(0, Number(this.opts.exposure));
+      this.exposure = sanitizeExposure(this.opts.exposure);
     }
     if (this.opts.camera) {
       this.setInitialCamera(
@@ -1674,7 +2000,7 @@ export class ThreeView {
       );
     }
     if (this.opts.toneMapping !== undefined) {
-      this.toneMapping = this.opts.toneMapping;
+      this.toneMapping = normalizeToneMapping(this.opts.toneMapping);
     }
     if (this.opts.autoplay !== undefined) {
       this.autoplay = this.opts.autoplay;
@@ -1719,19 +2045,75 @@ export class ThreeView {
       throw new Error('WebGL2 not supported');
     }
     this.gl = gl;
-    const spec = renderShaderSpec();
-    this.renderProg = createProgram(gl, VS_RENDER, spec.fs);
-    this.pickProg = createProgram(gl, VS_PICK, FS_PICK);
-    this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
-    this.uPick = getUniforms(gl, this.pickProg, ['uMVP', 'uColorId']);
-
-    this.setupPickingFbo();
+    this.initGlState();
     this.setupEvents();
+    this.setupContextLossHandling();
 
     if (this.opts.environmentImage) {
       this.setEnvironmentImage(this.opts.environmentImage).catch(() => {});
     }
 
+    if (
+      typeof requestAnimationFrame !== 'undefined' &&
+      this.opts.autoStart !== false
+    ) {
+      this.start();
+    }
+  }
+
+  /** True between `webglcontextlost` and `webglcontextrestored`. */
+  public contextLost = false;
+  private lastGlbData: GLBData | null = null;
+  private lastLimits: HostSceneLimits | undefined;
+  private boundContextLost: ((e: Event) => void) | null = null;
+  private boundContextRestored: (() => void) | null = null;
+
+  /**
+   * Handles WebGL context loss: stops rendering while lost, then on restore
+   * recompiles the core programs, rebuilds the picking target, and re-uploads
+   * the last model and environment so the viewer recovers without a reload.
+   */
+  private setupContextLossHandling(): void {
+    const c = this.canvas as HTMLCanvasElement;
+    if (typeof c?.addEventListener !== 'function') return;
+    this.boundContextLost = (e: Event) => {
+      e.preventDefault?.();
+      this.contextLost = true;
+      this.stop();
+    };
+    this.boundContextRestored = () => this.restoreContext();
+    c.addEventListener('webglcontextlost', this.boundContextLost);
+    c.addEventListener('webglcontextrestored', this.boundContextRestored);
+  }
+
+  private initGlState(): void {
+    const gl = this.gl;
+    const spec = renderShaderSpec();
+    this.renderProg = createProgram(gl, VS_RENDER, spec.fs);
+    this.pickProg = createProgram(gl, VS_PICK, FS_PICK);
+    this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
+    this.uPick = getUniforms(gl, this.pickProg, ['uMVP', 'uColorId']);
+    this.setupPickingFbo();
+  }
+
+  /** Re-creates GPU state after `webglcontextrestored` (public for tests). */
+  public restoreContext(): void {
+    const gl = this.gl;
+    this.contextLost = false;
+    this.initGlState();
+    for (const plugin of registeredPlugins) {
+      plugin.onContextRestored?.(gl, this);
+    }
+    // Old handles died with the context; drop them without deleting.
+    this.meshes = [];
+    this.gpuTextures = [];
+    this.environmentTexture = null;
+    if (this.lastGlbData) {
+      this.loadGLBData(this.lastGlbData, this.lastLimits);
+    }
+    if (this.opts.environmentImage) {
+      this.setEnvironmentImage(this.opts.environmentImage).catch(() => {});
+    }
     if (
       typeof requestAnimationFrame !== 'undefined' &&
       this.opts.autoStart !== false
@@ -1817,6 +2199,8 @@ export class ThreeView {
    * an untrusted source such as the script sandbox.
    */
   loadGLBData(glbData: GLBData, limits?: HostSceneLimits): void {
+    this.lastGlbData = glbData;
+    this.lastLimits = limits;
     const {
       meshes,
       bounds,
@@ -1837,8 +2221,12 @@ export class ThreeView {
     this.gpuTextures = gpuTextures || [];
     this.availableVariants = availableVariants || [];
     this.gltf = glbData.gltf;
-    if (this.activeVariantName) {
-      this.applyVariantMaterial(this.activeVariantName);
+    if (
+      this.activeVariantName &&
+      !this.applyVariantMaterial(this.activeVariantName)
+    ) {
+      // The new model does not define the previously selected variant.
+      this.activeVariantName = null;
     }
 
     this.initialNodeTransforms = [];
@@ -1873,13 +2261,17 @@ export class ThreeView {
 
     const glbExposure =
       glbData.exposure ??
-      glbData.environmentIntensity ??
       glbData.gltf?.extras?.exposure ??
-      glbData.gltf?.extras?.environmentIntensity ??
-      glbData.gltf?.asset?.extras?.exposure ??
-      glbData.gltf?.asset?.extras?.environmentIntensity;
+      glbData.gltf?.asset?.extras?.exposure;
     if (glbExposure !== undefined) {
-      this.envIntensity = Math.max(0, Number(glbExposure));
+      this.exposure = sanitizeExposure(glbExposure);
+    }
+    const glbEnvIntensity =
+      glbData.environmentIntensity ??
+      glbData.gltf?.extras?.environmentIntensity ??
+      glbData.gltf?.asset?.extras?.environmentIntensity;
+    if (glbEnvIntensity !== undefined) {
+      this.envIntensity = Math.max(0, Number(glbEnvIntensity) || 0);
     }
 
     if (
@@ -2053,12 +2445,17 @@ export class ThreeView {
     gl.uniform1f(u.uEnvIntensity, this.envIntensity);
   }
 
+  /**
+   * Sets the linear exposure applied to all lighting before tone mapping
+   * (model-viewer semantics). Image-based lighting strength comes separately
+   * from the model's `environmentIntensity` extras.
+   */
   public setExposure(exposure: number): void {
-    this.envIntensity = Math.max(0, Number(exposure));
+    this.exposure = sanitizeExposure(exposure);
   }
 
   public getExposure(): number {
-    return this.envIntensity;
+    return this.exposure;
   }
 
   public setShadow(intensity: number, softness?: number): void {
@@ -2077,7 +2474,7 @@ export class ThreeView {
   }
 
   setToneMapping(mode: ToneMappingMode): void {
-    this.toneMapping = mode;
+    this.toneMapping = normalizeToneMapping(mode);
   }
 
   getToneMapping(): ToneMappingMode {
@@ -2278,7 +2675,8 @@ export class ThreeView {
   }
 
   private applyVariantMaterial(name: string | null): boolean {
-    const isReset = name === null || name === '' || name === 'default';
+    // Only null / '' reset; a variant literally named 'default' is selectable.
+    const isReset = name === null || name === '';
     let variantIdx = -1;
     if (!isReset) {
       variantIdx = this.availableVariants.indexOf(name);
@@ -2305,70 +2703,42 @@ export class ThreeView {
             }
           }
         }
-        if (targetMatIdx === undefined || !materials[targetMatIdx]) {
-          prim.materialIndex = undefined;
-          prim.baseColor = [0.8, 0.8, 0.8, 1.0];
-          prim.metallic = 0.1;
-          prim.roughness = 0.5;
-          prim.clearcoat = 0.0;
-          prim.clearcoatRoughness = 0.04;
-          prim.texture = null;
-          prim.metallicRoughnessTexture = null;
-          prim.normalTexture = null;
-          prim.normalScale = 1.0;
-          prim.occlusionTexture = null;
-          prim.occlusionStrength = 1.0;
-          prim.isTransmissive = false;
-          continue;
-        }
-        const mat = materials[targetMatIdx];
-        prim.materialIndex = targetMatIdx;
-        const pbr = mat.pbrMetallicRoughness;
-        prim.baseColor = pbr?.baseColorFactor
-          ? [
-              pbr.baseColorFactor[0],
-              pbr.baseColorFactor[1],
-              pbr.baseColorFactor[2],
-              pbr.baseColorFactor[3] ?? 1.0,
-            ]
-          : [0.8, 0.8, 0.8, 1.0];
-        prim.metallic = pbr?.metallicFactor ?? 0.1;
-        prim.roughness = pbr?.roughnessFactor ?? 0.5;
-        const ccExt = mat.extensions?.KHR_materials_clearcoat;
-        prim.clearcoat = ccExt ? (ccExt.clearcoatFactor ?? 1.0) : 0.0;
-        prim.clearcoatRoughness = Math.max(
-          0.04,
-          ccExt?.clearcoatRoughnessFactor ?? 0.04,
-        );
-        prim.texture =
-          pbr?.baseColorTexture !== undefined &&
-          this.gpuTextures[pbr.baseColorTexture.index]
-            ? this.gpuTextures[pbr.baseColorTexture.index]
-            : null;
-        prim.metallicRoughnessTexture =
-          pbr?.metallicRoughnessTexture !== undefined &&
-          this.gpuTextures[pbr.metallicRoughnessTexture.index]
-            ? this.gpuTextures[pbr.metallicRoughnessTexture.index]
-            : null;
-        prim.normalTexture =
-          mat.normalTexture !== undefined &&
-          this.gpuTextures[mat.normalTexture.index]
-            ? this.gpuTextures[mat.normalTexture.index]
-            : null;
-        prim.normalScale = mat.normalTexture?.scale ?? 1.0;
-        prim.occlusionTexture =
-          mat.occlusionTexture !== undefined &&
-          this.gpuTextures[mat.occlusionTexture.index]
-            ? this.gpuTextures[mat.occlusionTexture.index]
-            : null;
-        prim.occlusionStrength = mat.occlusionTexture?.strength ?? 1.0;
-        prim.isTransmissive = Boolean(
-          mat.extensions?.KHR_materials_transmission ||
-            prim.pluginData?.materials?.isTransmissive,
-        );
+        const mat =
+          targetMatIdx !== undefined ? materials[targetMatIdx] : undefined;
+        prim.materialIndex = mat ? targetMatIdx : undefined;
+        Object.assign(prim, extractMaterialProps(mat, this.gpuTextures));
+        this.applyPrimitiveProgram(prim, prim.materialIndex, mat ?? null);
       }
     }
     return true;
+  }
+
+  /** Switches `prim` to the (cached) program resolved for material `matIdx`. */
+  private applyPrimitiveProgram(
+    prim: PrimitiveGpu,
+    matIdx: number | undefined,
+    // tslint:disable-next-line:no-any glTF material JSON.
+    mat: any,
+  ): void {
+    if (!this.gl || !prim.primitiveDef) return;
+    prim.programCache ??= new Map();
+    const key = matIdx ?? -1;
+    let entry = prim.programCache.get(key);
+    if (!entry) {
+      entry = resolvePrimitiveProgram(
+        this.gl,
+        {...prim.primitiveDef, material: matIdx},
+        mat,
+      );
+      prim.programCache.set(key, entry);
+    }
+    prim.customProgram = entry.program;
+    prim.customUniforms = entry.uniforms;
+    if (prim.pluginData) {
+      prim.pluginData.materials = prim.isTransmissive
+        ? {isTransmissive: true}
+        : undefined;
+    }
   }
 
   public setAutoplay(autoplay: boolean): void {
@@ -2652,15 +3022,7 @@ export class ThreeView {
       ndcZ <= 1.0;
 
     if (visible && normal) {
-      const c = this.customTarget || this.bounds.center;
-      const eyeX =
-        c[0] +
-        this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
-      const eyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
-      const eyeZ =
-        c[2] +
-        this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
-
+      const [eyeX, eyeY, eyeZ] = getOrbitEye(this);
       const eyeToPoint = [wx - eyeX, wy - eyeY, wz - eyeZ];
       const dot = nx * eyeToPoint[0] + ny * eyeToPoint[1] + nz * eyeToPoint[2];
       if (dot > 0.05) {
@@ -2861,6 +3223,14 @@ export class ThreeView {
 
   private teardownEvents(): void {
     const c = this.canvas;
+    if (this.boundContextLost) {
+      c.removeEventListener('webglcontextlost', this.boundContextLost);
+      this.boundContextLost = null;
+    }
+    if (this.boundContextRestored) {
+      c.removeEventListener('webglcontextrestored', this.boundContextRestored);
+      this.boundContextRestored = null;
+    }
     if (this.boundContextMenu) {
       c.removeEventListener('contextmenu', this.boundContextMenu);
       this.boundContextMenu = null;
@@ -2969,16 +3339,7 @@ export class ThreeView {
               );
               mat4Multiply(this.mvpMatrix, vp, instModel);
               gl.uniformMatrix4fv(this.uPick.uMVP, false, this.mvpMatrix);
-              if (prim.indices) {
-                gl.drawElements(
-                  gl.TRIANGLES,
-                  prim.indexCount,
-                  prim.indexType,
-                  0,
-                );
-              } else {
-                gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
-              }
+              drawPrim(gl, prim);
             }
           }
         } else {
@@ -2987,11 +3348,7 @@ export class ThreeView {
 
           for (const prim of mesh.primitives) {
             gl.bindVertexArray(prim.vao);
-            if (prim.indices) {
-              gl.drawElements(gl.TRIANGLES, prim.indexCount, prim.indexType, 0);
-            } else {
-              gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
-            }
+            drawPrim(gl, prim);
           }
         }
       }
@@ -3015,14 +3372,7 @@ export class ThreeView {
     let bestHitPoint: [number, number, number] = [0, 0, 0];
     let bestHitNormal: [number, number, number] = [0, 1, 0];
 
-    const c = this.customTarget || this.bounds.center;
-    const eyeX =
-      c[0] +
-      this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
-    const eyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
-    const eyeZ =
-      c[2] +
-      this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
+    const [eyeX, eyeY, eyeZ] = getOrbitEye(this);
 
     const baseModelMat = mat4Create();
     for (const hitMesh of candidateMeshes) {
@@ -3231,15 +3581,7 @@ export class ThreeView {
     mat4Perspective(this.projMatrix, this.fov, aspect, 0.1, farPlane);
 
     const c = this.customTarget || this.bounds.center;
-    const eyeX =
-      c[0] +
-      this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
-    const eyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
-    const eyeZ =
-      c[2] +
-      this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
-
-    mat4LookAt(this.viewMatrix, [eyeX, eyeY, eyeZ], c, [0, 1, 0]);
+    mat4LookAt(this.viewMatrix, getOrbitEye(this), c, [0, 1, 0]);
     mat4Multiply(this.mvpMatrix, this.projMatrix, this.viewMatrix);
     mat3NormalFromMat4(this.normalMatrix, this.modelMatrix);
   }
@@ -3546,6 +3888,7 @@ export class ThreeView {
     clear?: boolean;
     isAR?: boolean;
   }): void {
+    if (this.contextLost) return;
     if (!xrOverride && this.stereoSBS) {
       const fullW = Math.max(2, this.canvas.width || 2);
       const fullH = Math.max(1, this.canvas.height || 1);
@@ -3556,13 +3899,7 @@ export class ThreeView {
           ? Math.max(this.bounds.radius * 20, 120)
           : Math.max(this.bounds.radius * 20, 10);
       const c = this.customTarget || this.bounds.center;
-      const baseEyeX =
-        c[0] +
-        this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
-      const baseEyeY = c[1] + this.currDistance * Math.sin(this.currPhi);
-      const baseEyeZ =
-        c[2] +
-        this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
+      const [baseEyeX, baseEyeY, baseEyeZ] = getOrbitEye(this);
       const rightVecX = Math.cos(this.currTheta);
       const rightVecZ = -Math.sin(this.currTheta);
       const halfIpd = 0.032;
@@ -3650,32 +3987,15 @@ export class ThreeView {
 
     const vp = mat4Create();
     const activeView = xrOverride?.viewMatrix ?? this.viewMatrix;
+    this.activeViewMatrix = activeView;
     mat4Multiply(vp, xrOverride?.projMatrix ?? this.projMatrix, activeView);
     const xrDepth = getSharedRegistry().xrDepthShader;
 
-    const toneMode =
-      this.toneMapping === 'reinhard'
-        ? 1
-        : this.toneMapping === 'none'
-          ? 2
-          : this.toneMapping === 'aces'
-            ? 3
-            : this.toneMapping === 'agx'
-              ? 4
-              : 0;
+    const toneMode = toneMappingShaderIndex(this.toneMapping);
 
-    const c = this.customTarget || this.bounds.center;
-    const eyeX = xrOverride
-      ? xrOverride.eyePos[0]
-      : c[0] +
-        this.currDistance * Math.cos(this.currPhi) * Math.sin(this.currTheta);
-    const eyeY = xrOverride
-      ? xrOverride.eyePos[1]
-      : c[1] + this.currDistance * Math.sin(this.currPhi);
-    const eyeZ = xrOverride
-      ? xrOverride.eyePos[2]
-      : c[2] +
-        this.currDistance * Math.cos(this.currPhi) * Math.cos(this.currTheta);
+    const [eyeX, eyeY, eyeZ] = xrOverride
+      ? xrOverride.eyePos
+      : getOrbitEye(this);
 
     for (const plugin of registeredPlugins) {
       (plugin as any).onBeforeDrawScene?.(
@@ -3741,6 +4061,7 @@ export class ThreeView {
 
           gl.uniform1i(u.uToneMapping, toneMode);
           gl.uniform1f(u.uEnvIntensity, this.envIntensity);
+          if (u.uExposure) gl.uniform1f(u.uExposure, this.exposure);
           gl.uniform3f(u.uCameraPos, eyeX, eyeY, eyeZ);
           gl.uniform1f(u.uEmissive, isSelected ? 1.0 : 0.0);
           gl.uniformMatrix4fv(u.uMVP, false, this.mvpMatrix);
@@ -3839,7 +4160,35 @@ export class ThreeView {
 
           gl.bindVertexArray(prim.vao);
           const instMats = mesh.instanceMatrices;
-          if (instMats && instMats.length >= 16) {
+          if (
+            instMats &&
+            instMats.length >= 16 &&
+            prim.instanced &&
+            u.uInstanced &&
+            u.uViewProj
+          ) {
+            // EXT_mesh_gpu_instancing: one instanced draw per primitive.
+            const instCount = instMats.length >> 4;
+            gl.uniform1i(u.uInstanced, 1);
+            gl.uniformMatrix4fv(u.uViewProj, false, vp);
+            if (prim.indices) {
+              gl.drawElementsInstanced(
+                gl.TRIANGLES,
+                prim.indexCount,
+                prim.indexType,
+                0,
+                instCount,
+              );
+            } else {
+              gl.drawArraysInstanced(
+                gl.TRIANGLES,
+                0,
+                prim.indexCount,
+                instCount,
+              );
+            }
+            gl.uniform1i(u.uInstanced, 0);
+          } else if (instMats && instMats.length >= 16) {
             const instCount = instMats.length >> 4;
             const instColors = mesh.instanceColors;
             const instModel = mat4Create();
@@ -3868,21 +4217,10 @@ export class ThreeView {
                 tintedColor[3] = prim.baseColor[3];
                 gl.uniform4fv(u.uBaseColor, tintedColor);
               }
-              if (prim.indices) {
-                gl.drawElements(
-                  gl.TRIANGLES,
-                  prim.indexCount,
-                  prim.indexType,
-                  0,
-                );
-              } else {
-                gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
-              }
+              drawPrim(gl, prim);
             }
-          } else if (prim.indices) {
-            gl.drawElements(gl.TRIANGLES, prim.indexCount, prim.indexType, 0);
           } else {
-            gl.drawArrays(gl.TRIANGLES, 0, prim.indexCount);
+            drawPrim(gl, prim);
           }
         }
       }
@@ -3905,38 +4243,7 @@ export class ThreeView {
     list: MeshGpu[],
     extraTextures?: Array<WebGLTexture | null>,
   ): void {
-    const gl = this.gl;
-    const deletedTextures = new Set<WebGLTexture>();
-    const deleteTex = (tex: WebGLTexture | null | undefined) => {
-      if (tex && !deletedTextures.has(tex)) {
-        deletedTextures.add(tex);
-        gl.deleteTexture(tex);
-      }
-    };
-    for (const mesh of list) {
-      for (const prim of mesh.primitives) {
-        if (prim.vao) {
-          gl.deleteVertexArray(prim.vao);
-        }
-        if (prim.buffers) {
-          for (const buf of prim.buffers) {
-            gl.deleteBuffer(buf);
-          }
-        }
-        deleteTex(prim.texture);
-        deleteTex(prim.metallicRoughnessTexture);
-        deleteTex(prim.normalTexture);
-        deleteTex(prim.occlusionTexture);
-        if (prim.customProgram) {
-          gl.deleteProgram(prim.customProgram);
-        }
-      }
-    }
-    if (extraTextures) {
-      for (const tex of extraTextures) {
-        deleteTex(tex);
-      }
-    }
+    deleteMeshListGl(this.gl, list, extraTextures);
   }
 
   private disposeMeshGpuResources(): void {

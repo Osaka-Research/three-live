@@ -49,10 +49,13 @@ constructor(
   val maxSplats: Int =
     if (renderer.supportsGpuSplats) SplatParser.DEFAULT_MAX_GPU_SPLATS
     else SplatParser.DEFAULT_MAX_CPU_SPLATS,
-  /** Custom loader for tests; defaults to [SplatParser.loadUrl]. */
+  /**
+   * Custom loader for tests; defaults to [SplatParser.loadUrl] (skipping SH decode on the GPU
+   * billboard path, which never evaluates SH).
+   */
   private val splatLoader: (url: String, baseUrl: String?, allowCrossOrigin: Boolean) -> SplatData =
     { u, b, a ->
-      SplatParser.loadUrl(u, b, a)
+      SplatParser.loadUrl(u, b, a, decodeSh = !renderer.supportsGpuSplats)
     },
   /** Background executor for splat downloads and depth sorting. */
   private val backgroundExecutor: Executor? = null,

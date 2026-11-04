@@ -13,13 +13,21 @@
 // limitations under the License.
 
 import {registerPlugin} from '../src/plugin';
-import {cadPlugin} from '../src/plugins/cad';
+import {
+  cadPlugin,
+  installCadExtension,
+  MAX_BSP_DEPTH,
+  MAX_SHAPE_POINTS,
+  MAX_TEXT_GEOMETRY_CHARS,
+} from '../src/plugins/cad';
 import {
   applyMeshoptFilter,
   decodeMeshoptBuffer,
   decodeMeshoptGLB,
   encodeMeshoptBuffer,
   MAX_MESHOPT_COUNT,
+  meshoptDecoder,
+  type MeshoptFilter,
 } from '../src/plugins/meshopt';
 import {
   extractMaterialVariants,
@@ -378,6 +386,85 @@ function runThreeAuthorTests() {
         fakeGltf.bufferViews[0]._decoded[5] === attrOrig[5],
       'decodeMeshoptGLB populates bufferView._decoded in-place',
     );
+
+    // QUATERNION: out[(qc+1)&3]=x, out[(qc+2)&3]=y, out[(qc+3)&3]=z, out[qc]=w.
+    for (let qc = 0; qc < 3; qc++) {
+      const qBuf = new Uint8Array(8);
+      const qView = new Int16Array(qBuf.buffer);
+      qView.set([16384, 0, -16384, 0x7ffc | qc]);
+      applyMeshoptFilter(qBuf, 1, 8, 'QUATERNION');
+      assert(
+        Math.abs(qView[(qc + 1) & 3] - 11585) <= 2 &&
+          Math.abs(qView[(qc + 2) & 3]) <= 2 &&
+          Math.abs(qView[(qc + 3) & 3] + 11585) <= 2 &&
+          Math.abs(qView[qc] - 28378) <= 2,
+        `meshopt QUATERNION maxComp=${qc} writes components in spec order (${Array.from(qView)})`,
+      );
+    }
+
+    const throwsErr = (fn: () => unknown) => {
+      try {
+        fn();
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    assert(
+      throwsErr(() =>
+        applyMeshoptFilter(
+          new Uint8Array(8),
+          1,
+          8,
+          'FOO' as unknown as MeshoptFilter,
+        ),
+      ) &&
+        throwsErr(() =>
+          decodeMeshoptBuffer(
+            attrCompressed,
+            attrCount,
+            attrStride,
+            'ATTRIBUTES',
+            'FOO' as unknown as MeshoptFilter,
+          ),
+        ),
+      'meshopt rejects an unknown filter value',
+    );
+    assert(
+      throwsErr(() =>
+        decodeMeshoptBuffer(new Uint8Array(16), 4, 4, 'ATTRIBUTES'),
+      ) &&
+        throwsErr(() =>
+          decodeMeshoptBuffer(new Uint8Array(12), 6, 2, 'INDICES'),
+        ),
+      'meshopt rejects raw-sized streams with a wrong header instead of copying them',
+    );
+
+    // decodePrimitive must not repoint bufferViews past the caller's bin.
+    const primGltf = {
+      bufferViews: [
+        {
+          byteLength: attrOrig.byteLength,
+          extensions: {
+            EXT_meshopt_compression: {
+              buffer: 0,
+              byteOffset: 0,
+              byteLength: attrCompressed.byteLength,
+              byteStride: attrStride,
+              count: attrCount,
+              mode: 'ATTRIBUTES',
+            },
+          },
+        } as {byteOffset?: number; byteLength: number},
+      ],
+    };
+    const primBin = attrCompressed.slice().buffer;
+    meshoptDecoder.decodePrimitive(primGltf, {}, primBin);
+    assert(
+      primGltf.bufferViews[0].byteOffset === undefined &&
+        primGltf.bufferViews[0].byteLength === attrOrig.byteLength,
+      'meshoptDecoder.decodePrimitive does not repoint bufferViews past the caller bin',
+    );
   }
 
   // 9. KHR_materials_variants (Product Configurator) & GPU Instancing (EXT_mesh_gpu_instancing)
@@ -647,12 +734,609 @@ function runThreeAuthorTests() {
       ),
       'CSG.subtract on 36-segment beveled ExtrudeGeometry clips all cutter caps above top surface',
     );
+
+    runCadRegressionTests(cubeA, cubeB, subMesh, unionMesh, interMesh, plate);
   }
 
   console.log(
     `\n🏆 three-author Test Results: ${passed} Passed, ${failed} Failed.`,
   );
   if (failed > 0) process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// CAD / CSG / Text geometry helpers and regression tests (audit F1-F10).
+// ---------------------------------------------------------------------------
+
+/** Minimal structural view of a BufferGeometry used by the CAD helpers. */
+interface TestGeometry {
+  index: {array: ArrayLike<number>; count: number} | null;
+  attributes: {
+    [name: string]: {
+      count: number;
+      array: ArrayLike<number>;
+      getX(i: number): number;
+      getY(i: number): number;
+      getZ(i: number): number;
+    };
+  };
+}
+
+/** Iterates indexed (or non-indexed) triangles as [i0, i1, i2] vertex ids. */
+function forEachTri(
+  geo: TestGeometry,
+  fn: (a: number, b: number, c: number) => void,
+) {
+  const idx = geo.index ? geo.index.array : null;
+  const n = idx ? idx.length : geo.attributes.position.count;
+  for (let t = 0; t + 2 < n; t += 3) {
+    if (idx) fn(idx[t], idx[t + 1], idx[t + 2]);
+    else fn(t, t + 1, t + 2);
+  }
+}
+
+function vtx(geo: TestGeometry, i: number, name = 'position'): number[] {
+  const a = geo.attributes[name];
+  return [a.getX(i), a.getY(i), a.getZ(i)];
+}
+
+function sub3(a: number[], b: number[]): number[] {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function cross3(a: number[], b: number[]): number[] {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function dot3(a: number[], b: number[]): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+/**
+ * Generic normals-vs-winding check: every non-degenerate triangle's
+ * geometric normal must agree with the stored normal of each of its vertices.
+ * Returns the number of offending triangles.
+ */
+function countNormalWindingMismatches(geo: TestGeometry): number {
+  let bad = 0;
+  forEachTri(geo, (a, b, c) => {
+    const p0 = vtx(geo, a);
+    const fn = cross3(sub3(vtx(geo, b), p0), sub3(vtx(geo, c), p0));
+    const len = Math.hypot(fn[0], fn[1], fn[2]);
+    if (len < 1e-10) return;
+    for (const v of [a, b, c]) {
+      if (dot3(fn, vtx(geo, v, 'normal')) <= 0) {
+        bad++;
+        return;
+      }
+    }
+  });
+  return bad;
+}
+
+/** Sum of signed XY triangle areas, plus the most negative single triangle. */
+function xyAreaStats(geo: TestGeometry): {sum: number; minTri: number} {
+  let sum = 0;
+  let minTri = Infinity;
+  forEachTri(geo, (a, b, c) => {
+    const p0 = vtx(geo, a);
+    const p1 = vtx(geo, b);
+    const p2 = vtx(geo, c);
+    const ar =
+      0.5 *
+      ((p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]));
+    sum += ar;
+    minTri = Math.min(minTri, ar);
+  });
+  return {sum, minTri};
+}
+
+function polyArea(pts: Array<{x: number; y: number}>): number {
+  let a = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+  }
+  return Math.abs(a) * 0.5;
+}
+
+/** Enclosed volume via the divergence theorem (sum of signed tetrahedra). */
+function meshVolume(geo: TestGeometry): number {
+  let vol = 0;
+  forEachTri(geo, (a, b, c) => {
+    vol += dot3(vtx(geo, a), cross3(vtx(geo, b), vtx(geo, c))) / 6;
+  });
+  return vol;
+}
+
+function surfaceArea(geo: TestGeometry): number {
+  let area = 0;
+  forEachTri(geo, (a, b, c) => {
+    const p0 = vtx(geo, a);
+    const n = cross3(sub3(vtx(geo, b), p0), sub3(vtx(geo, c), p0));
+    area += 0.5 * Math.hypot(n[0], n[1], n[2]);
+  });
+  return area;
+}
+
+function allFinite(geo: TestGeometry): boolean {
+  const arr = geo.attributes.position.array;
+  for (let i = 0; i < arr.length; i++) {
+    if (!Number.isFinite(arr[i])) return false;
+  }
+  return arr.length > 0;
+}
+
+/** Asserts a ShapeGeometry covers exactly `expected` area with no flipped tris. */
+function assertShapeArea(
+  geo: TestGeometry,
+  expected: number,
+  testName: string,
+) {
+  const {sum, minTri} = xyAreaStats(geo);
+  assert(
+    Math.abs(sum - expected) < 1e-6 * Math.max(1, expected) &&
+      minTri >= -1e-9 * Math.max(1, expected),
+    `${testName} (area ${sum.toFixed(6)} vs ${expected.toFixed(6)}, min tri ${minTri})`,
+  );
+}
+
+function runCadRegressionTests(
+  cubeA: Mesh,
+  cubeB: Mesh,
+  subMesh: Mesh,
+  unionMesh: Mesh,
+  interMesh: Mesh,
+  plate: Mesh,
+) {
+  // F1: convex operand with ~1100 planes must give a correct boolean.
+  {
+    const r = CSG.subtract(
+      new Mesh(new BoxGeometry(1, 1, 1)),
+      new Mesh(new SphereGeometry(0.7, 48, 24)),
+    );
+    let inside = 0;
+    forEachTri(r.geometry, (a, b, c) => {
+      const p0 = vtx(r.geometry, a);
+      const p1 = vtx(r.geometry, b);
+      const p2 = vtx(r.geometry, c);
+      const cen = [0, 1, 2].map((k) => (p0[k] + p1[k] + p2[k]) / 3);
+      if (Math.hypot(cen[0], cen[1], cen[2]) < 0.69) inside++;
+    });
+    assert(
+      r.geometry.index.count > 0 && inside === 0,
+      `F1: CSG.subtract(box, SphereGeometry(0.7,48,24)) leaves no box faces inside the sphere (${inside} inside)`,
+    );
+
+    let depthError = '';
+    try {
+      CSG.subtract(
+        new Mesh(new BoxGeometry(1, 1, 1)),
+        new Mesh(new SphereGeometry(0.7, 90, 44)),
+      );
+    } catch (e) {
+      depthError = String(e);
+    }
+    assert(
+      MAX_BSP_DEPTH >= 2048 &&
+        /RangeError: SecurityError: CSG BSP/.test(depthError),
+      'F1: CSG beyond MAX_BSP_DEPTH throws a clear RangeError instead of returning wrong geometry',
+    );
+  }
+
+  // F2: hole bridges must not cross other holes / depend on units.
+  {
+    const notch = new Shape();
+    notch.moveTo(0, 0);
+    for (const [x, y] of [
+      [10, 0],
+      [10, 4.9],
+      [6, 5],
+      [10, 5.1],
+      [10, 10],
+      [0, 10],
+    ]) {
+      notch.lineTo(x, y);
+    }
+    notch.closePath();
+    const slit = new Path();
+    slit.moveTo(5, 1);
+    slit.lineTo(5.1, 1);
+    slit.lineTo(5.1, 9);
+    slit.lineTo(5, 9);
+    slit.closePath();
+    const square = new Path();
+    square.moveTo(3, 4.5);
+    square.lineTo(4, 4.5);
+    square.lineTo(4, 5.5);
+    square.lineTo(3, 5.5);
+    square.closePath();
+    notch.holes.push(slit, square);
+    assertShapeArea(
+      new ShapeGeometry(notch),
+      97.8,
+      'F2: notch + slit + square holes conserve area (bridge does not cross slit)',
+    );
+
+    const disc = new Shape();
+    disc.absarc(0, 0, 3000, 0, Math.PI * 2, false);
+    const mmHole = new Path();
+    mmHole.moveTo(-2500, -50);
+    mmHole.lineTo(-2400, -50);
+    mmHole.lineTo(-2400, 50);
+    mmHole.lineTo(-2500, 50);
+    mmHole.closePath();
+    disc.holes.push(mmHole);
+    const discPts = disc.extractPoints(24);
+    assertShapeArea(
+      new ShapeGeometry(disc, 24),
+      polyArea(discPts.shape) - polyArea(discPts.holes[0]),
+      'F2: mm-scale r=3000 disc with off-center hole conserves area',
+    );
+
+    const bracket = new Shape();
+    bracket.moveTo(-1, -1);
+    bracket.lineTo(1, -1);
+    bracket.lineTo(1, 1);
+    bracket.quadraticCurveTo(0, 1.3, -1, 1);
+    bracket.closePath();
+    const bolt = new Path();
+    bolt.absarc(0, 0, 0.35, 0, Math.PI * 2, false);
+    bracket.holes.push(bolt);
+    const bracketPts = bracket.extractPoints(8);
+    assertShapeArea(
+      new ShapeGeometry(bracket, 8),
+      polyArea(bracketPts.shape) - polyArea(bracketPts.holes[0]),
+      'F2: bracket with bolt hole conserves area',
+    );
+  }
+
+  // F3: degenerate contours (collinear runs) still triangulate to the exact area.
+  {
+    const comb = new Shape();
+    comb.moveTo(0, 0);
+    for (let i = 1; i <= 8; i++) comb.lineTo(i, 0);
+    comb.lineTo(8, 1);
+    for (let i = 7; i >= 0; i--) {
+      comb.lineTo(i + 0.5, i % 2 === 0 ? 2 : 1);
+      comb.lineTo(i, 1);
+    }
+    comb.closePath();
+    assertShapeArea(
+      new ShapeGeometry(comb),
+      polyArea(comb.getPoints()),
+      'F3: comb contour with collinear vertices conserves area',
+    );
+
+    // Degenerate / self-touching contours reach the forced-clip fallback. The
+    // vertex whose triangle is emitted must be the one removed, so a clipped
+    // ear tip never shows up in a later triangle.
+    let reused = 0;
+    for (const pts of [
+      [
+        [4, 1],
+        [0, 1],
+        [2, 1],
+        [4, 2],
+        [3, 4],
+      ],
+      [
+        [1, 4],
+        [2, 4],
+        [3, 3],
+        [2, 2],
+        [3, 4],
+        [1, 3],
+        [1, 2],
+      ],
+      [
+        [3, 3],
+        [4, 1],
+        [1, 3],
+        [3, 0],
+        [3, 2],
+        [4, 4],
+      ],
+    ]) {
+      const s = new Shape();
+      s.moveTo(pts[0][0], pts[0][1]);
+      for (const [x, y] of pts.slice(1)) s.lineTo(x, y);
+      s.closePath();
+      const idx = Array.from(new ShapeGeometry(s).index.array as number[]);
+      const clipped = new Set<number>();
+      for (let t = 0; t < idx.length; t += 3) {
+        if (idx.slice(t, t + 3).some((v) => clipped.has(v))) reused++;
+        clipped.add(idx[t + 1]);
+      }
+    }
+    assert(
+      reused === 0,
+      `F3: fallback clip removes the emitted ear tip (${reused} reused)`,
+    );
+  }
+
+  // F4: normals agree with triangle winding across Text/Extrude/Shape/CSG.
+  {
+    const sq = new Shape();
+    sq.moveTo(-1, -1);
+    sq.lineTo(1, -1);
+    sq.lineTo(1, 1);
+    sq.lineTo(-1, 1);
+    sq.closePath();
+    const holed = new Shape();
+    holed.absarc(0, 0, 1, 0, Math.PI * 2, false);
+    const bore = new Path();
+    bore.absarc(0, 0, 0.4, 0, Math.PI * 2, true);
+    holed.holes.push(bore);
+    const cases: Array<[string, TestGeometry]> = [
+      ['TextGeometry("HI1")', new TextGeometry('HI1')],
+      ['ExtrudeGeometry(square)', new ExtrudeGeometry(sq, {depth: 0.5})],
+      [
+        'ExtrudeGeometry(holed, bevel)',
+        new ExtrudeGeometry(holed, {depth: 0.3, bevelEnabled: true}),
+      ],
+      ['ShapeGeometry(holed)', new ShapeGeometry(holed)],
+      ['CSG.subtract', subMesh.geometry],
+      ['CSG.union', unionMesh.geometry],
+      ['CSG.intersect', interMesh.geometry],
+    ];
+    for (const [name, geo] of cases) {
+      const bad = countNormalWindingMismatches(geo);
+      assert(bad === 0, `F4: ${name} normals agree with winding (${bad} bad)`);
+    }
+  }
+
+  // F5: shape point cap and linear-ish ear scan.
+  {
+    const huge = new Shape();
+    huge.moveTo(0, 0);
+    for (let i = 1; i <= 5000; i++) {
+      const a = (i / 5000) * Math.PI * 2;
+      huge.lineTo(Math.cos(a), Math.sin(a));
+    }
+    let capMsg = '';
+    try {
+      assert(new ShapeGeometry(huge) === null, 'unreachable: cap not enforced');
+    } catch (e) {
+      capMsg = String(e);
+    }
+    assert(
+      MAX_SHAPE_POINTS === 4096 &&
+        capMsg.includes('RangeError') &&
+        capMsg.includes('MAX_SHAPE_POINTS'),
+      'F5: Shape with 5000 points throws RangeError mentioning MAX_SHAPE_POINTS',
+    );
+
+    const star = new Shape();
+    const starN = 2000;
+    for (let i = 0; i < starN; i++) {
+      const a = (i / starN) * Math.PI * 2;
+      const r = i % 2 === 0 ? 1 : 0.6;
+      if (i === 0) star.moveTo(r * Math.cos(a), r * Math.sin(a));
+      else star.lineTo(r * Math.cos(a), r * Math.sin(a));
+    }
+    star.closePath();
+    const t0 = Date.now();
+    const starGeo = new ShapeGeometry(star);
+    const ms = Date.now() - t0;
+    assert(ms < 500, `F5: 2000-point star triangulates in < 500 ms (${ms} ms)`);
+    assertShapeArea(
+      starGeo,
+      polyArea(star.getPoints()),
+      'F5: 2000-point star conserves area',
+    );
+  }
+
+  // F6: non-finite numeric options fall back to defaults.
+  {
+    // Deliberately non-numeric option values, as untrusted author scripts
+    // could pass.
+    const bad = (v: string) => v as unknown as number;
+    const t = new TextGeometry('A', {size: NaN, depth: bad('x')});
+    const sq = new Shape();
+    sq.moveTo(0, 0);
+    sq.lineTo(1, 0);
+    sq.lineTo(1, 1);
+    sq.lineTo(0, 1);
+    sq.closePath();
+    const e = new ExtrudeGeometry(sq, {
+      steps: bad('x'),
+      depth: Infinity,
+      bevelEnabled: true,
+      bevelThickness: NaN,
+      bevelSize: bad('big'),
+      bevelOffset: NaN,
+      bevelSegments: NaN,
+    });
+    // caps (2 x 4) + >= 1 layer of 4 quads for each of the side layers
+    assert(
+      allFinite(t) && allFinite(e) && e.attributes.position.count >= 8 + 4 * 4,
+      'F6: NaN / non-numeric Text and Extrude options produce finite geometry with side walls',
+    );
+  }
+
+  // F7: CSG keeps smooth vertex normals and uses the normal matrix.
+  {
+    const cutter = new Mesh(new BoxGeometry(0.3, 0.3, 0.3));
+    cutter.position.set(0, 1, 0);
+    const r = CSG.subtract(new Mesh(new SphereGeometry(1, 24, 12)), cutter);
+    let checked = 0;
+    let bad = 0;
+    for (let i = 0; i < r.geometry.attributes.position.count; i++) {
+      const p = vtx(r.geometry, i);
+      const len = Math.hypot(p[0], p[1], p[2]);
+      if (Math.abs(len - 1) > 1e-3 || p[1] > 0.7) continue;
+      checked++;
+      if (dot3(vtx(r.geometry, i, 'normal'), p) / len < 0.99) bad++;
+    }
+    assert(
+      checked > 50 && bad === 0,
+      `F7: CSG output keeps smooth sphere vertex normals (${bad}/${checked} bad)`,
+    );
+
+    // Non-uniform scale: normals must follow the inverse transpose.
+    const ell = new Mesh(new SphereGeometry(1, 16, 8));
+    ell.scale.set(2, 0.5, 1);
+    ell.position.set(5, 0, 0);
+    const u = CSG.union(new Mesh(new BoxGeometry(0.2, 0.2, 0.2)), ell);
+    let ellChecked = 0;
+    let ellBad = 0;
+    for (let i = 0; i < u.geometry.attributes.position.count; i++) {
+      const p = vtx(u.geometry, i);
+      if (p[0] < 2) continue;
+      // Only original surface vertices (BSP split vertices lie on chords).
+      const q = ((p[0] - 5) / 2) ** 2 + (p[1] / 0.5) ** 2 + p[2] ** 2;
+      if (Math.abs(q - 1) > 1e-4) continue;
+      const g = [(p[0] - 5) / 4, p[1] / 0.25, p[2]];
+      const gl = Math.hypot(g[0], g[1], g[2]);
+      if (gl < 1e-6) continue;
+      ellChecked++;
+      if (dot3(vtx(u.geometry, i, 'normal'), g) / gl < 0.99) ellBad++;
+    }
+    assert(
+      ellChecked > 50 && ellBad === 0,
+      `F7: CSG transforms normals by the normal matrix under non-uniform scale (${ellBad}/${ellChecked} bad)`,
+    );
+  }
+
+  // F8: tiny models keep all split fragments (no cracks).
+  {
+    const s = 1e-3;
+    const a = new Mesh(new BoxGeometry(s, s, s));
+    const b = new Mesh(new BoxGeometry(0.6 * s, 0.6 * s, 1.4 * s));
+    b.position.set(0.1 * s, 0.1 * s, 0);
+    const small = CSG.subtract(a, b);
+    const ratio =
+      surfaceArea(small.geometry) / (surfaceArea(subMesh.geometry) * s * s);
+    assert(
+      Math.abs(ratio - 1) < 0.01,
+      `F8: subtract at 1e-3 scale keeps surface area (ratio ${ratio.toFixed(4)})`,
+    );
+
+    // Curved operand: small split slivers used to be dropped when their first
+    // three vertices were nearly collinear, losing area at small scales.
+    const sphereCut = (sc: number): number => {
+      const cutter = new Mesh(new BoxGeometry(1.2 * sc, 0.37 * sc, 0.53 * sc));
+      cutter.position.set(0.31 * sc, 0.13 * sc, 0.07 * sc);
+      cutter.rotation.set(0.3, 0.2, 0.1);
+      const res = CSG.subtract(
+        new Mesh(new SphereGeometry(sc, 32, 16)),
+        cutter,
+      );
+      return surfaceArea(res.geometry) / (sc * sc);
+    };
+    const sphereRatio = sphereCut(0.002) / sphereCut(1);
+    assert(
+      Math.abs(sphereRatio - 1) < 2e-6,
+      `F8: sphere subtract at 2e-3 scale keeps all split fragments (ratio ${sphereRatio.toFixed(8)})`,
+    );
+  }
+
+  // F9: CR / tab handling and no per-update rebuild of empty sliced text.
+  {
+    const crlf = new TextGeometry('A\r\nB');
+    const lf = new TextGeometry('A\nB');
+    assert(
+      crlf.attributes.position.count === lf.attributes.position.count,
+      'F9: TextGeometry skips \\r (A\\r\\nB has the same vertices as A\\nB)',
+    );
+    const tab = new TextGeometry('A\tB', {center: false});
+    const spc = new TextGeometry('A B', {center: false});
+    assert(
+      tab.attributes.position.count === spc.attributes.position.count &&
+        tab.boundingBox.max.x > spc.boundingBox.max.x,
+      'F9: tab renders no glyph and advances further than a space',
+    );
+    const ws = new Mesh();
+    ws.userData.xr = {text: ' '.repeat(200) + 'X'};
+    ws.updateMatrixWorld();
+    const g1 = ws.geometry;
+    ws.updateMatrixWorld();
+    assert(
+      g1 === ws.geometry,
+      'F9: whitespace-only sliced text is not rebuilt on every updateMatrixWorld',
+    );
+  }
+
+  // F10 + coverage: declarative csg subtracts; over-limit op is skipped, not fatal.
+  {
+    assert(
+      plate.geometry.attributes.position.count > 24,
+      'Declarative userData.csg actually subtracted the punch (plate has > 24 vertices)',
+    );
+    const plate2 = new Mesh(new BoxGeometry(1, 1, 0.2));
+    plate2.userData.csg = {target: new Mesh(new SphereGeometry(1, 128, 64))};
+    const sc = new Scene();
+    sc.add(plate2);
+    const origWarn = console.warn;
+    let warned = false;
+    console.warn = () => {
+      warned = true;
+    };
+    let glb2: Uint8Array | null = null;
+    try {
+      glb2 = sc.toGLB();
+    } finally {
+      console.warn = origWarn;
+    }
+    assert(
+      glb2 instanceof Uint8Array &&
+        glb2.byteLength > 100 &&
+        warned &&
+        plate2.geometry.attributes.position.count === 24,
+      'F10: over-limit userData.csg is skipped with a warning and toGLB still succeeds',
+    );
+  }
+
+  // Coverage: CSG volumes obey inclusion-exclusion (divergence theorem).
+  {
+    const vA = meshVolume(cubeA.geometry);
+    const vB = 0.6 * 0.6 * 1.4;
+    const vSub = meshVolume(subMesh.geometry);
+    const vUni = meshVolume(unionMesh.geometry);
+    const vInt = meshVolume(interMesh.geometry);
+    assert(
+      Math.abs(vA - 1) < 1e-6 &&
+        Math.abs(vSub - 0.64) < 1e-4 &&
+        Math.abs(vInt - 0.36) < 1e-4 &&
+        Math.abs(vA + vB - (vUni + vInt)) < 1e-4,
+      `CSG volumes: subtract 0.64 (${vSub.toFixed(5)}), intersect 0.36 (${vInt.toFixed(5)}), V(A)+V(B)=V(A∪B)+V(A∩B) (${(vUni + vInt).toFixed(5)})`,
+    );
+    assert(cubeB.position.x === 0.1, 'CSG operands are not mutated');
+  }
+
+  // Coverage: text longer than MAX_TEXT_GEOMETRY_CHARS is truncated.
+  {
+    const long = 'AB'.repeat(100);
+    assert(
+      new TextGeometry(long).attributes.position.count ===
+        new TextGeometry(long.slice(0, MAX_TEXT_GEOMETRY_CHARS)).attributes
+          .position.count,
+      'TextGeometry truncates text to MAX_TEXT_GEOMETRY_CHARS',
+    );
+  }
+
+  // Coverage: the installer survives Function.prototype.toString round-trip
+  // (it is stringified into the Worker sandbox).
+  {
+    const fresh = new Function('return ' + installCadExtension.toString())()(
+      THREE,
+      {},
+    );
+    const sq = new fresh.Shape();
+    sq.moveTo(0, 0);
+    sq.lineTo(1, 0);
+    sq.lineTo(0, 1);
+    sq.closePath();
+    assert(
+      new fresh.ShapeGeometry(sq).index.count === 3 &&
+        typeof fresh.CSG.subtract === 'function',
+      'installCadExtension is self-contained (toString round-trip works)',
+    );
+  }
 }
 
 runThreeAuthorTests();

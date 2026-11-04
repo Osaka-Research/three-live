@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {
+  HOST_BLOOM_DEFAULT_RADIUS,
+  HOST_BLOOM_DEFAULT_THRESHOLD,
+} from '../src/constants';
 import {environmentMapPlugin} from '../src/plugins/envmap';
 import {hotspotPlugin} from '../src/plugins/hotspots';
 import {authorScriptRunner} from '../src/three-author';
@@ -348,6 +352,53 @@ async function runElementTests() {
     instance.toneMapping === 'neutral',
     'toneMapping getter reads attribute',
   );
+
+  {
+    // tone-mapping is normalized, and removing it restores neutral.
+    let viewerMode = 'unset';
+    const withViewer = instance as unknown as {viewer: unknown};
+    const prevViewer = withViewer.viewer;
+    withViewer.viewer = {
+      setToneMapping: (m: string) => {
+        viewerMode = m;
+      },
+    };
+    instance.setAttribute('tone-mapping', 'AgX');
+    assert(
+      viewerMode === 'agx' && instance.toneMapping === 'agx',
+      'tone-mapping="AgX" is normalized to agx for the viewer and getter',
+    );
+    instance.removeAttribute('tone-mapping');
+    assert(
+      viewerMode === 'neutral' && instance.toneMapping === 'neutral',
+      'removing tone-mapping restores neutral on the viewer',
+    );
+    instance.setAttribute('tone-mapping', 'bogus');
+    assert(
+      viewerMode === 'neutral' && instance.toneMapping === 'neutral',
+      'unknown tone-mapping values fall back to neutral',
+    );
+    instance.removeAttribute('tone-mapping');
+    withViewer.viewer = prevViewer;
+
+    // bloom-threshold / bloom-radius share the plugin's host defaults.
+    assert(
+      instance.bloomThreshold === HOST_BLOOM_DEFAULT_THRESHOLD &&
+        instance.bloomRadius === HOST_BLOOM_DEFAULT_RADIUS,
+      'bloomThreshold / bloomRadius default to the shared host bloom defaults',
+    );
+    instance.setAttribute('bloom-threshold', '');
+    instance.setAttribute('bloom-radius', 'abc');
+    assert(
+      instance.bloomThreshold === HOST_BLOOM_DEFAULT_THRESHOLD &&
+        instance.bloomRadius === HOST_BLOOM_DEFAULT_RADIUS,
+      'empty / junk bloom-threshold and bloom-radius fall back to the host defaults',
+    );
+    instance.bloomThreshold = 0.9;
+    assert(instance.bloomThreshold === 0.9, 'bloomThreshold reads a set value');
+    instance.removeAttribute('bloom-threshold');
+    instance.removeAttribute('bloom-radius');
+  }
 
   instance.environmentImage = '/hdr/studio.jpg';
   assert(

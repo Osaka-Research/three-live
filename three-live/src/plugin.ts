@@ -79,6 +79,12 @@ export interface ThreeLivePlugin {
     refSpace: unknown,
   ): void;
   onXRSessionEnd?(viewer: unknown): void;
+  /**
+   * Called after a lost WebGL context is restored (`webglcontextrestored`), so
+   * plugins drop GL objects cached for `gl`, which are no longer valid.
+   */
+  // tslint:disable-next-line:no-any
+  onContextRestored?(gl: WebGL2RenderingContext, viewer: any): void;
   onDestroy?(gl: WebGL2RenderingContext, viewer: any): void;
 }
 

@@ -28,3 +28,27 @@ export const SECURITY_3D_MAX_TEXTURE_DIMENSION = 2048;
 export const SECURITY_3D_SANDBOX_TIMEOUT_MS = 3000;
 export const SECURITY_3D_MAX_SCRIPT_BYTES = 1024 * 1024;
 export const SECURITY_3D_MAX_CONCURRENT_TASKS = 32;
+
+/**
+ * Default `<three-live bloom-threshold>`, shared by the element getter and the
+ * postprocessing plugin. Node `userData.xr.bloom` traits keep the
+ * cross-platform 0.8 default.
+ */
+export const HOST_BLOOM_DEFAULT_THRESHOLD = 0.62;
+
+/**
+ * Default `<three-live bloom-radius>`, shared by the element getter and the
+ * postprocessing plugin. Node `userData.xr.bloom` traits keep the
+ * cross-platform 0.5 default.
+ */
+export const HOST_BLOOM_DEFAULT_RADIUS = 0.75;
+
+/**
+ * Parses a numeric attribute value; `null`, empty, whitespace-only, or
+ * non-finite values return `fallback`.
+ */
+export function parseNumericAttr(v: string | null, fallback: number): number {
+  const t = v?.trim();
+  const n = t ? Number(t) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+}

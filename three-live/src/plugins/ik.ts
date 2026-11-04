@@ -21,6 +21,13 @@
  */
 
 import {
+  mat3NormalFromMat4,
+  mat4Create,
+  mat4FromRotationTranslationScale,
+  mat4Invert,
+  mat4Multiply,
+} from '../math';
+import {
   getSharedRegistry,
   registerWorkerExtensionInstaller,
   type ThreeLivePlugin,
@@ -280,52 +287,40 @@ export function installIKExtension(_threeNs?: any, reg?: any) {
         }
         usedIters = iter;
 
-        pts[n - 1] = [targetPos[0], targetPos[1], targetPos[2]];
-        for (let i = n - 2; i >= 0; i--) {
-          const dx = pts[i][0] - pts[i + 1][0];
-          const dy = pts[i][1] - pts[i + 1][1];
-          const dz = pts[i][2] - pts[i + 1][2];
+        const stepPt = (
+          from: TraitVec3,
+          to: TraitVec3,
+          l: number,
+          fallback: TraitVec3,
+          sign: number,
+        ): TraitVec3 => {
+          const dx = to[0] - from[0];
+          const dy = to[1] - from[1];
+          const dz = to[2] - from[2];
           const d = Math.hypot(dx, dy, dz);
-          const l = lengths[i];
           if (d > 1e-6) {
             const scale = l / d;
-            pts[i] = [
-              pts[i + 1][0] + dx * scale,
-              pts[i + 1][1] + dy * scale,
-              pts[i + 1][2] + dz * scale,
-            ];
-          } else {
-            const fallback = initDirs[i];
-            pts[i] = [
-              pts[i + 1][0] - fallback[0] * l,
-              pts[i + 1][1] - fallback[1] * l,
-              pts[i + 1][2] - fallback[2] * l,
+            return [
+              from[0] + dx * scale,
+              from[1] + dy * scale,
+              from[2] + dz * scale,
             ];
           }
+          return [
+            from[0] + fallback[0] * l * sign,
+            from[1] + fallback[1] * l * sign,
+            from[2] + fallback[2] * l * sign,
+          ];
+        };
+
+        pts[n - 1] = [targetPos[0], targetPos[1], targetPos[2]];
+        for (let i = n - 2; i >= 0; i--) {
+          pts[i] = stepPt(pts[i + 1], pts[i], lengths[i], initDirs[i], -1);
         }
 
         pts[0] = [root[0], root[1], root[2]];
         for (let i = 0; i < n - 1; i++) {
-          const dx = pts[i + 1][0] - pts[i][0];
-          const dy = pts[i + 1][1] - pts[i][1];
-          const dz = pts[i + 1][2] - pts[i][2];
-          const d = Math.hypot(dx, dy, dz);
-          const l = lengths[i];
-          if (d > 1e-6) {
-            const scale = l / d;
-            pts[i + 1] = [
-              pts[i][0] + dx * scale,
-              pts[i][1] + dy * scale,
-              pts[i][2] + dz * scale,
-            ];
-          } else {
-            const fallback = initDirs[i];
-            pts[i + 1] = [
-              pts[i][0] + fallback[0] * l,
-              pts[i][1] + fallback[1] * l,
-              pts[i][2] + fallback[2] * l,
-            ];
-          }
+          pts[i + 1] = stepPt(pts[i], pts[i + 1], lengths[i], initDirs[i], 1);
         }
       }
     }
@@ -353,41 +348,28 @@ export function installIKExtension(_threeNs?: any, reg?: any) {
       const t = v.trim().slice(0, 64);
       return /^[A-Za-z0-9_.:-]+$/.test(t) ? t : undefined;
     };
-    const isVec3 = (v: unknown): v is [number, number, number] =>
+    const clampVec3 = (v: unknown): TraitVec3 | undefined =>
       Array.isArray(v) &&
       v.length === 3 &&
-      typeof v[0] === 'number' &&
-      Number.isFinite(v[0]) &&
-      typeof v[1] === 'number' &&
-      Number.isFinite(v[1]) &&
-      typeof v[2] === 'number' &&
-      Number.isFinite(v[2]);
+      v.every((x) => typeof x === 'number' && Number.isFinite(x))
+        ? [
+            clampLocal(v[0], -1000, 1000, 0),
+            clampLocal(v[1], -1000, 1000, 0),
+            clampLocal(v[2], -1000, 1000, 0),
+          ]
+        : undefined;
 
     const root = safeId(r['root']);
     const effector = safeId(r['effector']);
     if (!root || !effector) return null;
     const mid = safeId(r['mid']);
-    const rawTarget = r['target'];
-    let target: TraitVec3 | string;
-    if (isVec3(rawTarget)) {
-      target = [
-        clampLocal(rawTarget[0], -1000, 1000, 0),
-        clampLocal(rawTarget[1], -1000, 1000, 0),
-        clampLocal(rawTarget[2], -1000, 1000, 0),
-      ];
-    } else {
-      const tId = safeId(rawTarget);
-      if (!tId) return null;
-      target = tId;
-    }
-    const rawPole = r['pole'];
-    const pole: TraitVec3 | undefined = isVec3(rawPole)
-      ? [
-          clampLocal(rawPole[0], -1000, 1000, 0),
-          clampLocal(rawPole[1], -1000, 1000, 0),
-          clampLocal(rawPole[2], -1000, 1000, 0),
-        ]
-      : undefined;
+    const target = clampVec3(r['target']) ?? safeId(r['target']);
+    if (!target) return null;
+    // `pole` is a scene-space point or a node name resolved like `target`;
+    // `poleTarget` is accepted as an alias.
+    const rawPole = r['pole'] ?? r['poleTarget'];
+    const pole: TraitVec3 | string | undefined =
+      clampVec3(rawPole) ?? safeId(rawPole);
     const solver: 'two-bone' | 'fabrik' =
       r['solver'] === 'fabrik'
         ? 'fabrik'
@@ -496,7 +478,56 @@ function blendSegmentPosition(
       parentPos[2] + dz * s,
     ];
   }
+  // Rest and solved children mirror each other about the parent, so the lerp
+  // collapsed onto it: keep the bone length by following the solved direction.
+  const sx = solvedChildPos[0] - parentPos[0];
+  const sy = solvedChildPos[1] - parentPos[1];
+  const sz = solvedChildPos[2] - parentPos[2];
+  const sl = Math.hypot(sx, sy, sz);
+  if (sl > 1e-6 && segLen > 1e-6) {
+    const s = segLen / sl;
+    return [
+      parentPos[0] + sx * s,
+      parentPos[1] + sy * s,
+      parentPos[2] + sz * s,
+    ];
+  }
   return [bx, by, bz];
+}
+
+/**
+ * Converts a world-space point (head / hand poses) into the scene space of
+ * `mesh.transform` by applying the inverse of `viewer.modelRootMatrix`.
+ */
+// tslint:disable-next-line:no-any Viewer instance.
+function worldToScene(viewer: any, p: TraitVec3): TraitVec3 {
+  const r = viewer?.modelRootMatrix;
+  if (!r || r.length !== 16) return p;
+  const inv = new Float32Array(16);
+  if (!mat4Invert(inv, r instanceof Float32Array ? r : Float32Array.from(r))) {
+    return p;
+  }
+  return [
+    inv[0] * p[0] + inv[4] * p[1] + inv[8] * p[2] + inv[12],
+    inv[1] * p[0] + inv[5] * p[1] + inv[9] * p[2] + inv[13],
+    inv[2] * p[0] + inv[6] * p[1] + inv[10] * p[2] + inv[14],
+  ];
+}
+
+/**
+ * Emits a one-time console warning per mesh and missing joint name so IK
+ * chains that cannot resolve a joint do not fail silently.
+ */
+// tslint:disable-next-line:no-any Heterogeneous viewer mesh record.
+function warnMissingIKJoint(mesh: any, name: string): void {
+  if (!mesh.__ikWarned) mesh.__ikWarned = new Set<string>();
+  const warned: Set<string> = mesh.__ikWarned;
+  if (warned.has(name)) return;
+  warned.add(name);
+  console.warn(
+    `[three-live] ik: joint '${name}' on '${mesh?.name ?? ''}' not found ` +
+      'among scene nodes or meshes.',
+  );
 }
 
 // tslint:disable-next-line:no-any Viewer is a ThreeView / XR host instance.
@@ -514,26 +545,360 @@ function resolveTargetPosition(
   if (targetMesh) {
     return readMeshPosition(targetMesh);
   }
+  // Head / hand poses are world space; joints live in scene space.
+  let p: unknown;
   if (target === 'head') {
-    const p =
+    p =
       viewer?.headPose?.position ?? viewer?.headPose ?? viewer?.cameraPosition;
-    if (Array.isArray(p) && p.length >= 3) return [p[0], p[1], p[2]];
   } else if (target === 'hand-left') {
-    const p =
+    p =
       viewer?.handPoses?.left?.position ??
       viewer?.handPoses?.left ??
       viewer?.hands?.left?.position ??
       viewer?.hands?.left;
-    if (Array.isArray(p) && p.length >= 3) return [p[0], p[1], p[2]];
   } else if (target === 'hand-right') {
-    const p =
+    p =
       viewer?.handPoses?.right?.position ??
       viewer?.handPoses?.right ??
       viewer?.hands?.right?.position ??
       viewer?.hands?.right;
-    if (Array.isArray(p) && p.length >= 3) return [p[0], p[1], p[2]];
+  }
+  if (
+    (Array.isArray(p) || ArrayBuffer.isView(p)) &&
+    (p as ArrayLike<number>).length >= 3
+  ) {
+    const a = p as ArrayLike<number>;
+    return worldToScene(viewer, [a[0], a[1], a[2]]);
   }
   return null;
+}
+
+// --- Host-side quaternion / node-graph helpers (not part of the worker installer) ---
+
+type Q = [number, number, number, number];
+
+function qMul(a: Q, b: Q): Q {
+  return [
+    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+  ];
+}
+
+function qConj(q: Q): Q {
+  return [-q[0], -q[1], -q[2], q[3]];
+}
+
+function qNormalize(q: Q): Q {
+  const l = Math.hypot(q[0], q[1], q[2], q[3]);
+  return l > 1e-12 ? [q[0] / l, q[1] / l, q[2] / l, q[3] / l] : [0, 0, 0, 1];
+}
+
+/** Slerp from identity to `q` by `t` (weight blending of a delta rotation). */
+function qPow(q: Q, t: number): Q {
+  if (t >= 1) return q;
+  if (t <= 0) return [0, 0, 0, 1];
+  let [x, y, z, w] = q;
+  if (w < 0) {
+    x = -x;
+    y = -y;
+    z = -z;
+    w = -w;
+  }
+  const half = Math.acos(Math.min(1, w));
+  const sinHalf = Math.sin(half);
+  if (sinHalf < 1e-9) return [0, 0, 0, 1];
+  const k = Math.sin(half * t) / sinHalf;
+  return qNormalize([x * k, y * k, z * k, Math.cos(half * t)]);
+}
+
+/** Rotation quaternion of a column-major 4x4 (columns normalized to drop scale). */
+function qFromMat4(m: ArrayLike<number>): Q {
+  const sx = Math.hypot(m[0], m[1], m[2]) || 1;
+  const sy = Math.hypot(m[4], m[5], m[6]) || 1;
+  const sz = Math.hypot(m[8], m[9], m[10]) || 1;
+  const m00 = m[0] / sx,
+    m10 = m[1] / sx,
+    m20 = m[2] / sx;
+  const m01 = m[4] / sy,
+    m11 = m[5] / sy,
+    m21 = m[6] / sy;
+  const m02 = m[8] / sz,
+    m12 = m[9] / sz,
+    m22 = m[10] / sz;
+  const tr = m00 + m11 + m22;
+  let q: Q;
+  if (tr > 0) {
+    const s = Math.sqrt(tr + 1) * 2;
+    q = [(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s];
+  } else if (m00 > m11 && m00 > m22) {
+    const s = Math.sqrt(1 + m00 - m11 - m22) * 2;
+    q = [0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s];
+  } else if (m11 > m22) {
+    const s = Math.sqrt(1 + m11 - m00 - m22) * 2;
+    q = [(m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s];
+  } else {
+    const s = Math.sqrt(1 + m22 - m00 - m11) * 2;
+    q = [(m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s];
+  }
+  return qNormalize(q);
+}
+
+/** Left-multiplies the rotation `q` into the upper 3x3 of column-major `m`. */
+function rotateMat3InPlace(
+  m: Float32Array | number[],
+  rest: ArrayLike<number>,
+  q: Q,
+): void {
+  const [x, y, z, w] = q;
+  const r00 = 1 - 2 * (y * y + z * z),
+    r01 = 2 * (x * y - z * w),
+    r02 = 2 * (x * z + y * w);
+  const r10 = 2 * (x * y + z * w),
+    r11 = 1 - 2 * (x * x + z * z),
+    r12 = 2 * (y * z - x * w);
+  const r20 = 2 * (x * z - y * w),
+    r21 = 2 * (y * z + x * w),
+    r22 = 1 - 2 * (x * x + y * y);
+  for (let c = 0; c < 3; c++) {
+    const a = rest[c * 4],
+      b = rest[c * 4 + 1],
+      d = rest[c * 4 + 2];
+    m[c * 4] = r00 * a + r01 * b + r02 * d;
+    m[c * 4 + 1] = r10 * a + r11 * b + r12 * d;
+    m[c * 4 + 2] = r20 * a + r21 * b + r22 * d;
+  }
+}
+
+function dirBetween(a: TraitVec3, b: TraitVec3): TraitVec3 | null {
+  const dx = b[0] - a[0],
+    dy = b[1] - a[1],
+    dz = b[2] - a[2];
+  const l = Math.hypot(dx, dy, dz);
+  return l > 1e-9 ? [dx / l, dy / l, dz / l] : null;
+}
+
+function updateNormalMatrix(mesh: any): void {
+  if (mesh?.normalMatrix && mesh?.transform) {
+    mat3NormalFromMat4(mesh.normalMatrix, mesh.transform);
+  }
+}
+
+const parentCache = new WeakMap<object, Int32Array>();
+
+// tslint:disable-next-line:no-any glTF JSON.
+function nodeParents(gltf: any): Int32Array {
+  let parents = parentCache.get(gltf);
+  if (!parents) {
+    parents = new Int32Array(gltf.nodes.length).fill(-1);
+    gltf.nodes.forEach((n: any, i: number) => {
+      for (const c of Array.isArray(n?.children) ? n.children : []) {
+        if (typeof c === 'number' && c >= 0 && c < parents!.length)
+          parents![c] = i;
+      }
+    });
+    parentCache.set(gltf, parents);
+  }
+  return parents;
+}
+
+/**
+ * Solves an IK chain on the glTF node graph (joints may be mesh-less groups):
+ * starting from the rest pose (`initialNodeTransforms`) of the root's subtree,
+ * it rotates each joint by the weighted shortest-arc delta that aligns its
+ * bone with the solved direction, then writes the subtree's world matrices
+ * into `viewer.worldMatrices` and every descendant mesh's `transform`, so
+ * child geometry follows the joints. Returns false when the chain cannot be
+ * resolved as nodes (callers fall back to the flat-mesh path).
+ */
+// tslint:disable-next-line:no-any Viewer instance.
+function solveIKOnNodeGraph(
+  viewer: any,
+  ik: IKTraitOptions,
+  // tslint:disable-next-line:no-any Heterogeneous mesh lookup.
+  byName: Map<string, any>,
+): boolean {
+  const gltf = viewer?.gltf;
+  const nodes = gltf?.nodes;
+  if (!Array.isArray(nodes) || nodes.length === 0) return false;
+  const nodeByName = new Map<string, number>();
+  nodes.forEach((n: any, i: number) => {
+    if (typeof n?.name === 'string' && n.name && !nodeByName.has(n.name)) {
+      nodeByName.set(n.name, i);
+    }
+  });
+  const names = ik.mid
+    ? [ik.root, ik.mid, ik.effector]
+    : [ik.root, ik.effector];
+  const joints = names.map((n) => nodeByName.get(n));
+  if (joints.some((j) => j === undefined)) return false;
+  const chain = joints as number[];
+  const parents = nodeParents(gltf);
+  // Each joint must be an ancestor of the next.
+  for (let k = 1; k < chain.length; k++) {
+    let p = parents[chain[k]];
+    let guard = 0;
+    while (p >= 0 && p !== chain[k - 1] && guard++ < 256) p = parents[p];
+    if (p !== chain[k - 1]) return false;
+  }
+
+  const root = chain[0];
+  const rest = viewer.initialNodeTransforms;
+  const local = new Map<number, {t: TraitVec3; r: Q; s: TraitVec3}>();
+  const subtree: number[] = [];
+  const stack = [root];
+  while (stack.length && subtree.length < 4096) {
+    const n = stack.pop()!;
+    if (local.has(n)) continue;
+    const init = rest?.[n];
+    const node = nodes[n];
+    local.set(n, {
+      t: init
+        ? [init.t[0], init.t[1], init.t[2]]
+        : node?.translation
+          ? ([...node.translation] as TraitVec3)
+          : [0, 0, 0],
+      r: init
+        ? [init.r[0], init.r[1], init.r[2], init.r[3]]
+        : node?.rotation
+          ? ([...node.rotation] as Q)
+          : [0, 0, 0, 1],
+      s: init
+        ? [init.s[0], init.s[1], init.s[2]]
+        : node?.scale
+          ? ([...node.scale] as TraitVec3)
+          : [1, 1, 1],
+    });
+    subtree.push(n);
+    for (const c of Array.isArray(node?.children) ? node.children : []) {
+      if (typeof c === 'number') stack.push(c);
+    }
+  }
+  const rootParent = parents[root];
+  const parentWorld =
+    rootParent >= 0 && viewer.worldMatrices?.[rootParent]?.length === 16
+      ? Float32Array.from(viewer.worldMatrices[rootParent])
+      : mat4Create();
+
+  const world = new Map<number, Float32Array>();
+  const recompute = () => {
+    const visit = (n: number, pw: Float32Array) => {
+      const trs = local.get(n);
+      if (!trs) return;
+      const l = mat4Create();
+      mat4FromRotationTranslationScale(l, trs.r, trs.t, trs.s);
+      const w = mat4Create();
+      mat4Multiply(w, pw, l);
+      world.set(n, w);
+      for (const c of Array.isArray(nodes[n]?.children)
+        ? nodes[n].children
+        : []) {
+        if (typeof c === 'number') visit(c, w);
+      }
+    };
+    visit(root, parentWorld);
+  };
+  const pos = (n: number): TraitVec3 => {
+    const w = world.get(n)!;
+    return [w[12], w[13], w[14]];
+  };
+  recompute();
+
+  const restPositions = chain.map(pos);
+  const resolve = (t: string | TraitVec3): TraitVec3 | null => {
+    if (typeof t === 'string' && !byName.has(t)) {
+      const ni = nodeByName.get(t);
+      const wm =
+        ni !== undefined
+          ? (world.get(ni) ?? viewer.worldMatrices?.[ni])
+          : undefined;
+      if (wm && wm.length === 16) return [wm[12], wm[13], wm[14]];
+    }
+    return resolveTargetPosition(t, byName, viewer);
+  };
+  const targetPos = resolve(ik.target);
+  if (!targetPos) return true;
+  const polePos = ik.pole ? (resolve(ik.pole) ?? undefined) : undefined;
+
+  const solvedPositions = solveChainPositions(
+    restPositions,
+    ik,
+    targetPos,
+    polePos,
+  );
+
+  const weight = clampNum(ik.weight, 0, 1, 1);
+  for (let k = 0; k < chain.length - 1; k++) {
+    const cur = dirBetween(pos(chain[k]), pos(chain[k + 1]));
+    const want = dirBetween(solvedPositions[k], solvedPositions[k + 1]);
+    if (!cur || !want) continue;
+    const delta = qPow(quatFromUnitVectors(cur, want) as Q, weight);
+    const j = chain[k];
+    const pj = parents[j];
+    const pw =
+      pj === rootParent || pj < 0
+        ? parentWorld
+        : (world.get(pj) ?? parentWorld);
+    const pRot = qFromMat4(pw);
+    const trs = local.get(j)!;
+    // world' = delta * P * L  =>  L' = P^-1 * delta * P * L
+    trs.r = qNormalize(qMul(qConj(pRot), qMul(delta, qMul(pRot, trs.r))));
+    recompute();
+  }
+
+  if (Array.isArray(viewer.worldMatrices)) {
+    for (const [n, w] of world) {
+      if (viewer.worldMatrices[n]?.set) viewer.worldMatrices[n].set(w);
+    }
+  }
+  for (const mesh of viewer.meshes ?? []) {
+    const w = world.get(mesh?.nodeIndex);
+    if (w && mesh.transform?.set) {
+      mesh.transform.set(w);
+      updateNormalMatrix(mesh);
+    }
+  }
+  return true;
+}
+
+function solveChainPositions(
+  rest: TraitVec3[],
+  ik: IKTraitOptions,
+  targetPos: TraitVec3,
+  polePos?: TraitVec3,
+): TraitVec3[] {
+  if (ik.solver === 'two-bone' && rest.length === 3) {
+    const s = solveTwoBoneIK(rest[0], rest[1], rest[2], targetPos, polePos);
+    return [rest[0], s.midPos, s.effectorPos];
+  }
+  return solveFABRIK(rest, targetPos, ik.iterations, ik.tolerance).positions;
+}
+
+/**
+ * Flat-mesh fallback: rotates each joint mesh (except the effector) from its
+ * cached rest orientation by the shortest arc between its rest bone direction
+ * and its solved bone direction, so joints turn as well as move.
+ */
+// tslint:disable-next-line:no-any Heterogeneous viewer mesh records.
+function applyFlatJointRotations(
+  owner: any,
+  chainMeshes: any[],
+  solved: TraitVec3[],
+): void {
+  const offsets: TraitVec3[] | undefined = owner.__ikRestOffsets;
+  const restMats: number[][] | undefined = owner.__ikRestMats;
+  if (!offsets || !restMats) return;
+  for (let k = 0; k < chainMeshes.length - 1; k++) {
+    const m = chainMeshes[k]?.transform ?? chainMeshes[k]?.modelMatrix;
+    const rest = restMats[k];
+    const restDir = dirBetween([0, 0, 0], offsets[k]);
+    const newDir = dirBetween(solved[k], solved[k + 1]);
+    if (!m || m.length < 16 || !rest || rest.length < 16 || !restDir || !newDir)
+      continue;
+    rotateMat3InPlace(m, rest, quatFromUnitVectors(restDir, newDir) as Q);
+    updateNormalMatrix(chainMeshes[k]);
+  }
 }
 
 /**
@@ -575,14 +940,23 @@ export const ikPlugin: ThreeLivePlugin = {
         }
       }
 
+      // Preferred: solve on the glTF node graph so mesh-less Group joints
+      // resolve and child meshes follow the rotated joints.
+      if (solveIKOnNodeGraph(viewer, ik, byName)) continue;
+
       const rootMesh = byName.get(ik.root);
       const effMesh = byName.get(ik.effector);
+      const midMesh = ik.mid ? byName.get(ik.mid) : undefined;
+      if (!rootMesh) warnMissingIKJoint(mesh, ik.root);
+      if (!effMesh) warnMissingIKJoint(mesh, ik.effector);
+      if (ik.mid && !midMesh) warnMissingIKJoint(mesh, ik.mid);
       if (!rootMesh || !effMesh) continue;
 
       const targetPos = resolveTargetPosition(ik.target, byName, viewer);
       if (!targetPos) continue;
-
-      const midMesh = ik.mid ? byName.get(ik.mid) : undefined;
+      const polePos = ik.pole
+        ? (resolveTargetPosition(ik.pole, byName, viewer) ?? undefined)
+        : undefined;
       const chainMeshes = midMesh
         ? [rootMesh, midMesh, effMesh]
         : [rootMesh, effMesh];
@@ -602,6 +976,9 @@ export const ikPlugin: ThreeLivePlugin = {
         }
         mesh.__ikRestOffsets = offsets;
         mesh.__ikRestKey = cacheKey;
+        mesh.__ikRestMats = chainMeshes.map((m) =>
+          Array.from((m.transform ?? m.modelMatrix ?? []) as ArrayLike<number>),
+        );
       }
 
       const offsets: TraitVec3[] = mesh.__ikRestOffsets;
@@ -615,74 +992,38 @@ export const ikPlugin: ThreeLivePlugin = {
         segLengths.push(Math.hypot(off[0], off[1], off[2]));
       }
 
-      if (ik.solver === 'two-bone' && midMesh && restChain.length === 3) {
-        const solved = solveTwoBoneIK(
-          restChain[0],
-          restChain[1],
-          restChain[2],
-          targetPos,
-          ik.pole,
-        );
-        const blendedMid = blendSegmentPosition(
-          restChain[0],
-          restChain[1],
-          solved.midPos,
-          segLengths[0],
+      const solvedPositions = solveChainPositions(
+        restChain,
+        ik,
+        targetPos,
+        polePos,
+      );
+      let parentPos = restChain[0];
+      const blendedChain: TraitVec3[] = [restChain[0]];
+      for (let i = 1; i < chainMeshes.length; i++) {
+        const off = offsets[i - 1];
+        const restFromParent: TraitVec3 = [
+          parentPos[0] + off[0],
+          parentPos[1] + off[1],
+          parentPos[2] + off[2],
+        ];
+        const solvedFromParent: TraitVec3 = [
+          parentPos[0] + (solvedPositions[i][0] - solvedPositions[i - 1][0]),
+          parentPos[1] + (solvedPositions[i][1] - solvedPositions[i - 1][1]),
+          parentPos[2] + (solvedPositions[i][2] - solvedPositions[i - 1][2]),
+        ];
+        const blended = blendSegmentPosition(
+          parentPos,
+          restFromParent,
+          solvedFromParent,
+          segLengths[i - 1],
           ik.weight,
         );
-        const effRestFromBlendedMid: TraitVec3 = [
-          blendedMid[0] + offsets[1][0],
-          blendedMid[1] + offsets[1][1],
-          blendedMid[2] + offsets[1][2],
-        ];
-        const solvedEffOffset: TraitVec3 = [
-          blendedMid[0] + (solved.effectorPos[0] - solved.midPos[0]),
-          blendedMid[1] + (solved.effectorPos[1] - solved.midPos[1]),
-          blendedMid[2] + (solved.effectorPos[2] - solved.midPos[2]),
-        ];
-        const blendedEff = blendSegmentPosition(
-          blendedMid,
-          effRestFromBlendedMid,
-          solvedEffOffset,
-          segLengths[1],
-          ik.weight,
-        );
-        writeMeshPositionExact(midMesh, blendedMid);
-        writeMeshPositionExact(effMesh, blendedEff);
-      } else {
-        const solved = solveFABRIK(
-          restChain,
-          targetPos,
-          ik.iterations,
-          ik.tolerance,
-        );
-        let parentPos = restChain[0];
-        for (let i = 1; i < chainMeshes.length; i++) {
-          const off = offsets[i - 1];
-          const restFromParent: TraitVec3 = [
-            parentPos[0] + off[0],
-            parentPos[1] + off[1],
-            parentPos[2] + off[2],
-          ];
-          const solvedFromParent: TraitVec3 = [
-            parentPos[0] +
-              (solved.positions[i][0] - solved.positions[i - 1][0]),
-            parentPos[1] +
-              (solved.positions[i][1] - solved.positions[i - 1][1]),
-            parentPos[2] +
-              (solved.positions[i][2] - solved.positions[i - 1][2]),
-          ];
-          const blended = blendSegmentPosition(
-            parentPos,
-            restFromParent,
-            solvedFromParent,
-            segLengths[i - 1],
-            ik.weight,
-          );
-          writeMeshPositionExact(chainMeshes[i], blended);
-          parentPos = blended;
-        }
+        writeMeshPositionExact(chainMeshes[i], blended);
+        parentPos = blended;
+        blendedChain.push(blended);
       }
+      applyFlatJointRotations(mesh, chainMeshes, blendedChain);
     }
   },
 };

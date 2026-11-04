@@ -67,7 +67,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `splat`: `{ url: 'https://.../capture.spz', shDegree: 3, maxSplats: 500000 }`
   - `bloom`: `{ strength: 1.2, threshold: 0.8, radius: 0.5 } | boolean | number`
   - `outline`: `{ color: '#38bdf8', thickness: 0.03 } | boolean | string`
-  - `ik`: `{ target: 'TargetNodeName', solver: 'two-bone' | 'fabrik', chainLength: 2, poleTarget: 'PoleNodeName', iterations: 10, tolerance: 0.001 }`
+  - `ik`: `{ root: 'RootNode', mid: 'MidNode', effector: 'EffectorNode', target: 'TargetNodeName' | [x, y, z], pole: 'PoleNodeName' | [x, y, z], solver: 'two-bone' | 'fabrik', iterations: 10, tolerance: 0.001, weight: 1 }`
   - `text`: `{ text: '3D Label', size: 0.2, depth: 0.04, bevelEnabled: true }`
   - `audio`: `{ src: 'https://.../sound.mp3', refDistance: 1.0, loop: false }`
   - `character`: `true` or `{ mode: 'third-person' | 'first-person' | 'top-down' | 'fixed-camera', speed: 4, jumpVelocity: 5.5, gravity: 15, radius: 0.35, height: 1.7, cameraDistance: 3.5, cameraHeight: 1.6 }`

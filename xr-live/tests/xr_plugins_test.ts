@@ -169,6 +169,7 @@ import {
 } from '../src/plugins/spatial-paint';
 import {
   computeSplatCovariance3D,
+  computeSplatViewColors,
   evaluateSplatSH,
   parseSplat,
   parseSpzPayload,
@@ -176,6 +177,8 @@ import {
   resolveSplatUrl,
   shBasisCountForDegree,
   sortSplatsByDepth,
+  splatLoaderPlugin,
+  SplatRenderer,
 } from '../src/plugins/splat-loader';
 import {
   hitTestPlanes,
@@ -3166,6 +3169,10 @@ function testSharedRoom(): void {
     'parseSharedRoomMessage rejects oversized WebRTC SDP/ICE payload',
   );
 
+  (hostA.setAttribute as (k: string, v: string) => void)(
+    'shared-room-voice',
+    '',
+  );
   (hostB.setAttribute as (k: string, v: string) => void)(
     'shared-room-voice',
     '',
@@ -3682,7 +3689,10 @@ async function testAuditRegressions(): Promise<void> {
 
   // shared-room: per-peer rate limiting on incoming WebRTC signaling messages.
   {
-    const host = auditHost({'shared-room': 'rtc-rate'});
+    const host = auditHost({
+      'shared-room': 'rtc-rate',
+      'shared-room-voice': '',
+    });
     const room = new AuditSharedRoomController('peer-local', () => 1000);
     const viewer = {meshes: [], container: host} as unknown as Parameters<
       typeof room.connect
@@ -3691,6 +3701,19 @@ async function testAuditRegressions(): Promise<void> {
       send() {},
       close() {},
     });
+    // Signaling is only accepted from joined peers.
+    room.handleRawMessage(
+      JSON.stringify({
+        v: 1,
+        type: 'pose',
+        peerId: 'peer-flood',
+        headPos: [0, 1.6, 0],
+        headQuat: [0, 0, 0, 1],
+      }),
+      viewer,
+      host,
+      1000,
+    );
     const offerRaw = JSON.stringify({
       v: 1,
       type: 'rtc',
@@ -3698,6 +3721,7 @@ async function testAuditRegressions(): Promise<void> {
       targetPeerId: 'peer-local',
       signalType: 'ice',
       candidate: 'candidate:1 1 UDP 2122252543 192.0.2.1 54400 typ host',
+      sdpMid: '0',
     });
     for (let i = 0; i < 40; i++) {
       room.handleRawMessage(offerRaw, viewer, host, 1000);
@@ -3713,6 +3737,441 @@ async function testAuditRegressions(): Promise<void> {
   }
 }
 
+/** Builds a 1-splat `.spz` v3 payload with `shDegree` SH bytes (golden pattern). */
+function buildSpzV3WithSh(shDegree: number, shBytes?: number): Uint8Array {
+  const basis = shBasisCountForDegree(shDegree);
+  const fullSh = basis * 3;
+  const sh = shBytes ?? fullSh;
+  const base = 16 + 9 + 1 + 3 + 3 + 4;
+  const out = new Uint8Array(base + sh);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, 0x5053474e, true);
+  dv.setUint32(4, 3, true);
+  dv.setUint32(8, 1, true);
+  out[12] = shDegree;
+  out[13] = 12;
+  out[16 + 9] = 255; // alpha
+  out.set([128, 128, 128], 16 + 9 + 1); // DC -> 128 gray
+  dv.setUint32(16 + 9 + 1 + 3 + 3, (3 << 30) >>> 0, true); // identity quat
+  for (let k = 0; k < basis && base + k * 3 + 2 < out.length; k++) {
+    // R: +(4+k) / -(2+k) alternating, G: -5, 0, +5 repeating, B: 0.
+    out[base + k * 3] = 128 + (k % 2 === 0 ? 4 + k : -(2 + k));
+    out[base + k * 3 + 1] = 128 + (k % 3) * 5 - 5;
+    out[base + k * 3 + 2] = 128;
+  }
+  return out;
+}
+
+// tslint:disable-next-line:no-any Minimal recording WebGL2 mock.
+function makeSplatMockGl(): any {
+  const calls: Array<{fn: string; args: unknown[]}> = [];
+  let id = 0;
+  const target: Record<string, unknown> = {
+    ARRAY_BUFFER: 0x8892,
+    ELEMENT_ARRAY_BUFFER: 0x8893,
+    VERTEX_SHADER: 0x8b31,
+    FRAGMENT_SHADER: 0x8b30,
+    COMPILE_STATUS: 0x8b81,
+    LINK_STATUS: 0x8b82,
+    VIEWPORT: 0x0ba2,
+    STATIC_DRAW: 0x88e4,
+    DYNAMIC_DRAW: 0x88e8,
+    FLOAT: 0x1406,
+    UNSIGNED_BYTE: 0x1401,
+    UNSIGNED_INT: 0x1405,
+    POINTS: 0,
+    BLEND: 0x0be2,
+    ONE: 1,
+    ONE_MINUS_SRC_ALPHA: 0x0303,
+    drawingBufferHeight: 100,
+    calls,
+  };
+  return new Proxy(target, {
+    get(t, k: string) {
+      if (k in t) return t[k];
+      return (...args: unknown[]) => {
+        calls.push({fn: k, args});
+        if (k === 'getShaderParameter' || k === 'getProgramParameter') {
+          return true;
+        }
+        if (k === 'getUniformLocation') return {name: args[1]};
+        if (k === 'getParameter') return new Int32Array([0, 0, 100, 100]);
+        if (k.startsWith('create')) return {id: ++id};
+        return undefined;
+      };
+    },
+  });
+}
+
+async function testSplatAuditFixes(): Promise<void> {
+  console.log('\n💠 splat-loader audit fixes');
+
+  // SH degree 2 / 3 golden values (reference 3DGS) along (0.48, 0.6, 0.64).
+  const sh2 = parseSpzPayload(buildSpzV3WithSh(2));
+  const sh3 = parseSpzPayload(buildSpzV3WithSh(3));
+  const g2 = evaluateSplatSH(sh2, 0, 0.48, 0.6, 0.64);
+  const g3 = evaluateSplatSH(sh3, 0, 0.48, 0.6, 0.64);
+  assert(
+    sh2.shDegree === 2 && g2[0] === 105 && g2[1] === 130 && g2[2] === 128,
+    `SH degree-2 golden RGB (105,130,128) (got ${g2})`,
+  );
+  assert(
+    sh3.shDegree === 3 && g3[0] === 93 && g3[1] === 125 && g3[2] === 128,
+    `SH degree-3 golden RGB (93,125,128) (got ${g3})`,
+  );
+  const truncSh = parseSpzPayload(buildSpzV3WithSh(3, 44));
+  assert(
+    truncSh.shDegree === 0 && truncSh.sh === null && truncSh.count === 1,
+    'truncated SH block falls back to shDegree 0 with sh null',
+  );
+  const deg4 = buildSpzV3WithSh(1);
+  deg4[12] = 4;
+  const ver4 = buildSpzV3WithSh(1);
+  new DataView(ver4.buffer).setUint32(4, 4, true);
+  let threw4 = 0;
+  for (const bad of [deg4, ver4]) {
+    try {
+      parseSpzPayload(bad);
+    } catch {
+      threw4++;
+    }
+  }
+  assert(threw4 === 2, '.spz shDegree 4 and version 4 rejected');
+
+  // v2 rotation decode: bytes (255, 128, 128) -> x ~ 1, w ~ 0.
+  const v2 = new Uint8Array(16 + 9 + 1 + 3 + 3 + 3);
+  const v2v = new DataView(v2.buffer);
+  v2v.setUint32(0, 0x5053474e, true);
+  v2v.setUint32(4, 2, true);
+  v2v.setUint32(8, 1, true);
+  v2.set([255, 128, 128], 16 + 9 + 1 + 3 + 3);
+  const v2d = parseSpzPayload(v2);
+  assert(
+    near(v2d.rotations[0], 1, 0.01) && near(v2d.rotations[3], 0, 0.01),
+    '.spz v2 rotation decode (255,128,128) -> x=1, w=0',
+  );
+
+  // F10: header flags byte 14 bit 0 = antialiased.
+  const aaBytes = buildSpzV3WithSh(0);
+  aaBytes[14] = 1;
+  const aa = parseSpzPayload(aaBytes);
+  assert(
+    aa.antialiased === true && !parseSpzPayload(buildSpzV3WithSh(0)).antialiased,
+    '.spz flags byte antialiased bit decoded',
+  );
+  const aaGl = makeSplatMockGl();
+  const aaRenderer = new SplatRenderer(aaGl, aa);
+  aaRenderer.draw(mat4Create(), mat4Create(), 500, mat4Create());
+  assert(
+    aaGl.calls.some(
+      (c: {fn: string; args: unknown[]}) =>
+        c.fn === 'uniform1i' &&
+        (c.args[0] as {name?: string})?.name === 'uAntialias' &&
+        c.args[1] === 1,
+    ),
+    'antialiased clouds enable opacity compensation in the vertex shader',
+  );
+
+  // Off-axis covariance projection (non-zero j02 term), vz~0 clamp, behind camera.
+  const iso = new Float32Array([0.01, 0, 0, 0.01, 0, 0.01]);
+  const offAxis = projectSplatCovariance2D(iso, mat4Create(), [1, 0, -2], 500);
+  assert(
+    near(offAxis.cov2d[0], 781.55, 1e-2) &&
+      near(offAxis.cov2d[1], 0, 1e-6) &&
+      near(offAxis.cov2d[2], 625.3, 1e-2),
+    `off-axis projection widens along x (got ${offAxis.cov2d})`,
+  );
+  const atEye = projectSplatCovariance2D(iso, mat4Create(), [0, 0, 0], 500);
+  const behind = projectSplatCovariance2D(iso, mat4Create(), [1, 0, 2], 500);
+  assert(
+    atEye.cov2d.every(Number.isFinite) &&
+      atEye.eigenvalues.every(Number.isFinite) &&
+      near(behind.cov2d[0], offAxis.cov2d[0], 1e-2),
+    'projection clamps vz~0 and mirrors points behind the camera',
+  );
+
+  // F12: one non-finite float32 depth must not drop or duplicate splats.
+  const extreme = mat4Create();
+  extreme[11] = -10;
+  extreme[15] = 0;
+  const extremeOrder = sortSplatsByDepth(
+    {count: 3, positions: new Float32Array([0, 0, -1, 0, 0, -3e38, 0, 0, -2])},
+    extreme,
+  );
+  assert(
+    new Set(extremeOrder).size === 3 && extremeOrder[0] === 1,
+    `depth sort survives float32 overflow (got ${Array.from(extremeOrder)})`,
+  );
+
+  // F3: SH view direction is mapped into the splat's local frame.
+  const sh1Local = parseSpzPayload(
+    (() => {
+      const b = buildSpzV3WithSh(1);
+      const base = b.length - 9;
+      b.fill(128, base);
+      b[base + 3] = 255; // basis 1 (local +Z), R channel
+      return b;
+    })(),
+  );
+  const yaw90 = mat4Create();
+  // Columns (0,0,-1), (0,1,0), (1,0,0): local +Z maps to world +X.
+  yaw90.set([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]);
+  const localColors = computeSplatViewColors(
+    sh1Local,
+    yaw90,
+    [-5, 0, 0],
+    new Uint8Array(4),
+  );
+  assert(
+    localColors[0] > sh1Local.colors[0] + 40,
+    `SH evaluated in the splat's local frame (R=${localColors[0]})`,
+  );
+
+  // F1 / F2 / F11 through the plugin hooks with a recording GL.
+  const gl = makeSplatMockGl();
+  const attrs: Record<string, string> = {
+    'allow-remote-splats': '',
+    'splat-quality': 'high',
+  };
+  const host = auditHost(attrs);
+  const splatMesh = meshAt('SplatHost', [0, 0, 0], {
+    splatUrl: 'https://site.test/room.spz',
+  });
+  const activeView = mat4Create();
+  activeView.set([0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, -3, 1]);
+  const proj = mat4Create();
+  proj[5] = 1.7;
+  const splatViewer = {
+    gl,
+    meshes: [splatMesh],
+    container: host,
+    viewMatrix: mat4Create(),
+    activeViewMatrix: activeView,
+    projMatrix: proj,
+  };
+  const payload = (() => {
+    const b = buildSpzV3WithSh(1);
+    const base = b.length - 9;
+    b.fill(128, base);
+    b[base + 3] = 255;
+    return b;
+  })();
+  const g = globalThis as {fetch?: unknown};
+  const savedFetch = g.fetch;
+  g.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: {get: () => null},
+    body: null,
+    arrayBuffer: async () => payload.slice().buffer,
+  });
+  try {
+    splatLoaderPlugin.onUpdate?.(splatViewer, 0.016);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    g.fetch = savedFetch;
+  }
+  const vp = mat4Create();
+  const colorUploads = (): Uint8Array[] =>
+    gl.calls
+      .filter(
+        (c: {fn: string; args: unknown[]}) =>
+          c.fn === 'bufferSubData' && c.args[0] === gl.ARRAY_BUFFER,
+      )
+      .map((c: {args: unknown[]}) => c.args[2] as Uint8Array);
+  splatLoaderPlugin.onBeforeDrawScene?.(splatViewer, gl, vp, [0, 0, 5], 0);
+  splatLoaderPlugin.onAfterRender?.(gl, splatViewer, vp);
+  const uploads = colorUploads();
+  const lastSh = uploads[uploads.length - 1];
+  assert(
+    uploads.length > 0 && lastSh[0] < 88,
+    `splat-quality=high re-uploads SH colors from the frame eye (R=${lastSh?.[0]})`,
+  );
+  const mvCall = gl.calls
+    .filter(
+      (c: {fn: string; args: unknown[]}) =>
+        c.fn === 'uniformMatrix4fv' &&
+        (c.args[0] as {name?: string})?.name === 'uMV',
+    )
+    .pop();
+  assert(
+    !!mvCall &&
+      Array.from(mvCall.args[2] as Float32Array).every((v, i) =>
+        near(v, activeView[i], 1e-6),
+      ),
+    'covariance uses the active (per-eye) view matrix, not the orbit view',
+  );
+  attrs['splat-quality'] = 'normal';
+  for (let i = 0; i < 4; i++) {
+    splatLoaderPlugin.onAfterRender?.(gl, splatViewer, vp);
+  }
+  const after = colorUploads();
+  const restored = after[after.length - 1];
+  assert(
+    after.length > uploads.length &&
+      restored[0] === 128 &&
+      restored[1] === 128 &&
+      restored[3] === 255,
+    'switching splat-quality high -> normal restores base colors',
+  );
+  splatLoaderPlugin.onDestroy?.(gl, splatViewer);
+}
+
+function testSharedRoomVoiceAuditFixes(): void {
+  console.log('\n🎙️ shared-room voice audit fixes');
+  const hub = new Set<SharedRoomTransport>();
+  const hubTransport = (): SharedRoomTransport => {
+    const t: SharedRoomTransport = {
+      send(raw: string) {
+        for (const o of hub) if (o !== t) o.onMessage?.(raw);
+      },
+      close() {
+        hub.delete(t);
+      },
+    };
+    hub.add(t);
+    return t;
+  };
+  let now = 1000;
+  const attrsA: Record<string, string> = {
+    'shared-room': 'voice',
+    'shared-room-voice': '',
+  };
+  const attrsB: Record<string, string> = {'shared-room': 'voice'};
+  const hostA = auditHost(attrsA);
+  const hostB = auditHost(attrsB);
+  const viewerA = {meshes: [] as unknown[], container: hostA};
+  const viewerB = {meshes: [] as unknown[], container: hostB};
+  const ctrlA = new XRSharedRoomController('peer-a', () => now);
+  const ctrlB = new XRSharedRoomController('peer-b', () => now);
+  ctrlA.connect('voice', viewerA, hostA, hubTransport());
+  ctrlB.connect('voice', viewerB, hostB, hubTransport());
+  ctrlA.broadcastPoseTick(viewerA, hostA, now, true);
+  ctrlB.broadcastPoseTick(viewerB, hostB, now, true);
+  const rtcEvents = (h: {events: Array<{type: string}>}) =>
+    h.events.filter((e) => e.type === 'peerrtcsignal').length;
+
+  // F8: receiving and voiceGain require the receiver's opt-in.
+  assert(
+    ctrlA.broadcastRtcSignal('peer-b', 'offer', {sdp: 'v=0\r\n'}) &&
+      rtcEvents(hostB) === 0,
+    'peer without shared-room-voice ignores rtc signaling',
+  );
+  assert(
+    ctrlB.getPeers()[0]?.voiceGain === undefined,
+    'peer without shared-room-voice computes no voiceGain',
+  );
+  assert(
+    !ctrlB.broadcastRtcSignal('peer-a', 'answer', {sdp: 'v=0\r\n'}),
+    'peer without shared-room-voice cannot send rtc signaling',
+  );
+  attrsB['shared-room-voice'] = '';
+  now += 100;
+  ctrlA.broadcastRtcSignal('peer-b', 'offer', {sdp: 'v=0\r\n'});
+  ctrlA.broadcastPoseTick(viewerA, hostA, now, true);
+  assert(
+    rtcEvents(hostB) === 1 && ctrlB.getPeers()[0]?.voiceGain !== undefined,
+    'opting in enables rtc signaling and voiceGain',
+  );
+  attrsA['shared-room-voice'] = 'false';
+  assert(
+    !ctrlA.broadcastRtcSignal('peer-b', 'offer', {sdp: 'v=0\r\n'}),
+    'shared-room-voice="false" disables sending',
+  );
+
+  // F9: unknown peers cannot signal or paint, and never grow rate maps.
+  const before = rtcEvents(hostB);
+  for (let i = 0; i < 100; i++) {
+    ctrlB.handleRawMessage(
+      JSON.stringify({
+        v: 1,
+        type: 'rtc',
+        peerId: `ghost-${i}`,
+        targetPeerId: 'peer-b',
+        signalType: 'ice',
+        candidate: 'candidate:1 1 UDP 1 192.0.2.1 9 typ host',
+        sdpMid: '0',
+      }),
+      viewerB,
+      hostB,
+      now,
+    );
+  }
+  const paintFromGhost = ctrlB.handleRawMessage(
+    JSON.stringify({
+      v: 1,
+      type: 'paint',
+      peerId: 'ghost-paint',
+      strokeId: 's1',
+      points: [
+        [0, 0, 0],
+        [0, 0.1, 0],
+      ],
+    }),
+    viewerB,
+    hostB,
+    now,
+  );
+  // tslint:disable-next-line:no-any Private rate maps.
+  const ctrlBAny = ctrlB as any;
+  assert(
+    rtcEvents(hostB) === before &&
+      !paintFromGhost &&
+      ctrlBAny.rtcRate.size <= 1 &&
+      !ctrlBAny.paintRate.has('ghost-paint'),
+    `unknown peers are ignored and add no rate entries (rtcRate=${ctrlBAny.rtcRate.size})`,
+  );
+  ctrlB.dispose(viewerB);
+  assert(
+    ctrlBAny.rtcRate.size === 0 && ctrlBAny.paintRate.size === 0,
+    'dispose clears rtc/paint rate maps',
+  );
+  ctrlA.dispose(viewerA);
+
+  // F10: ICE candidates need sdpMid or sdpMLineIndex; overlong mids are rejected.
+  const ice = (extra: Record<string, unknown>) =>
+    parseSharedRoomMessage(
+      JSON.stringify({
+        v: 1,
+        type: 'rtc',
+        peerId: 'peer-a',
+        targetPeerId: 'peer-b',
+        signalType: 'ice',
+        candidate: 'candidate:1 1 UDP 1 192.0.2.1 9 typ host',
+        ...extra,
+      }),
+    );
+  const mid64 = ice({sdpMid: 'm'.repeat(64)});
+  assert(
+    ice({}) === null &&
+      ice({sdpMid: 'm'.repeat(65)}) === null &&
+      mid64?.type === 'rtc' &&
+      (mid64 as {sdpMid?: string}).sdpMid?.length === 64 &&
+      ice({sdpMLineIndex: 0})?.type === 'rtc',
+    'ICE requires sdpMid or sdpMLineIndex and rejects overlong sdpMid',
+  );
+  const sender = new XRSharedRoomController('peer-s', () => now);
+  const senderHost = auditHost({'shared-room': 'x', 'shared-room-voice': ''});
+  sender.connect('x', {meshes: []}, senderHost, {
+    send() {},
+    close() {},
+  });
+  assert(
+    !sender.broadcastRtcSignal('peer-b', 'ice', {candidate: 'candidate:1'}) &&
+      !sender.broadcastRtcSignal('peer-b', 'ice', {
+        candidate: 'candidate:1',
+        sdpMid: 'm'.repeat(65),
+      }) &&
+      sender.broadcastRtcSignal('peer-b', 'ice', {
+        candidate: 'candidate:1',
+        sdpMid: '0',
+      }),
+    'broadcastRtcSignal validates ICE sdpMid / sdpMLineIndex',
+  );
+  sender.dispose();
+}
+
 async function main(): Promise<void> {
   console.log('🧪 Running spatial plugin unit tests...');
   testSchema();
@@ -3725,6 +4184,7 @@ async function main(): Promise<void> {
   testSpatialPaint();
   testParticles();
   testSplats();
+  await testSplatAuditFixes();
   testSpatialMeasure();
   testMagneticSnap();
   testGazeDwell();
@@ -3732,6 +4192,7 @@ async function main(): Promise<void> {
   await testPersistentAnchors();
   testSpatialLocomotion();
   testSharedRoom();
+  testSharedRoomVoiceAuditFixes();
   await testAuditRegressions();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);

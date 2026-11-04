@@ -22,6 +22,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [Unreleased]
+
+--------------------------------------------------------------------------------
+
+## [1.2.3] - 2026-11-04
+
+### Fixed
+
+-   **`EXT_meshopt_compression` is now spec-compliant** on Web, Android, and
+    iOS: vertex codec v0/v1, index buffer and index sequence codecs, and the
+    `OCTAHEDRAL` / `QUATERNION` / `EXPONENTIAL` / `COLOR` filters are byte-exact
+    with meshoptimizer, so `gltfpack` files load. Adds
+    `KHR_meshopt_compression`, `KHR_mesh_quantization` attribute dequantization,
+    `UNSIGNED_BYTE` indices, and `KHR_texture_transform` baking for
+    `TEXCOORD_0`. `encodeMeshoptBuffer` now emits spec streams.
+-   **IK joints rotate:** web IK runs on the glTF node graph (mesh-less `Group`
+    joints resolve and child meshes follow), and Web / Android / iOS rotate each
+    joint by the weighted shortest arc instead of only moving joint positions.
+-   **Gaussian splats render at their true size** (3σ half-extent with an
+    `exp(-0.5 m²)` falloff) on all platforms.
+-   **`EXT_mesh_gpu_instancing` draws with one `drawElementsInstanced`** per
+    primitive instead of one draw call per instance.
+-   **`KHR_materials_variants`** switching re-resolves custom shaders (unlit,
+    clearcoat, sheen, ...) and transmission for the selected material.
+-   **WebGL context loss** is handled: rendering pauses and the viewer restores
+    programs, plugin GPU state, the last model, and the environment.
+-   **`exposure`** is now a linear pre-tone-mapping multiplier (model-viewer
+    semantics) instead of scaling image-based lighting only.
+
+### Added
+
+-   **iOS post-processing:** `XRLivePostProcessor` /
+    `XRLiveRealityKitSession.enablePostProcessing(on:)` render `tone-mapping`
+    and `bloom` on `ARView` via `renderCallbacks.postProcess` + Core Image, and
+    `outline` traits render as inverted-hull rims on iOS 18 / visionOS 2.
+
+--------------------------------------------------------------------------------
+
 ## [1.2.2] - 2026-11-04
 
 ### Added
@@ -62,14 +100,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
         background alpha preservation), and `outline` (`outline-color`,
         `outline-selected`, `userData.xr.outline` via depth-tested stencil
         silhouette extrusion) across Web, Android, and iOS.
--   **Inverse Kinematics & Spatial WebRTC Voice (`three-live/animation` &
+-   **Inverse Kinematics & WebRTC Voice Signaling (`three-live/animation` &
     `xr-live/spatial`):**
     -   `ikPlugin` & `THREE.IKSolver` (`solveTwoBone`, `solveFABRIK`,
         `userData.xr.ik` chains) across Web, Android (`IKSolver`), and iOS
         (`IKSolver`).
-    -   `webrtcVoicePlugin` (`webrtc-voice` attribute, `WebRTCVoice` signaling,
-        and 3D `PannerNode` HRTF spatialization synced with `SharedRoom` peers)
-        across Web, Android (`WebRTCVoice`), and iOS (`WebRTCVoice`).
+    -   Opt-in `shared-room-voice` WebRTC signaling relay (`rtc`
+        offer/answer/ICE messages, `broadcastRtcSignal()`, `peerrtcsignal`
+        event) plus `computeSpatialVoiceGain` distance/pan helpers. Apps own
+        `RTCPeerConnection` and audio playback. Message parsing/validation on
+        Android and iOS (`SharedRoom`).
 
 ### Fixed
 

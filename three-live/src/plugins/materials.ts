@@ -53,6 +53,10 @@ export function registerMaterialShader(
 export const materialsPlugin: ThreeLivePlugin = {
   name: 'materials',
 
+  onContextRestored(gl: WebGL2RenderingContext): void {
+    transmissionTextures.delete(gl);
+  },
+
   onBuildPrimitiveVAO(
     _gl: WebGL2RenderingContext,
     _vao: WebGLVertexArrayObject,

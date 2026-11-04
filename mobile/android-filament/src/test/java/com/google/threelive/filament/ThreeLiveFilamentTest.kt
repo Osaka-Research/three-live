@@ -21,8 +21,10 @@ import com.google.threelive.ThreeLiveRenderers
 import com.google.threelive.XRLiveSceneCoreHelper
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** JVM tests for the Filament module's pure helpers (no native Filament needed). */
@@ -199,6 +201,72 @@ class ThreeLiveFilamentTest {
           ThreeLiveFilamentRenderer.linearToSrgb(postTonemapLinear[2]),
         )
       assertArrayEquals(targetSrgb, actualSrgb, 1e-3f)
+    }
+  }
+
+  /**
+   * Reference copy of Filament's `GenericToneMapper` (`ToneMapper.cpp`: `setParameters` and
+   * `operator()`), in double precision. Returns `[a - midGrayOut * b, toneMapped(x)]`.
+   */
+  private fun genericToneMap(x: Double, params: FloatArray): DoubleArray {
+    val contrast = maxOf(params[0].toDouble(), 1e-5)
+    val midGrayIn = params[1].toDouble().coerceIn(1e-5, 1.0)
+    val midGrayOut = params[2].toDouble().coerceIn(1e-5, 1.0)
+    val hdrMax = maxOf(params[3].toDouble(), 1.0)
+    val a = Math.pow(midGrayIn, contrast)
+    val b = Math.pow(hdrMax, contrast)
+    val c = a - midGrayOut * b
+    val inputScale = (a * b * (midGrayOut - 1.0)) / c
+    val outputScale = midGrayOut * (a - b) / c
+    val xc = Math.pow(x, contrast)
+    return doubleArrayOf(c, outputScale * xc / (xc + inputScale))
+  }
+
+  @Test
+  fun reinhardGenericParamsAreFiniteAndMatchReinhard() {
+    val params = ThreeLiveFilamentRenderer.REINHARD_GENERIC_PARAMS
+    assertNotEquals(0.0, genericToneMap(1.0, params)[0], 1e-6)
+    for (x in listOf(0.0, 0.18, 1.0, 4.0, 16.0)) {
+      val y = genericToneMap(x, params)[1]
+      assertTrue("reinhard($x) must be finite, got $y", y.isFinite())
+      assertEquals(x / (1.0 + x), y, 2e-3)
+    }
+    // The previous parameters (1.5, 1, 1, 1) divide 0 by 0 in Filament and render NaN.
+    assertTrue(genericToneMap(1.0, floatArrayOf(1.5f, 1f, 1f, 1f))[1].isNaN())
+  }
+
+  @Test
+  fun toneMapperKindForMatchesWebModes() {
+    assertEquals(ToneMapperKind.ACES, ThreeLiveFilamentRenderer.toneMapperKindFor("aces"))
+    assertEquals(ToneMapperKind.AGX, ThreeLiveFilamentRenderer.toneMapperKindFor("AGX "))
+    assertEquals(
+      ToneMapperKind.GENERIC_REINHARD,
+      ThreeLiveFilamentRenderer.toneMapperKindFor("reinhard"),
+    )
+    assertEquals(ToneMapperKind.LINEAR, ThreeLiveFilamentRenderer.toneMapperKindFor("none"))
+    assertEquals(ToneMapperKind.PBR_NEUTRAL, ThreeLiveFilamentRenderer.toneMapperKindFor("neutral"))
+    assertEquals(ToneMapperKind.PBR_NEUTRAL, ThreeLiveFilamentRenderer.toneMapperKindFor("bogus"))
+    assertEquals("agx", ThreeLiveFilamentRenderer.normalizeToneMappingMode(" AgX"))
+    assertEquals("neutral", ThreeLiveFilamentRenderer.normalizeToneMappingMode(""))
+  }
+
+  @Test
+  fun clearLinearForInvertsTheActiveToneMapper() {
+    val srgb = floatArrayOf(59f / 255f, 130f / 255f, 246f / 255f)
+    assertArrayEquals(
+      ThreeLiveFilamentRenderer.srgbToPbrNeutralClearLinear(srgb[0], srgb[1], srgb[2]),
+      ThreeLiveFilamentRenderer.clearLinearFor("neutral", srgb[0], srgb[1], srgb[2]),
+      1e-6f,
+    )
+    val none = ThreeLiveFilamentRenderer.clearLinearFor("none", srgb[0], srgb[1], srgb[2])
+    for (i in 0 until 3) {
+      assertEquals(ThreeLiveFilamentRenderer.srgbToLinear(srgb[i]), none[i], 1e-6f)
+    }
+    // Reinhard round-trips through x / (1 + x) back to the display color.
+    val reinhard = ThreeLiveFilamentRenderer.clearLinearFor("reinhard", srgb[0], srgb[1], srgb[2])
+    for (i in 0 until 3) {
+      val y = reinhard[i] / (1f + reinhard[i])
+      assertEquals(srgb[i], ThreeLiveFilamentRenderer.linearToSrgb(y), 1e-3f)
     }
   }
 }

@@ -579,8 +579,8 @@ the touch joystick), set `hit-zones="projectile"`, and give targets an
 
 ## 10. Procedural CAD Extrusion, CSG Booleans, 3D Text & GPU Instancing (`<three-live>`)
 
-Combines 2D `THREE.Shape` + hole paths with `THREE.ExtrudeGeometry`, manifold
-CSG Boolean subtraction (`THREE.CSG.subtract`), extruded 3D vector text
+Combines 2D `THREE.Shape` + hole paths with `THREE.ExtrudeGeometry`, BSP CSG
+Boolean subtraction (`THREE.CSG.subtract`), extruded 3D vector text
 (`THREE.TextGeometry`), and single-draw-call hardware GPU instancing
 (`THREE.InstancedMesh` -> glTF `EXT_mesh_gpu_instancing` / USDZ
 `PointInstancer`) with ACES Filmic tone mapping and HDR emissive bloom:
@@ -732,10 +732,11 @@ peer-to-peer spatialized voice chat:
     effector.position.set(0, 0, 0.28);
     effector.userData.xr = {
       ik: {
+        root: 'Shoulder',
+        mid: 'Forearm',
+        effector: 'WristEffector',
         target: 'GripperTarget',
-        poleTarget: 'ElbowPole',
-        solver: 'two-bone',
-        chainLength: 2
+        pole: 'ElbowPole'
       }
     };
     forearm.add(effector);

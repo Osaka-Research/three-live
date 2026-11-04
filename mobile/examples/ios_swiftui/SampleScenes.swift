@@ -495,7 +495,7 @@
           wrist.name = 'WristEffector';
           wrist.position.set(0, 0, 0.3);
           wrist.userData.xr = {
-            ik: { target: 'GripperTarget', poleTarget: 'ElbowPole', solver: 'two-bone', chainLength: 2 }
+            ik: { root: 'Shoulder', mid: 'Forearm', effector: 'WristEffector', target: 'GripperTarget', pole: 'ElbowPole' }
           };
           forearm.add(wrist);
           scene.add(shoulder);

@@ -320,7 +320,8 @@ public enum SharedRoom {
       else { return nil }
       if st == "offer" || st == "answer" {
         guard let sdp = XRJSON.string(root["sdp"]),
-          !sdp.isEmpty, sdp.count <= maxRtcSignalChars, !sdp.contains("\0")
+          // UTF-16 units, like web `.length` and Kotlin (grapheme `count` treats CRLF as one).
+          !sdp.isEmpty, sdp.utf16.count <= maxRtcSignalChars, !sdp.contains("\0")
         else { return nil }
         return .rtc(
           peerId: peerId,
@@ -333,11 +334,13 @@ public enum SharedRoom {
         )
       } else if st == "ice" {
         guard let cand = XRJSON.string(root["candidate"]),
-          !cand.isEmpty, cand.count <= maxRtcSignalChars, !cand.contains("\0")
+          !cand.isEmpty, cand.utf16.count <= maxRtcSignalChars, !cand.contains("\0")
         else { return nil }
         var sdpMid: String?
-        if let rawMid = XRJSON.string(root["sdpMid"]), !rawMid.isEmpty, !rawMid.contains("\0") {
-          sdpMid = rawMid.count > 64 ? String(rawMid.prefix(64)) : rawMid
+        if let rawMid = XRJSON.string(root["sdpMid"]), !rawMid.isEmpty {
+          // Reject (rather than truncate, which corrupts it) an overlong or NUL-bearing mid.
+          if rawMid.utf16.count > 64 || rawMid.contains("\0") { return nil }
+          sdpMid = rawMid
         }
         var sdpMLineIndex: Int?
         if let rawIdx = XRJSON.number(root["sdpMLineIndex"]),
@@ -345,6 +348,8 @@ public enum SharedRoom {
         {
           sdpMLineIndex = Int(rawIdx)
         }
+        // RTCIceCandidate() throws when both are nil.
+        if sdpMid == nil && sdpMLineIndex == nil { return nil }
         return .rtc(
           peerId: peerId,
           targetPeerId: targetPeerId,

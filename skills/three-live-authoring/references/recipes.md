@@ -604,7 +604,7 @@ order; out-of-order taps play an `error` cue.
 
 --------------------------------------------------------------------------------
 
-## Recipe 12: Articulated Robotic Arm with 2-Bone / FABRIK IK & Spatialized Voice (`<xr-live>`)
+## Recipe 12: Articulated Robotic Arm with 2-Bone / FABRIK IK & Voice Signaling (`<xr-live>`)
 
 ```html
 <script type="module" src="/dist/xr-live-full.min.js"></script>
@@ -642,7 +642,7 @@ order; out-of-order taps play an `error` cue.
     wrist.name = 'WristEffector';
     wrist.position.set(0, 0, 0.28);
     wrist.userData.xr = {
-      ik: { target: 'GripperTarget', poleTarget: 'ElbowPole', solver: 'two-bone', chainLength: 2 }
+      ik: { root: 'Shoulder', mid: 'Forearm', effector: 'WristEffector', target: 'GripperTarget', pole: 'ElbowPole' }
     };
     forearm.add(wrist);
     scene.add(shoulder);

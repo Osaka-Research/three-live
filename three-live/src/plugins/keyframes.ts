@@ -17,13 +17,14 @@
  * Parses and evaluates glTF animation clips, keyframe samplers, and TRS channels.
  */
 
-import type {ThreeLivePlugin} from '../plugin';
+import {readAccessorAsFloat32} from '../accessor';
 import {
+  mat3NormalFromMat4,
   mat4Create,
   mat4FromRotationTranslationScale,
-  mat3NormalFromMat4,
   resolveNodeWorldMatrices,
 } from '../math';
+import type {ThreeLivePlugin} from '../plugin';
 
 export interface AnimationChannel {
   nodeIndex: number;
@@ -144,7 +145,9 @@ export function parseAnimations(gltf: any, bin: ArrayBuffer): AnimationClip[] {
         const outOffset =
           (outputBv.byteOffset || 0) + (outputAcc.byteOffset || 0);
 
-        const times = readFloat32Array(bin, inOffset, inputAcc.count);
+        const times =
+          readAccessorAsFloat32(gltf, bin, inputAcc, 1) ??
+          readFloat32Array(bin, inOffset, inputAcc.count);
         if (times.length > 0 && times[times.length - 1] > maxTime) {
           maxTime = times[times.length - 1];
         }
@@ -153,13 +156,16 @@ export function parseAnimations(gltf: any, bin: ArrayBuffer): AnimationClip[] {
           ch.target.path === 'rotation'
             ? 4
             : ch.target.path === 'weights'
-              ? Math.max(1, Math.round(outputAcc.count / Math.max(1, inputAcc.count)))
+              ? Math.max(
+                  1,
+                  Math.round(outputAcc.count / Math.max(1, inputAcc.count)),
+                )
               : 3;
-        const values = readFloat32Array(
-          bin,
-          outOffset,
-          outputAcc.count * (ch.target.path === 'weights' ? 1 : componentCount),
-        );
+        // Rotation / weights outputs may be normalized BYTE/SHORT (glTF spec).
+        const valueComps = ch.target.path === 'weights' ? 1 : componentCount;
+        const values =
+          readAccessorAsFloat32(gltf, bin, outputAcc, valueComps) ??
+          readFloat32Array(bin, outOffset, outputAcc.count * valueComps);
         const interpolation =
           sampler.interpolation === 'STEP' ? 'STEP' : 'LINEAR';
 

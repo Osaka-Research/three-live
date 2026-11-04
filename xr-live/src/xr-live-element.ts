@@ -187,34 +187,20 @@ export class XRLiveElement extends ThreeLiveElement {
   }
 
   get soundFeedback(): boolean {
-    return (
-      this.hasAttribute('sound-feedback') &&
-      this.getAttribute('sound-feedback') !== 'false'
-    );
+    return this.getBoolAttr('sound-feedback');
   }
 
   set soundFeedback(value: boolean) {
-    if (value) {
-      this.setAttribute('sound-feedback', '');
-    } else {
-      this.removeAttribute('sound-feedback');
-    }
+    this.setBoolAttr('sound-feedback', value);
   }
 
   /** Opt-in WebRTC spatial voice chat in `shared-room`. Defaults to `false`. */
   get sharedRoomVoice(): boolean {
-    return (
-      this.hasAttribute('shared-room-voice') &&
-      this.getAttribute('shared-room-voice') !== 'false'
-    );
+    return this.getBoolAttr('shared-room-voice');
   }
 
   set sharedRoomVoice(value: boolean) {
-    if (value) {
-      this.setAttribute('shared-room-voice', '');
-    } else {
-      this.removeAttribute('shared-room-voice');
-    }
+    this.setBoolAttr('shared-room-voice', value);
   }
 
   /**
@@ -222,18 +208,11 @@ export class XRLiveElement extends ThreeLiveElement {
    * grid (`depthGridMeters`) to WebMCP agents (P1-3 / WEB-14). Defaults to false.
    */
   get webmcpAllowDepth(): boolean {
-    return (
-      this.hasAttribute('webmcp-allow-depth') &&
-      this.getAttribute('webmcp-allow-depth') !== 'false'
-    );
+    return this.getBoolAttr('webmcp-allow-depth');
   }
 
   set webmcpAllowDepth(value: boolean) {
-    if (value) {
-      this.setAttribute('webmcp-allow-depth', '');
-    } else {
-      this.removeAttribute('webmcp-allow-depth');
-    }
+    this.setBoolAttr('webmcp-allow-depth', value);
   }
 
   /**
@@ -241,18 +220,11 @@ export class XRLiveElement extends ThreeLiveElement {
    * returning the default 0.1m-quantized coarse position (P1-3 / WEB-14).
    */
   get webmcpOmitPose(): boolean {
-    return (
-      this.hasAttribute('webmcp-omit-pose') &&
-      this.getAttribute('webmcp-omit-pose') !== 'false'
-    );
+    return this.getBoolAttr('webmcp-omit-pose');
   }
 
   set webmcpOmitPose(value: boolean) {
-    if (value) {
-      this.setAttribute('webmcp-omit-pose', '');
-    } else {
-      this.removeAttribute('webmcp-omit-pose');
-    }
+    this.setBoolAttr('webmcp-omit-pose', value);
   }
 
   private _getViewer(customViewer?: any): any {

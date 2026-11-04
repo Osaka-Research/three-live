@@ -94,6 +94,9 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   var toneMappingMode: String = "neutral"
     private set
 
+  /** Last host clear color (sRGB), re-applied when the tone mapper changes. */
+  private var lastClearSrgb: FloatArray? = null
+
   private val appContext = context.applicationContext
   private val engine: Engine
   private val renderer: Renderer
@@ -329,24 +332,16 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
    * Configures Filament's [ColorGrading] tone mapper (`"neutral"`, `"aces"`, `"agx"`, `"reinhard"`,
    * or `"none"`).
    */
-  fun setToneMapping(mode: String) {
+  override fun setToneMapping(mode: String) {
     if (disposed) return
-    val normalized = mode.trim().lowercase()
-    val mapper =
-      when (normalized) {
-        "aces" -> ToneMapper.ACESLegacy()
-        "agx" -> ToneMapper.Agx()
-        "reinhard" -> ToneMapper.Generic(1.5f, 1.0f, 1.0f, 1.0f)
-        "none" -> ToneMapper.Linear()
-        else -> ToneMapper.PBRNeutralToneMapper()
-      }
-    toneMappingMode =
-      if (normalized in setOf("neutral", "aces", "agx", "reinhard", "none")) normalized
-      else "neutral"
+    val normalized = normalizeToneMappingMode(mode)
+    toneMappingMode = normalized
     val prev = colorGrading
-    colorGrading = ColorGrading.Builder().toneMapper(mapper).build(engine)
+    colorGrading = ColorGrading.Builder().toneMapper(toneMapperFor(normalized)).build(engine)
     filamentView.colorGrading = colorGrading
     engine.destroyColorGrading(prev)
+    // The clear color is pre-inverted through the active curve; recompute it for the new mode.
+    setClearColor(lastClearSrgb)
   }
 
   /** Configures Filament's post-processing bloom pass. */
@@ -382,13 +377,14 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
 
   override fun setClearColor(rgba: FloatArray?) {
     if (disposed) return
+    lastClearSrgb = rgba?.copyOf()
     // sRGB #0B1220 by default, Web's dark studio backdrop.
     val srgb = rgba?.takeIf { it.size >= 3 } ?: floatArrayOf(0.0431f, 0.0706f, 0.1255f, 1f)
-    val linearRgb = srgbToPbrNeutralClearLinear(srgb[0], srgb[1], srgb[2])
+    val linearRgb = clearLinearFor(toneMappingMode, srgb[0], srgb[1], srgb[2])
     renderer.clearOptions =
       Renderer.ClearOptions().apply {
         clear = true
-        // Pre-tonemapped linear HDR so Filament's PBRNeutralToneMapper + sRGB OETF outputs `srgb`.
+        // Pre-tonemapped linear HDR so the active tone mapper + sRGB OETF outputs `srgb`.
         clearColor =
           floatArrayOf(linearRgb[0], linearRgb[1], linearRgb[2], srgb.getOrElse(3) { 1f })
       }
@@ -1704,6 +1700,78 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       return out
     }
 
+    private val TONE_MAPPING_MODES = setOf("neutral", "aces", "agx", "reinhard", "none")
+
+    /**
+     * `ToneMapper.Generic(contrast, midGrayIn, midGrayOut, hdrMax)` parameters approximating
+     * Reinhard `x / (1 + x)` (web's `reinhard`). With contrast 1, Filament's curve is
+     * `outputScale * x / (x + inputScale)`; mapping mid-gray 0.18 to 0.18 / 1.18 with a large
+     * `hdrMax` gives `inputScale ≈ outputScale ≈ 1.001`, within 0.001 of Reinhard. (`hdrMax = 1`
+     * with `midGrayIn = midGrayOut = 1` makes Filament divide 0 by 0 and renders NaN.)
+     */
+    internal val REINHARD_GENERIC_PARAMS = floatArrayOf(1.0f, 0.18f, 0.18f / 1.18f, 1000f)
+
+    /** Lowercases and trims [mode]; unknown values fall back to `"neutral"` (matches web). */
+    internal fun normalizeToneMappingMode(mode: String): String {
+      val m = mode.trim().lowercase()
+      return if (m in TONE_MAPPING_MODES) m else "neutral"
+    }
+
+    internal fun toneMapperKindFor(mode: String): ToneMapperKind =
+      when (normalizeToneMappingMode(mode)) {
+        // Unboosted ACES matches web's Narkowicz fit (`ACESLegacy` adds a 1/0.6 brightness boost).
+        "aces" -> ToneMapperKind.ACES
+        "agx" -> ToneMapperKind.AGX
+        "reinhard" -> ToneMapperKind.GENERIC_REINHARD
+        "none" -> ToneMapperKind.LINEAR
+        else -> ToneMapperKind.PBR_NEUTRAL
+      }
+
+    /** Builds the Filament [ToneMapper] for a tone-mapping mode (needs the native library). */
+    internal fun toneMapperFor(mode: String): ToneMapper =
+      when (toneMapperKindFor(mode)) {
+        ToneMapperKind.ACES -> ToneMapper.ACES()
+        ToneMapperKind.AGX -> ToneMapper.Agx()
+        ToneMapperKind.GENERIC_REINHARD ->
+          REINHARD_GENERIC_PARAMS.let { ToneMapper.Generic(it[0], it[1], it[2], it[3]) }
+        ToneMapperKind.LINEAR -> ToneMapper.Linear()
+        ToneMapperKind.PBR_NEUTRAL -> ToneMapper.PBRNeutralToneMapper()
+      }
+
+    /**
+     * Pre-tonemapped linear clear color that the tone mapper for [mode] maps back to the display
+     * sRGB color `(rSrgb, gSrgb, bSrgb)`. PBR Neutral and Reinhard are inverted exactly; `none` is
+     * plain sRGB to linear; ACES and AgX have no cheap inverse and use sRGB to linear as an
+     * approximation.
+     */
+    internal fun clearLinearFor(
+      mode: String,
+      rSrgb: Float,
+      gSrgb: Float,
+      bSrgb: Float,
+      out: FloatArray = FloatArray(3),
+    ): FloatArray {
+      when (toneMapperKindFor(mode)) {
+        ToneMapperKind.PBR_NEUTRAL -> return srgbToPbrNeutralClearLinear(rSrgb, gSrgb, bSrgb, out)
+        ToneMapperKind.GENERIC_REINHARD -> {
+          // Inverse of y = x / (1 + x), capped so near-white stays finite.
+          fun inv(c: Float): Float {
+            val y = srgbToLinear(c).coerceAtMost(0.999f)
+            return y / (1f - y)
+          }
+          out[0] = inv(rSrgb)
+          out[1] = inv(gSrgb)
+          out[2] = inv(bSrgb)
+        }
+        else -> {
+          out[0] = srgbToLinear(rSrgb)
+          out[1] = srgbToLinear(gSrgb)
+          out[2] = srgbToLinear(bSrgb)
+        }
+      }
+      return out
+    }
+
     /**
      * Calibrates glTF `metallicFactor` so high-metalness materials retain diffuse body color
      * matching Web's shader (`directLight += (base.rgb * NdotL * 0.75 + spec)`), while still
@@ -2005,4 +2073,13 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
       return tMin
     }
   }
+}
+
+/** Filament tone mapper selected for each normalized tone-mapping mode. */
+internal enum class ToneMapperKind {
+  PBR_NEUTRAL,
+  ACES,
+  AGX,
+  GENERIC_REINHARD,
+  LINEAR,
 }

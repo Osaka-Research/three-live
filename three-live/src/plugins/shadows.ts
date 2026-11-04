@@ -140,6 +140,10 @@ function getShadowContext(gl: WebGL2RenderingContext): ShadowGpuContext {
 export const contactShadowPlugin: ThreeLivePlugin = {
   name: 'contact-shadow',
 
+  onContextRestored(gl: WebGL2RenderingContext): void {
+    shadowContexts.delete(gl);
+  },
+
   onAfterRender(
     gl: WebGL2RenderingContext,
     viewer: ThreeView,
