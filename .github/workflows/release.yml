@@ -360,14 +360,24 @@ jobs:
         run: |
           if [ -n "${NPM_TOKEN:-}" ]; then
             npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
-            npm publish --workspaces --access public --provenance || npm publish --workspaces --access public
           else
-            npm install -g npm@latest
-            npm publish --workspaces --access public --provenance || {
-              echo "::notice::npm OIDC Trusted Publishing failed (likely because the initial package has not been published and linked on npmjs.com yet)."
-              exit 0
-            }
+            npm install -g npm@latest || true
           fi
+          for ws in three-live xr-live; do
+            pkg_version="$(node -p "require('./${ws}/package.json').version")"
+            if npm view "${ws}@${pkg_version}" version >/dev/null 2>&1; then
+              echo "::notice::${ws}@${pkg_version} is already published on npm; skipping."
+              continue
+            fi
+            if [ -n "${NPM_TOKEN:-}" ]; then
+              npm publish --workspace="${ws}" --access public --provenance || npm publish --workspace="${ws}" --access public
+            else
+              npm publish --workspace="${ws}" --access public --provenance || {
+                echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}."
+                exit 0
+              }
+            fi
+          done
 
   publish-crates:
     name: Publish Crates.io
