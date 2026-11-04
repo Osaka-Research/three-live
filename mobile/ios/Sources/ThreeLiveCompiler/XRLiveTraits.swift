@@ -529,6 +529,87 @@ public struct XRLiveAnchorPersist: Codable, Sendable, Equatable {
   }
 }
 
+/// Normalized `bloom` post-processing options (`postprocessing`).
+public struct XRLiveBloom: Codable, Sendable, Equatable {
+  public var enabled: Bool
+  public var strength: Float
+  public var threshold: Float
+  public var radius: Float
+
+  public init(
+    enabled: Bool = true,
+    strength: Float = 0.35,
+    threshold: Float = 0.8,
+    radius: Float = 0.5
+  ) {
+    self.enabled = enabled
+    self.strength = Float(XRJSON.clampNum(Double(strength), 0, 5, 0.35))
+    self.threshold = Float(XRJSON.clampNum(Double(threshold), 0, 4, 0.8))
+    self.radius = Float(XRJSON.clampNum(Double(radius), 0, 2, 0.5))
+  }
+}
+
+/// Normalized silhouette `outline` options (`postprocessing`).
+public struct XRLiveOutline: Codable, Sendable, Equatable {
+  public var enabled: Bool
+  public var color: String
+  public var thickness: Float
+  public var pulse: Bool
+
+  public init(
+    enabled: Bool = true,
+    color: String = "#38bdf8",
+    thickness: Float = 3.0,
+    pulse: Bool = false
+  ) {
+    self.enabled = enabled
+    self.color = XRJSON.safeHexColor(color, fallback: "#38bdf8")
+    self.thickness = Float(XRJSON.clampNum(Double(thickness), 0.5, 20, 3))
+    self.pulse = pulse
+  }
+}
+
+/// Normalized inverse-kinematics `ik` options (`userData.xr.ik`).
+public struct XRLiveIK: Codable, Sendable, Equatable {
+  public var root: String
+  public var mid: String?
+  public var effector: String
+  /// Named target node or controller, or `nil` when `targetPoint` is used.
+  public var targetName: String?
+  /// Literal target position in scene space, or `nil` when `targetName` is used.
+  public var targetPoint: SIMD3<Float>?
+  public var pole: SIMD3<Float>?
+  /// `"two-bone"` or `"fabrik"`.
+  public var solver: String
+  public var iterations: Int
+  public var tolerance: Float
+  public var weight: Float
+
+  public init(
+    root: String,
+    mid: String? = nil,
+    effector: String,
+    targetName: String? = nil,
+    targetPoint: SIMD3<Float>? = nil,
+    pole: SIMD3<Float>? = nil,
+    solver: String = "two-bone",
+    iterations: Int = 8,
+    tolerance: Float = 1e-3,
+    weight: Float = 1.0
+  ) {
+    self.root = root
+    self.mid = mid
+    self.effector = effector
+    self.targetName = targetName
+    self.targetPoint = targetPoint
+    self.pole = pole
+    self.solver = solver == "fabrik" ? "fabrik" : "two-bone"
+    self.iterations = Int(XRJSON.clampNum(Double(iterations), 1, 32, 8).rounded())
+    self.tolerance = Float(XRJSON.clampNum(Double(tolerance), 1e-5, 0.1, 1e-3))
+    self.weight = Float(XRJSON.clampNum(Double(weight), 0, 1, 1))
+  }
+}
+
 /// Canonical, fully-normalized trait set for one glTF node (`NormalizedXRTraits` in TS).
 public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   /// `"1-hand"` or `"2-hand"`.
@@ -559,6 +640,9 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var gaze: XRLiveGaze?
   public var explode: XRLiveExplode?
   public var anchorPersist: XRLiveAnchorPersist?
+  public var bloom: XRLiveBloom?
+  public var outline: XRLiveOutline?
+  public var ik: XRLiveIK?
   /// `"walkable"` or `"blocked"` when authored via `navigable`.
   public var navigable: String?
   /// Explicit multi-user `shared-room` transform sync flag (`nil` inherits grabbable default).
@@ -576,8 +660,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && anchor == nil && physics == nil && orbit == nil && handles == nil && particles == nil
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
       && audio == nil && dimensions == nil && snapTo == nil && snapSocket == nil
-      && gaze == nil && explode == nil && anchorPersist == nil && navigable == nil
-      && sync == nil && !pointerEventsNone
+      && gaze == nil && explode == nil && anchorPersist == nil && bloom == nil && outline == nil
+      && ik == nil && navigable == nil && sync == nil && !pointerEventsNone
   }
 }
 
@@ -821,6 +905,169 @@ public enum XRLiveTraitParser {
     return nil
   }
 
+  /// Parses a `bloom` trait (`true`, number strength, or `{strength, threshold, radius}`).
+  public static func parseBloom(_ raw: Any?) -> XRLiveBloom? {
+    if raw == nil || raw is NSNull { return nil }
+    if let b = XRJSON.bool(raw) {
+      return b ? XRLiveBloom() : nil
+    }
+    if let n = XRJSON.number(raw) {
+      guard n.isFinite, n > 0 else { return nil }
+      return XRLiveBloom(strength: Float(XRJSON.clampNum(n, 0, 5, 0.35)))
+    }
+    guard let r = XRJSON.object(raw) else { return nil }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+    let strength = XRJSON.clampNum(r["strength"] ?? r["intensity"], 0, 5, 0.35)
+    guard strength > 0 else { return nil }
+    return XRLiveBloom(
+      enabled: true,
+      strength: Float(strength),
+      threshold: Float(XRJSON.clampNum(r["threshold"], 0, 4, 0.8)),
+      radius: Float(XRJSON.clampNum(r["radius"], 0, 2, 0.5))
+    )
+  }
+
+  /// Parses an `outline` trait (`true`, color string, or `{color, thickness, pulse}`).
+  public static func parseOutline(_ raw: Any?) -> XRLiveOutline? {
+    guard XRJSON.truthy(raw) else { return nil }
+    if let s = XRJSON.string(raw) {
+      return XRLiveOutline(color: XRJSON.safeHexColor(s, fallback: "#38bdf8"))
+    }
+    if XRJSON.bool(raw) == true { return XRLiveOutline() }
+    guard let r = XRJSON.object(raw) else { return nil }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+    return XRLiveOutline(
+      enabled: true,
+      color: XRJSON.safeHexColor(r["color"], fallback: "#38bdf8"),
+      thickness: Float(XRJSON.clampNum(r["thickness"] ?? r["width"], 0.5, 20, 3)),
+      pulse: XRJSON.bool(r["pulse"]) == true
+    )
+  }
+
+  /// Parses an `ik` trait (`{root, mid?, effector, target, pole?, solver?, iterations?, tolerance?, weight?}`).
+  public static func parseIK(_ raw: Any?) -> XRLiveIK? {
+    guard let r = XRJSON.object(raw) else { return nil }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+    guard let root = safeAnchorId(r["root"]),
+      let effector = safeAnchorId(r["effector"])
+    else { return nil }
+    let mid = safeAnchorId(r["mid"])
+    var targetPoint: SIMD3<Float>?
+    var targetName: String?
+    if let tv = XRJSON.finiteVec3(r["target"]) {
+      targetPoint = SIMD3<Float>(
+        Float(XRJSON.clampNum(tv.x, -1000, 1000, 0)),
+        Float(XRJSON.clampNum(tv.y, -1000, 1000, 0)),
+        Float(XRJSON.clampNum(tv.z, -1000, 1000, 0))
+      )
+    } else if let tn = safeAnchorId(r["target"]) {
+      targetName = tn
+    } else {
+      return nil
+    }
+    var polePoint: SIMD3<Float>?
+    if let pv = XRJSON.finiteVec3(r["pole"]) {
+      polePoint = SIMD3<Float>(
+        Float(XRJSON.clampNum(pv.x, -1000, 1000, 0)),
+        Float(XRJSON.clampNum(pv.y, -1000, 1000, 0)),
+        Float(XRJSON.clampNum(pv.z, -1000, 1000, 0))
+      )
+    }
+    let solverRaw = XRJSON.string(r["solver"])
+    let solver: String
+    if solverRaw == "fabrik" {
+      solver = "fabrik"
+    } else if solverRaw == "two-bone" {
+      solver = "two-bone"
+    } else {
+      solver = mid != nil ? "two-bone" : "fabrik"
+    }
+    return XRLiveIK(
+      root: root,
+      mid: mid,
+      effector: effector,
+      targetName: targetName,
+      targetPoint: targetPoint,
+      pole: polePoint,
+      solver: solver,
+      iterations: Int(XRJSON.clampNum(r["iterations"], 1, 32, 8).rounded()),
+      tolerance: Float(XRJSON.clampNum(r["tolerance"], 1e-5, 0.1, 1e-3)),
+      weight: Float(XRJSON.clampNum(r["weight"], 0, 1, 1))
+    )
+  }
+
+  /// Evaluates the canonical PBR tone-mapping curve (`neutral`, `aces`, `agx`, `reinhard`, `none`),
+  /// matching `evaluateToneMapping()` in `three-view.ts`.
+  public static func evaluateToneMapping(
+    rgb: SIMD3<Double>,
+    mode: String,
+    exposure: Double = 1.0
+  ) -> SIMD3<Double> {
+    let exp = exposure.isFinite ? Swift.max(0, exposure) : 1.0
+    var r = Swift.max(0, (rgb.x.isFinite ? rgb.x : 0) * exp)
+    var g = Swift.max(0, (rgb.y.isFinite ? rgb.y : 0) * exp)
+    var b = Swift.max(0, (rgb.z.isFinite ? rgb.z : 0) * exp)
+    func clamp01(_ v: Double) -> Double { Swift.max(0, Swift.min(1, v)) }
+    switch mode.lowercased() {
+    case "none":
+      return SIMD3<Double>(clamp01(r), clamp01(g), clamp01(b))
+    case "reinhard":
+      return SIMD3<Double>(r / (r + 1), g / (g + 1), b / (b + 1))
+    case "aces":
+      func aces(_ x: Double) -> Double {
+        let c = x * 0.6
+        return clamp01((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14))
+      }
+      return SIMD3<Double>(aces(r), aces(g), aces(b))
+    case "agx":
+      let ir = 0.84247906 * r + 0.0784336 * g + 0.07922375 * b
+      let ig = 0.04232824 * r + 0.87846864 * g + 0.07916613 * b
+      let ib = 0.04237565 * r + 0.0784336 * g + 0.87914297 * b
+      func sig(_ v: Double) -> Double {
+        let ev = clamp01((log2(Swift.max(v, 1e-6)) + 12.47393) / 16.5)
+        let x2 = ev * ev
+        let x4 = x2 * x2
+        return 15.5 * x4 * x2 - 40.14 * x4 * ev + 31.96 * x4 - 6.868 * x2 * ev
+          + 0.4298 * x2 + 0.1191 * ev - 0.00232
+      }
+      let sr = sig(ir)
+      let sg = sig(ig)
+      let sb = sig(ib)
+      let or = 1.196879 * sr - 0.09802088 * sg - 0.09902974 * sb
+      let og = -0.05289685 * sr + 1.15190313 * sg - 0.09896118 * sb
+      let ob = -0.05297164 * sr - 0.09804345 * sg + 1.15107367 * sb
+      return SIMD3<Double>(
+        clamp01(pow(Swift.max(or, 0), 2.2)),
+        clamp01(pow(Swift.max(og, 0), 2.2)),
+        clamp01(pow(Swift.max(ob, 0), 2.2))
+      )
+    default:
+      let startCompression = 0.76
+      let desaturation = 0.15
+      let x = Swift.min(r, Swift.min(g, b))
+      let offset = x < 0.08 ? x - 6.25 * x * x : 0.04
+      r -= offset
+      g -= offset
+      b -= offset
+      let peak = Swift.max(r, Swift.max(g, b))
+      if peak < startCompression {
+        return SIMD3<Double>(clamp01(r), clamp01(g), clamp01(b))
+      }
+      let d = 1.0 - startCompression
+      let newPeak = 1.0 - (d * d) / (peak + d - startCompression)
+      let scale = newPeak / peak
+      r *= scale
+      g *= scale
+      b *= scale
+      let gt = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0)
+      return SIMD3<Double>(
+        clamp01(r + (newPeak - r) * gt),
+        clamp01(g + (newPeak - g) * gt),
+        clamp01(b + (newPeak - b) * gt)
+      )
+    }
+  }
+
   /// Normalizes an authored or compiled `extras.xr` bag. Accepts legacy aliases
   /// (`grabbable`, `scalable`, `traits: ["grab", ...]`). Returns `nil` when no recognized
   /// trait is present or `raw` is not a dictionary.
@@ -894,6 +1141,9 @@ public enum XRLiveTraitParser {
     out.snapSocket = parseSnapSocket(r["snapSocket"])
     out.gaze = parseGaze(r["gaze"])
     out.explode = parseExplode(r["explode"])
+    out.bloom = parseBloom(r["bloom"])
+    out.outline = parseOutline(r["outline"])
+    out.ik = parseIK(r["ik"])
     out.navigable = parseNavigable(r["navigable"])
     out.sync = XRJSON.bool(r["sync"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
@@ -966,6 +1216,19 @@ public enum XRLiveTraitParser {
       r["explode"] = ex
     } else if let ex = d["explode"] {
       r["explode"] = ex
+    }
+    if let bl = gather("bloom") {
+      r["bloom"] = bl
+    } else if let bl = d["bloom"] {
+      r["bloom"] = bl
+    }
+    if let ol = gather("outline") {
+      r["outline"] = ol
+    } else if let ol = d["outline"] {
+      r["outline"] = ol
+    }
+    if let ik = gather("ik") {
+      r["ik"] = ik
     }
     return normalize(r)
   }

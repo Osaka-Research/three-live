@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview Optional spatial plugin bundle for `<xr-live>`
- * (`xr-live-plugins.min.js`). Importing this module registers all 14
+ * @fileoverview Optional spatial UX, world-understanding, splat, AI & co-presence plugin bundle for `<xr-live>`
+ * (`xr-live-spatial.min.js`). Importing this module registers all 14
  * plugins; each is inert until a scene opts in via `userData.xr` traits or
  * host attributes:
  *
@@ -98,16 +98,24 @@ export {
   flattenXRTraitsForUsd,
   normalizeXRTraits,
   parseAnchorPersist,
+  parseBloomTrait,
   parseDimensions,
   parseExplode,
   parseGaze,
+  parseIKTrait,
   parseNavigable,
+  parseOutlineTrait,
   parseSnapSocket,
   parseSnapTo,
   parseSpatialAudio,
+  parseTextTrait,
   parseWorldUnderstanding,
   registerXRTraitSerializer,
+  type BloomTraitOptions,
+  type IKTraitOptions,
   type NormalizedXRTraits,
+  type OutlineTraitOptions,
+  type TextTraitOptions,
 } from '../../../three-live/src/xr-trait-schema';
 export * from './depth-particles';
 export * from './exploded-view';

@@ -18,27 +18,39 @@ description: >-
 ## 1. Choose the Right Component & Bundle
 
 - **Use `<three-live>` (`three-live.min.js` or `three-live-full.min.js`)** when you need:
-  - A 3D `.glb` / `.usdz` model viewer (`<model-viewer>` drop-in replacement)
-  - A procedural Three.js scene with orbit controls and 1-tap mobile AR handoff (`ar`)
-  - PBR Next materials (clearcoat, transmission, dispersion, iridescence, sheen, volume), `.hdr` environment lighting, ground contact shadows, skeletal animations (`three-live/animation`), or 2D screen-space hotspots (`slot="hotspot-*"`)
+    -   A 3D `.glb` / `.usdz` model viewer (`<model-viewer>` drop-in
+        replacement) with built-in `EXT_meshopt_compression` decoding and
+        `KHR_materials_variants` (`variant-name`)
+    -   A procedural Three.js scene (including 2D `Shape`/`ExtrudeGeometry`,
+        `THREE.CSG` Booleans, 3D `TextGeometry`, and `THREE.InstancedMesh` GPU
+        instancing) with orbit controls and 1-tap mobile AR handoff (`ar`)
+    -   PBR Next materials (clearcoat, transmission, dispersion, iridescence,
+        sheen, volume), 5 filmic/commerce tone-mapping modes
+        (`tone-mapping="neutral|aces|agx|reinhard|none"`), HDR emissive `bloom`,
+        silhouette `outline`, `.hdr` environment lighting, ground contact
+        shadows, skeletal animations & 2-bone/FABRIK `ik`, or 2D screen-space
+        hotspots (`slot="hotspot-*"`)
 - **Use `<xr-live>` (`xr-live-full.min.js`)** when you need:
     - 6DoF WebXR (`xr-mode="ar"` / `"vr"` / `"auto"`) or desktop 6DoF simulation (`xr-simulator="living-room"`)
     -   Declarative spatial manipulation traits (`grab`, `scale`, `billboard`,
         `follow`, `anchor`, `physics`, `orbit`, `handles`, `dimensions`,
-        `snapTo`, `snapSocket`, `gaze`, `explode`, `navigable`, `sync`)
+        `snapTo`, `snapSocket`, `gaze`, `explode`, `navigable`, `sync`, `bloom`,
+        `outline`, `ik`, `text`, `splat`)
     - True 3D raycastable HTML/CSS spatial cards (`<div slot="spatial">`)
     -   Real-world depth occlusion & heightfield physics
         (`xr-depth="occlusion-physics"`), 25-joint hand gesture recognition
         (`xr-hands="gestures"`), spatial 3D painting (`spatial-paint`),
-        depth-colliding particles (`particles`), 3D Gaussian Splats
-        (`splatUrl`), world plane/reticle understanding (`world-understanding`),
-        multimodal Gemini Live (`connectGeminiLive()` / `holdToAsk`), 3D CAD
-        dimension callouts & tape measure (`spatial-measure`), magnetic
-        socket/grid snapping (`magnetic-snap`), hands-free eye/head gaze dwell
-        (`gaze-dwell`), multi-part exploded views & section clipping (`explode`
-        / `section-plane`), `#xr-state` & `XRAnchor` persistence
+        depth-colliding particles (`particles`), 3D Gaussian Splats with 3D
+        covariance & SH degree 1–3 (`splatUrl` / `splat`), world plane/reticle
+        understanding (`world-understanding`), multimodal Gemini Live
+        (`connectGeminiLive()` / `holdToAsk`), 3D CAD dimension callouts & tape
+        measure (`spatial-measure`), magnetic socket/grid snapping
+        (`magnetic-snap`), hands-free eye/head gaze dwell (`gaze-dwell`),
+        multi-part exploded views & section clipping (`explode` /
+        `section-plane`), `#xr-state` & `XRAnchor` persistence
         (`persistent-anchors`), parabolic XR locomotion (`locomotion`), or
-        multi-user co-presence (`shared-room`).
+        multi-user co-presence & WebRTC spatialized voice chat (`shared-room` +
+        `shared-room-voice`).
 -   **Add `xr-live-sim.min.js` (included in `xr-live-full.min.js`)** when the
     scene is an interactive simulation: a game, training drill, or safety
     walkthrough with a controllable character (`character`), steering agents
@@ -90,7 +102,12 @@ Trait Key            | Accepted Values                                          
 `particles`          | `{ preset: 'rain' \| 'snow' \| 'sparks' \| 'confetti', count?: number, area?: [x,y,z], speed?: number }`                                                    | Emits up to `2,000` depth-colliding particles inside `area`.
 `holdToAsk`          | `{ prompt?: string, holdMs?: number } \| true`                                                                                                              | Press-and-hold on the mesh starts speech recognition and queries Gemini Live; emits `xr-hold-to-ask`.
 `worldUnderstanding` | `{ planes?: boolean, meshes?: boolean, reticle?: boolean, objects?: boolean }`                                                                              | Enables WebXR plane/mesh detection and gaze surface reticle (`__xr_reticle__`).
-`splatUrl`           | `'https://.../scene.splat'` or `'.spz'`                                                                                                                     | Streams and depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2/v3).
+`splatUrl`           | `'https://.../scene.splat'` or `'.spz'`                                                                                                                     | Streams and depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2/v3 with 3D covariance + SH degree 1–3).
+`splat`              | `{ url: string, shDegree?: 0 \| 1 \| 2 \| 3, maxSplats?: number }`                                                                                          | Structured 3D Gaussian Splat trait controlling Spherical Harmonics degree (`0..3`) and splat cap.
+`bloom`              | `{ strength?: number, threshold?: number, radius?: number } \| boolean \| number`                                                                           | Enables HDR emissive bloom on the scene/node (`strength` in `[0, 5]`, `threshold` in `[0, 2]`, `radius` in `[0, 1]`).
+`outline`            | `{ color?: string, thickness?: number } \| boolean \| string`                                                                                               | Renders an inverted-hull or screen-space silhouette outline (`thickness` in `[0.002, 0.25]`) around the node.
+`ik`                 | `{ target: string, solver?: 'two-bone' \| 'fabrik', chainLength?: number, poleTarget?: string, iterations?: number, tolerance?: number }`                   | Solves analytical 2-bone or multi-joint FABRIK inverse kinematics toward `target` (and optional `poleTarget`).
+`text`               | `{ text: string, size?: number, depth?: number, bevelEnabled?: boolean, bevelThickness?: number, bevelSize?: number }`                                      | Extruded 3D vector text metadata exported to glTF `extras.xr.text` and USDZ `customData.xr`.
 `audio`              | `'https://.../sound.mp3'` or `{ src, refDistance?: number, loop?: boolean }`                                                                                | Attaches an HRTF 3D spatial audio source to the node.
 `character`          | `true \| 'third-person' \| 'first-person' \| 'top-down' \| 'fixed'` **or** `{ speed, jumpVelocity, radius, height, cameraMode, clips }`                     | (`xr-live-sim`) Keyboard, gamepad, or touch-joystick character that slides along `collidable` nodes.
 `agent`              | `'patrol' \| 'chase' \| 'flee' \| 'follow' \| 'wander'` **or** `{ mode, target, speed, sightRadius, waypoints }`                                            | (`xr-live-sim`) Steering agent; `target: 'user'` means the character, else the viewer.

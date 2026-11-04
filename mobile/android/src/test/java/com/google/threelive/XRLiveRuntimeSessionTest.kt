@@ -1165,6 +1165,42 @@ class XRLiveRuntimeSessionTest {
     assertTrue(Math.abs((r3.colors[0].toInt() and 0xFF) - 128) <= 2)
     val badBits = v3.array().copyOf().also { it[13] = 31 }
     assertThrows { SplatParser.parseSpzPayload(badBits) }
+
+    // v3 with Spherical Harmonics degree 1 (9 trailing bytes per splat)
+    val sh1 = ByteArray(v3.array().size + 9)
+    System.arraycopy(v3.array(), 0, sh1, 0, v3.array().size)
+    sh1[12] = 1
+    for (j in v3.array().size until sh1.size) sh1[j] = 128.toByte()
+    sh1[v3.array().size + 3] = 255.toByte() // basis 1 (+Z), R channel
+    val sh1Data = SplatParser.parseSpzPayload(sh1)
+    assertEquals(1, sh1Data.shDegree)
+    assertNotNull(sh1Data.sh)
+    assertEquals(9, sh1Data.sh!!.size)
+    val rgbPosZ = SplatParser.evaluateSplatSH(sh1Data, 0, 0f, 0f, 1f)
+    val rgbNegZ = SplatParser.evaluateSplatSH(sh1Data, 0, 0f, 0f, -1f)
+    assertTrue(rgbPosZ[0] > (sh1Data.colors[0].toInt() and 0xFF) + 40)
+    assertTrue(rgbNegZ[0] < (sh1Data.colors[0].toInt() and 0xFF) - 40)
+
+    // Anisotropic 3D & 2D covariance projection
+    val anisoScales = floatArrayOf(0.4f, 0.05f, 0.05f)
+    val s45 = Math.sin(Math.PI / 8.0).toFloat()
+    val c45 = Math.cos(Math.PI / 8.0).toFloat()
+    val anisoRot = floatArrayOf(0f, 0f, s45, c45)
+    val cov3d = SplatParser.computeCovariance3D(anisoScales, anisoRot, 0)
+    assertEquals(cov3d[0], cov3d[3], 1e-4f)
+    assertTrue(cov3d[1] > 0.05f)
+    val mv =
+      FloatArray(16).also {
+        it[0] = 1f
+        it[5] = 1f
+        it[10] = 1f
+        it[14] = -2f
+        it[15] = 1f
+      }
+    val proj2d = SplatParser.projectCovariance2D(cov3d, mv, floatArrayOf(0f, 0f, 0f), 500f)
+    assertTrue(proj2d[3] > proj2d[4] * 20f)
+    val dotAxes = proj2d[5] * proj2d[7] + proj2d[6] * proj2d[8]
+    assertEquals(0f, dotAxes, 1e-2f)
   }
 
   @Test
@@ -1675,6 +1711,288 @@ class XRLiveRuntimeSessionTest {
       "Ball_2 outside pedestal rim falls below pedestal top (-0.21) toward Room_Floor",
       yBall2 < 0.5f && yBall2 >= -0.71f,
     )
+  }
+
+  @Test
+  fun meshoptDecoderAndMaterialVariantsAndGpuInstancing() {
+    val orig = ByteArray(16 * 4) { ((it * 13 + 7) and 0xFF).toByte() }
+    val compressed = MeshoptDecoder.encodeBuffer(orig, 16, 4, "ATTRIBUTES")
+    val decoded = MeshoptDecoder.decodeBuffer(compressed, 16, 4, "ATTRIBUTES")
+    assertArrayEquals(orig, decoded)
+
+    val oct = byteArrayOf(0, 0, 100, 127)
+    MeshoptDecoder.applyFilter(oct, 1, 4, "OCTAHEDRAL")
+    assertEquals(0, oct[0].toInt())
+    assertEquals(0, oct[1].toInt())
+    assertEquals(127, oct[2].toInt())
+
+    val octZero = byteArrayOf(0, 0, 0, 127)
+    MeshoptDecoder.applyFilter(octZero, 1, 4, "OCTAHEDRAL")
+    assertEquals(127, octZero[2].toInt())
+
+    val triRaw = byteArrayOf(0, 0, 1, 0, 2, 0, 2, 0, 1, 0, 3, 0)
+    val triEnc = MeshoptDecoder.encodeBuffer(triRaw, 6, 2, "TRIANGLES")
+    val triDec = MeshoptDecoder.decodeBuffer(triEnc, 6, 2, "TRIANGLES")
+    assertArrayEquals(triRaw, triDec)
+
+    val exp =
+      ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(0, (-1 shl 24) or 1).array()
+    MeshoptDecoder.applyFilter(exp, 1, 4, "EXPONENTIAL")
+    val expFloat = ByteBuffer.wrap(exp).order(ByteOrder.LITTLE_ENDIAN).getFloat(0)
+    assertEquals(0.5f, expFloat, 1e-6f)
+
+    assertThrows {
+      MeshoptDecoder.decodeBuffer(
+        byteArrayOf(0xba.toByte(), 1),
+        MeshoptDecoder.MAX_MESHOPT_COUNT + 1,
+        4,
+        "ATTRIBUTES",
+      )
+    }
+
+    val gltfJson =
+      """{
+        "extensions": {
+          "KHR_materials_variants": {
+            "variants": [{"name": "Midnight"}, {"name": "Solar Gold"}]
+          }
+        },
+        "materials": [
+          {"name": "Midnight", "pbrMetallicRoughness": {"baseColorFactor": [0.1, 0.1, 0.2, 1]}},
+          {"name": "SolarGold", "pbrMetallicRoughness": {"baseColorFactor": [0.95, 0.6, 0.05, 1]}}
+        ],
+        "meshes": [
+          {
+            "primitives": [
+              {
+                "material": 0,
+                "extensions": {
+                  "KHR_materials_variants": {
+                    "mappings": [
+                      {"material": 0, "variants": [0]},
+                      {"material": 1, "variants": [1]}
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "name": "WatchStuds",
+            "mesh": 0,
+            "extensions": {
+              "EXT_mesh_gpu_instancing": {
+                "attributes": {"TRANSLATION": 0, "ROTATION": 1, "SCALE": 2}
+              }
+            }
+          }
+        ],
+        "accessors": [
+          {"count": 12},
+          {"count": 12},
+          {"count": 12}
+        ]
+      }"""
+    val s = XRLiveRuntimeSession(gltfJson)
+    assertEquals(listOf("Midnight", "Solar Gold"), s.availableVariants)
+    assertEquals(0, s.meshPrimitiveMaterial(0, 0))
+    assertEquals(12, s.nodeInstanceCount(0))
+    assertTrue(s.selectVariant("Solar Gold"))
+    assertEquals("Solar Gold", s.activeVariantName)
+    assertEquals(1, s.meshPrimitiveMaterial(0, 0))
+    assertTrue(s.selectVariant(null))
+    assertNull(s.activeVariantName)
+    assertEquals(0, s.meshPrimitiveMaterial(0, 0))
+    assertFalse(s.selectVariant("NonExistent"))
+  }
+
+  @Test
+  fun extendedToneMappingAndBloomAndOutlineTraits() {
+    val neutral = XRLiveSceneCoreHelper.evaluateToneMapping(4.0, 1.5, 0.25, "neutral", 1.0)
+    val aces = XRLiveSceneCoreHelper.evaluateToneMapping(4.0, 1.5, 0.25, "aces", 1.0)
+    val agx = XRLiveSceneCoreHelper.evaluateToneMapping(4.0, 1.5, 0.25, "agx", 1.0)
+    val reinhard = XRLiveSceneCoreHelper.evaluateToneMapping(4.0, 1.5, 0.25, "reinhard", 1.0)
+    val none = XRLiveSceneCoreHelper.evaluateToneMapping(4.0, 1.5, 0.25, "none", 1.0)
+    assertTrue(neutral[0] in 0.7..1.0)
+    assertTrue(aces[0] in 0.8..1.0)
+    assertTrue(agx[0] in 0.6..1.0)
+    assertEquals(0.8, reinhard[0], 1e-4)
+    assertEquals(1.0, none[0], 1e-6)
+
+    val bloom =
+      XRLiveSceneCoreHelper.parseBloom(
+        mapOf("strength" to 1.2, "threshold" to 0.65, "radius" to 0.5)
+      )!!
+    assertEquals(1.2, bloom.strength, 1e-6)
+    assertEquals(0.65, bloom.threshold, 1e-6)
+    assertEquals(0.5, bloom.radius, 1e-6)
+
+    val outline =
+      XRLiveSceneCoreHelper.parseOutline(mapOf("color" to "#22c55e", "thickness" to 4.0))!!
+    assertEquals("#22c55e", outline.color)
+    assertEquals(4.0, outline.thickness, 1e-6)
+
+    val json =
+      """{
+        "nodes": [
+          {
+            "name": "GlowingOrb",
+            "extras": {
+              "xr": {
+                "bloom": {"strength": 0.9, "threshold": 0.7, "radius": 0.4},
+                "outline": {"color": "#38bdf8", "thickness": 3.5}
+              }
+            }
+          }
+        ]
+      }"""
+    val traits = XRLiveSceneCoreHelper.parseNodeTraitsFromGltfJson(json)
+    assertEquals(1, traits.size)
+    assertEquals(0.9, traits[0].bloom!!.strength, 1e-6)
+    assertEquals("#38bdf8", traits[0].outline!!.color)
+    assertEquals(3.5, traits[0].outline!!.thickness, 1e-6)
+  }
+
+  @Test
+  fun ikSolverAndSharedRoomVoiceParity() {
+    val q90 =
+      IKSolver.quatFromUnitVectors(doubleArrayOf(1.0, 0.0, 0.0), doubleArrayOf(0.0, 1.0, 0.0))
+    assertEquals(Math.sin(Math.PI / 4.0), q90[2], 1e-4)
+    assertEquals(Math.cos(Math.PI / 4.0), q90[3], 1e-4)
+
+    val twoBone =
+      IKSolver.solveTwoBoneIK(
+        doubleArrayOf(0.0, 0.0, 0.0),
+        doubleArrayOf(0.0, 0.5, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+        doubleArrayOf(0.5, 0.5, 0.0),
+        doubleArrayOf(0.0, 1.0, 0.0),
+      )
+    val d1 = Math.hypot(twoBone.midPos[0], Math.hypot(twoBone.midPos[1], twoBone.midPos[2]))
+    val d2 =
+      Math.hypot(
+        twoBone.effectorPos[0] - twoBone.midPos[0],
+        Math.hypot(
+          twoBone.effectorPos[1] - twoBone.midPos[1],
+          twoBone.effectorPos[2] - twoBone.midPos[2],
+        ),
+      )
+    val err2 =
+      Math.hypot(
+        twoBone.effectorPos[0] - 0.5,
+        Math.hypot(twoBone.effectorPos[1] - 0.5, twoBone.effectorPos[2]),
+      )
+    assertEquals(0.5, d1, 1e-4)
+    assertEquals(0.5, d2, 1e-4)
+    assertEquals(0.0, err2, 1e-4)
+
+    val fabrik =
+      IKSolver.solveFABRIK(
+        listOf(
+          doubleArrayOf(0.0, 0.0, 0.0),
+          doubleArrayOf(0.0, 0.4, 0.0),
+          doubleArrayOf(0.0, 0.8, 0.0),
+          doubleArrayOf(0.0, 1.2, 0.0),
+        ),
+        doubleArrayOf(0.6, 0.6, 0.2),
+        12,
+        1e-4,
+      )
+    val endPos = fabrik.positions[3]
+    val fabrikErr = Math.hypot(endPos[0] - 0.6, Math.hypot(endPos[1] - 0.6, endPos[2] - 0.2))
+    assertTrue("fabrikErr=$fabrikErr", fabrikErr < 1e-3)
+    assertEquals(3, fabrik.rotations.size)
+
+    val ikTrait =
+      XRLiveSceneCoreHelper.parseIK(
+        mapOf(
+          "solver" to "two-bone",
+          "root" to "Shoulder",
+          "mid" to "Elbow",
+          "effector" to "Wrist",
+          "target" to "TargetOrb",
+          "pole" to listOf(0.0, 1.0, -0.5),
+          "iterations" to 10,
+        )
+      )!!
+    assertEquals("two-bone", ikTrait.solver)
+    assertEquals("Shoulder", ikTrait.root)
+    assertEquals("Elbow", ikTrait.mid)
+    assertEquals("Wrist", ikTrait.effector)
+    assertEquals("TargetOrb", ikTrait.targetName)
+    assertEquals(10, ikTrait.iterations)
+
+    val rtc =
+      SharedRoom.WireMessage.Rtc(
+        peerId = "peer-alice",
+        targetPeerId = "peer-bob",
+        signalType = "offer",
+        sdp = "v=0\r\nm=audio 9 UDP/TLS\r\n",
+      )
+    val rtcJson = SharedRoom.serializeMessage(rtc)
+    val parsedRtc = SharedRoom.parseMessage(rtcJson) as? SharedRoom.WireMessage.Rtc
+    assertNotNull(parsedRtc)
+    assertEquals("peer-alice", parsedRtc!!.peerId)
+    assertEquals("peer-bob", parsedRtc.targetPeerId)
+    assertEquals("offer", parsedRtc.signalType)
+    assertNull(
+      SharedRoom.parseMessage(
+        SharedRoom.serializeMessage(
+          SharedRoom.WireMessage.Rtc("peer-a", "peer-a", "offer", sdp = "v=0")
+        )
+      )
+    )
+
+    val vgNear =
+      SharedRoom.computeSpatialVoiceGain(
+        doubleArrayOf(0.0, 1.6, 0.0),
+        doubleArrayOf(0.0, 0.0, 0.0, 1.0),
+        doubleArrayOf(0.0, 1.6, -1.0),
+      )
+    val vgRight =
+      SharedRoom.computeSpatialVoiceGain(
+        doubleArrayOf(0.0, 1.6, 0.0),
+        doubleArrayOf(0.0, 0.0, 0.0, 1.0),
+        doubleArrayOf(3.0, 1.6, 0.0),
+      )
+    assertEquals(1.0, vgNear.gain, 1e-4)
+    assertEquals(0.0, vgNear.pan, 1e-4)
+    assertTrue(vgRight.gain < 0.4)
+    assertTrue(vgRight.pan > 0.9)
+
+    val ikGltf =
+      """{"asset":{"version":"2.0"},"nodes":[
+        {"name":"Shoulder","translation":[0,0,0]},
+        {"name":"Elbow","translation":[0,0.5,0]},
+        {"name":"Wrist","translation":[0,1.0,0],"extras":{"xr":{"ik":{"solver":"two-bone","root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":[0,1,0],"weight":0.5}}}}
+      ]}"""
+    val ikSession = XRLiveRuntimeSession(ikGltf)
+    val head = XRPose()
+    for (i in 0 until 10) {
+      ikSession.step(0.016, head)
+    }
+    val shoulderPos = ikSession.nodeTransform(0)!!.translation
+    val elbowPos = ikSession.nodeTransform(1)!!.translation
+    val wristPos = ikSession.nodeTransform(2)!!.translation
+    val seg1 =
+      kotlin.math.sqrt(
+        ((elbowPos[0] - shoulderPos[0]) * (elbowPos[0] - shoulderPos[0]) +
+            (elbowPos[1] - shoulderPos[1]) * (elbowPos[1] - shoulderPos[1]) +
+            (elbowPos[2] - shoulderPos[2]) * (elbowPos[2] - shoulderPos[2]))
+          .toDouble()
+      )
+    val seg2 =
+      kotlin.math.sqrt(
+        ((wristPos[0] - elbowPos[0]) * (wristPos[0] - elbowPos[0]) +
+            (wristPos[1] - elbowPos[1]) * (wristPos[1] - elbowPos[1]) +
+            (wristPos[2] - elbowPos[2]) * (wristPos[2] - elbowPos[2]))
+          .toDouble()
+      )
+    assertEquals(0.5, seg1, 1e-4)
+    assertEquals(0.5, seg2, 1e-4)
+    assertTrue(wristPos[0] > 0.1f)
   }
 
   private fun assertThrows(block: () -> Unit) {

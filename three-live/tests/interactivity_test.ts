@@ -657,6 +657,56 @@ console.log('=== Running KHR_interactivity Plugin Tests ===');
   const t1 = Date.now();
   createMockViewerFromGLBData({gltf: diamondGltf, bin: new ArrayBuffer(0)});
   assert(Date.now() - t1 < 1000, `diamond value DAG evaluation is capped (${Date.now() - t1}ms)`);
+
+  // Orbiting nodes respect viewer autoRotate (Start/Pause Spin) state.
+  let spinEnabled = true;
+  const orbitViewer = {
+    getAutoRotate: () => spinEnabled,
+    gltf: {
+      nodes: [
+        {name: 'QuantumCore', translation: [0, 0, 0]},
+        {
+          name: 'SensorArray_A',
+          translation: [1.45, 0.35, 0],
+          extras: {
+            xr: {
+              orbit: {
+                target: 'QuantumCore',
+                radius: 1.45,
+                speed: 1.2,
+                height: 0.35,
+                phase: 0,
+                faceCenter: true,
+              },
+            },
+          },
+        },
+      ],
+    },
+    meshes: [
+      {
+        nodeIndex: 1,
+        transform: new Float32Array(16),
+        normalMatrix: new Float32Array(9),
+      },
+    ],
+  };
+  interactivityPlugin.onLoadModel?.(orbitViewer, orbitViewer.gltf);
+  interactivityPlugin.onUpdate?.(orbitViewer, 0.1);
+  const posAfterSpin = [...orbitViewer.gltf.nodes[1].translation!];
+  assert(
+    Math.abs(posAfterSpin[0] - 1.45) > 1e-4 || Math.abs(posAfterSpin[2]) > 1e-4,
+    'Orbiting node advances when viewer autoRotate is enabled',
+  );
+  spinEnabled = false;
+  interactivityPlugin.onUpdate?.(orbitViewer, 0.1);
+  const posWhilePaused = [...orbitViewer.gltf.nodes[1].translation!];
+  assert(
+    posWhilePaused[0] === posAfterSpin[0] &&
+      posWhilePaused[1] === posAfterSpin[1] &&
+      posWhilePaused[2] === posAfterSpin[2],
+    'Orbiting node pauses when viewer autoRotate is false',
+  );
 }
 
 console.log(

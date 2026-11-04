@@ -270,4 +270,50 @@ mod tests {
         assert!(usdz.len() > 100);
         assert_eq!(&usdz[0..2], b"PK");
     }
+
+    #[test]
+    fn test_instanced_mesh_and_material_variants_compile_to_glb_and_usdz() {
+        let script = r#"
+            const midnight = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.2 });
+            const gold = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.3, metalness: 0.9 });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.2), midnight);
+            body.name = 'WatchCase';
+            body.userData.variants = {
+                'Midnight': midnight,
+                'Solar Gold': gold,
+            };
+            scene.add(body);
+
+            const studGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.1, 8);
+            const studMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const studs = new THREE.InstancedMesh(studGeo, studMat, 4);
+            studs.name = 'Studs';
+            for (let i = 0; i < 4; i++) {
+                const m = new THREE.Matrix4().makeTranslation(i * 0.4, 0, 0);
+                studs.setMatrixAt(i, m);
+                studs.setColorAt(i, new THREE.Color(0xff0000));
+            }
+            scene.add(studs);
+        "#;
+
+        let glb =
+            transcode_three_to_glb(script).expect("InstancedMesh + variants should compile to GLB");
+        assert!(glb.len() > 200);
+        let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+        let json_str = std::str::from_utf8(&glb[20..20 + json_len]).unwrap();
+        assert!(
+            json_str.contains("KHR_materials_variants"),
+            "GLB JSON must include KHR_materials_variants"
+        );
+        assert!(
+            json_str.contains("EXT_mesh_gpu_instancing"),
+            "GLB JSON must include EXT_mesh_gpu_instancing"
+        );
+        assert!(json_str.contains("Solar Gold"), "GLB JSON must include Solar Gold variant");
+
+        let usdz = transcode_three_to_usdz(script)
+            .expect("InstancedMesh + variants should compile to USDZ");
+        assert!(usdz.len() > 200);
+        assert_eq!(&usdz[0..2], b"PK");
+    }
 }

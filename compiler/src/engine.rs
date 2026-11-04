@@ -779,6 +779,13 @@ impl ThreeEngine {
                 &mut self.context,
             );
 
+            let variant_mappings = read_json_field(
+                &mesh_obj,
+                "variant_mappings_json",
+                MAX_XR_JSON_BYTES,
+                &mut self.context,
+            );
+
             rust_meshes.push(Mesh3D {
                 name,
                 positions,
@@ -786,6 +793,7 @@ impl ThreeEngine {
                 uvs,
                 indices,
                 material_index,
+                variant_mappings,
                 xr_traits,
                 xr_normalized,
                 xr_scenecore,
@@ -983,6 +991,14 @@ impl ThreeEngine {
         )
         .filter(|v| v.is_object());
 
+        let variants = read_json_field(
+            &scene_obj,
+            "variants_json",
+            MAX_INTERACTIVITY_JSON_BYTES,
+            &mut self.context,
+        )
+        .filter(|v| v.is_object());
+
         // 5. Scene hierarchy (absent on legacy engine assets -> flat layout).
         let nodes = self.extract_nodes(&scene_obj, rust_meshes.len())?;
 
@@ -992,6 +1008,7 @@ impl ThreeEngine {
             lights: rust_lights,
             camera: camera_config,
             interactivity,
+            variants,
             nodes,
         })
     }
@@ -1082,6 +1099,18 @@ impl ThreeEngine {
             let (xr_traits, xr_normalized, xr_scenecore, xr_hubs) =
                 read_xr_fields(&node_obj, &mut self.context);
 
+            let inst_mat_val = node_obj
+                .get(js_string!("instance_matrices"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let instance_matrices =
+                extract_float_buffer(&inst_mat_val, &mut self.context).unwrap_or_default();
+
+            let inst_col_val = node_obj
+                .get(js_string!("instance_colors"), &mut self.context)
+                .unwrap_or(JsValue::undefined());
+            let instance_colors =
+                extract_float_buffer(&inst_col_val, &mut self.context).unwrap_or_default();
+
             nodes.push(SceneNode {
                 name,
                 parent,
@@ -1093,6 +1122,8 @@ impl ThreeEngine {
                 xr_normalized,
                 xr_scenecore,
                 xr_hubs,
+                instance_matrices,
+                instance_colors,
             });
         }
         Ok(nodes)

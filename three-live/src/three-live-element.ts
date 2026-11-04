@@ -18,6 +18,10 @@
  * responsive layout, mesh inspection, and one-tap spatial/AR launch.
  */
 
+import {
+  CLIENT_SCRIPTS_DISABLED_ERROR,
+  CLIENT_SCRIPTS_DISABLED_TOAST,
+} from './messages';
 import {getSharedRegistry} from './plugin';
 import {
   SANDBOX_HOST_SCENE_LIMITS,
@@ -30,13 +34,10 @@ import {
   type HostSceneLimits,
   type MeshDecoder,
   type OrbitLimits,
+  type ToneMappingMode,
 } from './three-view';
-import {
-  CLIENT_SCRIPTS_DISABLED_ERROR,
-  CLIENT_SCRIPTS_DISABLED_TOAST,
-} from './messages';
 
-export type {DecoderType, MeshDecoder, OrbitLimits};
+export type {DecoderType, MeshDecoder, OrbitLimits, ToneMappingMode};
 
 export type ARMode = 'quick-look' | 'webxr' | 'scene-viewer';
 
@@ -151,10 +152,17 @@ export class ThreeLiveElement extends BaseElement {
     'shadow-intensity',
     'shadow-softness',
     'tone-mapping',
+    'bloom',
+    'bloom-threshold',
+    'bloom-radius',
+    'outline',
+    'outline-selected',
+    'outline-color',
     'environment-image',
     'skybox-image',
     'autoplay',
     'animation-name',
+    'variant-name',
     'auto-rotate',
     'auto-rotate-delay',
     'rotation-per-second',
@@ -489,6 +497,12 @@ export class ThreeLiveElement extends BaseElement {
         }
         break;
 
+      case 'variant-name':
+        if (this.viewer) {
+          this.selectVariant(newVal);
+        }
+        break;
+
       case 'auto-rotate':
         if (this.viewer) {
           this.viewer.setAutoRotate(newVal !== null && newVal !== 'false');
@@ -723,11 +737,46 @@ export class ThreeLiveElement extends BaseElement {
     this.setAttribute('shadow-softness', String(val));
   }
 
-  get toneMapping(): 'neutral' | 'reinhard' | 'none' {
-    return (this.getAttribute('tone-mapping') as any) || 'neutral';
+  get toneMapping(): ToneMappingMode {
+    return (this.getAttribute('tone-mapping') as ToneMappingMode) || 'neutral';
   }
-  set toneMapping(val: 'neutral' | 'reinhard' | 'none') {
+  set toneMapping(val: ToneMappingMode) {
     this.setAttribute('tone-mapping', val);
+  }
+
+  get bloom(): number {
+    return this.getFloatAttr('bloom', 0);
+  }
+  set bloom(val: number) {
+    this.setAttribute('bloom', String(val));
+  }
+
+  get bloomThreshold(): number {
+    return this.getFloatAttr('bloom-threshold', 0.8);
+  }
+  set bloomThreshold(val: number) {
+    this.setAttribute('bloom-threshold', String(val));
+  }
+
+  get bloomRadius(): number {
+    return this.getFloatAttr('bloom-radius', 0.5);
+  }
+  set bloomRadius(val: number) {
+    this.setAttribute('bloom-radius', String(val));
+  }
+
+  get outlineSelected(): boolean {
+    return this.getBoolAttr('outline-selected');
+  }
+  set outlineSelected(val: boolean) {
+    this.setBoolAttr('outline-selected', val);
+  }
+
+  get outlineColor(): string {
+    return this.getAttr('outline-color') || '#38bdf8';
+  }
+  set outlineColor(val: string | null) {
+    this.setAttr('outline-color', val);
   }
 
   get environmentImage(): string | null {
@@ -760,6 +809,34 @@ export class ThreeLiveElement extends BaseElement {
 
   get availableAnimations(): string[] {
     return this.viewer ? this.viewer.getAvailableAnimations() : [];
+  }
+
+  get variantName(): string | null {
+    return this.viewer
+      ? this.viewer.getVariantName()
+      : this.getAttr('variant-name');
+  }
+  set variantName(val: string | null) {
+    this.setAttr('variant-name', val);
+  }
+
+  get availableVariants(): string[] {
+    return this.viewer ? this.viewer.getAvailableVariants() : [];
+  }
+
+  selectVariant(name: string | null): boolean {
+    if (!this.viewer) return false;
+    const applied = this.viewer.selectVariant(name);
+    if (applied) {
+      this.dispatchEvent(
+        new CustomEvent('variant-applied', {
+          bubbles: true,
+          composed: true,
+          detail: {variantName: this.viewer.getVariantName()},
+        }),
+      );
+    }
+    return applied;
   }
 
   get model(): {
@@ -966,6 +1043,10 @@ export class ThreeLiveElement extends BaseElement {
       const selected = this.getAttribute('selected-mesh');
       if (selected) {
         this.viewer.setSelectedMesh(selected);
+      }
+      const initialVariant = this.getAttribute('variant-name');
+      if (initialVariant) {
+        this.selectVariant(initialVariant);
       }
 
       this.dispatchEvent(
@@ -1256,6 +1337,7 @@ export class ThreeLiveElement extends BaseElement {
       environmentImage: this.environmentImage,
       autoplay: this.autoplay,
       animationName: this.animationName || undefined,
+      variantName: this.getAttribute('variant-name') || undefined,
       fieldOfView,
       cameraTarget,
       minCameraOrbit: minOrbit,
@@ -1721,12 +1803,8 @@ export class ThreeLiveElement extends BaseElement {
       return this.runWithScriptRunner(() => Promise.resolve());
     }
     if (!this.allowClientScripts) {
-      const error = new Error(
-        CLIENT_SCRIPTS_DISABLED_ERROR,
-      );
-      this.showToast(
-        CLIENT_SCRIPTS_DISABLED_TOAST,
-      );
+      const error = new Error(CLIENT_SCRIPTS_DISABLED_ERROR);
+      this.showToast(CLIENT_SCRIPTS_DISABLED_TOAST);
       this.dispatchEvent(
         new CustomEvent('error', {
           bubbles: true,

@@ -49,6 +49,29 @@ import type {
 
 export * from './three-live/src/core';
 export {
+  cadPlugin,
+  installCadExtension,
+  MAX_BSP_DEPTH,
+  MAX_CSG_TRIANGLES,
+  MAX_TEXT_GEOMETRY_CHARS,
+  type ExtrudeGeometryOptions,
+  type TextGeometryOptions,
+} from './three-live/src/plugins/cad';
+export {
+  ikPlugin,
+  IKSolver,
+  quatFromUnitVectors,
+  solveFABRIK,
+  solveTwoBoneIK,
+  type FABRIKSolution,
+  type IKQuat,
+  type TwoBoneIKSolution,
+} from './three-live/src/plugins/ik';
+export {
+  extractNodeInstancing,
+  instancingPlugin,
+} from './three-live/src/plugins/instancing';
+export {
   getInteractivityVM,
   interactivityPlugin,
   InteractivityVM,
@@ -63,6 +86,30 @@ export {
   type InteractivityValueSocket,
   type InteractivityVariableDef,
 } from './three-live/src/plugins/interactivity';
+export {
+  applyMeshoptFilter,
+  decodeMeshoptBuffer,
+  decodeMeshoptGLB,
+  encodeMeshoptBuffer,
+  meshoptDecoder,
+  meshoptPlugin,
+  type MeshoptFilter,
+  type MeshoptMode,
+} from './three-live/src/plugins/meshopt';
+export {
+  computeOutlineClipOffset,
+  evaluateKawaseBloom,
+  parseHexRgb,
+  postprocessingPlugin,
+  resolveViewerBloom,
+} from './three-live/src/plugins/postprocessing';
+export {
+  extractMaterialVariants,
+  extractPrimitiveVariantMappings,
+  selectMaterialVariant,
+  variantsPlugin,
+  type VariantMapping,
+} from './three-live/src/plugins/variants';
 export {
   ThreeLiveElement,
   type ARLaunchOptions,
@@ -80,7 +127,7 @@ export {
   type XRProfile,
   type XRSimulatorRoom,
 } from './xr-live/src/xr-live-element';
-/** Optional spatial plugins (`xr-live/plugins`, `xr-live-plugins.min.js`). */
+/** Optional spatial plugins (`xr-live/spatial`, `xr-live-spatial.min.js`). */
 export * from './xr-live/src/plugins/index';
 
 /**
@@ -119,7 +166,7 @@ export interface ThreeLiveAttributes {
   'shadow-intensity'?: number | string;
   /** Radial Gaussian blur falloff of contact shadow (0.0 to 1.0). */
   'shadow-softness'?: number | string;
-  /** Tone mapping mode ("neutral", "reinhard", "none"). */
+  /** Tone mapping mode ("neutral", "aces", "agx", "reinhard", "none"). */
   'tone-mapping'?: string;
   /** Enable or disable interactive camera orbit/pan/zoom controls (default: true). */
   'camera-controls'?: boolean | string;
@@ -127,6 +174,8 @@ export interface ThreeLiveAttributes {
   'autoplay'?: boolean | string;
   /** Name of specific glTF animation clip to play. */
   'animation-name'?: string;
+  /** Name of the active KHR_materials_variants material variant. */
+  'variant-name'?: string;
   /** Automatically rotate scene around the Y-axis when user is idle. */
   'auto-rotate'?: boolean | string;
   /** Delay in milliseconds before auto-rotation resumes after user interaction (default: 3000). */
@@ -162,6 +211,7 @@ export interface ThreeLiveAttributes {
   onerror?: (e: CustomEvent<{error: any}>) => void;
   onmeshclick?: (e: CustomEvent<HitDetail>) => void;
   'oncamera-change'?: (e: CustomEvent<CameraDetail>) => void;
+  'onvariant-applied'?: (e: CustomEvent<{variantName: string | null}>) => void;
   'onar-status'?: (
     e: CustomEvent<{
       status: 'session-started' | 'not-presenting' | 'failed';
@@ -248,6 +298,8 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   'peer-name'?: string;
   /** Local avatar visor & laser color (`#rrggbb`) in `shared-room`. */
   'peer-color'?: string;
+  /** Opt-in WebRTC spatial voice chat signaling and HRTF distance attenuation in `shared-room`. */
+  'shared-room-voice'?: boolean | string;
   /** xr-live-sim: character camera mode, or `none` to disable the character. */
   'character-controller'?:
     | 'third-person'
@@ -362,6 +414,17 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
   onpeersync?: (e: CustomEvent<{peerId: string; nodeId: string}>) => void;
   onpeergrabconflict?: (
     e: CustomEvent<{peerId: string; nodeId: string}>,
+  ) => void;
+  onpeerrtcsignal?: (
+    e: CustomEvent<{
+      peerId: string;
+      targetPeerId: string;
+      signalType: 'offer' | 'answer' | 'ice';
+      sdp: string | null;
+      candidate: string | null;
+      sdpMid: string | null;
+      sdpMLineIndex: number | null;
+    }>,
   ) => void;
   /** xr-live-sim events. */
   oncharacterjump?: (

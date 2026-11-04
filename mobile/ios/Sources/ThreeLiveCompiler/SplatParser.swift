@@ -39,13 +39,21 @@ public struct SplatData: Sendable, Equatable {
   public var colors: [UInt8]
   /// Unit quaternion `xyzw` per splat.
   public var rotations: [Float]
+  /// Optional Spherical Harmonics degree (`0`, `1`, `2`, or `3`).
+  public var shDegree: Int
+  /// Optional higher-order SH coefficients in `[-1, 1]`
+  /// (`count * SplatParser.shBasisCountForDegree(shDegree) * 3` floats, RGB-interleaved per basis).
+  public var sh: [Float]?
 
-  init(count: Int) {
+  public init(count: Int, shDegree: Int = 0) {
     self.count = count
     positions = [Float](repeating: 0, count: count * 3)
     scales = [Float](repeating: 0, count: count * 3)
     colors = [UInt8](repeating: 0, count: count * 4)
     rotations = [Float](repeating: 0, count: count * 4)
+    self.shDegree = shDegree
+    let basisCount = SplatParser.shBasisCountForDegree(shDegree)
+    sh = basisCount > 0 ? [Float](repeating: 0, count: count * basisCount * 3) : nil
   }
 }
 
@@ -56,6 +64,7 @@ public enum SplatParserError: Error, Equatable, LocalizedError {
   case headerTruncated
   case badMagic
   case unsupportedVersion(UInt32)
+  case invalidShDegree(UInt8)
   case invalidFractionalBits
   case payloadTruncated
   case fileTooLarge
@@ -70,6 +79,7 @@ public enum SplatParserError: Error, Equatable, LocalizedError {
     case .headerTruncated: return ".spz header truncated"
     case .badMagic: return "bad .spz magic"
     case .unsupportedVersion(let v): return "unsupported .spz version \(v)"
+    case .invalidShDegree(let d): return "invalid .spz shDegree \(d)"
     case .invalidFractionalBits: return "invalid .spz fractional bits"
     case .payloadTruncated: return ".spz payload truncated"
     case .fileTooLarge: return "splat file too large"
@@ -124,6 +134,29 @@ public enum SplatParser {
   static let splatRecordBytes = 32
   static let spzMagic: UInt32 = 0x5053_474E
   static let shC0 = 0.28209479177387814
+  static let shC1 = 0.4886025119029199
+  static let shC2_0 = 1.0925484305920792
+  static let shC2_1 = -1.0925484305920792
+  static let shC2_2 = 0.31539156525252005
+  static let shC2_3 = -1.0925484305920792
+  static let shC2_4 = 0.5462742152960396
+  static let shC3_0 = -0.5900435899266435
+  static let shC3_1 = 2.890611442640554
+  static let shC3_2 = -0.4570457994644658
+  static let shC3_3 = 0.3731763325901154
+  static let shC3_4 = -0.4570457994644658
+  static let shC3_5 = 1.445305721320277
+  static let shC3_6 = -0.5900435899266435
+
+  /// Number of higher-order SH basis functions (excluding DC) for degree `0..3`.
+  public static func shBasisCountForDegree(_ shDegree: Int) -> Int {
+    switch shDegree {
+    case 1: return 3
+    case 2: return 8
+    case 3: return 15
+    default: return 0
+    }
+  }
 
   private static func normalizeQuat(_ q: inout [Float], _ o: Int) {
     let len = (q[o] * q[o] + q[o + 1] * q[o + 1] + q[o + 2] * q[o + 2] + q[o + 3] * q[o + 3])
@@ -178,8 +211,9 @@ public enum SplatParser {
   }
 
   /// Parses a decompressed `.spz` payload (versions 2 and 3): 16-byte header, then SoA blocks
-  /// of 24-bit fixed-point positions, alphas, colors (SH DC), log scales, and rotations
-  /// (3-byte xyz for v2, 4-byte smallest-three for v3). Spherical harmonics are ignored.
+  /// of 24-bit fixed-point positions, alphas, colors (SH DC), log scales, rotations
+  /// (3-byte xyz for v2, 4-byte smallest-three for v3), and optional trailing Spherical
+  /// Harmonics (bands 1–3, header byte 12).
   public static func parseSpzPayload(_ data: Data) throws -> SplatData {
     if data.count < 16 { throw SplatParserError.headerTruncated }
     return try data.withUnsafeBytes { (b: UnsafeRawBufferPointer) -> SplatData in
@@ -189,13 +223,18 @@ public enum SplatParser {
       let rawCount = u32(b, 8)
       if rawCount > UInt32(maxSplats) { throw SplatParserError.tooManySplats }
       let count = Int(rawCount)
+      let rawShDegree = b[12]
+      if rawShDegree > 3 { throw SplatParserError.invalidShDegree(rawShDegree) }
       let fractionalBits = Int(b[13])
       if fractionalBits > 24 { throw SplatParserError.invalidFractionalBits }
       let rotBytes = version == 3 ? 4 : 3
       let needed = 16 + count * (9 + 1 + 3 + 3 + rotBytes)
       if b.count < needed { throw SplatParserError.payloadTruncated }
+      let shBasisCount = shBasisCountForDegree(Int(rawShDegree))
+      let shBytesPerSplat = shBasisCount * 3
+      let hasFullShBlock = shBytesPerSplat > 0 && b.count >= needed + count * shBytesPerSplat
 
-      var out = SplatData(count: count)
+      var out = SplatData(count: count, shDegree: hasFullShBlock ? Int(rawShDegree) : 0)
       let fixed = 1.0 / Double(1 << fractionalBits)
       var o = 16
       for i in 0..<(count * 3) {
@@ -208,6 +247,7 @@ public enum SplatParser {
       let colorStart = alphaStart + count
       let scaleStart = colorStart + count * 3
       let rotStart = scaleStart + count * 3
+      let shStart = rotStart + count * rotBytes
       for i in 0..<count {
         for k in 0..<3 {
           let dc = (Double(b[colorStart + i * 3 + k]) / 255 - 0.5) / 0.15
@@ -242,8 +282,228 @@ public enum SplatParser {
         }
         normalizeQuat(&out.rotations, i * 4)
       }
+      if hasFullShBlock, var shArr = out.sh {
+        let totalSh = count * shBytesPerSplat
+        for j in 0..<totalSh {
+          shArr[j] = Float((Double(b[shStart + j]) - 128.0) / 128.0)
+        }
+        out.sh = shArr
+      }
       return out
     }
+  }
+
+  /// Evaluates view-dependent RGB color `[0..255]` for splat `index` along unit view direction
+  /// `dir` (from camera to splat) using decoded Spherical Harmonics bands 1..3 when present.
+  public static func evaluateSplatSH(
+    _ data: SplatData,
+    index: Int,
+    dir: SIMD3<Float>
+  ) -> SIMD3<UInt8> {
+    guard index >= 0 && index < data.count else { return SIMD3<UInt8>(0, 0, 0) }
+    let r0 = data.colors[index * 4]
+    let g0 = data.colors[index * 4 + 1]
+    let b0 = data.colors[index * 4 + 2]
+    let deg = data.shDegree
+    let basisCount = shBasisCountForDegree(deg)
+    guard deg > 0, basisCount > 0, let sh = data.sh, sh.count >= (index + 1) * basisCount * 3 else {
+      return SIMD3<UInt8>(r0, g0, b0)
+    }
+    let len = Double(simd_length(dir))
+    let invLen = len > 1e-8 ? 1.0 / len : 1.0
+    let x = Double(dir.x) * invLen
+    let y = Double(dir.y) * invLen
+    let z = Double(dir.z) * invLen
+    let offset = index * basisCount * 3
+    var r = Double(r0) / 255.0
+    var g = Double(g0) / 255.0
+    var b = Double(b0) / 255.0
+
+    func addBasis(_ basisIdx: Int, _ weight: Double) {
+      let o = offset + basisIdx * 3
+      r += weight * Double(sh[o])
+      g += weight * Double(sh[o + 1])
+      b += weight * Double(sh[o + 2])
+    }
+
+    if deg >= 1 {
+      addBasis(0, -shC1 * y)
+      addBasis(1, shC1 * z)
+      addBasis(2, -shC1 * x)
+    }
+    if deg >= 2 {
+      let xx = x * x
+      let yy = y * y
+      let zz = z * z
+      let xy = x * y
+      let yz = y * z
+      let xz = x * z
+      addBasis(3, shC2_0 * xy)
+      addBasis(4, shC2_1 * yz)
+      addBasis(5, shC2_2 * (2.0 * zz - xx - yy))
+      addBasis(6, shC2_3 * xz)
+      addBasis(7, shC2_4 * (xx - yy))
+      if deg >= 3 {
+        addBasis(8, shC3_0 * y * (3.0 * xx - yy))
+        addBasis(9, shC3_1 * xy * z)
+        addBasis(10, shC3_2 * y * (4.0 * zz - xx - yy))
+        addBasis(11, shC3_3 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy))
+        addBasis(12, shC3_4 * x * (4.0 * zz - xx - yy))
+        addBasis(13, shC3_5 * z * (xx - yy))
+        addBasis(14, shC3_6 * x * (xx - 3.0 * yy))
+      }
+    }
+    return SIMD3<UInt8>(
+      UInt8(max(0, min(255, (r * 255.0).rounded()))),
+      UInt8(max(0, min(255, (g * 255.0).rounded()))),
+      UInt8(max(0, min(255, (b * 255.0).rounded())))
+    )
+  }
+
+  /// Computes the 6 unique upper-triangular elements `[cxx, cxy, cxz, cyy, cyz, czz]` of the 3D
+  /// Gaussian covariance matrix `Sigma = R * S * S^T * R^T` for splat `index`.
+  public static func computeCovariance3D(_ data: SplatData, index: Int) -> [Float] {
+    let sx = Double(data.scales[index * 3])
+    let sy = Double(data.scales[index * 3 + 1])
+    let sz = Double(data.scales[index * 3 + 2])
+    var qx = Double(data.rotations[index * 4])
+    var qy = Double(data.rotations[index * 4 + 1])
+    var qz = Double(data.rotations[index * 4 + 2])
+    var qw = Double(data.rotations[index * 4 + 3])
+    let qLen = (qx * qx + qy * qy + qz * qz + qw * qw).squareRoot()
+    if qLen > 1e-8 {
+      qx /= qLen
+      qy /= qLen
+      qz /= qLen
+      qw /= qLen
+    } else {
+      qx = 0
+      qy = 0
+      qz = 0
+      qw = 1
+    }
+
+    let r00 = 1.0 - 2.0 * (qy * qy + qz * qz)
+    let r01 = 2.0 * (qx * qy - qw * qz)
+    let r02 = 2.0 * (qx * qz + qw * qy)
+    let r10 = 2.0 * (qx * qy + qw * qz)
+    let r11 = 1.0 - 2.0 * (qx * qx + qz * qz)
+    let r12 = 2.0 * (qy * qz - qw * qx)
+    let r20 = 2.0 * (qx * qz - qw * qy)
+    let r21 = 2.0 * (qy * qz + qw * qx)
+    let r22 = 1.0 - 2.0 * (qx * qx + qy * qy)
+
+    let m00 = r00 * sx
+    let m01 = r01 * sy
+    let m02 = r02 * sz
+    let m10 = r10 * sx
+    let m11 = r11 * sy
+    let m12 = r12 * sz
+    let m20 = r20 * sx
+    let m21 = r21 * sy
+    let m22 = r22 * sz
+
+    return [
+      Float(m00 * m00 + m01 * m01 + m02 * m02),
+      Float(m00 * m10 + m01 * m11 + m02 * m12),
+      Float(m00 * m20 + m01 * m21 + m02 * m22),
+      Float(m10 * m10 + m11 * m11 + m12 * m12),
+      Float(m10 * m20 + m11 * m21 + m12 * m22),
+      Float(m20 * m20 + m21 * m21 + m22 * m22),
+    ]
+  }
+
+  /// Projected 2D screen-space Gaussian covariance and principal ellipse axes.
+  public struct SplatEllipse2D: Sendable, Equatable {
+    public var cov2d: SIMD3<Float>
+    public var eigenvalues: SIMD2<Float>
+    public var majorAxisPx: SIMD2<Float>
+    public var minorAxisPx: SIMD2<Float>
+  }
+
+  /// Projects a 3D covariance `[cxx, cxy, cxz, cyy, cyz, czz]` to 2D screen space via the
+  /// perspective Jacobian `J` and view transform `modelView`:
+  /// `Sigma_2D = J * W * Sigma * W^T * J^T + 0.3 * I`.
+  public static func projectCovariance2D(
+    cov3d: [Float],
+    modelView: simd_float4x4,
+    localPos: SIMD3<Float>,
+    focalX: Float,
+    focalY: Float? = nil
+  ) -> SplatEllipse2D {
+    let fy = Double(focalY ?? focalX)
+    let fx = Double(focalX)
+    let v = modelView * SIMD4<Float>(localPos.x, localPos.y, localPos.z, 1)
+    let vx = Double(v.x)
+    let vy = Double(v.y)
+    let vz = Double(v.z)
+    let tz = max(abs(vz), 1e-3)
+    let signZ = vz < 0.0 ? -1.0 : 1.0
+
+    let j00 = fx / tz
+    let j02 = (-signZ * fx * vx) / (tz * tz)
+    let j11 = fy / tz
+    let j12 = (-signZ * fy * vy) / (tz * tz)
+
+    let w00 = Double(modelView.columns.0.x)
+    let w01 = Double(modelView.columns.1.x)
+    let w02 = Double(modelView.columns.2.x)
+    let w10 = Double(modelView.columns.0.y)
+    let w11 = Double(modelView.columns.1.y)
+    let w12 = Double(modelView.columns.2.y)
+    let w20 = Double(modelView.columns.0.z)
+    let w21 = Double(modelView.columns.1.z)
+    let w22 = Double(modelView.columns.2.z)
+
+    let t00 = j00 * w00 + j02 * w20
+    let t01 = j00 * w01 + j02 * w21
+    let t02 = j00 * w02 + j02 * w22
+    let t10 = j11 * w10 + j12 * w20
+    let t11 = j11 * w11 + j12 * w21
+    let t12 = j11 * w12 + j12 * w22
+
+    let s00 = Double(cov3d[0])
+    let s01 = Double(cov3d[1])
+    let s02 = Double(cov3d[2])
+    let s11 = Double(cov3d[3])
+    let s12 = Double(cov3d[4])
+    let s22 = Double(cov3d[5])
+
+    let st00 = s00 * t00 + s01 * t01 + s02 * t02
+    let st10 = s01 * t00 + s11 * t01 + s12 * t02
+    let st20 = s02 * t00 + s12 * t01 + s22 * t02
+    let st01 = s00 * t10 + s01 * t11 + s02 * t12
+    let st11 = s01 * t10 + s11 * t11 + s12 * t12
+    let st21 = s02 * t10 + s12 * t11 + s22 * t12
+
+    let a = t00 * st00 + t01 * st10 + t02 * st20 + 0.3
+    let b = t00 * st01 + t01 * st11 + t02 * st21
+    let c = t10 * st01 + t11 * st11 + t12 * st21 + 0.3
+
+    let mid = 0.5 * (a + c)
+    let diff = 0.5 * (a - c)
+    let disc = (diff * diff + b * b).squareRoot()
+    let lambda1 = max(0.1, mid + disc)
+    let lambda2 = max(0.1, mid - disc)
+
+    var dx = b
+    var dy = lambda1 - a
+    let dLen = (dx * dx + dy * dy).squareRoot()
+    if dLen > 1e-8 {
+      dx /= dLen
+      dy /= dLen
+    } else {
+      dx = a >= c ? 1 : 0
+      dy = a >= c ? 0 : 1
+    }
+    let r1 = min(256.0, 3.0 * lambda1.squareRoot())
+    let r2 = min(256.0, 3.0 * lambda2.squareRoot())
+    return SplatEllipse2D(
+      cov2d: SIMD3<Float>(Float(a), Float(b), Float(c)),
+      eigenvalues: SIMD2<Float>(Float(lambda1), Float(lambda2)),
+      majorAxisPx: SIMD2<Float>(Float(dx * r1), Float(dy * r1)),
+      minorAxisPx: SIMD2<Float>(Float(-dy * r2), Float(dx * r2))
+    )
   }
 
   /// Parses `.spz` bytes, transparently gunzipping when gzip-compressed.
@@ -406,8 +666,10 @@ public enum SplatParser {
       baseURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
       ? baseURL!.trimmingCharacters(in: .whitespacesAndNewlines)
       : "https://localhost/"
-    guard let base = URL(string: fallback), let resolved = URL(string: trimmed, relativeTo: base)?.absoluteURL,
-      let scheme = resolved.scheme?.lowercased(), let host = resolved.host?.lowercased(), !host.isEmpty
+    guard let base = URL(string: fallback),
+      let resolved = URL(string: trimmed, relativeTo: base)?.absoluteURL,
+      let scheme = resolved.scheme?.lowercased(), let host = resolved.host?.lowercased(),
+      !host.isEmpty
     else { return nil }
     let loopback = host == "localhost" || host == "127.0.0.1"
     let schemeOk = scheme == "https" || (scheme == "http" && loopback)
@@ -426,10 +688,13 @@ public enum SplatParser {
 
   /// Deterministic stride downsampling when `data.count > maxSplats`, keeping at most `maxSplats`
   /// splats. Returns `data` unchanged when `data.count <= maxSplats`.
-  public static func downsample(_ data: SplatData, maxSplats: Int = defaultMaxCpuSplats) -> SplatData {
+  public static func downsample(_ data: SplatData, maxSplats: Int = defaultMaxCpuSplats)
+    -> SplatData
+  {
     let cap = max(1, min(maxSplats, Self.maxSplats))
     guard data.count > cap else { return data }
-    var out = SplatData(count: cap)
+    var out = SplatData(count: cap, shDegree: data.shDegree)
+    let shValsPerSplat = shBasisCountForDegree(data.shDegree) * 3
     let step = Double(data.count) / Double(cap)
     for i in 0..<cap {
       let src = min(data.count - 1, Int((Double(i) * step).rounded(.down)))
@@ -440,6 +705,11 @@ public enum SplatParser {
       for k in 0..<4 {
         out.colors[i * 4 + k] = data.colors[src * 4 + k]
         out.rotations[i * 4 + k] = data.rotations[src * 4 + k]
+      }
+      if shValsPerSplat > 0, let srcSh = data.sh {
+        for j in 0..<shValsPerSplat {
+          out.sh?[i * shValsPerSplat + j] = srcSh[src * shValsPerSplat + j]
+        }
       }
     }
     return out
@@ -470,7 +740,9 @@ public enum SplatParser {
     let f0 = SIMD3<Float>(lastCam.columns.2.x, lastCam.columns.2.y, lastCam.columns.2.z)
     let f1 = SIMD3<Float>(cameraWorld.columns.2.x, cameraWorld.columns.2.y, cameraWorld.columns.2.z)
     if simd_dot(f0, f1) < cosLimit { return true }
-    let nDot = (axisDot(lastNode.columns.0, nodeWorld.columns.0) + axisDot(lastNode.columns.2, nodeWorld.columns.2)) * 0.5
+    let nDot =
+      (axisDot(lastNode.columns.0, nodeWorld.columns.0)
+        + axisDot(lastNode.columns.2, nodeWorld.columns.2)) * 0.5
     return nDot < cosLimit
   }
 
@@ -485,13 +757,17 @@ public enum SplatParser {
 
   /// Builds a column-major matrix whose row 3 (`columns.*.w`) equals the view depth along `-Z` of
   /// `cameraWorld` for local positions under `nodeWorld`, for `sortByDepth(_:mvp:)`.
-  public static func viewDepthMatrix(nodeWorld: simd_float4x4, cameraWorld: simd_float4x4) -> simd_float4x4 {
+  public static func viewDepthMatrix(nodeWorld: simd_float4x4, cameraWorld: simd_float4x4)
+    -> simd_float4x4
+  {
     let f = -SIMD3<Float>(cameraWorld.columns.2.x, cameraWorld.columns.2.y, cameraWorld.columns.2.z)
-    let camPos = SIMD3<Float>(cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
+    let camPos = SIMD3<Float>(
+      cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
     let c0 = SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z)
     let c1 = SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z)
     let c2 = SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z)
-    let c3 = SIMD3<Float>(nodeWorld.columns.3.x, nodeWorld.columns.3.y, nodeWorld.columns.3.z) - camPos
+    let c3 =
+      SIMD3<Float>(nodeWorld.columns.3.x, nodeWorld.columns.3.y, nodeWorld.columns.3.z) - camPos
     var m = matrix_identity_float4x4
     m.columns.0.w = simd_dot(f, c0)
     m.columns.1.w = simd_dot(f, c1)
@@ -509,12 +785,24 @@ public enum SplatParser {
   ) -> QuadGeometry {
     let n = min(data.count, order.count)
     guard n > 0 else { return QuadGeometry() }
-    let sx = simd_length(SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z))
-    let sy = simd_length(SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z))
-    let sz = simd_length(SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z))
+    let sx = simd_length(
+      SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z))
+    let sy = simd_length(
+      SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z))
+    let sz = simd_length(
+      SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z))
     let nodeScale = max(max(sx, max(sy, sz)), 1e-6)
-    let right = SIMD3<Float>(cameraWorld.columns.0.x, cameraWorld.columns.0.y, cameraWorld.columns.0.z)
+    let right = SIMD3<Float>(
+      cameraWorld.columns.0.x, cameraWorld.columns.0.y, cameraWorld.columns.0.z)
     let up = SIMD3<Float>(cameraWorld.columns.1.x, cameraWorld.columns.1.y, cameraWorld.columns.1.z)
+    let camPos = SIMD3<Float>(
+      cameraWorld.columns.3.x, cameraWorld.columns.3.y, cameraWorld.columns.3.z)
+    let col0 = SIMD3<Float>(nodeWorld.columns.0.x, nodeWorld.columns.0.y, nodeWorld.columns.0.z)
+    let col1 = SIMD3<Float>(nodeWorld.columns.1.x, nodeWorld.columns.1.y, nodeWorld.columns.1.z)
+    let col2 = SIMD3<Float>(nodeWorld.columns.2.x, nodeWorld.columns.2.y, nodeWorld.columns.2.z)
+    let lRight = SIMD3<Float>(simd_dot(col0, right), simd_dot(col1, right), simd_dot(col2, right))
+    let lUp = SIMD3<Float>(simd_dot(col0, up), simd_dot(col1, up), simd_dot(col2, up))
+    let hasSH = data.shDegree > 0 && data.sh != nil
 
     var positions: [SIMD3<Float>] = []
     positions.reserveCapacity(n * 4)
@@ -534,13 +822,63 @@ public enum SplatParser {
       let s = Int(order[k])
       guard s >= 0 && s < data.count else { continue }
       validCount += 1
-      let lp = SIMD4<Float>(data.positions[s * 3], data.positions[s * 3 + 1], data.positions[s * 3 + 2], 1)
+      let lp = SIMD4<Float>(
+        data.positions[s * 3], data.positions[s * 3 + 1], data.positions[s * 3 + 2], 1)
       let wp4 = nodeWorld * lp
       let wp = SIMD3<Float>(wp4.x, wp4.y, wp4.z)
-      let r0 = max(data.scales[s * 3], max(data.scales[s * 3 + 1], data.scales[s * 3 + 2]))
-      let half = min(max(r0 * nodeScale * 1.5, 0.001), 10.0)
-      let dr = right * half
-      let du = up * half
+      let scx = data.scales[s * 3]
+      let scy = data.scales[s * 3 + 1]
+      let scz = data.scales[s * 3 + 2]
+      let dr: SIMD3<Float>
+      let du: SIMD3<Float>
+      if scx > 0 && scy > 0 && scz > 0 && (scx != scy || scy != scz) {
+        let cov6 = computeCovariance3D(data, index: s)
+        let c00 = cov6[0]
+        let c01 = cov6[1]
+        let c02 = cov6[2]
+        let c11 = cov6[3]
+        let c12 = cov6[4]
+        let c22 = cov6[5]
+        let sr = SIMD3<Float>(
+          c00 * lRight.x + c01 * lRight.y + c02 * lRight.z,
+          c01 * lRight.x + c11 * lRight.y + c12 * lRight.z,
+          c02 * lRight.x + c12 * lRight.y + c22 * lRight.z
+        )
+        let su = SIMD3<Float>(
+          c00 * lUp.x + c01 * lUp.y + c02 * lUp.z,
+          c01 * lUp.x + c11 * lUp.y + c12 * lUp.z,
+          c02 * lUp.x + c12 * lUp.y + c22 * lUp.z
+        )
+        let a = Double(simd_dot(lRight, sr))
+        let b = Double(simd_dot(lRight, su))
+        let c = Double(simd_dot(lUp, su))
+        let mid = 0.5 * (a + c)
+        let diff = 0.5 * (a - c)
+        let disc = (diff * diff + b * b).squareRoot()
+        let l1 = max(1e-8, mid + disc)
+        let l2 = max(1e-8, mid - disc)
+        var ex = b
+        var ey = l1 - a
+        let eLen = (ex * ex + ey * ey).squareRoot()
+        if eLen > 1e-8 {
+          ex /= eLen
+          ey /= eLen
+        } else {
+          ex = a >= c ? 1 : 0
+          ey = a >= c ? 0 : 1
+        }
+        let half1 = Float(min(max(l1.squareRoot() * 1.5, 0.001), 10.0))
+        let half2 = Float(min(max(l2.squareRoot() * 1.5, 0.001), 10.0))
+        let m1 = right * Float(ex) + up * Float(ey)
+        let m2 = right * Float(-ey) + up * Float(ex)
+        dr = m1 * half1
+        du = m2 * half2
+      } else {
+        let r0 = max(scx, max(scy, scz))
+        let half = min(max(r0 * nodeScale * 1.5, 0.001), 10.0)
+        dr = right * half
+        du = up * half
+      }
       let base = UInt32(positions.count)
       positions.append(wp - dr - du)
       positions.append(wp + dr - du)
@@ -550,9 +888,19 @@ public enum SplatParser {
       uvs.append(SIMD2<Float>(1, 0))
       uvs.append(SIMD2<Float>(1, 1))
       uvs.append(SIMD2<Float>(0, 1))
-      let c0 = data.colors[s * 4]
-      let c1 = data.colors[s * 4 + 1]
-      let c2 = data.colors[s * 4 + 2]
+      let c0: UInt8
+      let c1: UInt8
+      let c2: UInt8
+      if hasSH {
+        let shRgb = evaluateSplatSH(data, index: s, dir: wp - camPos)
+        c0 = shRgb.x
+        c1 = shRgb.y
+        c2 = shRgb.z
+      } else {
+        c0 = data.colors[s * 4]
+        c1 = data.colors[s * 4 + 1]
+        c2 = data.colors[s * 4 + 2]
+      }
       let c3 = data.colors[s * 4 + 3]
       sumR += Double(c0)
       sumG += Double(c1)
@@ -569,11 +917,13 @@ public enum SplatParser {
     let avg: SIMD4<Float>
     if validCount > 0 {
       let denom = Double(validCount) * 255.0
-      avg = SIMD4<Float>(Float(sumR / denom), Float(sumG / denom), Float(sumB / denom), Float(sumA / denom))
+      avg = SIMD4<Float>(
+        Float(sumR / denom), Float(sumG / denom), Float(sumB / denom), Float(sumA / denom))
     } else {
       avg = SIMD4<Float>(1, 1, 1, 1)
     }
-    return QuadGeometry(positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
+    return QuadGeometry(
+      positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
   }
 
   /// Builds a static local-space vertex buffer for GPU-billboarded splat rendering (`CustomMaterial`).
@@ -598,15 +948,29 @@ public enum SplatParser {
     var sumA: Double = 0
 
     for s in 0..<n {
-      let lp = SIMD3<Float>(data.positions[s * 3], data.positions[s * 3 + 1], data.positions[s * 3 + 2])
-      let r0 = max(data.scales[s * 3], max(data.scales[s * 3 + 1], data.scales[s * 3 + 2]))
-      let half = min(max(r0 * 1.5, 0.001), 10.0)
+      let lp = SIMD3<Float>(
+        data.positions[s * 3], data.positions[s * 3 + 1], data.positions[s * 3 + 2])
+      let scx = data.scales[s * 3]
+      let scy = data.scales[s * 3 + 1]
+      let scz = data.scales[s * 3 + 2]
+      let halfX: Float
+      let halfY: Float
+      if scx > 0 && scy > 0 && scz > 0 && (scx != scy || scy != scz) {
+        let cov6 = computeCovariance3D(data, index: s)
+        halfX = Float(min(max(Double(max(1e-8, cov6[0])).squareRoot() * 1.5, 0.001), 10.0))
+        halfY = Float(min(max(Double(max(1e-8, cov6[3])).squareRoot() * 1.5, 0.001), 10.0))
+      } else {
+        let r0 = max(scx, max(scy, scz))
+        let half = min(max(r0 * 1.5, 0.001), 10.0)
+        halfX = half
+        halfY = half
+      }
       let base = UInt32(s * 4)
       for _ in 0..<4 { positions.append(lp) }
-      uvs.append(SIMD2<Float>(-half, -half))
-      uvs.append(SIMD2<Float>(half, -half))
-      uvs.append(SIMD2<Float>(half, half))
-      uvs.append(SIMD2<Float>(-half, half))
+      uvs.append(SIMD2<Float>(-halfX, -halfY))
+      uvs.append(SIMD2<Float>(halfX, -halfY))
+      uvs.append(SIMD2<Float>(halfX, halfY))
+      uvs.append(SIMD2<Float>(-halfX, halfY))
       let c0 = data.colors[s * 4]
       let c1 = data.colors[s * 4 + 1]
       let c2 = data.colors[s * 4 + 2]
@@ -624,8 +988,10 @@ public enum SplatParser {
       indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
     }
     let denom = Double(n) * 255.0
-    let avg = SIMD4<Float>(Float(sumR / denom), Float(sumG / denom), Float(sumB / denom), Float(sumA / denom))
-    return QuadGeometry(positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
+    let avg = SIMD4<Float>(
+      Float(sumR / denom), Float(sumG / denom), Float(sumB / denom), Float(sumA / denom))
+    return QuadGeometry(
+      positions: positions, uvs: uvs, colors: colors, averageColor: avg, indices: indices)
   }
 
   /// Builds the `6 * count` triangle indices referencing the static 4-vertex-per-splat buffer from
@@ -813,7 +1179,8 @@ public enum SplatParser {
     allowCrossOrigin: Bool = true,
     maxBytes: Int = maxFileBytes
   ) async throws -> SplatData {
-    guard let resolved = resolveSplatURL(url, baseURL: baseURL, allowCrossOrigin: allowCrossOrigin) else {
+    guard let resolved = resolveSplatURL(url, baseURL: baseURL, allowCrossOrigin: allowCrossOrigin)
+    else {
       throw SplatParserError.badMagic
     }
     let (data, response) = try await URLSession.shared.data(from: resolved)
@@ -825,8 +1192,8 @@ public enum SplatParser {
   }
 }
 
-private extension Comparable {
-  func clamped(to range: ClosedRange<Self>) -> Self {
+extension Comparable {
+  fileprivate func clamped(to range: ClosedRange<Self>) -> Self {
     min(max(self, range.lowerBound), range.upperBound)
   }
 }

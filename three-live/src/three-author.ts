@@ -33,6 +33,8 @@ import {
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
 import {getSharedRegistry} from './plugin';
+import {installCadExtension} from './plugins/cad';
+import {installIKExtension} from './plugins/ik';
 import {
   generateUSDZ,
   glbToUSDZ,
@@ -897,6 +899,45 @@ export class BufferGeometry {
     this.setIndex(indices);
   }
 
+  computeBoundingBox(): {min: Vector3; max: Vector3} {
+    const pos = this.attributes.position;
+    const min = new Vector3(Infinity, Infinity, Infinity);
+    const max = new Vector3(-Infinity, -Infinity, -Infinity);
+    if (pos && pos.count > 0) {
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        const z = pos.getZ(i);
+        if (x < min.x) min.x = x;
+        if (y < min.y) min.y = y;
+        if (z < min.z) min.z = z;
+        if (x > max.x) max.x = x;
+        if (y > max.y) max.y = y;
+        if (z > max.z) max.z = z;
+      }
+    } else {
+      min.set(0, 0, 0);
+      max.set(0, 0, 0);
+    }
+    this.boundingBox = {min, max};
+    return this.boundingBox;
+  }
+
+  center(): this {
+    const box = this.computeBoundingBox();
+    const cx = (box.min.x + box.max.x) * 0.5;
+    const cy = (box.min.y + box.max.y) * 0.5;
+    const cz = (box.min.z + box.max.z) * 0.5;
+    const pos = this.attributes.position;
+    if (pos && pos.count > 0) {
+      for (let i = 0; i < pos.count; i++) {
+        pos.setXYZ(i, pos.getX(i) - cx, pos.getY(i) - cy, pos.getZ(i) - cz);
+      }
+      this.computeBoundingBox();
+    }
+    return this;
+  }
+
   public dispose(): void {}
 }
 
@@ -1614,6 +1655,7 @@ export class Object3D {
   }
 
   public updateMatrixWorld(force: boolean = false): void {
+    materializeDeclarativeGeometry(this);
     if (this.matrixAutoUpdate || force) this.updateMatrix();
     if (this.parent) {
       this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix);
@@ -1678,6 +1720,119 @@ export class Mesh extends Object3D {
             new MeshStandardMaterial({color: 0xcccccc}))
           : new MeshStandardMaterial();
   }
+}
+
+function materializeDeclarativeGeometry(node: Object3D): void {
+  const hook = getSharedRegistry().materializeDeclarativeGeometry;
+  if (typeof hook === 'function') {
+    hook(node);
+  }
+}
+
+/** Maximum number of instances permitted per `InstancedMesh` (DoS cap). */
+export const MAX_INSTANCES_PER_MESH = 10000;
+
+/**
+ * Hardware-instanced mesh that renders `count` transforms (and optional
+ * per-instance RGB colors) of a shared `BufferGeometry` + `Material`.
+ * Serializes to `EXT_mesh_gpu_instancing` in glTF 2.0 / GLB.
+ */
+export class InstancedMesh extends Mesh {
+  count: number;
+  instanceMatrix: BufferAttribute;
+  instanceColor: BufferAttribute | null = null;
+  isInstancedMesh = true;
+
+  constructor(geometry?: BufferGeometry, material?: Material, count = 1) {
+    super(geometry, material);
+    const n = Number(count);
+    if (!Number.isFinite(n) || n < 0 || n > MAX_INSTANCES_PER_MESH) {
+      throw new RangeError(
+        `SecurityError: InstancedMesh count (${String(count)}) exceeds MAX_INSTANCES_PER_MESH (${MAX_INSTANCES_PER_MESH})`,
+      );
+    }
+    this.count = Math.floor(n);
+    const matArr = new Float32Array(this.count * 16);
+    for (let i = 0; i < this.count; i++) {
+      const base = i * 16;
+      matArr[base] = 1;
+      matArr[base + 5] = 1;
+      matArr[base + 10] = 1;
+      matArr[base + 15] = 1;
+    }
+    this.instanceMatrix = new BufferAttribute(matArr, 16);
+  }
+
+  setMatrixAt(index: number, matrix: Matrix4): void {
+    const i = Math.floor(Number(index));
+    if (
+      !Number.isFinite(i) ||
+      i < 0 ||
+      i >= this.count ||
+      !matrix ||
+      !matrix.elements
+    ) {
+      return;
+    }
+    const dst = this.instanceMatrix.array as Float32Array;
+    const base = i * 16;
+    if (base + 16 > dst.length) return;
+    for (let k = 0; k < 16; k++) {
+      const v = Number(matrix.elements[k]);
+      dst[base + k] = Number.isFinite(v) ? v : k % 5 === 0 ? 1 : 0;
+    }
+  }
+
+  getMatrixAt(index: number, matrix: Matrix4): void {
+    const i = Math.floor(Number(index));
+    if (
+      !Number.isFinite(i) ||
+      i < 0 ||
+      i >= this.count ||
+      !matrix ||
+      !matrix.elements
+    ) {
+      return;
+    }
+    const src = this.instanceMatrix.array as Float32Array;
+    const base = i * 16;
+    if (base + 16 > src.length) return;
+    for (let k = 0; k < 16; k++) {
+      matrix.elements[k] = src[base + k]!;
+    }
+  }
+
+  setColorAt(index: number, color: Color): void {
+    const i = Math.floor(Number(index));
+    if (!Number.isFinite(i) || i < 0 || i >= this.count || !color) return;
+    if (
+      !this.instanceColor ||
+      this.instanceColor.array.length < this.count * 3
+    ) {
+      const colArr = new Float32Array(this.count * 3);
+      colArr.fill(1);
+      this.instanceColor = new BufferAttribute(colArr, 3);
+    }
+    const dst = this.instanceColor.array as Float32Array;
+    const base = i * 3;
+    dst[base] = Number.isFinite(color.r) ? color.r : 1;
+    dst[base + 1] = Number.isFinite(color.g) ? color.g : 1;
+    dst[base + 2] = Number.isFinite(color.b) ? color.b : 1;
+  }
+
+  getColorAt(index: number, color: Color): void {
+    const i = Math.floor(Number(index));
+    if (!Number.isFinite(i) || i < 0 || i >= this.count || !color) return;
+    if (!this.instanceColor || this.instanceColor.array.length < (i + 1) * 3) {
+      color.setRGB(1, 1, 1);
+      return;
+    }
+    const src = this.instanceColor.array as Float32Array;
+    const base = i * 3;
+    color.setRGB(src[base]!, src[base + 1]!, src[base + 2]!);
+  }
+
+  dispose(): void {}
 }
 
 export class Light extends Object3D {
@@ -1823,10 +1978,20 @@ export class SceneQuotaValidator {
     };
 
     scene.traverse((obj) => {
-      if (obj instanceof Mesh) {
+      materializeDeclarativeGeometry(obj);
+      if (
+        obj instanceof Mesh ||
+        Boolean((obj as Mesh).geometry?.attributes?.position?.count)
+      ) {
         meshCount++;
         if (meshCount > SECURITY_3D_MAX_MESHES) {
           fail('MESHES', SECURITY_3D_MAX_MESHES, meshCount);
+        }
+        if (obj instanceof InstancedMesh) {
+          const instCount = finite('instance', obj.count);
+          if (instCount < 0 || instCount > MAX_INSTANCES_PER_MESH) {
+            fail('INSTANCES', MAX_INSTANCES_PER_MESH, instCount);
+          }
         }
         const geo = obj.geometry;
         if (geo) {
@@ -2522,7 +2687,10 @@ interface SandboxWorkerConfig {
  * globals, never anything from this module's scope. Keeping it as real code
  * (rather than a template string) lets esbuild minify it.
  */
-function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
+function sandboxWorkerMain(
+  cfg: SandboxWorkerConfig,
+  extInstallers?: Array<(threeNs: unknown, reg: unknown) => void>,
+) {
   // The worker global is a WorkerGlobalScope whose members are revoked and
   // patched dynamically below, so it is deliberately untyped here.
   // tslint:disable-next-line:no-any
@@ -2619,6 +2787,17 @@ function sandboxWorkerMain(cfg: SandboxWorkerConfig) {
         'not an ES module build.',
     );
     return;
+  }
+
+  if (Array.isArray(extInstallers)) {
+    const reg = scope.__THREE_LIVE_REGISTRY__;
+    for (let i = 0; i < extInstallers.length; i++) {
+      if (typeof extInstallers[i] === 'function') {
+        try {
+          extInstallers[i](THREE, reg);
+        } catch (extErr) {}
+      }
+    }
   }
 
   // Revoke ambient authority on self AND every prototype along the worker's
@@ -2860,9 +3039,12 @@ export function buildSandboxWorkerSource(
     allowClientScripts,
     revoked: REVOKED_WORKER_GLOBALS,
   };
+  const installerExprs = (getSharedRegistry().workerExtensionInstallers ?? [])
+    .map((fn) => `(${fn.toString()})`)
+    .join(',');
   // The 'use strict' prologue applies to the whole worker script; a directive
   // inside the function could be stripped when the bundle is itself strict.
-  return `'use strict';(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)});`;
+  return `'use strict';(${sandboxWorkerMain.toString()})(${JSON.stringify(cfg)},[${installerExprs}]);`;
 }
 
 /** Reports a sandbox job that hit SECURITY_3D_SANDBOX_TIMEOUT_MS. */
@@ -3632,6 +3814,7 @@ const threeExports: Record<string, any> = {
   Object3D,
   Group,
   Mesh,
+  InstancedMesh,
   Light,
   AmbientLight,
   DirectionalLight,
@@ -3666,6 +3849,10 @@ Object.freeze(threeExports);
 export const THREE: any = new Proxy(threeExports, {
   get: (target, prop) => {
     if (prop in target) return (target as Record<PropertyKey, unknown>)[prop];
+    const ext = getSharedRegistry().authorNamespace;
+    if (ext && typeof prop === 'string' && prop in ext) {
+      return ext[prop];
+    }
     if (
       typeof prop === 'string' &&
       prop !== 'then' &&
@@ -3675,6 +3862,11 @@ export const THREE: any = new Proxy(threeExports, {
       warnUnsupported(`THREE.${prop}`, 'no-op proxy');
     }
     return noopProxy;
+  },
+  has: (target, prop) => {
+    if (prop in target) return true;
+    const ext = getSharedRegistry().authorNamespace;
+    return Boolean(ext && typeof prop === 'string' && prop in ext);
   },
   set: (_target, prop) => {
     throw new TypeError(
@@ -3693,6 +3885,14 @@ export const THREE: any = new Proxy(threeExports, {
     throw new TypeError('#<THREE> is not extensible');
   },
 });
+
+const sharedRegForAuthor = getSharedRegistry();
+sharedRegForAuthor.threeNamespace = THREE;
+if (sharedRegForAuthor.workerExtensionInstallers) {
+  for (const installer of sharedRegForAuthor.workerExtensionInstallers) {
+    installer(THREE, sharedRegForAuthor);
+  }
+}
 
 export const threeAuthorPlugin = {
   name: 'three_author',
@@ -3733,9 +3933,11 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
-  // Native GLB/USDZ exports carry the full canonical spatial trait set.
+  // Native GLB/USDZ exports carry the full canonical spatial trait set and CAD/IK authoring extensions.
   registerXRTraitSerializer();
   registerSimTraitSchema();
+  installCadExtension(THREE, getSharedRegistry());
+  installIKExtension(THREE, getSharedRegistry());
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -3898,6 +4100,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
      * the web exporter.
      */
     const rawNodes: any[] = [];
+    const variantNames: string[] = [];
     /** Per-node `userData.interactivity`, kept off `rawNodes` (read by Rust). */
     const nodeInteractivity: unknown[] = [];
     let anyNodeInteractivity = false;
@@ -4019,11 +4222,57 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       ];
       // Same mesh predicate as `sceneToCanvas3D`: any node with a non-empty
       // position attribute. Empty geometry yields a mesh-less node.
+      materializeDeclarativeGeometry(node);
       let meshIdx = -1;
       const geo = (node as any).geometry;
       const posAttr = geo?.attributes?.position;
       if (posAttr && posAttr.array && posAttr.count > 0) {
         meshIdx = rawMeshes.length;
+        let variantMappingsJson: string | null = null;
+        const rawVariants = node.userData?.variants;
+        if (rawVariants && typeof rawVariants === 'object') {
+          const matToVarIndices = new Map<number, number[]>();
+          for (const k of Object.keys(rawVariants)) {
+            if (
+              !k ||
+              k === '__proto__' ||
+              k === 'constructor' ||
+              k === 'prototype'
+            ) {
+              continue;
+            }
+            const vMat = rawVariants[k];
+            const matObj =
+              vMat instanceof Material
+                ? vMat
+                : vMat && typeof vMat === 'object'
+                  ? new MeshStandardMaterial(vMat)
+                  : null;
+            if (!matObj) continue;
+            let vIdx = variantNames.indexOf(k);
+            if (vIdx === -1 && variantNames.length < 256) {
+              vIdx = variantNames.length;
+              variantNames.push(k);
+            }
+            if (vIdx === -1) continue;
+            const mIdx = getMaterialIndex(matObj);
+            if (mIdx !== null) {
+              let list = matToVarIndices.get(mIdx);
+              if (!list) {
+                list = [];
+                matToVarIndices.set(mIdx, list);
+              }
+              list.push(vIdx);
+            }
+          }
+          if (matToVarIndices.size > 0) {
+            const mappings: Array<{material: number; variants: number[]}> = [];
+            for (const [mIdx, vIndices] of matToVarIndices.entries()) {
+              mappings.push({material: mIdx, variants: vIndices});
+            }
+            variantMappingsJson = JSON.stringify({mappings});
+          }
+        }
         rawMeshes.push({
           name: node.name || `Mesh_${rawMeshes.length}`,
           raw_positions: posAttr.array,
@@ -4038,6 +4287,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
               ? (node as any).material
               : null,
           ),
+          variant_mappings_json: variantMappingsJson,
         });
       }
 
@@ -4045,6 +4295,10 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       // `sceneToCanvas3D` only serializes truthy `userData.xr`.
       const hasXR = Boolean(node.userData?.xr) && safeXR !== null;
       const nodeIdx = rawNodes.length;
+      const isInstanced =
+        node instanceof InstancedMesh &&
+        node.count > 0 &&
+        node.instanceMatrix?.array;
       rawNodes.push({
         name: typeof node.name === 'string' ? node.name.slice(0, 1024) : '',
         parent: parentIdx,
@@ -4054,6 +4308,19 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         mesh: meshIdx,
         xr_traits_json: hasXR ? JSON.stringify(safeXR) : null,
         ...(hasXR ? serializeXRForCompiler(safeXR) : {}),
+        ...(isInstanced
+          ? {
+              instance_matrices: (
+                node.instanceMatrix.array as Float32Array
+              ).subarray(0, node.count * 16),
+              instance_colors: node.instanceColor?.array
+                ? (node.instanceColor.array as Float32Array).subarray(
+                    0,
+                    node.count * 3,
+                  )
+                : null,
+            }
+          : {}),
       });
       const inter = toSafeJson(node.userData?.interactivity);
       nodeInteractivity.push(inter);
@@ -4127,6 +4394,10 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       interactivity_json: interactivityExt
         ? JSON.stringify(interactivityExt)
         : null,
+      variants_json:
+        variantNames.length > 0
+          ? JSON.stringify({variants: variantNames.map((name) => ({name}))})
+          : null,
       camera: {
         fov: activeCam.fov || 45,
         position: activeCam.position

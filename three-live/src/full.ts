@@ -30,6 +30,7 @@ if (typeof window !== 'undefined') {
 }
 
 export * from './animation';
-export * from './extras';
+export * from './cad';
 export * from './index';
+export * from './studio';
 export * from './three-author';

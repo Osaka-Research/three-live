@@ -33,7 +33,7 @@ import {
   type ARCapabilities,
 } from './three-xr';
 
-// Automatically register AR provider, contact shadows, and Three.js script runner for the default bundle
+// Automatically register AR provider, core contact shadows, and Three.js script runner for the default bundle
 ThreeLiveElement.registerAR({activateAR, createUSDZBlob});
 ThreeLiveElement.registerScriptRunner(authorScriptRunner);
 registerPlugin(contactShadowPlugin);
@@ -47,11 +47,13 @@ export {
   type CameraState,
 } from './three-live-element';
 export {
+  evaluateToneMapping,
   ThreeView,
   toGLBData,
   type CameraDetail,
   type GLBData,
   type HitDetail,
+  type ToneMappingMode,
 } from './three-view';
 export {
   activateAR,

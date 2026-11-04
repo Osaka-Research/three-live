@@ -43,17 +43,20 @@ material {
 vertex {
     void materialVertex(inout MaterialVertexInputs material) {
         if (materialParams.gpuBillboard > 0.5) {
+            // `uv0` carries signed anisotropic half-extents `(-halfX, -halfY)..(+halfX, +halfY)`
+            // derived from the 3D Gaussian covariance matrix.
             vec2 offset = material.uv0;
             mat4 worldFromModel = getWorldFromModelMatrix();
-            float modelScale = (
-                length(worldFromModel[0].xyz) +
-                length(worldFromModel[1].xyz) +
-                length(worldFromModel[2].xyz)
-            ) * (1.0 / 3.0);
+            vec2 axisScale = vec2(
+                length(worldFromModel[0].xyz),
+                length(worldFromModel[1].xyz)
+            );
             mat4 worldFromView = getWorldFromViewMatrix();
             vec3 right = worldFromView[0].xyz;
             vec3 up = worldFromView[1].xyz;
-            material.worldPosition.xyz += (right * offset.x + up * offset.y) * max(modelScale, 1e-6);
+            material.worldPosition.xyz +=
+                right * offset.x * max(axisScale.x, 1e-6) +
+                up * offset.y * max(axisScale.y, 1e-6);
             material.uv0 = sign(offset) * 0.5 + 0.5;
         }
     }

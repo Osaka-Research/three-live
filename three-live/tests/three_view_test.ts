@@ -12,12 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {rayIntersectsTriangle} from '../src/math';
+import {
+  mat3NormalFromMat4,
+  mat4Multiply,
+  rayIntersectsTriangle,
+} from '../src/math';
 import {
   environmentMapPlugin,
   getEnvironmentSH,
   setEnvironmentSH,
 } from '../src/plugins/envmap';
+import {
+  ikPlugin,
+  IKSolver,
+  quatFromUnitVectors,
+  solveFABRIK,
+  solveTwoBoneIK,
+} from '../src/plugins/ik';
 import {
   type AnimationChannel,
   crossFadeTo,
@@ -29,10 +40,17 @@ import {
 } from '../src/plugins/keyframes';
 import {materialsPlugin} from '../src/plugins/materials';
 import {morphPlugin, setMorphTargetWeight} from '../src/plugins/morph';
+import {
+  computeOutlineClipOffset,
+  evaluateKawaseBloom,
+  parseHexRgb,
+  postprocessingPlugin,
+} from '../src/plugins/postprocessing';
 import {contactShadowPlugin} from '../src/plugins/shadows';
 import {webxrPlugin} from '../src/plugins/webxr';
 import THREE from '../src/three-author';
 import {
+  evaluateToneMapping,
   isGLBData,
   mat4Create,
   mat4LookAt,
@@ -45,6 +63,11 @@ import {
   ThreeView,
   toGLBData,
 } from '../src/three-view';
+import {
+  parseBloomTrait,
+  parseIKTrait,
+  parseOutlineTrait,
+} from '../src/xr-trait-schema';
 
 registerPlugin(keyframeAnimationPlugin);
 
@@ -1133,6 +1156,354 @@ async function runThreeViewTests() {
     assert(
       sanitizeTextureUri(blockedUri) === null,
       `sanitizeTextureUri blocks unsafe URI: ${blockedUri.slice(0, 28)}`,
+    );
+  }
+
+  // 19. Extended Tone Mapping ('neutral' | 'aces' | 'agx' | 'reinhard' | 'none') & Post-Processing (Bloom & Outline)
+  const hdrSample: [number, number, number] = [4.0, 1.5, 0.25];
+  const tmNeutral = evaluateToneMapping(hdrSample, 'neutral', 1.0);
+  const tmAces = evaluateToneMapping(hdrSample, 'aces', 1.0);
+  const tmAgx = evaluateToneMapping(hdrSample, 'agx', 1.0);
+  const tmReinhard = evaluateToneMapping(hdrSample, 'reinhard', 1.0);
+  const tmNone = evaluateToneMapping(hdrSample, 'none', 1.0);
+  assert(
+    tmNeutral[0] > 0.7 &&
+      tmNeutral[0] <= 1.0 &&
+      tmAces[0] > 0.8 &&
+      tmAces[0] <= 1.0 &&
+      tmAgx[0] > 0.6 &&
+      tmAgx[0] <= 1.0 &&
+      Math.abs(tmReinhard[0] - 4.0 / 5.0) < 1e-4 &&
+      tmNone[0] === 1.0,
+    `evaluateToneMapping supports neutral (${tmNeutral[0].toFixed(3)}), aces (${tmAces[0].toFixed(3)}), agx (${tmAgx[0].toFixed(3)}), reinhard (${tmReinhard[0].toFixed(3)}), and none (${tmNone[0].toFixed(3)})`,
+  );
+  viewInstance.setToneMapping('aces');
+  assert(
+    viewInstance.getToneMapping() === 'aces',
+    'ThreeView.setToneMapping("aces") updates toneMapping mode',
+  );
+  viewInstance.setToneMapping('agx');
+  assert(
+    viewInstance.getToneMapping() === 'agx',
+    'ThreeView.setToneMapping("agx") updates toneMapping mode',
+  );
+
+  // Kawase Bloom & Outline helpers + trait parsers
+  const bloomBelow = evaluateKawaseBloom([0.2, 0.25, 0.1], 0.5, 0.8);
+  const bloomAbove = evaluateKawaseBloom([2.0, 1.2, 0.4], 0.8, 0.8);
+  assert(
+    bloomBelow[0] === 0 && bloomBelow[1] === 0 && bloomBelow[2] === 0,
+    'evaluateKawaseBloom suppresses pixels below luminance threshold',
+  );
+  assert(
+    bloomAbove[0] > 0.4 && bloomAbove[1] > 0.2,
+    `evaluateKawaseBloom extracts soft-knee HDR glow above threshold: [${bloomAbove.map((v) => v.toFixed(2)).join(', ')}]`,
+  );
+  const clipOff = computeOutlineClipOffset([1, 0], 2.0, 4.0, [400, 200]);
+  assert(
+    Math.abs(clipOff[0] - (4.0 * 2.0 * 2.0) / 400) < 1e-6 && clipOff[1] === 0,
+    `computeOutlineClipOffset computes perspective-compensated clip-space extrusion: [${clipOff[0].toFixed(4)}, ${clipOff[1].toFixed(4)}]`,
+  );
+  const rgbSky = parseHexRgb('#38bdf8');
+  assert(
+    Math.abs(rgbSky[0] - 0x38 / 255) < 1e-4 &&
+      Math.abs(rgbSky[1] - 0xbd / 255) < 1e-4 &&
+      Math.abs(rgbSky[2] - 0xf8 / 255) < 1e-4,
+    'parseHexRgb parses 6-digit hex color string into normalized RGB tuple',
+  );
+  const bloomTrait = parseBloomTrait({
+    strength: 1.2,
+    threshold: 0.65,
+    radius: 0.5,
+  });
+  const outlineTrait = parseOutlineTrait({color: '#22c55e', thickness: 4});
+  assert(
+    bloomTrait !== null &&
+      Math.abs(bloomTrait.strength - 1.2) < 1e-6 &&
+      Math.abs(bloomTrait.threshold - 0.65) < 1e-6 &&
+      Math.abs(bloomTrait.radius - 0.5) < 1e-6,
+    'parseBloomTrait normalizes bloom trait options',
+  );
+  assert(
+    outlineTrait !== null &&
+      outlineTrait.color === '#22c55e' &&
+      outlineTrait.thickness === 4,
+    'parseOutlineTrait normalizes outline trait options',
+  );
+  assert(
+    postprocessingPlugin.name === 'postprocessing' &&
+      typeof postprocessingPlugin.onAfterRender === 'function',
+    'postprocessingPlugin exposes ThreeLivePlugin onAfterRender hook',
+  );
+  {
+    let blendFuncSeparateCalled = false;
+    let drawArraysCalls = 0;
+    const mockBloomGl = {
+      VERTEX_SHADER: 35633,
+      FRAGMENT_SHADER: 35632,
+      TEXTURE_2D: 3553,
+      TEXTURE0: 33984,
+      RGBA: 6408,
+      UNSIGNED_BYTE: 5121,
+      TEXTURE_MIN_FILTER: 10241,
+      TEXTURE_MAG_FILTER: 10240,
+      TEXTURE_WRAP_S: 10242,
+      TEXTURE_WRAP_T: 10243,
+      LINEAR: 9729,
+      CLAMP_TO_EDGE: 33071,
+      FRAMEBUFFER: 36160,
+      COLOR_ATTACHMENT0: 36064,
+      DEPTH_TEST: 2929,
+      BLEND: 3042,
+      ONE: 1,
+      ONE_MINUS_SRC_ALPHA: 771,
+      SRC_ALPHA: 770,
+      TRIANGLES: 4,
+      createShader: () => ({}),
+      shaderSource: () => {},
+      compileShader: () => {},
+      createProgram: () => ({}),
+      attachShader: () => {},
+      linkProgram: () => {},
+      getUniformLocation: () => ({}),
+      createVertexArray: () => ({}),
+      bindVertexArray: () => {},
+      createTexture: () => ({}),
+      bindTexture: () => {},
+      texImage2D: () => {},
+      texParameteri: () => {},
+      createFramebuffer: () => ({}),
+      bindFramebuffer: () => {},
+      framebufferTexture2D: () => {},
+      activeTexture: () => {},
+      copyTexSubImage2D: () => {},
+      viewport: () => {},
+      disable: () => {},
+      enable: () => {},
+      depthMask: () => {},
+      useProgram: () => {},
+      uniform1i: () => {},
+      uniform1f: () => {},
+      uniform2f: () => {},
+      blendFunc: () => {},
+      blendFuncSeparate: (
+        srcRgb: number,
+        dstRgb: number,
+        srcA: number,
+        dstA: number,
+      ) => {
+        if (srcRgb === 1 && dstRgb === 1 && srcA === 1 && dstA === 771) {
+          blendFuncSeparateCalled = true;
+        }
+      },
+      drawArrays: () => {
+        drawArraysCalls++;
+      },
+    } as unknown as WebGL2RenderingContext;
+    const mockBloomViewer = {
+      canvas: {width: 400, height: 300},
+      container: {
+        getAttribute: (name: string) => (name === 'bloom' ? '1.2' : null),
+      },
+      meshes: [{name: 'Core', visible: true, primitives: []}],
+    } as unknown as ThreeView;
+    postprocessingPlugin.onAfterRender!(
+      mockBloomGl,
+      mockBloomViewer,
+      new Float32Array(16),
+    );
+    assert(
+      blendFuncSeparateCalled && drawArraysCalls === 6,
+      'postprocessingPlugin runs 3-level Dual-Kawase pyramid (6 passes) and preserves transparent canvas background alpha via blendFuncSeparate',
+    );
+
+    // Regression test: mat3NormalFromMat4 must return the column-major
+    // inverse-transpose (so a pure rotation R_y(theta) * R_x(-90 deg) maps
+    // local +Z [0, 0, 1] to world +Y [0, 1, 0] at every turntable angle).
+    const rxMinus90 = new Float32Array([
+      1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1,
+    ]);
+    const cosT = Math.cos(1.1);
+    const sinT = Math.sin(1.1);
+    const ryTurntable = new Float32Array([
+      cosT,
+      0,
+      -sinT,
+      0,
+      0,
+      1,
+      0,
+      0,
+      sinT,
+      0,
+      cosT,
+      0,
+      0,
+      0,
+      0,
+      1,
+    ]);
+    const combinedRot = mat4Create();
+    mat4Multiply(combinedRot, ryTurntable, rxMinus90);
+    const nMat = new Float32Array(9);
+    mat3NormalFromMat4(nMat, combinedRot);
+    // Transform local +Z normal [0, 0, 1] -> column 2 of nMat: [nMat[6], nMat[7], nMat[8]]
+    assert(
+      Math.abs(nMat[6]) < 1e-6 &&
+        Math.abs(nMat[7] - 1.0) < 1e-6 &&
+        Math.abs(nMat[8]) < 1e-6,
+      'mat3NormalFromMat4 preserves world +Y normal for R_y(theta) * R_x(-90 deg) across turntable rotation',
+    );
+  }
+
+  // 20. Analytic Two-Bone & FABRIK Inverse Kinematics (ikPlugin & THREE.IKSolver)
+  const q90z = quatFromUnitVectors([1, 0, 0], [0, 1, 0]);
+  assert(
+    Math.abs(q90z[2] - Math.sin(Math.PI / 4)) < 1e-4 &&
+      Math.abs(q90z[3] - Math.cos(Math.PI / 4)) < 1e-4,
+    'quatFromUnitVectors rotates +X onto +Y by +90 deg around +Z',
+  );
+  const q180 = quatFromUnitVectors([1, 0, 0], [-1, 0, 0]);
+  const q180Len = Math.hypot(q180[0], q180[1], q180[2], q180[3]);
+  assert(
+    Math.abs(q180Len - 1.0) < 1e-4 && Math.abs(q180[3]) < 1e-4,
+    'quatFromUnitVectors handles 180-degree opposite vectors cleanly',
+  );
+
+  const twoBone = solveTwoBoneIK(
+    [0, 0, 0],
+    [0, 0.5, 0],
+    [0, 1.0, 0],
+    [0.5, 0.5, 0],
+    [0, 1, 0],
+  );
+  const d1 = Math.hypot(
+    twoBone.midPos[0],
+    twoBone.midPos[1],
+    twoBone.midPos[2],
+  );
+  const d2 = Math.hypot(
+    twoBone.effectorPos[0] - twoBone.midPos[0],
+    twoBone.effectorPos[1] - twoBone.midPos[1],
+    twoBone.effectorPos[2] - twoBone.midPos[2],
+  );
+  const errTwoBone = Math.hypot(
+    twoBone.effectorPos[0] - 0.5,
+    twoBone.effectorPos[1] - 0.5,
+    twoBone.effectorPos[2],
+  );
+  assert(
+    Math.abs(d1 - 0.5) < 1e-4 && Math.abs(d2 - 0.5) < 1e-4 && errTwoBone < 1e-4,
+    `solveTwoBoneIK reaches target [0.5, 0.5, 0] while preserving bone lengths (${d1.toFixed(3)}, ${d2.toFixed(3)})`,
+  );
+
+  const fabrik = solveFABRIK(
+    [
+      [0, 0, 0],
+      [0, 0.4, 0],
+      [0, 0.8, 0],
+      [0, 1.2, 0],
+    ],
+    [0.6, 0.6, 0.2],
+    12,
+    1e-4,
+  );
+  const endPos = fabrik.positions[3];
+  const fabrikErr = Math.hypot(
+    endPos[0] - 0.6,
+    endPos[1] - 0.6,
+    endPos[2] - 0.2,
+  );
+  assert(
+    fabrikErr < 1e-3 && fabrik.rotations.length === 3,
+    `solveFABRIK 4-joint chain converges within 1mm (err=${fabrikErr.toFixed(5)})`,
+  );
+
+  ikPlugin.onRegister?.();
+  assert(
+    Boolean(THREE.IKSolver) &&
+      typeof IKSolver.solveTwoBone === 'function' &&
+      typeof THREE.IKSolver.solveTwoBone === 'function' &&
+      typeof THREE.IKSolver.solveFABRIK === 'function' &&
+      typeof THREE.IKSolver.parseIKTrait === 'function',
+    'THREE.IKSolver is exposed in three-author sandbox API when ikPlugin is registered',
+  );
+  const ikTrait = parseIKTrait({
+    solver: 'two-bone',
+    root: 'Shoulder',
+    mid: 'Elbow',
+    effector: 'Wrist',
+    target: 'TargetOrb',
+    pole: [0, 1, -0.5],
+    iterations: 10,
+  });
+  assert(
+    ikTrait !== null &&
+      ikTrait.solver === 'two-bone' &&
+      ikTrait.root === 'Shoulder' &&
+      ikTrait.mid === 'Elbow' &&
+      ikTrait.effector === 'Wrist' &&
+      ikTrait.target === 'TargetOrb' &&
+      Array.isArray(ikTrait.pole) &&
+      ikTrait.iterations === 10,
+    'parseIKTrait normalizes two-bone IK trait configuration',
+  );
+  assert(
+    ikPlugin.name === 'ik' && typeof ikPlugin.onUpdate === 'function',
+    'ikPlugin exposes ThreeLivePlugin onUpdate hook',
+  );
+  {
+    const mkBoneMesh = (
+      name: string,
+      pos: [number, number, number],
+      xr?: Record<string, unknown>,
+    ) => {
+      const m = new Float32Array(16);
+      m[0] = m[5] = m[10] = m[15] = 1;
+      m[12] = pos[0];
+      m[13] = pos[1];
+      m[14] = pos[2];
+      return {
+        name,
+        modelMatrix: m,
+        extras: xr ? {xr} : {},
+      };
+    };
+    const shoulder = mkBoneMesh('Shoulder', [0, 0, 0]);
+    const elbow = mkBoneMesh('Elbow', [0, 0.5, 0]);
+    const wrist = mkBoneMesh('Wrist', [0, 1.0, 0], {
+      ik: {
+        solver: 'two-bone',
+        root: 'Shoulder',
+        mid: 'Elbow',
+        effector: 'Wrist',
+        target: 'hand-right',
+        pole: [0, 1, 0],
+        weight: 0.5,
+      },
+    });
+    const mockViewer = {
+      meshes: [shoulder, elbow, wrist],
+      handPoses: {right: [0.5, 0.5, 0]},
+    } as unknown as Parameters<NonNullable<typeof ikPlugin.onUpdate>>[0];
+    for (let f = 0; f < 10; f++) {
+      ikPlugin.onUpdate?.(mockViewer, 0.016);
+    }
+    const len1 = Math.hypot(
+      elbow.modelMatrix[12] - shoulder.modelMatrix[12],
+      elbow.modelMatrix[13] - shoulder.modelMatrix[13],
+      elbow.modelMatrix[14] - shoulder.modelMatrix[14],
+    );
+    const len2 = Math.hypot(
+      wrist.modelMatrix[12] - elbow.modelMatrix[12],
+      wrist.modelMatrix[13] - elbow.modelMatrix[13],
+      wrist.modelMatrix[14] - elbow.modelMatrix[14],
+    );
+    assert(
+      Math.abs(len1 - 0.5) < 1e-4 &&
+        Math.abs(len2 - 0.5) < 1e-4 &&
+        wrist.modelMatrix[12] > 0.1,
+      `ikPlugin.onUpdate preserves bone lengths (${len1.toFixed(3)}, ${len2.toFixed(3)}) across multi-frame weight<1 blending and resolves 'hand-right' target`,
     );
   }
 

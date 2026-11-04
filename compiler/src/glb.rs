@@ -43,6 +43,90 @@ fn sanitize_finite(val: f32, fallback: f32) -> f32 {
     }
 }
 
+/// Decomposes a column-major 4x4 matrix into `(translation, rotation_quat, scale)`.
+fn decompose_mat4(m: &[f32]) -> ([f32; 3], [f32; 4], [f32; 3]) {
+    if m.len() < 16 {
+        return ([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0]);
+    }
+    let tx = sanitize_finite(m[12], 0.0);
+    let ty = sanitize_finite(m[13], 0.0);
+    let tz = sanitize_finite(m[14], 0.0);
+
+    let m00 = sanitize_finite(m[0], 1.0);
+    let m01 = sanitize_finite(m[1], 0.0);
+    let m02 = sanitize_finite(m[2], 0.0);
+    let m10 = sanitize_finite(m[4], 0.0);
+    let m11 = sanitize_finite(m[5], 1.0);
+    let m12 = sanitize_finite(m[6], 0.0);
+    let m20 = sanitize_finite(m[8], 0.0);
+    let m21 = sanitize_finite(m[9], 0.0);
+    let m22 = sanitize_finite(m[10], 1.0);
+
+    let mut sx = (m00 * m00 + m01 * m01 + m02 * m02).sqrt();
+    let sy = (m10 * m10 + m11 * m11 + m12 * m12).sqrt();
+    let sz = (m20 * m20 + m21 * m21 + m22 * m22).sqrt();
+
+    let det = m00 * (m11 * m22 - m21 * m12) - m10 * (m01 * m22 - m21 * m02)
+        + m20 * (m01 * m12 - m11 * m02);
+    if det < 0.0 {
+        sx = -sx;
+    }
+
+    let inv_sx = if sx.abs() > 1e-8 { 1.0 / sx } else { 0.0 };
+    let inv_sy = if sy.abs() > 1e-8 { 1.0 / sy } else { 0.0 };
+    let inv_sz = if sz.abs() > 1e-8 { 1.0 / sz } else { 0.0 };
+
+    let r00 = m00 * inv_sx;
+    let r01 = m01 * inv_sx;
+    let r02 = m02 * inv_sx;
+    let r10 = m10 * inv_sy;
+    let r11 = m11 * inv_sy;
+    let r12 = m12 * inv_sy;
+    let r20 = m20 * inv_sz;
+    let r21 = m21 * inv_sz;
+    let r22 = m22 * inv_sz;
+
+    let trace = r00 + r11 + r22;
+    let (mut qx, mut qy, mut qz, mut qw) = if trace > 0.0 {
+        let s = 0.5 / (trace + 1.0).sqrt();
+        ((r12 - r21) * s, (r20 - r02) * s, (r01 - r10) * s, 0.25 / s)
+    } else if r00 > r11 && r00 > r22 {
+        let s = 2.0 * (1.0 + r00 - r11 - r22).max(0.0).sqrt();
+        if s > 1e-8 {
+            (0.25 * s, (r10 + r01) / s, (r20 + r02) / s, (r12 - r21) / s)
+        } else {
+            (0.0, 0.0, 0.0, 1.0)
+        }
+    } else if r11 > r22 {
+        let s = 2.0 * (1.0 + r11 - r00 - r22).max(0.0).sqrt();
+        if s > 1e-8 {
+            ((r10 + r01) / s, 0.25 * s, (r12 + r21) / s, (r20 - r02) / s)
+        } else {
+            (0.0, 0.0, 0.0, 1.0)
+        }
+    } else {
+        let s = 2.0 * (1.0 + r22 - r00 - r11).max(0.0).sqrt();
+        if s > 1e-8 {
+            ((r20 + r02) / s, (r12 + r21) / s, 0.25 * s, (r01 - r10) / s)
+        } else {
+            (0.0, 0.0, 0.0, 1.0)
+        }
+    };
+    let qlen = (qx * qx + qy * qy + qz * qz + qw * qw).sqrt();
+    if qlen > 1e-8 && qlen.is_finite() {
+        qx /= qlen;
+        qy /= qlen;
+        qz /= qlen;
+        qw /= qlen;
+    } else {
+        qx = 0.0;
+        qy = 0.0;
+        qz = 0.0;
+        qw = 1.0;
+    }
+    ([tx, ty, tz], [qx, qy, qz, qw], [sx, sy, sz])
+}
+
 /// Serializes an `f32` as JSON without the artifacts of a naive `f32 as f64` widening.
 ///
 /// `serde_json` stores every float as `f64`, so `json!(0.1f32)` emits
@@ -545,6 +629,15 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
         if mat_idx < materials.len() {
             primitive.as_object_mut().unwrap().insert("material".to_string(), json!(mat_idx));
         }
+        if let Some(ref vm) = mesh.variant_mappings {
+            if vm.is_object() {
+                add_ext("KHR_materials_variants");
+                primitive
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("extensions".to_string(), json!({ "KHR_materials_variants": vm }));
+            }
+        }
 
         let mesh_obj_idx = meshes.len();
         meshes.push(json!({
@@ -624,6 +717,7 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             if !children[i].is_empty() {
                 node_json["children"] = json!(children[i]);
             }
+            let mut merged_node_exts = serde_json::Map::new();
             if let Some((extras_xr, node_exts)) = build_xr_payload(
                 node.xr_traits.as_ref(),
                 node.xr_normalized.as_ref(),
@@ -638,9 +732,126 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                 if node_exts.contains_key("ANDROID_xr_scenecore") {
                     add_ext("ANDROID_xr_scenecore");
                 }
-                if !node_exts.is_empty() {
-                    node_json["extensions"] = serde_json::Value::Object(node_exts);
+                for (k, v) in node_exts {
+                    merged_node_exts.insert(k, v);
                 }
+            }
+            let inst_count = node.instance_matrices.len() / 16;
+            if inst_count > 0 {
+                add_ext("EXT_mesh_gpu_instancing");
+                align_bin_data(bin_data);
+                let t_offset = bin_data.len();
+                let mut rotations = Vec::with_capacity(inst_count);
+                let mut scales = Vec::with_capacity(inst_count);
+                for inst in 0..inst_count {
+                    let (it, ir, is) =
+                        decompose_mat4(&node.instance_matrices[inst * 16..(inst + 1) * 16]);
+                    for &c in &it {
+                        bin_data.extend_from_slice(&c.to_le_bytes());
+                    }
+                    rotations.push(ir);
+                    scales.push(is);
+                }
+                let t_len = bin_data.len() - t_offset;
+                let t_bv_idx = buffer_views.len();
+                buffer_views.push(json!({
+                    "buffer": 0,
+                    "byteOffset": t_offset,
+                    "byteLength": t_len,
+                }));
+                let t_acc_idx = accessors.len();
+                accessors.push(json!({
+                    "bufferView": t_bv_idx,
+                    "byteOffset": 0,
+                    "componentType": COMPONENT_FLOAT,
+                    "count": inst_count,
+                    "type": "VEC3",
+                }));
+
+                align_bin_data(bin_data);
+                let r_offset = bin_data.len();
+                for ir in &rotations {
+                    for &c in ir {
+                        bin_data.extend_from_slice(&c.to_le_bytes());
+                    }
+                }
+                let r_len = bin_data.len() - r_offset;
+                let r_bv_idx = buffer_views.len();
+                buffer_views.push(json!({
+                    "buffer": 0,
+                    "byteOffset": r_offset,
+                    "byteLength": r_len,
+                }));
+                let r_acc_idx = accessors.len();
+                accessors.push(json!({
+                    "bufferView": r_bv_idx,
+                    "byteOffset": 0,
+                    "componentType": COMPONENT_FLOAT,
+                    "count": inst_count,
+                    "type": "VEC4",
+                }));
+
+                align_bin_data(bin_data);
+                let s_offset = bin_data.len();
+                for is in &scales {
+                    for &c in is {
+                        bin_data.extend_from_slice(&c.to_le_bytes());
+                    }
+                }
+                let s_len = bin_data.len() - s_offset;
+                let s_bv_idx = buffer_views.len();
+                buffer_views.push(json!({
+                    "buffer": 0,
+                    "byteOffset": s_offset,
+                    "byteLength": s_len,
+                }));
+                let s_acc_idx = accessors.len();
+                accessors.push(json!({
+                    "bufferView": s_bv_idx,
+                    "byteOffset": 0,
+                    "componentType": COMPONENT_FLOAT,
+                    "count": inst_count,
+                    "type": "VEC3",
+                }));
+
+                let mut inst_attrs = json!({
+                    "TRANSLATION": t_acc_idx,
+                    "ROTATION": r_acc_idx,
+                    "SCALE": s_acc_idx,
+                });
+                if node.instance_colors.len() >= inst_count * 3 {
+                    align_bin_data(bin_data);
+                    let c_offset = bin_data.len();
+                    for c in &node.instance_colors[..inst_count * 3] {
+                        bin_data.extend_from_slice(&sanitize_finite(*c, 1.0).to_le_bytes());
+                    }
+                    let c_len = bin_data.len() - c_offset;
+                    let c_bv_idx = buffer_views.len();
+                    buffer_views.push(json!({
+                        "buffer": 0,
+                        "byteOffset": c_offset,
+                        "byteLength": c_len,
+                    }));
+                    let c_acc_idx = accessors.len();
+                    accessors.push(json!({
+                        "bufferView": c_bv_idx,
+                        "byteOffset": 0,
+                        "componentType": COMPONENT_FLOAT,
+                        "count": inst_count,
+                        "type": "VEC3",
+                    }));
+                    inst_attrs
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("_COLOR_0".to_string(), json!(c_acc_idx));
+                }
+                merged_node_exts.insert(
+                    "EXT_mesh_gpu_instancing".to_string(),
+                    json!({ "attributes": inst_attrs }),
+                );
+            }
+            if !merged_node_exts.is_empty() {
+                node_json["extensions"] = serde_json::Value::Object(merged_node_exts);
             }
             nodes.push(node_json);
         }
@@ -696,6 +907,7 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             root.insert("images".to_string(), json!(images));
             root.insert("samplers".to_string(), json!(samplers));
         }
+        let mut root_exts = serde_json::Map::new();
         if let Some(interactivity) = scene.interactivity.as_ref().filter(|v| v.is_object()) {
             if !extensions_used.contains(&"KHR_interactivity") {
                 extensions_used.insert(0, "KHR_interactivity");
@@ -705,7 +917,16 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             {
                 extensions_used.push("KHR_node_visibility");
             }
-            root.insert("extensions".to_string(), json!({ "KHR_interactivity": interactivity }));
+            root_exts.insert("KHR_interactivity".to_string(), interactivity.clone());
+        }
+        if let Some(variants) = scene.variants.as_ref().filter(|v| v.is_object()) {
+            if !extensions_used.contains(&"KHR_materials_variants") {
+                extensions_used.push("KHR_materials_variants");
+            }
+            root_exts.insert("KHR_materials_variants".to_string(), variants.clone());
+        }
+        if !root_exts.is_empty() {
+            root.insert("extensions".to_string(), serde_json::Value::Object(root_exts));
         }
         if !extensions_used.is_empty() {
             root.insert("extensionsUsed".to_string(), json!(extensions_used));

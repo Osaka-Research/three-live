@@ -427,34 +427,64 @@ function buildThreeLive() {
     outfile: path.join(tlDist, 'three-live-viewer.min.js'),
   });
 
-  // 10. three-live-extras (ESM, CJS, IIFE min)
+  // 10. three-live-studio (ESM, CJS, IIFE min)
   buildTarget({
-    entryPoints: [path.join(THREE_LIVE_DIR, 'src/extras.ts')],
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/studio.ts')],
     bundle: true,
     format: 'esm',
     minify: true,
     target: 'es2020',
     define: {'IS_DEV': 'false'},
-    outfile: path.join(tlDist, 'three-live-extras.js'),
+    outfile: path.join(tlDist, 'three-live-studio.js'),
   });
   buildTarget({
-    entryPoints: [path.join(THREE_LIVE_DIR, 'src/extras.ts')],
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/studio.ts')],
     bundle: true,
     format: 'cjs',
     minify: true,
     target: 'es2020',
     define: {'IS_DEV': 'false'},
-    outfile: path.join(tlDist, 'three-live-extras.cjs'),
+    outfile: path.join(tlDist, 'three-live-studio.cjs'),
   });
   buildTarget({
-    entryPoints: [path.join(THREE_LIVE_DIR, 'src/extras.ts')],
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/studio.ts')],
     bundle: true,
     format: 'iife',
-    globalName: 'ThreeLiveExtras',
+    globalName: 'ThreeLiveStudio',
     minify: true,
     target: 'es2020',
     define: {'IS_DEV': 'false'},
-    outfile: path.join(tlDist, 'three-live-extras.min.js'),
+    outfile: path.join(tlDist, 'three-live-studio.min.js'),
+  });
+
+  // 10b. three-live-cad (ESM, CJS, IIFE min)
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/cad.ts')],
+    bundle: true,
+    format: 'esm',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-cad.js'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/cad.ts')],
+    bundle: true,
+    format: 'cjs',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-cad.cjs'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/cad.ts')],
+    bundle: true,
+    format: 'iife',
+    globalName: 'ThreeLiveCAD',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-cad.min.js'),
   });
 
   // 11. three-live-animation (ESM, CJS, IIFE min)
@@ -496,7 +526,8 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-convert.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-element.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-viewer.d.ts'), rootDts);
-  fs.writeFileSync(path.join(tlDist, 'three-live-extras.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-studio.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-cad.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-animation.d.ts'), rootDts);
 
   // Sync to root dist/ and examples
@@ -515,8 +546,11 @@ function buildThreeLive() {
       path.join(tlDist, 'three-live-viewer.min.js'),
       path.join(DIST_DIR, 'three-live-viewer.min.js'));
   fs.copyFileSync(
-      path.join(tlDist, 'three-live-extras.min.js'),
-      path.join(DIST_DIR, 'three-live-extras.min.js'));
+      path.join(tlDist, 'three-live-studio.min.js'),
+      path.join(DIST_DIR, 'three-live-studio.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-cad.min.js'),
+      path.join(DIST_DIR, 'three-live-cad.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-animation.min.js'),
       path.join(DIST_DIR, 'three-live-animation.min.js'));
@@ -527,11 +561,29 @@ function buildThreeLive() {
       path.join(tlDist, 'three-live.min.js'),
       path.join(THREE_LIVE_DIR, 'examples/three-live.js'));
   fs.copyFileSync(
+      path.join(tlDist, 'three-live-studio.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-studio.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-cad.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-cad.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-animation.min.js'),
+      path.join(THREE_LIVE_DIR, 'examples/three-live-animation.min.js'));
+  fs.copyFileSync(
       sandboxHtmlSrc,
       path.join(THREE_LIVE_DIR, 'examples/three-live-sandbox.html'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live.min.js'),
       path.join(ROOT_DIR, 'examples/three/three-live.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-studio.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-studio.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-cad.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-cad.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-animation.min.js'),
+      path.join(ROOT_DIR, 'examples/three/three-live-animation.min.js'));
   fs.copyFileSync(
       sandboxHtmlSrc,
       path.join(ROOT_DIR, 'examples/three/three-live-sandbox.html'));
@@ -611,48 +663,48 @@ function buildXRLive() {
     outfile: path.join(xrDist, 'xr-live-viewer.min.js'),
   });
 
-  // 3. xr-live-extras (Deep XR, Simulator & AI Plugin)
+  // 3. xr-live-sensors (Hardware XR Sensors, Simulator & WebMCP Plugin)
   buildTarget({
-    entryPoints: [path.join(XR_LIVE_DIR, 'src/extras.ts')],
+    entryPoints: [path.join(XR_LIVE_DIR, 'src/sensors.ts')],
     bundle: true,
     format: 'esm',
     minify: true,
     target: 'es2020',
     define: {'IS_DEV': 'false'},
-    outfile: path.join(xrDist, 'xr-live-extras.js'),
+    outfile: path.join(xrDist, 'xr-live-sensors.js'),
   });
   buildTarget({
-    entryPoints: [path.join(XR_LIVE_DIR, 'src/extras.ts')],
+    entryPoints: [path.join(XR_LIVE_DIR, 'src/sensors.ts')],
     bundle: true,
     format: 'cjs',
     minify: true,
     target: 'es2020',
     define: {'IS_DEV': 'false'},
-    outfile: path.join(xrDist, 'xr-live-extras.cjs'),
+    outfile: path.join(xrDist, 'xr-live-sensors.cjs'),
   });
   buildTarget({
-    entryPoints: [path.join(XR_LIVE_DIR, 'src/extras.ts')],
+    entryPoints: [path.join(XR_LIVE_DIR, 'src/sensors.ts')],
     bundle: true,
     format: 'iife',
-    globalName: 'XRLiveExtras',
+    globalName: 'XRLiveSensors',
     minify: true,
     target: 'es2020',
     define: {'IS_DEV': 'false'},
-    outfile: path.join(xrDist, 'xr-live-extras.min.js'),
+    outfile: path.join(xrDist, 'xr-live-sensors.min.js'),
   });
 
-  // 4. xr-live-plugins (optional spatial plugins: head-follow, handles,
-  // world-understanding, gemini-live, spatial-paint, depth-particles, splats)
+  // 4. xr-live-spatial (optional spatial UX, world-understanding, splats & AI
+  // plugins)
   for (const [format, ext] of [['esm', 'js'], ['cjs', 'cjs'], ['iife', 'min.js']]) {
     buildTarget({
       entryPoints: [path.join(XR_LIVE_DIR, 'src/plugins/index.ts')],
       bundle: true,
       format,
-      ...(format === 'iife' ? {globalName: 'XRLivePlugins'} : {}),
+      ...(format === 'iife' ? {globalName: 'XRLiveSpatial'} : {}),
       minify: true,
       target: 'es2020',
       define: {'IS_DEV': 'false'},
-      outfile: path.join(xrDist, `xr-live-plugins.${ext}`),
+      outfile: path.join(xrDist, `xr-live-spatial.${ext}`),
     });
   }
 
@@ -706,9 +758,9 @@ function buildXRLive() {
       fs.readFileSync(path.join(ROOT_DIR, 'three-live.d.ts'), 'utf8');
   fs.writeFileSync(path.join(xrDist, 'index.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-viewer.d.ts'), rootDts);
-  fs.writeFileSync(path.join(xrDist, 'xr-live-extras.d.ts'), rootDts);
+  fs.writeFileSync(path.join(xrDist, 'xr-live-sensors.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-full.d.ts'), rootDts);
-  fs.writeFileSync(path.join(xrDist, 'xr-live-plugins.d.ts'), rootDts);
+  fs.writeFileSync(path.join(xrDist, 'xr-live-spatial.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-sim.d.ts'), rootDts);
 
   if (!fs.existsSync(DIST_DIR)) {
@@ -721,14 +773,14 @@ function buildXRLive() {
       path.join(xrDist, 'xr-live-viewer.min.js'),
       path.join(DIST_DIR, 'xr-live-viewer.min.js'));
   fs.copyFileSync(
-      path.join(xrDist, 'xr-live-extras.min.js'),
-      path.join(DIST_DIR, 'xr-live-extras.min.js'));
+      path.join(xrDist, 'xr-live-sensors.min.js'),
+      path.join(DIST_DIR, 'xr-live-sensors.min.js'));
   fs.copyFileSync(
       path.join(xrDist, 'xr-live-full.min.js'),
       path.join(DIST_DIR, 'xr-live-full.min.js'));
   fs.copyFileSync(
-      path.join(xrDist, 'xr-live-plugins.min.js'),
-      path.join(DIST_DIR, 'xr-live-plugins.min.js'));
+      path.join(xrDist, 'xr-live-spatial.min.js'),
+      path.join(DIST_DIR, 'xr-live-spatial.min.js'));
   fs.copyFileSync(
       path.join(xrDist, 'xr-live-sim.min.js'),
       path.join(DIST_DIR, 'xr-live-sim.min.js'));
@@ -743,14 +795,23 @@ function buildXRLive() {
         path.join(xrDist, 'xr-live.min.js'),
         path.join(xrExampleDir, 'xr-live.min.js'));
     fs.copyFileSync(
-        path.join(xrDist, 'xr-live-extras.min.js'),
-        path.join(xrExampleDir, 'xr-live-extras.min.js'));
+        path.join(xrDist, 'xr-live-sensors.min.js'),
+        path.join(xrExampleDir, 'xr-live-sensors.min.js'));
     fs.copyFileSync(
-        path.join(xrDist, 'xr-live-plugins.min.js'),
-        path.join(xrExampleDir, 'xr-live-plugins.min.js'));
+        path.join(xrDist, 'xr-live-spatial.min.js'),
+        path.join(xrExampleDir, 'xr-live-spatial.min.js'));
     fs.copyFileSync(
         path.join(xrDist, 'xr-live-sim.min.js'),
         path.join(xrExampleDir, 'xr-live-sim.min.js'));
+    fs.copyFileSync(
+        path.join(DIST_DIR, 'three-live-studio.min.js'),
+        path.join(xrExampleDir, 'three-live-studio.min.js'));
+    fs.copyFileSync(
+        path.join(DIST_DIR, 'three-live-cad.min.js'),
+        path.join(xrExampleDir, 'three-live-cad.min.js'));
+    fs.copyFileSync(
+        path.join(DIST_DIR, 'three-live-animation.min.js'),
+        path.join(xrExampleDir, 'three-live-animation.min.js'));
     fs.copyFileSync(
         sandboxHtmlSrc, path.join(xrExampleDir, 'three-live-sandbox.html'));
   }
@@ -787,17 +848,18 @@ function reportSizes() {
   console.log('Asset                                      Raw Size     Gzip Size     Budget');
   console.log('------------------------------------------------------------------------------');
   const files = [
-    {name: 'three-live-viewer.min.js', budgetKb: '25.5'},
-    {name: 'three-live.min.js', budgetKb: '54'},
-    {name: 'three-live-extras.min.js', budgetKb: '17'},
-    {name: 'three-live-animation.min.js', budgetKb: '6.5'},
-    {name: 'three-live-full.min.js', budgetKb: '69'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '46'},
-    {name: 'xr-live.min.js', budgetKb: '66'},
-    {name: 'xr-live-extras.min.js', budgetKb: '10'},
-    {name: 'xr-live-full.min.js', budgetKb: '151'},
-    {name: 'xr-live-plugins.min.js', budgetKb: '52'},
+    {name: 'three-live-viewer.min.js', budgetKb: '28'},
+    {name: 'three-live.min.js', budgetKb: '59'},
+    {name: 'three-live-studio.min.js', budgetKb: '22'},
+    {name: 'three-live-cad.min.js', budgetKb: '9'},
+    {name: 'three-live-animation.min.js', budgetKb: '8'},
+    {name: 'three-live-full.min.js', budgetKb: '91'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '50'},
+    {name: 'xr-live.min.js', budgetKb: '71'},
+    {name: 'xr-live-sensors.min.js', budgetKb: '10'},
+    {name: 'xr-live-spatial.min.js', budgetKb: '56'},
     {name: 'xr-live-sim.min.js', budgetKb: '22'},
+    {name: 'xr-live-full.min.js', budgetKb: '177'},
   ];
   const failures = [];
   for (const f of files) {

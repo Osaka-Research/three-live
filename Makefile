@@ -247,7 +247,7 @@ all: web rust
 
 clean:
 	rm -rf dist three-live/dist xr-live/dist target .gradle
-	rm -f $(ENGINE_ASSET) examples/three/three-live.js examples/three/three-live-sandbox.html examples/xr/xr-live.min.js examples/xr/xr-live-extras.min.js examples/xr/three-live-sandbox.html three-live/examples/three-live.js three-live/examples/three-live-sandbox.html
+	rm -f $(ENGINE_ASSET) examples/three/three-live.js examples/three/three-live-sandbox.html examples/xr/xr-live.min.js examples/xr/xr-live-sensors.min.js examples/xr/three-live-sandbox.html three-live/examples/three-live.js three-live/examples/three-live-sandbox.html
 	rm -rf mobile/android/build mobile/android/src/main/jniLibs
 	rm -rf mobile/examples/android_compose/build
 	rm -rf mobile/ios/ThreeLiveCompiler.xcframework mobile/ios/.build

@@ -62,35 +62,40 @@ bundles and entry points.
 
 ## Observed Attributes
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Attribute | Type | Bundle | Description |
-| :--------------------- | :--------- | :------------------- | :------------------ |
+| :--- | :--- | :--- | :--- |
 | `src` | `string` | `three-live-viewer`+ | URL or path to binary `.glb` model. |
 | `ios-src` | `string` | `three-live-viewer`+ | Optional URL or path to Apple `.usdz` model for iOS Quick Look (auto-transcoded from GLB if omitted). |
 | `poster` | `string` | `three-live-viewer`+ | URL to a placeholder image shown before 3D rendering initializes. |
 | `scale` | `string` | `three-live-viewer`+ | Uniform or per-axis scale multiplier `"x y z"` (e.g. `"2 2 2"`). |
-| `camera-orbit` | `string` (str/JSON) | `three-live-viewer`+ | Initial camera orbit angles and distance\ 20deg 3m"` or `{"theta"\ "phi"\ "zoom"\ |
+| `camera-orbit` | `string` (str/JSON) | `three-live-viewer`+ | Initial camera orbit angles and distance (`"45deg 20deg 3m"` or `{"theta": 0.8, "phi": 0.35, "zoom": 3}`). |
 | `camera-target` | `string` | `three-live-viewer`+ | Orbit center coordinate `"x y z"` (e.g. `"0m 1.5m 0m"`, defaults to model bounding center). |
-| `min-camera-orbit` | `string` | `three-live-viewer`+ | Lower bounds for camera orbit\ `"theta phi radius"` (e.g. `"-45deg 0deg 1m"` or `"auto 0deg auto"`). |
+| `min-camera-orbit` | `string` | `three-live-viewer`+ | Lower bounds for camera orbit `"theta phi radius"` (e.g. `"-45deg 0deg 1m"` or `"auto 0deg auto"`). |
 | `max-camera-orbit` | `string` | `three-live-viewer`+ | Upper bounds for camera orbit (e.g. `"auto 90deg auto"` prevents orbiting beneath the ground plane). |
 | `field-of-view` | `string` | `three-live-viewer`+ | Vertical field of view angle (e.g. `"45deg"`, clamps between `10deg` and `90deg`). |
 | `selected-mesh` | `string` | `three-live-viewer`+ | Name of the sub-mesh to highlight. |
 | `camera-controls` | `boolean` | `three-live-viewer`+ | Enables interactive orbit/pan/zoom camera controls (disabled by default unless `camera-controls` is present, matching `<model-viewer>`). |
 | `ar` | `boolean` | `three-live-viewer`+ | Enables the augmented reality launcher button. |
-| `ar-modes` | `string` | `three-live-viewer`+ | Space-delimited AR modes\ `quick-look`, `scene-viewer`, `webxr`. |
-| `ar-scale` | `string` | `three-live-viewer`+ | Controls whether the model can be scaled in AR\ `"auto"` (default) or `"fixed"`. |
-| `ar-placement` | `string` | `three-live-viewer`+ | Controls AR surface placement mode\ `"floor"` (default) or `"wall"`. |
+| `ar-modes` | `string` | `three-live-viewer`+ | Space-delimited AR modes: `quick-look`, `scene-viewer`, `webxr`. |
+| `ar-scale` | `string` | `three-live-viewer`+ | Controls whether the model can be scaled in AR: `"auto"` (default) or `"fixed"`. |
+| `ar-placement` | `string` | `three-live-viewer`+ | Controls AR surface placement mode: `"floor"` (default) or `"wall"`. |
 | `script-src` | `string` | `three-live`+ | URL or path to a server-generated procedural Three.js scene script. |
-| `sandbox` | `string` | `three-live`+ | Mandatory sandbox mode (`"worker"` or `"iframe"`). Default\ `"worker"`. |
+| `sandbox` | `string` | `three-live`+ | Mandatory sandbox mode (`"worker"` or `"iframe"`). Default: `"worker"`. |
 | `allow-client-scripts` | `boolean` | `three-live`+ | Explicit opt-in allowing client-modified script strings via `executeScript()` or inline `<script>`. |
-| `exposure` | `number` | `three-live-viewer`+ | Exposure / lighting multiplier for ambient/environment light intensity (default\ |
-| `environment-image` | `string` | `three-live-extras` | Equirectangular `.hdr`/`.pic` radiance map or LDR environment image for ambient reflections and SH irradiance. |
-| `skybox-image` | `string` | `three-live-extras` | Visible background equirectangular skybox image URL rendered behind the 3D scene. |
-| `shadow-intensity` | `number` | `three-live-extras` | Ground contact shadow opacity from `0.0` (off) to `1.0` (default\ `0.7`). |
-| `shadow-softness` | `number` | `three-live-extras` | Radial Gaussian blur falloff of contact shadow from `0.0` (hard) to `1.0` (soft). |
-| `tone-mapping` | `string` | `three-live-viewer`+ | Tone mapping mode: `"neutral"` (default, Khronos PBR Neutral for commerce), `"reinhard"`, or `"none"`. |
+| `exposure` | `number` | `three-live-viewer`+ | Exposure / lighting multiplier for ambient/environment light intensity (default: `1.0`). |
+| `environment-image` | `string` | `three-live-studio` | Equirectangular `.hdr`/`.pic` radiance map or LDR environment image for ambient reflections and SH irradiance. |
+| `skybox-image` | `string` | `three-live-studio` | Visible background equirectangular skybox image URL rendered behind the 3D scene. |
+| `shadow-intensity` | `number` | `three-live`+ | Ground contact shadow opacity from `0.0` (off) to `1.0` (default: `0.7`). |
+| `shadow-softness` | `number` | `three-live`+ | Radial Gaussian blur falloff of contact shadow from `0.0` (hard) to `1.0` (soft). |
+| `tone-mapping` | `string` | `three-live-viewer`+ | Tone mapping mode: `"neutral"` (default, Khronos PBR Neutral), `"aces"` (ACES Filmic), `"agx"` (AgX Filmic), `"reinhard"`, or `"none"`. |
+| `variant-name` | `string` | `three-live-studio` | Active `KHR_materials_variants` product material variant name (e.g. `"Midnight Black"`). Also readable/writable via `viewer.variantName` and `viewer.availableVariants`. |
+| `bloom` | `boolean \| string` | `three-live-studio` | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`). |
+| `outline` | `boolean \| string` | `three-live-studio` | Enables silhouette outlines on `selected-mesh`, nodes with `userData.xr.outline`, or all foreground meshes (`outline`, `outline="#38bdf8"`, or `outline="#38bdf8 0.025"`). |
 | `autoplay` | `boolean` | `three-live-viewer`+ | Automatically starts keyframe animation playback on model load. |
 | `animation-name` | `string` | `three-live-viewer`+ | Name of specific glTF animation clip to play (defaults to first clip). |
 | `auto-rotate` | `boolean` | `three-live-viewer`+ | Automatically rotates the camera around the model. |
+<!-- mdformat on -->
 
 --------------------------------------------------------------------------------
 
@@ -107,9 +112,16 @@ JavaScript configurators, hotspot managers, and AR launchers:
 -   **Surface Raycasting:** `viewer.positionAndNormalFromPoint(pixelX, pixelY)`
     returns `{ position: { x, y, z, toString() }, normal: { x, y, z, toString()
     } } | null`
--   **Live Material Editing (`viewer.model.materials`):**
+-   **Live Material Editing & `KHR_materials_variants`
+    (`viewer.model.materials`, `viewer.availableVariants`,
+    `viewer.variantName`):**
 
     ```js
+    // Switch a glTF KHR_materials_variants colorway (or USDZ VariantSet)
+    console.log(viewer.availableVariants); // ['Midnight Black', 'Titanium Silver']
+    viewer.variantName = 'Titanium Silver';
+
+    // Or edit PBR material factors directly
     const mat = viewer.model.getMaterialByName('Leather') || viewer.model.materials[0];
     mat.pbrMetallicRoughness.setBaseColorFactor([0.8, 0.2, 0.1, 1.0]);
     mat.pbrMetallicRoughness.setRoughnessFactor(0.35);
@@ -119,13 +131,15 @@ JavaScript configurators, hotspot managers, and AR launchers:
 
 ## DOM Events
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Event | Detail Payload | Description |
-| :-------------- | :------------------------- | :---------------------------- |
+| :--- | :--- | :--- |
 | `load` | `{ model: GLBData }` | Fired when the 3D model or procedural scene finishes loading. |
 | `error` | `{ error: Error }` | Fired if model loading or script execution fails. |
 | `camera-change` | `{ theta, phi, distance }` | Fired whenever the camera orbit changes. |
-| `ar-status` | `{ status: 'session-started' \ | 'not-presenting' \ | 'failed', error? }` | Fired when AR session status transitions (`<model-viewer>` standard). |
+| `ar-status` | `{ status: 'session-started' \| 'not-presenting' \| 'failed', error? }` | Fired when AR session status transitions (`<model-viewer>` standard). |
 | `meshclick` | `{ meshName, hitPoint, normal, distance }` | Fired when a user clicks or taps a sub-mesh. |
+<!-- mdformat on -->
 
 --------------------------------------------------------------------------------
 
@@ -148,9 +162,9 @@ its built-in button, manages visibility when `ar` is enabled, and triggers
 
 ## Visual Extensions & Plugins
 
-### 3D Hotspots & Annotations (`three-live/extras`)
+### 3D Hotspots & Annotations (`three-live/studio`)
 
-Import `three-live/extras` (or use `three-live-full.min.js`) to attach
+Import `three-live/studio` (or use `three-live-full.min.js`) to attach
 interactive HTML buttons or callouts pinned to 3D surface coordinates. Hotspots
 automatically orbit with the camera and support surface normal occlusion
 culling:
@@ -171,14 +185,31 @@ culling:
 Update a hotspot dynamically at runtime using `viewer.updateHotspot({ name,
 position, normal })`.
 
-### PBR Rendering & Lighting Extensions
+### PBR Rendering, Tone Mapping, Post-Processing & Lighting Extensions
 
 -   **Core WebGL2 PBR (`three-live-viewer`+):**
     -   **Screen-Space Derivative Normal Maps:** Perturbs normals via GLSL
         `dFdx`/`dFdy` without requiring glTF vertex tangents.
-    -   **Khronos PBR Neutral Tone Mapping:** Accurate color fidelity for
-        e-commerce products without chalky highlight desaturation.
--   **PBR Next Materials, HDRI & Contact Shadows (`three-live/extras`):**
+    -   **5 Filmic & Commerce Tone Mapping Modes (`tone-mapping`):** Supports
+        `"neutral"` (default Khronos PBR Neutral for accurate e-commerce
+        colors), `"aces"` (Narkowicz ACES Filmic), `"agx"` (Sobotka AgX Filmic
+        with smooth highlight chroma desaturation), `"reinhard"`, and `"none"`.
+    -   **Hardware GPU Instancing (`EXT_mesh_gpu_instancing` /
+        `THREE.InstancedMesh`):** Renders up to `MAX_INSTANCE_COUNT = 10,000`
+        instances per mesh in a single `gl.drawElementsInstanced` call with
+        per-instance `MAT4` transforms and optional per-instance `COLOR_0`
+        tints, exporting to glTF `EXT_mesh_gpu_instancing` and USDZ
+        `PointInstancer`.
+-   **HDR Emissive Bloom & Silhouette Outlines (`three-live/studio` /
+    `postprocessingPlugin`):**
+    -   **Bloom (`bloom` attribute or `mesh.userData.xr.bloom`):** Dual-Kawase
+        MIP-chain HDR bloom and soft emissive halo generation
+        (`{ strength: 1.2, threshold: 0.8, radius: 0.5 }`).
+    -   **Selection & Highlight Outlines (`outline` attribute or
+        `mesh.userData.xr.outline`):** Inverted-hull and screen-space Sobel
+        silhouette outlines (`{ color: '#38bdf8', thickness: 0.03 }`),
+        automatically highlighting `selected-mesh` or outlined nodes.
+-   **PBR Next Materials, HDRI & Contact Shadows (`three-live/studio`):**
     -   **glTF PBR Next Extensions:** Shader support for Clearcoat
         (`KHR_materials_clearcoat`), Transmission
         (`KHR_materials_transmission`), Dispersion (`KHR_materials_dispersion`),
@@ -192,7 +223,7 @@ position, normal })`.
         `shadow-softness="0.5"` for soft ground ambient occlusion without shadow
         map pass overhead.
 
-### Animations: Rigid-Body TRS & Skeletal/Morph Plugins
+### Animations: Rigid-Body TRS, Skeletal/Morph & Inverse Kinematics (IK)
 
 -   **Rigid-Body Keyframe Animations (`three-live-viewer`+):** Node translation,
     rotation, and scale (`TRS`) keyframe tracks are built into all bundles
@@ -202,14 +233,21 @@ position, normal })`.
     `three-live-full.min.js`) to enable 64-joint GPU vertex skinning
     (`JOINTS_0`/`WEIGHTS_0`), morph target blending (`weights`), and smooth clip
     cross-fading (`el.crossFadeTo('Walk', 0.3)`).
+-   **Analytical 2-Bone & FABRIK Inverse Kinematics (`ikPlugin` /
+    `userData.xr.ik` / `THREE.IKSolver`):** Attach `mesh.userData.xr.ik = {
+    target: 'TargetNode', solver: 'two-bone' | 'fabrik', chainLength: 2,
+    poleTarget: 'ElbowPole', iterations: 10 }` to solve robotic arms, mechanical
+    linkages, and character limbs at runtime across Web, Android, and iOS, or
+    call `THREE.IKSolver.solveTwoBone(...)` / `THREE.IKSolver.solveFABRIK(...)`
+    directly inside `<script type="text/three">`.
 
 ### Declarative `KHR_interactivity` Behavior Graphs (`userData.interactivity`)
 
-Inside `<script type="text/three">`, any `THREE.Mesh` or `THREE.Group` can attach
-declarative `userData.interactivity` triggers (`onSelect`, `onHoverIn`,
+Inside `<script type="text/three">`, any `THREE.Mesh` or `THREE.Group` can
+attach declarative `userData.interactivity` triggers (`onSelect`, `onHoverIn`,
 `onHoverOut`, `onStart`, `onReceive`) that compile into standard Khronos
 `KHR_interactivity` bytecode embedded inside exported `.glb` files and executed
-by the `three-live/extras` VM on Web, Android, and iOS:
+by the `three-live/studio` VM on Web, Android, and iOS:
 
 ```html
 <three-live allow-client-scripts camera-controls style="width: 100%; height: 480px; display: block;">
@@ -245,6 +283,7 @@ by the `three-live/extras` VM on Web, Android, and iOS:
 ```
 
 Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` / `onReceive[eventName]`:
+
 - `toggleTransform`: `{ action: 'toggleTransform', property: 'translation' | 'rotation' | 'scale', from?: number[], to: number[], duration?: number }`
 - `interpolate`: `{ action: 'interpolate', target?: string, property: 'translation' | 'rotation' | 'scale' | 'baseColorFactor' | 'metallicFactor' | 'roughnessFactor' | 'emissiveFactor', to: number | number[], duration?: number }`
 - `setProperty`: `{ action: 'setProperty', target?: string, property: string, value: unknown }`
@@ -253,10 +292,13 @@ Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` 
 - `playAnimation` / `stopAnimation`: `{ action: 'playAnimation', animation?: number }` / `{ action: 'stopAnimation' }`
 - `sendEvent`: `{ action: 'sendEvent', event: string, values?: Record<string, unknown> }` (dispatches `interactivityEvent` on the host element).
 
-### Pluggable Mesh & Texture Decoders
+### Built-in `EXT_meshopt_compression` & Pluggable Decoders
 
-Heavy decompression runtimes (Draco WASM, Meshopt, KTX2) are not bundled by
-default. Register external decoders on demand:
+`EXT_meshopt_compression` (`VERTEX`, `INDEX`, and `GENERIC` bufferView modes and
+`OCTAHEDRAL`, `QUATERNION`, and `EXPONENTIAL` filters) is decoded **out of the
+box** in pure TypeScript with zero WASM dependencies
+(`decodeMeshoptBufferView`). For Draco or KTX2 Basis Universal textures,
+register external decoders on demand:
 
 ```javascript
 import { ThreeLiveElement } from 'three-live';
@@ -360,15 +402,23 @@ assets to be located.
 ### Supported Procedural Scripting Subset
 
 -   **Math & Core:** `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`,
-    `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`.
--   **Primitives & Geometries:** `BoxGeometry`, `PlaneGeometry`,
+    `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`, `IKSolver`
+    (`solveTwoBone`, `solveFABRIK`).
+-   **Primitives, CAD & Text Geometries:** `BoxGeometry`, `PlaneGeometry`,
     `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`,
-    `TorusKnotGeometry`, `BufferGeometry`, `BufferAttribute`.
--   **Materials:** `MeshStandardMaterial`, `MeshBasicMaterial`,
+    `TorusKnotGeometry`, `LatheGeometry`, `TubeGeometry`, `Shape`, `Path`,
+    `ShapeGeometry`, `ExtrudeGeometry` (with holes and multi-segment bevels),
+    `TextGeometry` (built-in 3D extruded vector font), `CSG` (`THREE.CSG.union`,
+    `THREE.CSG.subtract`, `THREE.CSG.intersect`), `BufferGeometry`,
+    `BufferAttribute`.
+-   **Materials & Variants:** `MeshStandardMaterial`, `MeshBasicMaterial`,
     `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` (mapped
-    to glTF PBR metallic-roughness properties).
--   **Scene Graph:** `Scene`, `Group`, `Mesh`, `Object3D` (`position`,
-    `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`).
+    to glTF PBR metallic-roughness + PBR Next extensions, plus
+    `mesh.userData.variants` for `KHR_materials_variants`).
+-   **Scene Graph & GPU Instancing:** `Scene`, `Group`, `Mesh`, `InstancedMesh`
+    (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`),
+    `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`,
+    `traverse`).
 -   **Lights & Cameras:** `AmbientLight`, `DirectionalLight`, `PointLight`,
     `Camera`, `PerspectiveCamera`.
 -   **Permissive LLM Fallbacks & Warnings:** Unsupported Three.js shaders

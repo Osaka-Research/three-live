@@ -915,6 +915,34 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertThrowsError(try SplatParser.parseSpzPayload(Data(v4))) {
       XCTAssertEqual($0 as? SplatParserError, .unsupportedVersion(4))
     }
+
+    // v3 with Spherical Harmonics degree 1 (9 trailing bytes per splat)
+    var sh1 = v3 + [UInt8](repeating: 128, count: 9)
+    sh1[12] = 1
+    sh1[v3.count + 3] = 255
+    let sh1Data = try SplatParser.parseSpzPayload(Data(sh1))
+    XCTAssertEqual(sh1Data.shDegree, 1)
+    XCTAssertEqual(sh1Data.sh?.count, 9)
+    let rgbPosZ = SplatParser.evaluateSplatSH(sh1Data, index: 0, dir: SIMD3<Float>(0, 0, 1))
+    let rgbNegZ = SplatParser.evaluateSplatSH(sh1Data, index: 0, dir: SIMD3<Float>(0, 0, -1))
+    XCTAssertGreaterThan(Int(rgbPosZ.x), Int(sh1Data.colors[0]) + 40)
+    XCTAssertLessThan(Int(rgbNegZ.x), Int(sh1Data.colors[0]) - 40)
+
+    // Anisotropic 3D & 2D covariance projection
+    var aniso = SplatData(count: 1)
+    aniso.scales = [0.4, 0.05, 0.05]
+    let s45 = Float(sin(Double.pi / 8))
+    let c45 = Float(cos(Double.pi / 8))
+    aniso.rotations = [0, 0, s45, c45]
+    let cov3d = SplatParser.computeCovariance3D(aniso, index: 0)
+    XCTAssertEqual(cov3d[0], cov3d[3], accuracy: 1e-4)
+    XCTAssertGreaterThan(cov3d[1], 0.05)
+    var mv = matrix_identity_float4x4
+    mv.columns.3.z = -2
+    let ell = SplatParser.projectCovariance2D(
+      cov3d: cov3d, modelView: mv, localPos: SIMD3<Float>(0, 0, 0), focalX: 500)
+    XCTAssertGreaterThan(ell.eigenvalues.x, ell.eigenvalues.y * 20)
+    XCTAssertEqual(simd_dot(ell.majorAxisPx, ell.minorAxisPx), 0, accuracy: 1e-2)
   }
 
   #if canImport(Compression)
@@ -1679,5 +1707,268 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     let laserMiss = SharedRoom.buildPeerLaserGeometry(
       origin: SIMD3<Float>(0, 1.5, 0), end: SIMD3<Float>(0, 1.0, -1.5), hasHit: false)
     XCTAssertGreaterThan(laserHit.indices.count, laserMiss.indices.count)
+  }
+
+  func testMeshoptDecoderAndMaterialVariantsAndGpuInstancing() throws {
+    var orig = [UInt8](repeating: 0, count: 16 * 4)
+    for i in 0..<orig.count { orig[i] = UInt8((i * 13 + 7) & 0xFF) }
+    let compressed = MeshoptDecoder.encodeBuffer(
+      Data(orig), count: 16, byteStride: 4, mode: "ATTRIBUTES")
+    let decoded = try MeshoptDecoder.decodeBuffer(
+      compressed, count: 16, byteStride: 4, mode: "ATTRIBUTES")
+    XCTAssertEqual([UInt8](decoded), orig)
+
+    var oct = Data([0, 0, 100, 127])
+    MeshoptDecoder.applyFilter(&oct, count: 1, byteStride: 4, filter: "OCTAHEDRAL")
+    XCTAssertEqual(oct[0], 0)
+    XCTAssertEqual(oct[1], 0)
+    XCTAssertEqual(oct[2], 127)
+
+    var octZero = Data([0, 0, 0, 127])
+    MeshoptDecoder.applyFilter(&octZero, count: 1, byteStride: 4, filter: "OCTAHEDRAL")
+    XCTAssertEqual(octZero[2], 127)
+
+    let triRaw = Data([0, 0, 1, 0, 2, 0, 2, 0, 1, 0, 3, 0])
+    let triEnc = MeshoptDecoder.encodeBuffer(triRaw, count: 6, byteStride: 2, mode: "TRIANGLES")
+    let triDec = try MeshoptDecoder.decodeBuffer(triEnc, count: 6, byteStride: 2, mode: "TRIANGLES")
+    XCTAssertEqual(triDec, triRaw)
+
+    var exp = Data([1, 0, 0, 0xFF])  // (-1 << 24) | 1 LE
+    MeshoptDecoder.applyFilter(&exp, count: 1, byteStride: 4, filter: "EXPONENTIAL")
+    let bits =
+      UInt32(exp[0]) | (UInt32(exp[1]) << 8) | (UInt32(exp[2]) << 16) | (UInt32(exp[3]) << 24)
+    XCTAssertEqual(Float(bitPattern: bits), 0.5, accuracy: 1e-6)
+
+    XCTAssertThrowsError(
+      try MeshoptDecoder.decodeBuffer(
+        Data([0xBA, 1]), count: MeshoptDecoder.maxMeshoptCount + 1, byteStride: 4,
+        mode: "ATTRIBUTES")
+    )
+
+    let gltfJson = #"""
+      {
+        "extensions": {
+          "KHR_materials_variants": {
+            "variants": [{"name": "Midnight"}, {"name": "Solar Gold"}]
+          }
+        },
+        "materials": [
+          {"name": "Midnight", "pbrMetallicRoughness": {"baseColorFactor": [0.1, 0.1, 0.2, 1]}},
+          {"name": "SolarGold", "pbrMetallicRoughness": {"baseColorFactor": [0.95, 0.6, 0.05, 1]}}
+        ],
+        "meshes": [
+          {
+            "primitives": [
+              {
+                "material": 0,
+                "extensions": {
+                  "KHR_materials_variants": {
+                    "mappings": [
+                      {"material": 0, "variants": [0]},
+                      {"material": 1, "variants": [1]}
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "nodes": [
+          {
+            "name": "WatchStuds",
+            "mesh": 0,
+            "extensions": {
+              "EXT_mesh_gpu_instancing": {
+                "attributes": {"TRANSLATION": 0, "ROTATION": 1, "SCALE": 2}
+              }
+            }
+          }
+        ],
+        "accessors": [
+          {"count": 12},
+          {"count": 12},
+          {"count": 12}
+        ]
+      }
+      """#
+    let (s, _) = session(gltfJson)
+    XCTAssertEqual(s.availableVariants, ["Midnight", "Solar Gold"])
+    XCTAssertEqual(s.meshPrimitiveMaterial(meshIndex: 0, primitiveIndex: 0), 0)
+    XCTAssertEqual(s.nodeInstanceCount(at: 0), 12)
+    XCTAssertTrue(s.selectVariant("Solar Gold"))
+    XCTAssertEqual(s.activeVariantName, "Solar Gold")
+    XCTAssertEqual(s.meshPrimitiveMaterial(meshIndex: 0, primitiveIndex: 0), 1)
+    XCTAssertTrue(s.selectVariant(nil))
+    XCTAssertNil(s.activeVariantName)
+    XCTAssertEqual(s.meshPrimitiveMaterial(meshIndex: 0, primitiveIndex: 0), 0)
+    XCTAssertFalse(s.selectVariant("NonExistent"))
+  }
+
+  func testExtendedToneMappingAndBloomAndOutlineTraits() throws {
+    let hdr = SIMD3<Double>(4.0, 1.5, 0.25)
+    let neutral = XRLiveTraitParser.evaluateToneMapping(rgb: hdr, mode: "neutral", exposure: 1.0)
+    let aces = XRLiveTraitParser.evaluateToneMapping(rgb: hdr, mode: "aces", exposure: 1.0)
+    let agx = XRLiveTraitParser.evaluateToneMapping(rgb: hdr, mode: "agx", exposure: 1.0)
+    let reinhard = XRLiveTraitParser.evaluateToneMapping(rgb: hdr, mode: "reinhard", exposure: 1.0)
+    let none = XRLiveTraitParser.evaluateToneMapping(rgb: hdr, mode: "none", exposure: 1.0)
+    XCTAssertTrue(neutral.x > 0.7 && neutral.x <= 1.0)
+    XCTAssertTrue(aces.x > 0.8 && aces.x <= 1.0)
+    XCTAssertTrue(agx.x > 0.6 && agx.x <= 1.0)
+    XCTAssertEqual(reinhard.x, 0.8, accuracy: 1e-4)
+    XCTAssertEqual(none.x, 1.0, accuracy: 1e-6)
+
+    let traits = try XCTUnwrap(
+      XRLiveTraitParser.normalize([
+        "bloom": ["strength": 1.2, "threshold": 0.65, "radius": 0.5],
+        "outline": ["color": "#22c55e", "thickness": 4.0],
+      ]))
+    XCTAssertEqual(traits.bloom?.strength ?? 0, 1.2, accuracy: 1e-6)
+    XCTAssertEqual(traits.bloom?.threshold ?? 0, 0.65, accuracy: 1e-6)
+    XCTAssertEqual(traits.bloom?.radius ?? 0, 0.5, accuracy: 1e-6)
+    XCTAssertEqual(traits.outline?.color, "#22c55e")
+    XCTAssertEqual(traits.outline?.thickness ?? 0, 4.0, accuracy: 1e-6)
+
+    let usd = try XCTUnwrap(
+      XRLiveTraitParser.normalize(usdCustomData: [
+        "bloomStrength": 0.9,
+        "bloomThreshold": 0.7,
+        "bloomRadius": 0.4,
+        "outlineColor": "#38bdf8",
+        "outlineThickness": 3.5,
+      ]))
+    XCTAssertEqual(usd.bloom?.strength ?? 0, 0.9, accuracy: 1e-6)
+    XCTAssertEqual(usd.outline?.color, "#38bdf8")
+    XCTAssertEqual(usd.outline?.thickness ?? 0, 3.5, accuracy: 1e-6)
+  }
+
+  func testIKSolverAndSharedRoomVoiceParity() throws {
+    let q90 = IKSolver.quatFromUnitVectors(SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0)).vector
+    XCTAssertEqual(q90.z, sin(.pi / 4), accuracy: 1e-4)
+    XCTAssertEqual(q90.w, cos(.pi / 4), accuracy: 1e-4)
+
+    let twoBone = IKSolver.solveTwoBoneIK(
+      rootPos: SIMD3<Float>(0, 0, 0),
+      midPos: SIMD3<Float>(0, 0.5, 0),
+      effectorPos: SIMD3<Float>(0, 1.0, 0),
+      targetPos: SIMD3<Float>(0.5, 0.5, 0),
+      polePos: SIMD3<Float>(0, 1, 0)
+    )
+    XCTAssertEqual(simd_length(twoBone.midPos), 0.5, accuracy: 1e-4)
+    XCTAssertEqual(simd_length(twoBone.effectorPos - twoBone.midPos), 0.5, accuracy: 1e-4)
+    XCTAssertEqual(simd_length(twoBone.effectorPos - SIMD3<Float>(0.5, 0.5, 0)), 0, accuracy: 1e-4)
+
+    let fabrik = IKSolver.solveFABRIK(
+      positions: [
+        SIMD3<Float>(0, 0, 0),
+        SIMD3<Float>(0, 0.4, 0),
+        SIMD3<Float>(0, 0.8, 0),
+        SIMD3<Float>(0, 1.2, 0),
+      ],
+      targetPos: SIMD3<Float>(0.6, 0.6, 0.2),
+      maxIterations: 12,
+      tolerance: 1e-4
+    )
+    XCTAssertLessThan(simd_length(fabrik.positions[3] - SIMD3<Float>(0.6, 0.6, 0.2)), 1e-3)
+    XCTAssertEqual(fabrik.rotations.count, 3)
+
+    let ikTraits = try XCTUnwrap(
+      XRLiveTraitParser.normalize([
+        "ik": [
+          "solver": "two-bone",
+          "root": "Shoulder",
+          "mid": "Elbow",
+          "effector": "Wrist",
+          "target": "TargetOrb",
+          "pole": [0, 1, -0.5],
+          "iterations": 10,
+        ]
+      ]))
+    XCTAssertEqual(ikTraits.ik?.solver, "two-bone")
+    XCTAssertEqual(ikTraits.ik?.root, "Shoulder")
+    XCTAssertEqual(ikTraits.ik?.mid, "Elbow")
+    XCTAssertEqual(ikTraits.ik?.effector, "Wrist")
+    XCTAssertEqual(ikTraits.ik?.targetName, "TargetOrb")
+    XCTAssertEqual(ikTraits.ik?.iterations, 10)
+
+    let usdIK = try XCTUnwrap(
+      XRLiveTraitParser.normalize(usdCustomData: [
+        "ikSolver": "fabrik",
+        "ikRoot": "Shoulder",
+        "ikEffector": "Wrist",
+        "ikTarget": "TargetOrb",
+        "ikIterations": 14,
+      ]))
+    XCTAssertEqual(usdIK.ik?.solver, "fabrik")
+    XCTAssertEqual(usdIK.ik?.root, "Shoulder")
+    XCTAssertEqual(usdIK.ik?.effector, "Wrist")
+    XCTAssertEqual(usdIK.ik?.targetName, "TargetOrb")
+    XCTAssertEqual(usdIK.ik?.iterations, 14)
+
+    let rtcMsg = SharedRoom.WireMessage.rtc(
+      peerId: "peer-alice",
+      targetPeerId: "peer-bob",
+      signalType: "offer",
+      sdp: "v=0\r\nm=audio 9 UDP/TLS\r\n",
+      candidate: nil,
+      sdpMid: nil,
+      sdpMLineIndex: nil
+    )
+    let rtcJson = SharedRoom.serializeMessage(rtcMsg)
+    guard case .rtc(let pId, let tId, let sig, let sdp, _, _, _)? = SharedRoom.parseMessage(rtcJson)
+    else {
+      return XCTFail("expected .rtc wire message")
+    }
+    XCTAssertEqual(pId, "peer-alice")
+    XCTAssertEqual(tId, "peer-bob")
+    XCTAssertEqual(sig, "offer")
+    XCTAssertTrue(sdp?.contains("m=audio") == true)
+    XCTAssertNil(
+      SharedRoom.parseMessage(
+        SharedRoom.serializeMessage(
+          .rtc(
+            peerId: "peer-a",
+            targetPeerId: "peer-a",
+            signalType: "offer",
+            sdp: "v=0",
+            candidate: nil,
+            sdpMid: nil,
+            sdpMLineIndex: nil
+          )
+        )
+      )
+    )
+
+    let vgNear = SharedRoom.computeSpatialVoiceGain(
+      listenerPos: SIMD3<Float>(0, 1.6, 0),
+      listenerQuat: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+      peerHeadPos: SIMD3<Float>(0, 1.6, -1)
+    )
+    let vgRight = SharedRoom.computeSpatialVoiceGain(
+      listenerPos: SIMD3<Float>(0, 1.6, 0),
+      listenerQuat: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+      peerHeadPos: SIMD3<Float>(3, 1.6, 0)
+    )
+    XCTAssertEqual(vgNear.gain, 1.0, accuracy: 1e-4)
+    XCTAssertEqual(vgNear.pan, 0.0, accuracy: 1e-4)
+    XCTAssertLessThan(vgRight.gain, 0.4)
+    XCTAssertGreaterThan(vgRight.pan, 0.9)
+
+    let ikGltf = """
+      {"asset":{"version":"2.0"},"nodes":[
+        {"name":"Shoulder","translation":[0,0,0]},
+        {"name":"Elbow","translation":[0,0.5,0]},
+        {"name":"Wrist","translation":[0,1.0,0],"extras":{"xr":{"ik":{"solver":"two-bone","root":"Shoulder","mid":"Elbow","effector":"Wrist","target":[0.5,0.5,0],"pole":[0,1,0],"weight":0.5}}}}
+      ]}
+      """
+    let (ikSession, _) = session(ikGltf)
+    for _ in 0..<10 {
+      ikSession.step(dt: 0.016)
+    }
+    let shoulderPos = translation(ikSession, 0)
+    let elbowPos = translation(ikSession, 1)
+    let wristPos = translation(ikSession, 2)
+    XCTAssertEqual(simd_length(elbowPos - shoulderPos), 0.5, accuracy: 1e-4)
+    XCTAssertEqual(simd_length(wristPos - elbowPos), 0.5, accuracy: 1e-4)
+    XCTAssertGreaterThan(wristPos.x, 0.1)
   }
 }

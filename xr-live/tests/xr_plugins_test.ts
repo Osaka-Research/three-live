@@ -127,10 +127,12 @@ import {
   buildPeerLaserGeometry,
   buildPeerVisorGeometry,
   canAcquireNodeLease,
+  computeSpatialVoiceGain,
   isAllowedRoomUrl,
   MAX_PAINT_MESSAGES_PER_SEC,
   MAX_PAYLOAD_BYTES,
   MAX_REMOTE_STROKES,
+  MAX_RTC_SIGNAL_CHARS,
   parseRoomTarget,
   parseSharedRoomMessage,
   PEER_TIMEOUT_MS,
@@ -166,9 +168,13 @@ import {
   XRSpatialPaintController,
 } from '../src/plugins/spatial-paint';
 import {
+  computeSplatCovariance3D,
+  evaluateSplatSH,
   parseSplat,
   parseSpzPayload,
+  projectSplatCovariance2D,
   resolveSplatUrl,
+  shBasisCountForDegree,
   sortSplatsByDepth,
 } from '../src/plugins/splat-loader';
 import {
@@ -1283,6 +1289,66 @@ function testSplats(): void {
   assert(threw, '.spz fractional bits > 24 rejected');
   // Color decode: DC byte 128 -> ~0.5 gray.
   assert(Math.abs(r3.colors[0] - 128) <= 2, '.spz SH DC color decode');
+
+  // .spz v3 with Spherical Harmonics degree 1 (3 basis * 3 channels = 9 bytes per splat)
+  assert(
+    shBasisCountForDegree(0) === 0 &&
+      shBasisCountForDegree(1) === 3 &&
+      shBasisCountForDegree(2) === 8 &&
+      shBasisCountForDegree(3) === 15,
+    'shBasisCountForDegree returns 0, 3, 8, 15 for degrees 0..3',
+  );
+  const sh1Bytes = new Uint8Array(v3.length + 9);
+  sh1Bytes.set(v3);
+  sh1Bytes[12] = 1; // shDegree = 1
+  // Basis 1 (z-axis weight +SH_C1 * z) R channel = 255 -> +127/128, G/B = 128 -> 0
+  sh1Bytes.fill(128, v3.length);
+  sh1Bytes[v3.length + 3] = 255; // basis 1, R
+  const sh1Data = parseSpzPayload(sh1Bytes);
+  assert(
+    sh1Data.shDegree === 1 && sh1Data.sh !== null && sh1Data.sh.length === 9,
+    '.spz v3 decodes shDegree=1 trailing SH coefficients',
+  );
+  const rgbPosZ = evaluateSplatSH(sh1Data, 0, 0, 0, 1);
+  const rgbNegZ = evaluateSplatSH(sh1Data, 0, 0, 0, -1);
+  assert(
+    rgbPosZ[0] > sh1Data.colors[0] + 40 && rgbNegZ[0] < sh1Data.colors[0] - 40,
+    'evaluateSplatSH modulates view-dependent color along +Z vs -Z',
+  );
+
+  // Anisotropic 3D & 2D covariance projection: elongated splat [0.4, 0.05, 0.05] rotated 45 deg around Z
+  const anisoScales = new Float32Array([0.4, 0.05, 0.05]);
+  const s45 = Math.sin(Math.PI / 8);
+  const c45 = Math.cos(Math.PI / 8);
+  const anisoRot = new Float32Array([0, 0, s45, c45]);
+  const cov3d = computeSplatCovariance3D(anisoScales, anisoRot, 0);
+  assert(
+    near(cov3d[0], cov3d[3], 1e-4) && cov3d[1] > 0.05,
+    'computeSplatCovariance3D produces positive off-diagonal xy covariance for 45° Z-rotated splat',
+  );
+  const mv = mat4Create();
+  mv[14] = -2; // splat 2m in front of camera
+  const ell = projectSplatCovariance2D(cov3d, mv, [0, 0, 0], 500);
+  assert(
+    ell.eigenvalues[0] > ell.eigenvalues[1] * 20,
+    'projectSplatCovariance2D preserves high anisotropy ratio (lambda1 >> lambda2)',
+  );
+  const dotAxes =
+    ell.majorAxisPx[0] * ell.minorAxisPx[0] +
+    ell.majorAxisPx[1] * ell.minorAxisPx[1];
+  assert(
+    Math.abs(dotAxes) < 1e-3 &&
+      near(ell.majorAxisPx[0], ell.majorAxisPx[1], 1e-2),
+    'projectSplatCovariance2D major/minor axes are orthogonal and oriented at 45°',
+  );
+  const splatTraits = normalizeXRTraits({
+    splatUrl: 'https://example.com/room.spz',
+    splatQuality: 'high',
+  });
+  assert(
+    splatTraits?.splatQuality === 'high',
+    'normalizeXRTraits preserves splatQuality: high',
+  );
 }
 
 function testSchema(): void {
@@ -3059,6 +3125,100 @@ function testSharedRoom(): void {
   );
 
   // Clean disconnect sends `leave` and frees GPU meshes.
+  // Before disconnecting, verify opt-in WebRTC signaling (`type: 'rtc'`) and `computeSpatialVoiceGain`.
+  assert(
+    parseSharedRoomMessage(
+      JSON.stringify({
+        v: 1,
+        type: 'rtc',
+        peerId: 'peer-alice',
+        targetPeerId: 'peer-bob',
+        signalType: 'offer',
+        sdp: 'v=0\r\no=- 123 2 IN IP4 127.0.0.1\r\n',
+      }),
+    )?.type === 'rtc',
+    'parseSharedRoomMessage accepts valid WebRTC offer message',
+  );
+  assert(
+    parseSharedRoomMessage(
+      JSON.stringify({
+        v: 1,
+        type: 'rtc',
+        peerId: 'peer-alice',
+        targetPeerId: 'peer-alice',
+        signalType: 'offer',
+        sdp: 'v=0',
+      }),
+    ) === null,
+    'parseSharedRoomMessage rejects self-targeted WebRTC message',
+  );
+  assert(
+    parseSharedRoomMessage(
+      JSON.stringify({
+        v: 1,
+        type: 'rtc',
+        peerId: 'peer-alice',
+        targetPeerId: 'peer-bob',
+        signalType: 'ice',
+        candidate: 'x'.repeat(MAX_RTC_SIGNAL_CHARS + 1),
+      }),
+    ) === null,
+    'parseSharedRoomMessage rejects oversized WebRTC SDP/ICE payload',
+  );
+
+  (hostB.setAttribute as (k: string, v: string) => void)(
+    'shared-room-voice',
+    '',
+  );
+  assert(
+    ctrlA.broadcastRtcSignal('peer-bob', 'offer', {
+      sdp: 'v=0\r\nm=audio 9 UDP/TLS\r\n',
+    }),
+    'Alice broadcasts WebRTC offer to Bob',
+  );
+  assert(
+    hostB.events.some(
+      (e) =>
+        e.type === 'peerrtcsignal' &&
+        (e.detail as {peerId?: string; signalType?: string})?.peerId ===
+          'peer-alice' &&
+        (e.detail as {signalType?: string})?.signalType === 'offer',
+    ),
+    'Bob dispatches peerrtcsignal event when targeted by Alice',
+  );
+  assert(
+    !hostA.events.some((e) => e.type === 'peerrtcsignal'),
+    'non-targeted peers ignore WebRTC signaling messages',
+  );
+
+  const vgNear = computeSpatialVoiceGain(
+    [0, 1.6, 0],
+    [0, 0, 0, 1],
+    [0, 1.6, -1.0],
+    1.0,
+    12.0,
+  );
+  const vgRight = computeSpatialVoiceGain(
+    [0, 1.6, 0],
+    [0, 0, 0, 1],
+    [3.0, 1.6, 0],
+    1.0,
+    12.0,
+  );
+  assert(
+    near(vgNear.gain, 1.0) &&
+      near(vgNear.pan, 0.0) &&
+      vgRight.gain < 0.4 &&
+      vgRight.pan > 0.9,
+    `computeSpatialVoiceGain computes inverse-distance attenuation and stereo pan (near=${vgNear.gain.toFixed(2)}, rightGain=${vgRight.gain.toFixed(2)}, rightPan=${vgRight.pan.toFixed(2)})`,
+  );
+  simNow += 100;
+  ctrlA.broadcastPoseTick(viewerA, hostA, simNow, true);
+  assert(
+    ctrlB.getPeers()[0]?.voiceGain !== undefined,
+    'shared-room-voice populates spatial voiceGain on RemotePeerState',
+  );
+
   ctrlA.dispose(viewerA);
   ctrlB.dispose(viewerB);
   ctrlC.dispose(viewerC);
@@ -3518,6 +3678,38 @@ async function testAuditRegressions(): Promise<void> {
       dt >= 1 / 240 && dt <= 0.1,
       'measureFrameDt clamps measured frame time',
     );
+  }
+
+  // shared-room: per-peer rate limiting on incoming WebRTC signaling messages.
+  {
+    const host = auditHost({'shared-room': 'rtc-rate'});
+    const room = new AuditSharedRoomController('peer-local', () => 1000);
+    const viewer = {meshes: [], container: host} as unknown as Parameters<
+      typeof room.connect
+    >[1];
+    room.connect('rtc-rate', viewer, host, {
+      send() {},
+      close() {},
+    });
+    const offerRaw = JSON.stringify({
+      v: 1,
+      type: 'rtc',
+      peerId: 'peer-flood',
+      targetPeerId: 'peer-local',
+      signalType: 'ice',
+      candidate: 'candidate:1 1 UDP 2122252543 192.0.2.1 54400 typ host',
+    });
+    for (let i = 0; i < 40; i++) {
+      room.handleRawMessage(offerRaw, viewer, host, 1000);
+    }
+    const rtcEvents = host.events.filter(
+      (e: {type: string}) => e.type === 'peerrtcsignal',
+    );
+    assert(
+      rtcEvents.length === 32,
+      `shared-room rate-limits incoming RTC signaling to 32 msgs/sec per peer (got ${rtcEvents.length})`,
+    );
+    room.dispose(viewer);
   }
 }
 

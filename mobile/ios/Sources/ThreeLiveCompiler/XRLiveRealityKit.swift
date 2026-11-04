@@ -60,6 +60,10 @@
     public var spatialSlot: String?
     /// Spatial audio parameters (`src` already filtered by the `safeMediaUrl` allow-list).
     public var audio: XRLiveSpatialAudio?
+    /// Post-processing bloom parameters.
+    public var bloom: XRLiveBloom?
+    /// Silhouette selection outline parameters.
+    public var outline: XRLiveOutline?
 
     public init(
       grabbable: Bool? = nil,
@@ -81,7 +85,9 @@
       worldUnderstanding: XRLiveWorldUnderstanding? = nil,
       splatUrl: String? = nil,
       spatialSlot: String? = nil,
-      audio: XRLiveSpatialAudio? = nil
+      audio: XRLiveSpatialAudio? = nil,
+      bloom: XRLiveBloom? = nil,
+      outline: XRLiveOutline? = nil
     ) {
       self.grabbable = grabbable
       self.billboard = billboard
@@ -103,6 +109,8 @@
       self.splatUrl = splatUrl
       self.spatialSlot = spatialSlot
       self.audio = audio
+      self.bloom = bloom
+      self.outline = outline
     }
 
     /// Builds entity traits from a raw `extras.xr` dictionary, combining the legacy keys
@@ -140,7 +148,9 @@
         worldUnderstanding: canonical?.worldUnderstanding,
         splatUrl: canonical?.splatUrl,
         spatialSlot: canonical?.spatialSlot,
-        audio: canonical?.audio
+        audio: canonical?.audio,
+        bloom: canonical?.bloom,
+        outline: canonical?.outline
       )
     }
   }
@@ -238,6 +248,10 @@
             entity.components.set(InputTargetComponent(allowedInputTypes: .all))
           }
         #endif
+        #if os(visionOS)
+          entity.components.set(HoverEffectComponent())
+        #endif
+      } else if traits.outline != nil {
         #if os(visionOS)
           entity.components.set(HoverEffectComponent())
         #endif

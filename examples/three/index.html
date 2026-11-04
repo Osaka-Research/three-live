@@ -22,6 +22,9 @@ limitations under the License.
   <title>three-live — AI-First Native 3D &amp; AR</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
   <script src="./three-live.js"></script>
+  <script src="./three-live-studio.min.js"></script>
+  <script src="./three-live-cad.min.js"></script>
+  <script src="./three-live-animation.min.js"></script>
   <style>
     :root {
       --bg-primary: #090d16;
@@ -397,7 +400,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">53.2 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">58.6 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -422,6 +425,7 @@ limitations under the License.
         ar-modes="quick-look webxr scene-viewer"
         shadow-intensity="0.75"
         exposure="1.2"
+        tone-mapping="neutral"
         auto-rotate>
       </three-live>
     </div>
@@ -433,6 +437,8 @@ limitations under the License.
         <div class="card-title">Preset Scenes</div>
         <div class="btn-row preset-grid">
           <button id="btn-artifact" class="primary">Quantum Core</button>
+          <button id="btn-cad">⚙️ CAD CSG &amp; 3D Text</button>
+          <button id="btn-instanced">💎 Instanced Field</button>
           <button id="btn-torus">Torus Knot</button>
           <button id="btn-crystal">Emerald Crystal</button>
           <button id="btn-orbital">Orbital Spheres</button>
@@ -442,12 +448,23 @@ limitations under the License.
 
       <!-- Camera & Interaction -->
       <div class="card">
-        <div class="card-title">Camera & Lights</div>
+        <div class="card-title">Camera, Tone Mapping &amp; FX</div>
         <div class="btn-row">
           <button id="btn-reset">Reset</button>
           <button id="btn-top">Top</button>
           <button id="btn-front">Front</button>
           <button id="btn-spin">Toggle Spin</button>
+        </div>
+        <div class="btn-row" style="margin-top: 4px; align-items: center;">
+          <button id="btn-bloom" title="Toggle HDR Emissive Bloom">✨ HDR Bloom</button>
+          <button id="btn-outline" title="Toggle Selection Silhouette Outline">🟦 Outline</button>
+          <select id="select-tonemap" aria-label="Tone Mapping Mode" style="background: rgba(255,255,255,0.06); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 600;">
+            <option value="neutral" selected>Tone: PBR Neutral</option>
+            <option value="aces">Tone: ACES Filmic</option>
+            <option value="agx">Tone: AgX Filmic</option>
+            <option value="reinhard">Tone: Reinhard</option>
+            <option value="none">Tone: Linear (None)</option>
+          </select>
         </div>
         <div class="slider-group" style="margin-top: 6px;">
           <div class="slider-label">
@@ -653,6 +670,148 @@ mesh.userData.interactivity = {
 };
 scene.add(mesh);`,
 
+    cad: `// Procedural CAD Extrusion + CSG Booleans + 3D Extruded Text + Instanced Bolts
+// 1. 2D Shape profile with central bore hole -> ExtrudeGeometry with bevels
+const profile = new THREE.Shape();
+profile.absarc(0, 0, 1.25, 0, Math.PI * 2, false);
+const bore = new THREE.Path();
+bore.absarc(0, 0, 0.48, 0, Math.PI * 2, true);
+profile.holes.push(bore);
+
+const alloyMat = new THREE.MeshStandardMaterial({
+  color: 0x94a3b8,
+  metalness: 0.78,
+  roughness: 0.24
+});
+const rawBlank = new THREE.Mesh(
+  new THREE.ExtrudeGeometry(profile, {
+    depth: 0.36,
+    bevelEnabled: true,
+    bevelThickness: 0.05,
+    bevelSize: 0.04,
+    bevelSegments: 2,
+    curveSegments: 36
+  }),
+  alloyMat
+);
+rawBlank.rotation.x = -Math.PI / 2;
+rawBlank.position.set(0, -0.18, 0);
+
+// 2. CSG Boolean Subtraction: machine perpendicular keyway channels
+const slotX = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.26, 0.32), alloyMat);
+slotX.position.set(0, 0.12, 0);
+const slotZ = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.26, 2.8), alloyMat);
+slotZ.position.set(0, 0.12, 0);
+const step1 = THREE.CSG.subtract(rawBlank, slotX);
+const machinedFlange = THREE.CSG.subtract(step1, slotZ);
+machinedFlange.name = "MachinedCADFlange";
+machinedFlange.userData.interactivity = {
+  onSelect: {
+    action: "cycleMaterialColor",
+    colors: [
+      [0.58, 0.64, 0.72, 1.0],
+      [0.22, 0.74, 0.97, 1.0],
+      [0.96, 0.62, 0.04, 1.0]
+    ],
+    duration: 0.3
+  }
+};
+scene.add(machinedFlange);
+
+// 3. 3D Extruded Vector Text Label
+const textMesh = new THREE.Mesh(
+  new THREE.TextGeometry("CAD R1", {
+    size: 0.34,
+    depth: 0.09,
+    bevelEnabled: true,
+    bevelThickness: 0.015,
+    bevelSize: 0.012
+  }),
+  new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    emissive: 0x38bdf8,
+    emissiveIntensity: 0.6,
+    metalness: 0.5,
+    roughness: 0.2
+  })
+);
+textMesh.name = "ExtrudedTextBadge";
+textMesh.position.set(-0.78, 0.42, 0);
+scene.add(textMesh);
+
+// 4. Hardware GPU Instanced Bolt Ring (EXT_mesh_gpu_instancing)
+const boltCount = 8;
+const bolts = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.08, 0.08, 0.48, 16),
+  new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.92, roughness: 0.14 }),
+  boltCount
+);
+bolts.name = "InstancedBoltRing";
+const m4 = new THREE.Matrix4();
+const pos = new THREE.Vector3();
+const quat = new THREE.Quaternion();
+const scl = new THREE.Vector3(1, 1, 1);
+for (let i = 0; i < boltCount; i++) {
+  const angle = (i / boltCount) * Math.PI * 2 + Math.PI / 8;
+  pos.set(Math.cos(angle) * 0.88, 0.02, Math.sin(angle) * 0.88);
+  m4.compose(pos, quat, scl);
+  bolts.setMatrixAt(i, m4);
+}
+scene.add(bolts);`,
+
+    instanced: `// Hardware GPU Instanced Crystal Lattice (125 instances in 1 draw call)
+const grid = 5;
+const total = grid * grid * grid;
+const instanced = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.0, 0.13, 0.34, 6),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.85, roughness: 0.15 }),
+  total
+);
+instanced.name = "InstancedCrystalLattice";
+
+const m4 = new THREE.Matrix4();
+const pos = new THREE.Vector3();
+const quat = new THREE.Quaternion();
+const scl = new THREE.Vector3(1, 1, 1);
+const col = new THREE.Color();
+let idx = 0;
+for (let x = 0; x < grid; x++) {
+  for (let y = 0; y < grid; y++) {
+    for (let z = 0; z < grid; z++) {
+      // Leave center hollow for the glowing energy core
+      if (x >= 1 && x <= 3 && y >= 1 && y <= 3 && z >= 1 && z <= 3) {
+        scl.set(0.001, 0.001, 0.001);
+      } else {
+        scl.set(1, 1, 1);
+      }
+      pos.set((x - 2) * 0.55, (y - 2) * 0.55, (z - 2) * 0.55);
+      m4.compose(pos, quat, scl);
+      instanced.setMatrixAt(idx, m4);
+      col.setRGB(0.2 + (x / grid) * 0.75, 0.35 + (y / grid) * 0.6, 0.95 - (z / grid) * 0.5);
+      instanced.setColorAt(idx, col);
+      idx++;
+    }
+  }
+}
+scene.add(instanced);
+
+// Glowing HDR Emissive Core with Silhouette Outline
+const core = new THREE.Mesh(
+  new THREE.TorusKnotGeometry(0.38, 0.11, 96, 20),
+  new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    emissive: 0x0284c7,
+    emissiveIntensity: 0.85,
+    metalness: 0.9,
+    roughness: 0.1
+  })
+);
+core.name = "LatticeEnergyCore";
+core.userData.interactivity = {
+  onSelect: { action: "toggleTransform", scale: [1.25, 1.25, 1.25], duration: 0.35 }
+};
+scene.add(core);`,
+
     crystal: `// Emerald Crystal Gem
 const mesh = new THREE.Mesh(
   new THREE.CylinderGeometry(0.0, 1.2, 2.2, 6),
@@ -767,6 +926,8 @@ scene.add(sat2);`
     const token = ++presetSwitchToken;
     const presetButtons = {
       artifact: document.getElementById("btn-artifact"),
+      cad: document.getElementById("btn-cad"),
+      instanced: document.getElementById("btn-instanced"),
       torus: document.getElementById("btn-torus"),
       crystal: document.getElementById("btn-crystal"),
       orbital: document.getElementById("btn-orbital"),
@@ -880,10 +1041,40 @@ scene.add(sat2);`
 
   // UI Button Handlers
   document.getElementById("btn-artifact").addEventListener("click", () => selectPreset("artifact"));
+  document.getElementById("btn-cad").addEventListener("click", () => selectPreset("cad"));
+  document.getElementById("btn-instanced").addEventListener("click", () => selectPreset("instanced"));
   document.getElementById("btn-torus").addEventListener("click", () => selectPreset("torus"));
   document.getElementById("btn-crystal").addEventListener("click", () => selectPreset("crystal"));
   document.getElementById("btn-orbital").addEventListener("click", () => selectPreset("orbital"));
   document.getElementById("btn-spheres").addEventListener("click", () => selectPreset("spheres"));
+
+  const btnBloom = document.getElementById("btn-bloom");
+  const btnOutline = document.getElementById("btn-outline");
+  const selectTonemap = document.getElementById("select-tonemap");
+
+  btnBloom.addEventListener("click", () => {
+    if (el.hasAttribute("bloom")) {
+      el.removeAttribute("bloom");
+      btnBloom.classList.remove("primary");
+    } else {
+      el.setAttribute("bloom", "1.2");
+      btnBloom.classList.add("primary");
+    }
+  });
+
+  btnOutline.addEventListener("click", () => {
+    if (el.hasAttribute("outline")) {
+      el.removeAttribute("outline");
+      btnOutline.classList.remove("primary");
+    } else {
+      el.setAttribute("outline", "#38bdf8 0.025");
+      btnOutline.classList.add("primary");
+    }
+  });
+
+  selectTonemap.addEventListener("change", (e) => {
+    el.setAttribute("tone-mapping", e.target.value);
+  });
 
   document.getElementById("btn-reset").addEventListener("click", () => el.resetCamera());
   document.getElementById("btn-top").addEventListener("click", () => {

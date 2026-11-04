@@ -32,7 +32,74 @@ object SharedRoom {
   /** Maximum remote paint strokes accepted per peer per second (GPU churn guard). */
   const val MAX_PAINT_MESSAGES_PER_SEC: Int = 8
   const val MAX_STROKE_CHUNK_POINTS: Int = 128
+  const val MAX_RTC_SIGNAL_CHARS: Int = 8192
   const val DEFAULT_PEER_COLOR: String = "#38bdf8"
+
+  /** Spatialized voice attenuation and equal-power stereo panning gains for a remote peer. */
+  data class SpatialVoiceGain(
+    val gain: Double,
+    val pan: Double,
+    val leftGain: Double,
+    val rightGain: Double,
+  )
+
+  /**
+   * Computes inverse-distance spatial voice attenuation and equal-power stereo panning from the
+   * listener's 6DoF head pose to a remote peer's head position (mirrors `computeSpatialVoiceGain`
+   * in `xr-live/src/plugins/shared-room.ts`).
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun computeSpatialVoiceGain(
+    listenerPos: DoubleArray,
+    listenerQuat: DoubleArray,
+    peerHeadPos: DoubleArray,
+    refDistance: Double = 1.0,
+    maxDistance: Double = 15.0,
+    rolloff: Double = 1.0,
+  ): SpatialVoiceGain {
+    val dx = peerHeadPos[0] - listenerPos[0]
+    val dy = peerHeadPos[1] - listenerPos[1]
+    val dz = peerHeadPos[2] - listenerPos[2]
+    val dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+
+    val refD = Math.max(0.01, if (refDistance.isFinite()) refDistance else 1.0)
+    val maxD = Math.max(refD, if (maxDistance.isFinite()) maxDistance else 15.0)
+    val roll = Math.max(0.0, if (rolloff.isFinite()) rolloff else 1.0)
+    val clampedDist = Math.max(refD, Math.min(maxD, dist))
+    val gain = XRSpatialMath.clampNum(refD / (refD + roll * (clampedDist - refD)), 0.0, 1.0, 1.0)
+
+    val qLen =
+      Math.sqrt(
+          listenerQuat[0] * listenerQuat[0] +
+            listenerQuat[1] * listenerQuat[1] +
+            listenerQuat[2] * listenerQuat[2] +
+            listenerQuat[3] * listenerQuat[3]
+        )
+        .let { if (it > 0.0) it else 1.0 }
+    val qx = listenerQuat[0] / qLen
+    val qy = listenerQuat[1] / qLen
+    val qz = listenerQuat[2] / qLen
+    val qw = listenerQuat[3] / qLen
+
+    val rx = 1.0 - 2.0 * (qy * qy + qz * qz)
+    val ry = 2.0 * (qx * qy + qz * qw)
+    val rz = 2.0 * (qx * qz - qy * qw)
+
+    val pan =
+      if (dist > 1e-6) {
+        XRSpatialMath.clampNum((dx * rx + dy * ry + dz * rz) / dist, -1.0, 1.0, 0.0)
+      } else {
+        0.0
+      }
+    val angle = (pan + 1.0) * (Math.PI / 4.0)
+    return SpatialVoiceGain(
+      gain = gain,
+      pan = pan,
+      leftGain = gain * Math.cos(angle),
+      rightGain = gain * Math.sin(angle),
+    )
+  }
 
   private val HEX_COLOR = Regex("^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
@@ -99,6 +166,16 @@ object SharedRoom {
       val color: String,
       val radius: Double,
       val points: List<DoubleArray>,
+    ) : WireMessage(peerId)
+
+    data class Rtc(
+      override val peerId: String,
+      val targetPeerId: String,
+      val signalType: String,
+      val sdp: String? = null,
+      val candidate: String? = null,
+      val sdpMid: String? = null,
+      val sdpMLineIndex: Int? = null,
     ) : WireMessage(peerId)
 
     data class Leave(override val peerId: String) : WireMessage(peerId)
@@ -255,6 +332,54 @@ object SharedRoom {
           points = pts,
         )
       }
+      "rtc" -> {
+        val targetPeerId =
+          XRLiveSceneCoreHelper.safeAnchorId(root["targetPeerId"] as? String) ?: return null
+        if (targetPeerId == peerId) return null
+        val st = root["signalType"] as? String ?: return null
+        if (st == "offer" || st == "answer") {
+          val sdp = root["sdp"] as? String ?: return null
+          if (sdp.isEmpty() || sdp.length > MAX_RTC_SIGNAL_CHARS || sdp.contains('\u0000')) {
+            return null
+          }
+          WireMessage.Rtc(peerId = peerId, targetPeerId = targetPeerId, signalType = st, sdp = sdp)
+        } else if (st == "ice") {
+          val cand = root["candidate"] as? String ?: return null
+          if (cand.isEmpty() || cand.length > MAX_RTC_SIGNAL_CHARS || cand.contains('\u0000')) {
+            return null
+          }
+          val rawMid = root["sdpMid"] as? String
+          val sdpMid =
+            if (!rawMid.isNullOrEmpty() && !rawMid.contains('\u0000')) {
+              if (rawMid.length > 64) rawMid.substring(0, 64) else rawMid
+            } else {
+              null
+            }
+          val rawIdx = (root["sdpMLineIndex"] as? Number)?.toDouble()
+          val sdpMLineIndex =
+            if (
+              rawIdx != null &&
+                rawIdx.isFinite() &&
+                rawIdx == Math.floor(rawIdx) &&
+                rawIdx >= 0.0 &&
+                rawIdx <= 64.0
+            ) {
+              rawIdx.toInt()
+            } else {
+              null
+            }
+          WireMessage.Rtc(
+            peerId = peerId,
+            targetPeerId = targetPeerId,
+            signalType = "ice",
+            candidate = cand,
+            sdpMid = sdpMid,
+            sdpMLineIndex = sdpMLineIndex,
+          )
+        } else {
+          null
+        }
+      }
       "leave" -> WireMessage.Leave(peerId)
       else -> null
     }
@@ -298,6 +423,16 @@ object SharedRoom {
         map["color"] = sanitizePeerColor(msg.color)
         map["radius"] = q4(msg.radius)
         map["points"] = msg.points.map { pt -> pt.map(::q4) }
+      }
+      is WireMessage.Rtc -> {
+        map["type"] = "rtc"
+        map["peerId"] = msg.peerId
+        map["targetPeerId"] = msg.targetPeerId
+        map["signalType"] = msg.signalType
+        map["sdp"] = msg.sdp
+        map["candidate"] = msg.candidate
+        map["sdpMid"] = msg.sdpMid
+        map["sdpMLineIndex"] = msg.sdpMLineIndex
       }
       is WireMessage.Leave -> {
         map["type"] = "leave"

@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * @fileoverview Lightweight registry for XR-Live modular plugins (xr-live-extras and scene converters).
- * Enables tree-shaking between xr-live-viewer, xr-live, xr-live-extras, and xr-live-full.
+ * @fileoverview Lightweight registry for XR-Live modular plugins (xr-live-sensors and scene converters).
+ * Enables tree-shaking between xr-live-viewer, xr-live, xr-live-sensors, and xr-live-full.
  */
 
 import {mat4Create} from '../../three-live/src/math';

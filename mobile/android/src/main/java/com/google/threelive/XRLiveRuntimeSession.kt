@@ -86,6 +86,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
      * stopped (`animation/stop`, `animation/resetAt`) animation playback.
      */
     fun onAnimation(start: Boolean, animationIndex: Int, animationName: String?) {}
+
+    /** The active `KHR_materials_variants` variant changed (`null` when reset to default). */
+    fun onVariantChanged(variantName: String?) {}
   }
 
   /** Snapshot of a node's local transform. */
@@ -124,6 +127,20 @@ class XRLiveRuntimeSession(gltfJson: String) {
 
   /** Why the behavior graph was rejected (e.g. a safety limit), or `null`. */
   val interactivityError: String?
+
+  /** Ordered list of `KHR_materials_variants` variant names defined at the glTF root. */
+  val availableVariants: List<String>
+
+  /** Currently selected `KHR_materials_variants` variant name, or `null` for default. */
+  var activeVariantName: String? = null
+    private set
+
+  private class VariantMapping(val material: Int, val variants: IntArray)
+
+  private val nodeInstanceCounts: IntArray
+  private val meshDefaultMaterials: Array<IntArray>
+  private val meshActiveMaterials: Array<IntArray>
+  private val meshVariantMappings: Array<Array<Array<VariantMapping>>>
 
   // ---- Scene state ---------------------------------------------------------------------------
 
@@ -185,6 +202,8 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private val followOptions: Array<XRLazyFollowOptions?>
   private val orbiters: IntArray
   private val billboards: IntArray
+  private val ikNodes: IntArray
+  private val ikRestOffsets = HashMap<Int, List<DoubleArray>>()
   private val dynamicBodies: Array<PhysicsBody>
   private val staticColliders: Array<DoubleArray>
   private val physicsFloorY: Double
@@ -239,9 +258,11 @@ class XRLiveRuntimeSession(gltfJson: String) {
     parent = IntArray(n) { -1 }
     nodeMesh = IntArray(n) { -1 }
     nodeNames = arrayOfNulls(n)
+    nodeInstanceCounts = IntArray(n) { 1 }
     grabbed = BooleanArray(n)
     dirtyTransform = BooleanArray(n)
     dirtyVisibility = BooleanArray(n)
+    val rawAccessorsForInstancing = MiniJson.asList(root["accessors"]) ?: emptyList()
     for (i in 0 until n) {
       rotation[i * 4 + 3] = 1.0
       scale[i * 3] = 1.0
@@ -256,15 +277,69 @@ class XRLiveRuntimeSession(gltfJson: String) {
       val ext = MiniJson.asMap(node["extensions"])
       val vis = MiniJson.asMap(ext?.get("KHR_node_visibility"))?.get("visible") ?: node["visible"]
       if (vis is Boolean) visible[i] = vis
+      val instExt = MiniJson.asMap(ext?.get("EXT_mesh_gpu_instancing"))
+      val instAttrs = MiniJson.asMap(instExt?.get("attributes"))
+      if (instAttrs != null) {
+        val accIdx =
+          intIndex(instAttrs["TRANSLATION"] ?: instAttrs["ROTATION"] ?: instAttrs["SCALE"])
+        val accObj = MiniJson.asMap(rawAccessorsForInstancing.getOrNull(accIdx))
+        val cnt = intIndex(accObj?.get("count"))
+        if (cnt > 0) {
+          nodeInstanceCounts[i] = cnt.coerceAtMost(10000)
+        }
+      }
       for (c in MiniJson.asList(node["children"]) ?: emptyList()) {
         val ci = intIndex(c)
         if (ci in 0 until n && ci != i) parent[ci] = i
       }
     }
-    meshNames =
-      (MiniJson.asList(root["meshes"]) ?: emptyList())
-        .map { MiniJson.asMap(it)?.get("name") as? String }
-        .toTypedArray()
+    val rawRootExts = MiniJson.asMap(root["extensions"])
+    val rawVariantsExt = MiniJson.asMap(rawRootExts?.get("KHR_materials_variants"))
+    val rawVariantList = MiniJson.asList(rawVariantsExt?.get("variants")) ?: emptyList()
+    val parsedVariants = ArrayList<String>(rawVariantList.size)
+    for (vObj in rawVariantList) {
+      val vName = MiniJson.asMap(vObj)?.get("name") as? String
+      if (!vName.isNullOrEmpty()) parsedVariants.add(vName)
+    }
+    availableVariants = parsedVariants
+
+    val rawMeshesList = MiniJson.asList(root["meshes"]) ?: emptyList()
+    meshDefaultMaterials = Array(rawMeshesList.size) { IntArray(0) }
+    meshActiveMaterials = Array(rawMeshesList.size) { IntArray(0) }
+    meshVariantMappings = Array(rawMeshesList.size) { emptyArray() }
+    for (mi in rawMeshesList.indices) {
+      val mObj = MiniJson.asMap(rawMeshesList[mi]) ?: continue
+      val prims = MiniJson.asList(mObj["primitives"]) ?: continue
+      val defMats = IntArray(prims.size) { -1 }
+      val actMats = IntArray(prims.size) { -1 }
+      val primMaps = Array(prims.size) { emptyArray<VariantMapping>() }
+      for (pi in prims.indices) {
+        val pObj = MiniJson.asMap(prims[pi]) ?: continue
+        val matIdx = intIndex(pObj["material"])
+        defMats[pi] = matIdx
+        actMats[pi] = matIdx
+        val pExt = MiniJson.asMap(pObj["extensions"])
+        val khrVar = MiniJson.asMap(pExt?.get("KHR_materials_variants"))
+        val rawMaps = MiniJson.asList(khrVar?.get("mappings"))
+        if (rawMaps != null) {
+          val mapList = ArrayList<VariantMapping>(rawMaps.size)
+          for (rm in rawMaps) {
+            val rmObj = MiniJson.asMap(rm) ?: continue
+            val mTarget = intIndex(rmObj["material"])
+            val vIndicesRaw = MiniJson.asList(rmObj["variants"]) ?: continue
+            val vIndices = IntArray(vIndicesRaw.size) { intIndex(vIndicesRaw[it]) }
+            if (mTarget >= 0) {
+              mapList.add(VariantMapping(mTarget, vIndices))
+            }
+          }
+          primMaps[pi] = mapList.toTypedArray()
+        }
+      }
+      meshDefaultMaterials[mi] = defMats
+      meshActiveMaterials[mi] = actMats
+      meshVariantMappings[mi] = primMaps
+    }
+    meshNames = rawMeshesList.map { MiniJson.asMap(it)?.get("name") as? String }.toTypedArray()
     animationNames =
       (MiniJson.asList(root["animations"]) ?: emptyList())
         .map { MiniJson.asMap(it)?.get("name") as? String }
@@ -295,6 +370,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val fl = ArrayList<Int>()
     val ob = ArrayList<Int>()
     val bb = ArrayList<Int>()
+    val ikList = ArrayList<Int>()
     val dynNodes = ArrayList<Int>()
     followOptions = arrayOfNulls(n)
     for (t in traits) {
@@ -312,10 +388,14 @@ class XRLiveRuntimeSession(gltfJson: String) {
       if (!t.billboard.isNullOrEmpty() && t.billboard != "false" && lazy == null) {
         bb.add(t.nodeIndex)
       }
+      if (t.ik != null) {
+        ikList.add(t.nodeIndex)
+      }
     }
     followers = fl.toIntArray()
     orbiters = ob.toIntArray()
     billboards = bb.toIntArray()
+    ikNodes = ikList.toIntArray()
 
     // Parse mesh local bounds from POSITION accessors when dynamic physics is present.
     if (dynNodes.isEmpty()) {
@@ -562,6 +642,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
         if (grabbed[i]) continue
         stepBillboard(i, traitByNode[i]?.billboard ?: continue, headPose, dt)
       }
+      for (i in ikNodes) {
+        stepIK(i, traitByNode[i]?.ik ?: continue, headPose, handPoses)
+      }
       if (dynamicBodies.isNotEmpty()) {
         stepPhysics(dt)
       }
@@ -702,6 +785,52 @@ class XRLiveRuntimeSession(gltfJson: String) {
   /** Returns a material's `roughnessFactor`, or `NaN`. */
   fun materialRoughness(materialIndex: Int): Float =
     if (materialIndex in 0 until materialCount) roughness[materialIndex].toFloat() else Float.NaN
+
+  /** Returns the GPU instance count of [nodeIndex] (`EXT_mesh_gpu_instancing`), or `1`. */
+  fun nodeInstanceCount(nodeIndex: Int): Int =
+    if (nodeIndex in 0 until nodeCount) nodeInstanceCounts[nodeIndex] else 0
+
+  /** Returns the currently active material index for [meshIndex] and [primitiveIndex], or `-1`. */
+  fun meshPrimitiveMaterial(meshIndex: Int, primitiveIndex: Int): Int {
+    val mats = meshActiveMaterials.getOrNull(meshIndex) ?: return -1
+    return if (primitiveIndex in mats.indices) mats[primitiveIndex] else -1
+  }
+
+  /**
+   * Selects a `KHR_materials_variants` material variant by name, or resets to default when [name]
+   * is `null`, `""`, or `"default"`. Returns `true` if the variant was applied.
+   */
+  fun selectVariant(name: String?): Boolean {
+    val isReset = name.isNullOrEmpty() || name == "default"
+    val variantIdx: Int
+    if (isReset) {
+      variantIdx = -1
+      activeVariantName = null
+    } else {
+      variantIdx = availableVariants.indexOf(name)
+      if (variantIdx < 0) return false
+      activeVariantName = name
+    }
+    for (mi in meshActiveMaterials.indices) {
+      val defMats = meshDefaultMaterials[mi]
+      val actMats = meshActiveMaterials[mi]
+      val primMaps = meshVariantMappings[mi]
+      for (pi in actMats.indices) {
+        var target = defMats[pi]
+        if (!isReset) {
+          for (mp in primMaps[pi]) {
+            if (mp.variants.any { it == variantIdx }) {
+              target = mp.material
+              break
+            }
+          }
+        }
+        actMats[pi] = target
+      }
+    }
+    listener?.onVariantChanged(activeVariantName)
+    return true
+  }
 
   /**
    * Reads a whitelisted glTF pointer (same rules as the VM). Returns a [Double], [Boolean] or
@@ -1805,6 +1934,149 @@ class XRLiveRuntimeSession(gltfJson: String) {
     XRSpatialMath.quatSlerp(q4c, q4a, q4b, alpha)
     normalizeQuatInto(q4c)
     setWorldPose(i, v3a, q4c)
+  }
+
+  private fun readNodeWorldPos(idx: Int): DoubleArray {
+    worldMatrix(idx, mA)
+    return doubleArrayOf(mA[12], mA[13], mA[14])
+  }
+
+  private fun blendSegmentPos(
+    parentPos: DoubleArray,
+    restChildPos: DoubleArray,
+    solvedChildPos: DoubleArray,
+    segLen: Double,
+    weight: Double,
+  ): DoubleArray {
+    val w = XRSpatialMath.clampNum(weight, 0.0, 1.0, 1.0)
+    val bx = restChildPos[0] + (solvedChildPos[0] - restChildPos[0]) * w
+    val by = restChildPos[1] + (solvedChildPos[1] - restChildPos[1]) * w
+    val bz = restChildPos[2] + (solvedChildPos[2] - restChildPos[2]) * w
+    val dx = bx - parentPos[0]
+    val dy = by - parentPos[1]
+    val dz = bz - parentPos[2]
+    val d = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    if (d > 1e-6 && segLen > 1e-6) {
+      val s = segLen / d
+      return doubleArrayOf(parentPos[0] + dx * s, parentPos[1] + dy * s, parentPos[2] + dz * s)
+    }
+    return doubleArrayOf(bx, by, bz)
+  }
+
+  private fun stepIK(
+    nodeIndex: Int,
+    ik: XRIKTrait,
+    headPose: XRPose,
+    handPoses: Map<String, XRPose>,
+  ) {
+    if (ik.weight <= 0.0) return
+    val rootIdx = firstNodeByName[ik.root] ?: return
+    val effIdx = firstNodeByName[ik.effector] ?: return
+    val midIdx = ik.mid?.let { firstNodeByName[it] }
+    val chainIndices =
+      if (midIdx != null) intArrayOf(rootIdx, midIdx, effIdx) else intArrayOf(rootIdx, effIdx)
+
+    val targetPos = DoubleArray(3)
+    val tPos = ik.targetPosition
+    val tName = ik.targetName
+    if (tPos != null && tPos.size >= 3) {
+      if (rootIsIdentity) {
+        targetPos[0] = tPos[0]
+        targetPos[1] = tPos[1]
+        targetPos[2] = tPos[2]
+      } else {
+        XRSpatialMath.transformPoint(root, tPos[0], tPos[1], tPos[2], targetPos)
+      }
+    } else if (tName != null) {
+      val ref = firstNodeByName[tName]
+      if (ref != null) {
+        worldMatrix(ref, mA)
+        targetPos[0] = mA[12]
+        targetPos[1] = mA[13]
+        targetPos[2] = mA[14]
+      } else if (tName == "head") {
+        for (k in 0 until 3) targetPos[k] = headPose.position[k].toDouble()
+      } else if (tName == "hand-left") {
+        val hp = handPoses["left"] ?: return
+        for (k in 0 until 3) targetPos[k] = hp.position[k].toDouble()
+      } else if (tName == "hand-right") {
+        val hp = handPoses["right"] ?: return
+        for (k in 0 until 3) targetPos[k] = hp.position[k].toDouble()
+      } else {
+        return
+      }
+    } else {
+      return
+    }
+
+    val offsets =
+      ikRestOffsets.getOrPut(nodeIndex) {
+        val cur = chainIndices.map { readNodeWorldPos(it) }
+        val offs = ArrayList<DoubleArray>(cur.size - 1)
+        for (k in 0 until cur.size - 1) {
+          offs.add(
+            doubleArrayOf(
+              cur[k + 1][0] - cur[k][0],
+              cur[k + 1][1] - cur[k][1],
+              cur[k + 1][2] - cur[k][2],
+            )
+          )
+        }
+        offs
+      }
+
+    val curRoot = readNodeWorldPos(rootIdx)
+    val restChain = ArrayList<DoubleArray>(offsets.size + 1)
+    val segLengths = DoubleArray(offsets.size)
+    restChain.add(curRoot)
+    for (k in offsets.indices) {
+      val prev = restChain[k]
+      val off = offsets[k]
+      restChain.add(doubleArrayOf(prev[0] + off[0], prev[1] + off[1], prev[2] + off[2]))
+      segLengths[k] = Math.sqrt(off[0] * off[0] + off[1] * off[1] + off[2] * off[2])
+    }
+
+    if (ik.solver == "two-bone" && midIdx != null && restChain.size == 3) {
+      val poleArr = ik.pole?.takeIf { it.size >= 3 }?.let { doubleArrayOf(it[0], it[1], it[2]) }
+      val solved =
+        IKSolver.solveTwoBoneIK(restChain[0], restChain[1], restChain[2], targetPos, poleArr)
+      val blendedMid =
+        blendSegmentPos(restChain[0], restChain[1], solved.midPos, segLengths[0], ik.weight)
+      val effRestFromMid =
+        doubleArrayOf(
+          blendedMid[0] + offsets[1][0],
+          blendedMid[1] + offsets[1][1],
+          blendedMid[2] + offsets[1][2],
+        )
+      val solvedEffFromMid =
+        doubleArrayOf(
+          blendedMid[0] + (solved.effectorPos[0] - solved.midPos[0]),
+          blendedMid[1] + (solved.effectorPos[1] - solved.midPos[1]),
+          blendedMid[2] + (solved.effectorPos[2] - solved.midPos[2]),
+        )
+      val blendedEff =
+        blendSegmentPos(blendedMid, effRestFromMid, solvedEffFromMid, segLengths[1], ik.weight)
+      setWorldPose(midIdx, blendedMid, null)
+      setWorldPose(effIdx, blendedEff, null)
+    } else {
+      val solved = IKSolver.solveFABRIK(restChain, targetPos, ik.iterations, ik.tolerance)
+      var parentPos = restChain[0]
+      for (k in 1 until chainIndices.size) {
+        val off = offsets[k - 1]
+        val restFromParent =
+          doubleArrayOf(parentPos[0] + off[0], parentPos[1] + off[1], parentPos[2] + off[2])
+        val solvedFromParent =
+          doubleArrayOf(
+            parentPos[0] + (solved.positions[k][0] - solved.positions[k - 1][0]),
+            parentPos[1] + (solved.positions[k][1] - solved.positions[k - 1][1]),
+            parentPos[2] + (solved.positions[k][2] - solved.positions[k - 1][2]),
+          )
+        val blended =
+          blendSegmentPos(parentPos, restFromParent, solvedFromParent, segLengths[k - 1], ik.weight)
+        setWorldPose(chainIndices[k], blended, null)
+        parentPos = blended
+      }
+    }
   }
 
   private fun stepPhysics(dt: Double) {

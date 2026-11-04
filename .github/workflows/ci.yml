@@ -59,14 +59,18 @@ jobs:
             const fs = require("fs");
             const zlib = require("zlib");
             const budgets = [
-              { file: "dist/three-live-viewer.min.js", limit: 26112 },
-              { file: "dist/three-live.min.js", limit: 55296 },
-              { file: "three-live/dist/three-live.min.js", limit: 55296 },
-              { file: "three-live/dist/three-live-full.min.js", limit: 70656 },
-              { file: "xr-live/dist/xr-live.min.js", limit: 67584 },
-              { file: "xr-live/dist/xr-live-full.min.js", limit: 154624 },
-              { file: "xr-live/dist/xr-live-plugins.min.js", limit: 53248 },
-              { file: "xr-live/dist/xr-live-sim.min.js", limit: 22528 }
+              { file: "dist/three-live-viewer.min.js", limit: 28672 },
+              { file: "dist/three-live.min.js", limit: 60416 },
+              { file: "three-live/dist/three-live.min.js", limit: 60416 },
+              { file: "three-live/dist/three-live-studio.min.js", limit: 22528 },
+              { file: "three-live/dist/three-live-cad.min.js", limit: 9216 },
+              { file: "three-live/dist/three-live-animation.min.js", limit: 8192 },
+              { file: "three-live/dist/three-live-full.min.js", limit: 93184 },
+              { file: "xr-live/dist/xr-live.min.js", limit: 72704 },
+              { file: "xr-live/dist/xr-live-sensors.min.js", limit: 10240 },
+              { file: "xr-live/dist/xr-live-spatial.min.js", limit: 57344 },
+              { file: "xr-live/dist/xr-live-sim.min.js", limit: 22528 },
+              { file: "xr-live/dist/xr-live-full.min.js", limit: 181248 }
             ];
             for (const { file, limit } of budgets) {
               if (fs.existsSync(file)) {

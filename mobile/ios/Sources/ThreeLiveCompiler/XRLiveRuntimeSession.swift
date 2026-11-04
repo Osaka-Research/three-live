@@ -114,6 +114,8 @@ public protocol XRLiveRuntimeSessionDelegate: AnyObject {
   func animationStart(index: Int?, name: String?)
   /// The graph executed `animation/stop` (or `animation/resetAt`).
   func animationStop()
+  /// The active `KHR_materials_variants` variant changed (`nil` when reset to default).
+  func variantChanged(_ variantName: String?)
 }
 
 extension XRLiveRuntimeSessionDelegate {
@@ -123,6 +125,7 @@ extension XRLiveRuntimeSessionDelegate {
   public func interactivityEvent(id: String, payloadJSON: String) {}
   public func animationStart(index: Int?, name: String?) {}
   public func animationStop() {}
+  public func variantChanged(_ variantName: String?) {}
 }
 
 // MARK: - Session
@@ -256,10 +259,24 @@ public final class XRLiveRuntimeSession {
   /// Why the behavior graph was disabled, or `nil` when it loaded (or none was present).
   public private(set) var interactivityError: String?
 
+  /// Ordered list of `KHR_materials_variants` variant names defined at the glTF root.
+  public private(set) var availableVariants: [String] = []
+
+  /// Currently selected `KHR_materials_variants` variant name, or `nil` for default.
+  public private(set) var activeVariantName: String?
+
+  struct VariantMapping {
+    let material: Int
+    let variants: [Int]
+  }
+
   private var nodes: [NodeState] = []
+  private var nodeInstanceCounts: [Int] = []
   private var parentOf: [Int: Int] = [:]
   private var materials: [MaterialData] = []
+  private var meshDefaultMaterials: [[Int]] = []
   private var meshMaterials: [[Int]] = []
+  private var meshVariantMappings: [[[VariantMapping]]] = []
   private var meshNames: [String?] = []
   private var animationNames: [String?] = []
   private var nodeIndexByName: [String: Int] = [:]
@@ -292,6 +309,7 @@ public final class XRLiveRuntimeSession {
 
   private var followStates: [Int: FollowState] = [:]
   private var orbitTimes: [Int: Double] = [:]
+  private var ikRestOffsets: [Int: [SIMD3<Float>]] = [:]
   private var physicsStates: [Int: PhysicsBodyState] = [:]
   private var staticColliders: [StaticAabb] = []
   private var collidersInitialized = false
@@ -335,7 +353,9 @@ public final class XRLiveRuntimeSession {
 
   private func loadScene(_ root: [String: Any]) {
     let rawNodes = Array((XRJSON.array(root["nodes"]) ?? []).prefix(Self.maxSceneElements))
+    let rawAccessors = Array((XRJSON.array(root["accessors"]) ?? []).prefix(Self.maxSceneElements))
     nodes.reserveCapacity(rawNodes.count)
+    nodeInstanceCounts = Array(repeating: 1, count: rawNodes.count)
     for (i, raw) in rawNodes.enumerated() {
       var state = NodeState()
       guard let n = XRJSON.object(raw) else {
@@ -372,6 +392,19 @@ public final class XRLiveRuntimeSession {
       let ext = XRJSON.object(n["extensions"])
       let vis = XRJSON.object(ext?["KHR_node_visibility"])
       state.visible = XRJSON.bool(vis?["visible"]) ?? XRJSON.bool(n["visible"]) ?? true
+      if let instExt = XRJSON.object(ext?["EXT_mesh_gpu_instancing"]),
+        let instAttrs = XRJSON.object(instExt["attributes"])
+      {
+        let accNum = instAttrs["TRANSLATION"] ?? instAttrs["ROTATION"] ?? instAttrs["SCALE"]
+        if let accIdx = XRJSON.number(accNum).flatMap({ Int(exactly: $0) }),
+          accIdx >= 0, accIdx < rawAccessors.count,
+          let accObj = XRJSON.object(rawAccessors[accIdx]),
+          let cnt = XRJSON.number(accObj["count"]).flatMap({ Int(exactly: $0) }),
+          cnt > 0
+        {
+          nodeInstanceCounts[i] = min(cnt, 10000)
+        }
+      }
       if let mesh = XRJSON.number(n["mesh"]), let mi = Int(exactly: mesh), mi >= 0 {
         state.mesh = mi
       }
@@ -384,6 +417,17 @@ public final class XRLiveRuntimeSession {
         }
       }
       nodes.append(state)
+    }
+
+    if let rootExts = XRJSON.object(root["extensions"]),
+      let varExt = XRJSON.object(rootExts["KHR_materials_variants"]),
+      let rawVars = XRJSON.array(varExt["variants"])
+    {
+      for rv in rawVars {
+        if let vo = XRJSON.object(rv), let vName = XRJSON.string(vo["name"]), !vName.isEmpty {
+          availableVariants.append(vName)
+        }
+      }
     }
 
     for raw in (XRJSON.array(root["materials"]) ?? []).prefix(Self.maxSceneElements) {
@@ -402,9 +446,9 @@ public final class XRLiveRuntimeSession {
       materials.append(mat)
     }
 
-    let rawAccessors = Array((XRJSON.array(root["accessors"]) ?? []).prefix(Self.maxSceneElements))
     for raw in (XRJSON.array(root["meshes"]) ?? []).prefix(Self.maxSceneElements) {
       var list: [Int] = []
+      var primMappingsList: [[VariantMapping]] = []
       var bounds: (min: SIMD3<Float>, max: SIMD3<Float>)? = nil
       for p in (XRJSON.array(XRJSON.object(raw)?["primitives"]) ?? []).prefix(
         Self.maxSocketsPerNode)
@@ -412,6 +456,23 @@ public final class XRLiveRuntimeSession {
         let po = XRJSON.object(p)
         let mat = XRJSON.number(po?["material"]).flatMap { Int(exactly: $0) }
         list.append(mat ?? -1)
+        var mappings: [VariantMapping] = []
+        if let pExt = XRJSON.object(po?["extensions"]),
+          let khrVar = XRJSON.object(pExt["KHR_materials_variants"]),
+          let rawMaps = XRJSON.array(khrVar["mappings"])
+        {
+          for rm in rawMaps {
+            if let rmObj = XRJSON.object(rm),
+              let mTarget = XRJSON.number(rmObj["material"]).flatMap({ Int(exactly: $0) }),
+              mTarget >= 0,
+              let vArr = XRJSON.array(rmObj["variants"])
+            {
+              let vIndices = vArr.compactMap { XRJSON.number($0).flatMap { Int(exactly: $0) } }
+              mappings.append(VariantMapping(material: mTarget, variants: vIndices))
+            }
+          }
+        }
+        primMappingsList.append(mappings)
         if let attrs = XRJSON.object(po?["attributes"]),
           let posIdx = XRJSON.number(attrs["POSITION"]).flatMap({ Int(exactly: $0) }),
           posIdx >= 0, posIdx < rawAccessors.count,
@@ -430,7 +491,9 @@ public final class XRLiveRuntimeSession {
           }
         }
       }
+      meshDefaultMaterials.append(list)
       meshMaterials.append(list)
+      meshVariantMappings.append(primMappingsList)
       meshNames.append(XRJSON.string(XRJSON.object(raw)?["name"]))
       meshLocalBounds.append(bounds)
     }
@@ -569,6 +632,55 @@ public final class XRLiveRuntimeSession {
     guard index >= 0, index < nodes.count, let mesh = nodes[index].mesh, mesh < meshMaterials.count
     else { return [] }
     return meshMaterials[mesh]
+  }
+
+  /// Currently active material index for `meshIndex` and `primitiveIndex`, or `-1`.
+  public func meshPrimitiveMaterial(meshIndex: Int, primitiveIndex: Int) -> Int {
+    guard meshIndex >= 0, meshIndex < meshMaterials.count else { return -1 }
+    let mats = meshMaterials[meshIndex]
+    guard primitiveIndex >= 0, primitiveIndex < mats.count else { return -1 }
+    return mats[primitiveIndex]
+  }
+
+  /// GPU instance count of node `index` (`EXT_mesh_gpu_instancing`), or `1`.
+  public func nodeInstanceCount(at index: Int) -> Int {
+    guard index >= 0, index < nodeInstanceCounts.count else { return 0 }
+    return nodeInstanceCounts[index]
+  }
+
+  /// Selects a `KHR_materials_variants` material variant by name, or resets to default when
+  /// `name` is `nil`, `""`, or `"default"`. Returns `true` if the variant was applied.
+  @discardableResult
+  public func selectVariant(_ name: String?) -> Bool {
+    let isReset = name == nil || name == "" || name == "default"
+    let variantIdx: Int
+    if isReset {
+      variantIdx = -1
+      activeVariantName = nil
+    } else if let name = name, let idx = availableVariants.firstIndex(of: name) {
+      variantIdx = idx
+      activeVariantName = name
+    } else {
+      return false
+    }
+    for mi in 0..<meshMaterials.count {
+      let defMats = meshDefaultMaterials[mi]
+      let primMaps = meshVariantMappings[mi]
+      for pi in 0..<meshMaterials[mi].count {
+        var target = defMats[pi]
+        if !isReset {
+          for mp in primMaps[pi] {
+            if mp.variants.contains(variantIdx) {
+              target = mp.material
+              break
+            }
+          }
+        }
+        meshMaterials[mi][pi] = target
+      }
+    }
+    delegate?.variantChanged(activeVariantName)
+    return true
   }
 
   /// The glTF mesh name (`meshes[nodes[index].mesh].name`) of node `index`, if any. Event
@@ -1809,8 +1921,142 @@ public final class XRLiveRuntimeSession {
       if let bb = traits.billboard, !bb.isEmpty, let head = headPose {
         stepBillboard(i, mode: bb, headPose: head, dt: stepDt)
       }
+      if let ik = traits.ik {
+        stepIK(i, ik: ik, headPose: headPose, handPoses: handPoses)
+      }
     }
     stepPhysics(dt: stepDt)
+  }
+
+  private func readNodeWorldPosition(_ i: Int) -> SIMD3<Float> {
+    let m = worldMatrix(of: i)
+    return SIMD3<Float>(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+  }
+
+  private func blendSegmentPosition(
+    parentPos: SIMD3<Float>,
+    restChildPos: SIMD3<Float>,
+    solvedChildPos: SIMD3<Float>,
+    segLen: Float,
+    weight: Float
+  ) -> SIMD3<Float> {
+    let w = max(Float(0), min(Float(1), weight))
+    let blended = restChildPos + (solvedChildPos - restChildPos) * w
+    let delta = blended - parentPos
+    let d = simd_length(delta)
+    if d > 1e-6 && segLen > 1e-6 {
+      return parentPos + delta * (segLen / d)
+    }
+    return blended
+  }
+
+  private func stepIK(
+    _ nodeIndex: Int,
+    ik: XRLiveIK,
+    headPose: XRPose?,
+    handPoses: [XRHand: XRPose]
+  ) {
+    guard ik.weight > 0,
+      let rootIdx = nodeIndexByName[ik.root],
+      let effIdx = nodeIndexByName[ik.effector]
+    else { return }
+    let midIdx = ik.mid.flatMap { nodeIndexByName[$0] }
+    let chainIndices = midIdx != nil ? [rootIdx, midIdx!, effIdx] : [rootIdx, effIdx]
+
+    let targetPos: SIMD3<Float>
+    if let pt = ik.targetPoint {
+      targetPos = XRSpatialMath.transformPoint(rootTransform, pt)
+    } else if let name = ik.targetName {
+      if let ref = nodeIndexByName[name] {
+        targetPos = readNodeWorldPosition(ref)
+      } else if name == "head", let head = headPose {
+        targetPos = head.position
+      } else if name == "hand-left", let hp = handPoses[.left] {
+        targetPos = hp.position
+      } else if name == "hand-right", let hp = handPoses[.right] {
+        targetPos = hp.position
+      } else {
+        return
+      }
+    } else {
+      return
+    }
+
+    let offsets: [SIMD3<Float>]
+    if let cached = ikRestOffsets[nodeIndex] {
+      offsets = cached
+    } else {
+      let cur = chainIndices.map { readNodeWorldPosition($0) }
+      var offs: [SIMD3<Float>] = []
+      for k in 0..<(cur.count - 1) {
+        offs.append(cur[k + 1] - cur[k])
+      }
+      ikRestOffsets[nodeIndex] = offs
+      offsets = offs
+    }
+
+    let curRoot = readNodeWorldPosition(rootIdx)
+    var restChain: [SIMD3<Float>] = [curRoot]
+    var segLengths: [Float] = []
+    for k in 0..<offsets.count {
+      let next = restChain[k] + offsets[k]
+      restChain.append(next)
+      segLengths.append(simd_length(offsets[k]))
+    }
+
+    if ik.solver == "two-bone", let midIdx = midIdx, restChain.count == 3 {
+      let solved = IKSolver.solveTwoBoneIK(
+        rootPos: restChain[0],
+        midPos: restChain[1],
+        effectorPos: restChain[2],
+        targetPos: targetPos,
+        polePos: ik.pole
+      )
+      let blendedMid = blendSegmentPosition(
+        parentPos: restChain[0],
+        restChildPos: restChain[1],
+        solvedChildPos: solved.midPos,
+        segLen: segLengths[0],
+        weight: ik.weight
+      )
+      let effRestFromMid = blendedMid + offsets[1]
+      let solvedEffFromMid = blendedMid + (solved.effectorPos - solved.midPos)
+      let blendedEff = blendSegmentPosition(
+        parentPos: blendedMid,
+        restChildPos: effRestFromMid,
+        solvedChildPos: solvedEffFromMid,
+        segLen: segLengths[1],
+        weight: ik.weight
+      )
+      let midWorld = XRSpatialMath.decompose(worldMatrix(of: midIdx))
+      setWorldTRS(midIdx, rotation: midWorld.rotation, position: blendedMid, scale: midWorld.scale)
+      let effWorld = XRSpatialMath.decompose(worldMatrix(of: effIdx))
+      setWorldTRS(effIdx, rotation: effWorld.rotation, position: blendedEff, scale: effWorld.scale)
+    } else {
+      let solved = IKSolver.solveFABRIK(
+        positions: restChain,
+        targetPos: targetPos,
+        maxIterations: ik.iterations,
+        tolerance: ik.tolerance
+      )
+      var parentPos = restChain[0]
+      for k in 1..<chainIndices.count {
+        let off = offsets[k - 1]
+        let restFromParent = parentPos + off
+        let solvedFromParent = parentPos + (solved.positions[k] - solved.positions[k - 1])
+        let blended = blendSegmentPosition(
+          parentPos: parentPos,
+          restChildPos: restFromParent,
+          solvedChildPos: solvedFromParent,
+          segLen: segLengths[k - 1],
+          weight: ik.weight
+        )
+        let idx = chainIndices[k]
+        let wTrs = XRSpatialMath.decompose(worldMatrix(of: idx))
+        setWorldTRS(idx, rotation: wTrs.rotation, position: blended, scale: wTrs.scale)
+        parentPos = blended
+      }
+    }
   }
 
   private func stepBillboard(_ i: Int, mode: String, headPose: XRPose, dt: Float) {

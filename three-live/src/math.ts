@@ -246,13 +246,13 @@ export function mat3NormalFromMat4(
   det = 1.0 / det;
 
   out[0] = b01 * det;
-  out[1] = (-a22 * a01 + a02 * a21) * det;
-  out[2] = (a12 * a01 - a02 * a11) * det;
-  out[3] = b11 * det;
+  out[1] = b11 * det;
+  out[2] = b21 * det;
+  out[3] = (-a22 * a01 + a02 * a21) * det;
   out[4] = (a22 * a00 - a02 * a20) * det;
-  out[5] = (-a12 * a00 + a02 * a10) * det;
-  out[6] = b21 * det;
-  out[7] = (-a21 * a00 + a01 * a20) * det;
+  out[5] = (-a21 * a00 + a01 * a20) * det;
+  out[6] = (a12 * a01 - a02 * a11) * det;
+  out[7] = (-a12 * a00 + a02 * a10) * det;
   out[8] = (a11 * a00 - a01 * a10) * det;
   return out;
 }

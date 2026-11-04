@@ -25,6 +25,9 @@ pub struct SceneGraph {
     /// Compiled root `KHR_interactivity` extension (from `userData.interactivity`).
     #[serde(default)]
     pub interactivity: Option<serde_json::Value>,
+    /// Root `KHR_materials_variants` extension (from `userData.variants`).
+    #[serde(default)]
+    pub variants: Option<serde_json::Value>,
     /// Full scene hierarchy (every `Object3D` below the scene root, in the web
     /// exporter's pre-order DFS order). When non-empty, the GLB writer emits
     /// exactly these nodes, with `meshes` referenced by index; when empty it
@@ -59,6 +62,10 @@ pub struct SceneNode {
     pub xr_scenecore: Option<serde_json::Value>,
     #[serde(default)]
     pub xr_hubs: Option<serde_json::Value>,
+    #[serde(default)]
+    pub instance_matrices: Vec<f32>,
+    #[serde(default)]
+    pub instance_colors: Vec<f32>,
 }
 
 impl Default for SceneNode {
@@ -74,6 +81,8 @@ impl Default for SceneNode {
             xr_normalized: None,
             xr_scenecore: None,
             xr_hubs: None,
+            instance_matrices: Vec::new(),
+            instance_colors: Vec::new(),
         }
     }
 }
@@ -90,6 +99,8 @@ pub struct Mesh3D {
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
     pub material_index: Option<usize>,
+    #[serde(default)]
+    pub variant_mappings: Option<serde_json::Value>,
     #[serde(default)]
     pub xr_traits: Option<serde_json::Value>,
     /// Canonical normalized traits (`xr-trait-schema.ts`), emitted as `extras.xr`.

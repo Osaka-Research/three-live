@@ -20,6 +20,16 @@
 
 import {registerPlugin} from './plugin';
 import {
+  ikPlugin,
+  IKSolver,
+  quatFromUnitVectors,
+  solveFABRIK,
+  solveTwoBoneIK,
+  type FABRIKSolution,
+  type IKQuat,
+  type TwoBoneIKSolution,
+} from './plugins/ik';
+import {
   crossFadeTo,
   keyframeAnimationPlugin,
   parseAnimations,
@@ -32,13 +42,22 @@ import {skinningPlugin} from './plugins/skinning';
 registerPlugin(morphPlugin);
 registerPlugin(keyframeAnimationPlugin);
 registerPlugin(skinningPlugin);
+registerPlugin(ikPlugin);
 
 export {
   crossFadeTo,
+  ikPlugin,
+  IKSolver,
   keyframeAnimationPlugin,
   morphPlugin,
   parseAnimations,
+  quatFromUnitVectors,
   sampleChannel,
   setMorphTargetWeight,
   skinningPlugin,
+  solveFABRIK,
+  solveTwoBoneIK,
+  type FABRIKSolution,
+  type IKQuat,
+  type TwoBoneIKSolution,
 };

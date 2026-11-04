@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/**
- * @fileoverview Studio Extras & WebXR AR Suite plugin bundle for <three-live>.
- * Includes Planar Contact Shadows, 3D Interactive Hotspots,
- * Custom HDR/LDR Radiance Maps & True IBL (Spherical Harmonics + Karis Split-Sum),
- * Luxury PBR & Optical Materials (Clearcoat, Sheen, Transmission, Volume, IOR, Dispersion, Iridescence),
- * and In-Browser WebXR Augmented Reality Suite (DOM Overlay, Hit-Test Reticle & Gestures, Light Estimation).
- */
+// Studio Rendering & WebXR AR Suite plugin bundle for <three-live> (three-live-studio.min.js).
+// Includes Planar Contact Shadows, 3D Interactive Hotspots,
+// Custom HDR/LDR Radiance Maps & True IBL (Spherical Harmonics + Karis Split-Sum),
+// Luxury PBR & Optical Materials (Clearcoat, Sheen, Transmission, Volume, IOR, Dispersion, Iridescence),
+// HDR Kawase Bloom & Silhouette Outlines, KHR_materials_variants, EXT_meshopt_compression,
+// KHR_interactivity VM, and In-Browser WebXR Augmented Reality Suite.
 
 import {registerPlugin} from './plugin';
 import {
@@ -35,29 +34,72 @@ import {
   sendInteractivityEvent,
 } from './plugins/interactivity';
 import {materialsPlugin, registerMaterialShader} from './plugins/materials';
+import {
+  applyMeshoptFilter,
+  decodeMeshoptBuffer,
+  decodeMeshoptGLB,
+  encodeMeshoptBuffer,
+  meshoptDecoder,
+  meshoptPlugin,
+  type MeshoptFilter,
+  type MeshoptMode,
+} from './plugins/meshopt';
+import {
+  computeOutlineClipOffset,
+  evaluateKawaseBloom,
+  parseHexRgb,
+  postprocessingPlugin,
+} from './plugins/postprocessing';
 import {contactShadowPlugin} from './plugins/shadows';
+import {
+  extractMaterialVariants,
+  extractPrimitiveVariantMappings,
+  selectMaterialVariant,
+  variantsPlugin,
+  type VariantMapping,
+} from './plugins/variants';
 import {webxrPlugin} from './plugins/webxr';
 
-// Auto-register Studio Extras & WebXR Suite plugins
+// Auto-register Studio Rendering & WebXR Suite plugins
 registerPlugin(contactShadowPlugin);
 registerPlugin(hotspotPlugin);
 registerPlugin(environmentMapPlugin);
 registerPlugin(materialsPlugin);
 registerPlugin(webxrPlugin);
 registerPlugin(interactivityPlugin);
+registerPlugin(meshoptPlugin);
+registerPlugin(variantsPlugin);
+registerPlugin(postprocessingPlugin);
 
 export {
+  applyMeshoptFilter,
+  computeOutlineClipOffset,
   contactShadowPlugin,
+  decodeMeshoptBuffer,
+  decodeMeshoptGLB,
+  encodeMeshoptBuffer,
   environmentMapPlugin,
+  evaluateKawaseBloom,
+  extractMaterialVariants,
+  extractPrimitiveVariantMappings,
   getEnvironmentSH,
   getInteractivityVM,
   hotspotPlugin,
   interactivityPlugin,
   InteractivityVM,
   materialsPlugin,
+  meshoptDecoder,
+  meshoptPlugin,
+  parseHexRgb,
   parseSafeGltfPointer,
+  postprocessingPlugin,
   registerMaterialShader,
+  selectMaterialVariant,
   sendInteractivityEvent,
   setEnvironmentSH,
+  variantsPlugin,
   webxrPlugin,
+  type MeshoptFilter,
+  type MeshoptMode,
+  type VariantMapping,
 };

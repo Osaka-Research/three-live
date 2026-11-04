@@ -1178,6 +1178,11 @@ const viewerOrbitElapsed = new WeakMap<object, number>();
 function stepViewerOrbits(viewer: any, dt: number): void {
   if (!viewer || typeof viewer !== 'object' || !Number.isFinite(dt) || dt <= 0) return;
   if (getRegisteredPlugins().some((p) => p.name === 'xr-live-head-follow')) return;
+  const autoRotate =
+    typeof viewer.getAutoRotate === 'function'
+      ? viewer.getAutoRotate()
+      : viewer.autoRotate;
+  if (autoRotate === false) return;
   const gltf = viewer.gltf;
   const gNodes = gltf?.nodes;
   if (!Array.isArray(gNodes) || gNodes.length === 0) return;

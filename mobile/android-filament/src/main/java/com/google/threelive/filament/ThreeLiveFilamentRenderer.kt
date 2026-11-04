@@ -90,12 +90,16 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
   /** Uniform scale multiplier applied to the loaded glTF model root (e.g. for AR scale presets). */
   var modelScale: Float = 1.0f
 
+  /** Active tone-mapping mode (`"neutral"`, `"aces"`, `"agx"`, `"reinhard"`, or `"none"`). */
+  var toneMappingMode: String = "neutral"
+    private set
+
   private val appContext = context.applicationContext
   private val engine: Engine
   private val renderer: Renderer
   private val scene: Scene
   private val filamentView: com.google.android.filament.View
-  private val colorGrading: ColorGrading
+  private var colorGrading: ColorGrading
   private val camera: Camera
   private val sunEntity: Int
   private val fillLightEntity: Int
@@ -315,8 +319,59 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val animCount = loaded.instance?.animator?.animationCount ?: 0
     playingAnimation = if (animCount > 0) -1 else null
     animationTime = 0.0
+    applyPostprocessingTraits(glb)
     if (arSurfacePreviewEnabled) {
       attachArSurfacePreviewMeshes(arSurfaceGroundY)
+    }
+  }
+
+  /**
+   * Configures Filament's [ColorGrading] tone mapper (`"neutral"`, `"aces"`, `"agx"`, `"reinhard"`,
+   * or `"none"`).
+   */
+  fun setToneMapping(mode: String) {
+    if (disposed) return
+    val normalized = mode.trim().lowercase()
+    val mapper =
+      when (normalized) {
+        "aces" -> ToneMapper.ACESLegacyToneMapper()
+        "agx" -> ToneMapper.AgxToneMapper()
+        "reinhard" -> ToneMapper.GenericToneMapper(1.5f, 1.0f, 1.0f, 1.0f)
+        "none" -> ToneMapper.LinearToneMapper()
+        else -> ToneMapper.PBRNeutralToneMapper()
+      }
+    toneMappingMode =
+      if (normalized in setOf("neutral", "aces", "agx", "reinhard", "none")) normalized
+      else "neutral"
+    val prev = colorGrading
+    colorGrading = ColorGrading.Builder().toneMapper(mapper).build(engine)
+    filamentView.colorGrading = colorGrading
+    engine.destroyColorGrading(prev)
+  }
+
+  /** Configures Filament's post-processing bloom pass. */
+  fun setBloomOptions(enabled: Boolean, strength: Float = 0.35f) {
+    if (disposed) return
+    filamentView.bloomOptions =
+      com.google.android.filament.View.BloomOptions().apply {
+        this.enabled = enabled && strength > 0f
+        this.strength = strength.coerceIn(0f, 1f)
+      }
+  }
+
+  private fun applyPostprocessingTraits(glb: ByteBuffer) {
+    val traits =
+      try {
+        XRLiveSceneCoreHelper.extractNodeTraits(glb.duplicate().order(ByteOrder.LITTLE_ENDIAN))
+      } catch (e: RuntimeException) {
+        emptyList()
+      }
+    val bloomTrait =
+      traits.mapNotNull { it.bloom }.filter { it.enabled }.maxByOrNull { it.strength }
+    if (bloomTrait != null) {
+      setBloomOptions(true, bloomTrait.strength.toFloat())
+    } else {
+      setBloomOptions(false, 0f)
     }
   }
 

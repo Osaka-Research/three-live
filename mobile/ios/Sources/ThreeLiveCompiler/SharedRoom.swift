@@ -30,7 +30,69 @@ public enum SharedRoom {
   /// Maximum remote paint strokes accepted per peer per second (GPU churn guard).
   public static let maxPaintMessagesPerSec = 8
   public static let maxStrokeChunkPoints = 128
+  public static let maxRtcSignalChars = 8192
   public static let defaultPeerColor = "#38bdf8"
+
+  /// Spatialized voice attenuation and equal-power stereo panning gains for a remote peer.
+  public struct SpatialVoiceGain: Sendable, Equatable {
+    public let gain: Float
+    public let pan: Float
+    public let leftGain: Float
+    public let rightGain: Float
+  }
+
+  /// Computes inverse-distance spatial voice attenuation and equal-power stereo panning from the
+  /// listener's 6DoF head pose to a remote peer's head position (mirrors `computeSpatialVoiceGain`
+  /// in `xr-live/src/plugins/shared-room.ts`).
+  public static func computeSpatialVoiceGain(
+    listenerPos: SIMD3<Float>,
+    listenerQuat: simd_quatf,
+    peerHeadPos: SIMD3<Float>,
+    refDistance: Float = 1.0,
+    maxDistance: Float = 15.0,
+    rolloff: Float = 1.0
+  ) -> SpatialVoiceGain {
+    let delta = peerHeadPos - listenerPos
+    let dist = Double(simd_length(delta))
+
+    let refD = Swift.max(0.01, refDistance.isFinite ? Double(refDistance) : 1.0)
+    let maxD = Swift.max(refD, maxDistance.isFinite ? Double(maxDistance) : 15.0)
+    let roll = Swift.max(0.0, rolloff.isFinite ? Double(rolloff) : 1.0)
+    let clampedDist = Swift.max(refD, Swift.min(maxD, dist))
+    let gain = XRJSON.clampNum(refD / (refD + roll * (clampedDist - refD)), 0, 1, 1)
+
+    let qVec = SIMD4<Double>(
+      Double(listenerQuat.imag.x),
+      Double(listenerQuat.imag.y),
+      Double(listenerQuat.imag.z),
+      Double(listenerQuat.real)
+    )
+    let qLenSq = qVec.x * qVec.x + qVec.y * qVec.y + qVec.z * qVec.z + qVec.w * qVec.w
+    let qLen = qLenSq > 0 ? sqrt(qLenSq) : 1.0
+    let qx = qVec.x / qLen
+    let qy = qVec.y / qLen
+    let qz = qVec.z / qLen
+    let qw = qVec.w / qLen
+
+    let rx = 1.0 - 2.0 * (qy * qy + qz * qz)
+    let ry = 2.0 * (qx * qy + qz * qw)
+    let rz = 2.0 * (qx * qz - qy * qw)
+
+    let dx = Double(delta.x)
+    let dy = Double(delta.y)
+    let dz = Double(delta.z)
+    let pan =
+      dist > 1e-6
+      ? XRJSON.clampNum((dx * rx + dy * ry + dz * rz) / dist, -1, 1, 0)
+      : 0.0
+    let angle = (pan + 1.0) * (Double.pi / 4.0)
+    return SpatialVoiceGain(
+      gain: Float(gain),
+      pan: Float(pan),
+      leftGain: Float(gain * cos(angle)),
+      rightGain: Float(gain * sin(angle))
+    )
+  }
 
   /// Optimistic soft-lock lease on a synchronized scene node.
   public struct NodeSoftLock: Sendable, Equatable {
@@ -92,6 +154,15 @@ public enum SharedRoom {
       radius: Float,
       points: [SIMD3<Float>]
     )
+    case rtc(
+      peerId: String,
+      targetPeerId: String,
+      signalType: String,
+      sdp: String?,
+      candidate: String?,
+      sdpMid: String?,
+      sdpMLineIndex: Int?
+    )
     case leave(peerId: String)
 
     public var peerId: String {
@@ -100,6 +171,7 @@ public enum SharedRoom {
         .node(let id, _, _, _, _, _),
         .explode(let id, _),
         .paint(let id, _, _, _, _),
+        .rtc(let id, _, _, _, _, _, _),
         .leave(let id):
         return id
       }
@@ -241,6 +313,50 @@ public enum SharedRoom {
         radius: Float(XRJSON.clampNum(root["radius"], 0.002, 0.1, 0.01)),
         points: pts
       )
+    case "rtc":
+      guard let targetPeerId = XRLiveTraitParser.safeAnchorId(XRJSON.string(root["targetPeerId"])),
+        targetPeerId != peerId,
+        let st = XRJSON.string(root["signalType"])
+      else { return nil }
+      if st == "offer" || st == "answer" {
+        guard let sdp = XRJSON.string(root["sdp"]),
+          !sdp.isEmpty, sdp.count <= maxRtcSignalChars, !sdp.contains("\0")
+        else { return nil }
+        return .rtc(
+          peerId: peerId,
+          targetPeerId: targetPeerId,
+          signalType: st,
+          sdp: sdp,
+          candidate: nil,
+          sdpMid: nil,
+          sdpMLineIndex: nil
+        )
+      } else if st == "ice" {
+        guard let cand = XRJSON.string(root["candidate"]),
+          !cand.isEmpty, cand.count <= maxRtcSignalChars, !cand.contains("\0")
+        else { return nil }
+        var sdpMid: String?
+        if let rawMid = XRJSON.string(root["sdpMid"]), !rawMid.isEmpty, !rawMid.contains("\0") {
+          sdpMid = rawMid.count > 64 ? String(rawMid.prefix(64)) : rawMid
+        }
+        var sdpMLineIndex: Int?
+        if let rawIdx = XRJSON.number(root["sdpMLineIndex"]),
+          rawIdx.isFinite, rawIdx == rawIdx.rounded(.towardZero), rawIdx >= 0, rawIdx <= 64
+        {
+          sdpMLineIndex = Int(rawIdx)
+        }
+        return .rtc(
+          peerId: peerId,
+          targetPeerId: targetPeerId,
+          signalType: "ice",
+          sdp: nil,
+          candidate: cand,
+          sdpMid: sdpMid,
+          sdpMLineIndex: sdpMLineIndex
+        )
+      } else {
+        return nil
+      }
     case "leave":
       return .leave(peerId: peerId)
     default:
@@ -292,6 +408,15 @@ public enum SharedRoom {
       dict["color"] = sanitizePeerColor(color)
       dict["radius"] = q4(Double(radius))
       dict["points"] = points.map { [q4(Double($0.x)), q4(Double($0.y)), q4(Double($0.z))] }
+    case .rtc(let peerId, let targetPeerId, let signalType, let sdp, let cand, let mid, let idx):
+      dict["type"] = "rtc"
+      dict["peerId"] = peerId
+      dict["targetPeerId"] = targetPeerId
+      dict["signalType"] = signalType
+      dict["sdp"] = sdp ?? NSNull()
+      dict["candidate"] = cand ?? NSNull()
+      dict["sdpMid"] = mid ?? NSNull()
+      dict["sdpMLineIndex"] = idx ?? NSNull()
     case .leave(let peerId):
       dict["type"] = "leave"
       dict["peerId"] = peerId

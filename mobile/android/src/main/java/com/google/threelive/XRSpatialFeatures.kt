@@ -100,6 +100,9 @@ constructor(
 
     /** A remote peer won a near-simultaneous grab of [nodeId]; the local hold was released. */
     fun onPeerGrabConflict(peerId: String, nodeId: String) {}
+
+    /** Targeted WebRTC voice signaling payload (`peerrtcsignal`). */
+    fun onPeerRtcSignal(msg: SharedRoom.WireMessage.Rtc) {}
   }
 
   var listener: Listener? = null
@@ -2034,6 +2037,12 @@ constructor(
           remoteStrokeMeshIds.add(meshId)
         }
         listener?.onPeerSync(msg.peerId, "paint:${msg.strokeId}")
+        true
+      }
+      is SharedRoom.WireMessage.Rtc -> {
+        if (msg.targetPeerId != selfId) return false
+        remotePeers[msg.peerId]?.lastSeenMs = atMs
+        listener?.onPeerRtcSignal(msg)
         true
       }
     }

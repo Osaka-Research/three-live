@@ -784,7 +784,7 @@ async function runXRLiveTests() {
   }
   assert(
     stepSucceeded,
-    'Regression X1: stepSpatialFrame() executes cleanly without xr-live-extras registered',
+    'Regression X1: stepSpatialFrame() executes cleanly without xr-live-sensors registered',
   );
 
   // =========================================================================

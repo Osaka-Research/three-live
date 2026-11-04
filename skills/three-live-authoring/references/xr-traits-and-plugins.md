@@ -31,8 +31,12 @@ Attribute             | Values                                                  
 `snap-turn-deg`       | `number` (degrees)                                                                             | `30`        | Horizontal thumbstick snap-turn increment in degrees.
 `comfort-vignette`    | boolean attribute                                                                              | `true`      | Shows a `120ms` peripheral FOV comfort vignette during teleports and snap-turns.
 `shared-room`         | `'<room-id>'` or `'wss://...'`                                                                 | —           | Joins a multi-user room via `BroadcastChannel("xr-live:room:<id>")` or a `wss://` relay (`xr-live-shared-room`).
+`shared-room-voice`   | boolean attribute                                                                              | `false`     | Enables WebRTC peer-to-peer spatialized voice chat (`PannerNode` HRTF 3D audio + inverse-distance attenuation) in `shared-room`.
 `peer-name`           | `string` (max `32` chars)                                                                      | —           | Local peer display name broadcast in `shared-room`.
 `peer-color`          | `'#rrggbb'`                                                                                    | `'#38bdf8'` | Local peer 3D visor & laser ray tint color in `shared-room`.
+`bloom`               | `boolean \| string`                                                                            | —           | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`).
+`outline`             | `boolean \| string`                                                                            | —           | Enables silhouette outlines on `selected-mesh` or nodes with `userData.xr.outline` (`outline="#38bdf8 0.03"`).
+`variant-name`        | `string`                                                                                       | —           | Selects active `KHR_materials_variants` colorway name (`viewer.variantName` / `viewer.availableVariants`).
 `webmcp`              | boolean attribute                                                                              | `false`     | Registers `inspect_xr_scene`, `place_xr_object_at_gaze`, and `capture_xr_view` on `navigator.modelContext`.
 `webmcp-allow-depth`  | boolean attribute                                                                              | `false`     | Opt-in gate allowing `capture_xr_view` to include the 8×8 metric `depthGridMeters` array.
 `webmcp-omit-pose`    | boolean attribute                                                                              | `false`     | When present, `inspect_xr_scene` omits `headPosition` entirely.
@@ -192,6 +196,43 @@ mesh.userData.xr = {
 };
 ```
 
+### `bloom`, `outline`, `ik`, `splat`, & `text` (`BloomTraitOptions` / `OutlineTraitOptions` / `IKTraitOptions` / `SplatTraitOptions` / `TextTraitOptions`)
+
+```ts
+mesh.userData.xr = {
+  bloom: {
+    strength: 1.2,           // [0, 5] HDR bloom intensity (default: 1.0)
+    threshold: 0.8,          // [0, 2] luminance threshold (default: 0.8)
+    radius: 0.5,             // [0, 1] blur radius (default: 0.5)
+  },
+  outline: {
+    color: '#38bdf8',        // sanitized #rgb / #rrggbb hex color (default: '#38bdf8')
+    thickness: 0.03,         // [0.002, 0.25] outline width (default: 0.03)
+  },
+  ik: {
+    target: 'GripperTarget', // required target node name (max 128 chars)
+    solver: 'two-bone',      // 'two-bone' | 'fabrik' (default: 'two-bone')
+    chainLength: 2,          // integer [1, 32] (default: 2)
+    poleTarget: 'ElbowPole', // optional pole hint node name for two-bone solver
+    iterations: 10,          // integer [1, 64] for FABRIK (default: 10)
+    tolerance: 0.001,        // [1e-5, 0.1] convergence tolerance in meters (default: 0.001)
+  },
+  splat: {
+    url: '/assets/room.spz', // safe https:// or clean relative .splat/.spz URL
+    shDegree: 3,             // 0 | 1 | 2 | 3 Spherical Harmonics degree (default: 3)
+    maxSplats: 500000,       // [1, 1000000] splat cap
+  },
+  text: {
+    text: 'STAGE 1',         // max 256 chars
+    size: 0.2,               // [0.01, 20] glyph height in meters (default: 0.2)
+    depth: 0.04,             // [0.001, 10] extrusion depth in meters (default: 0.04)
+    bevelEnabled: true,
+    bevelThickness: 0.008,
+    bevelSize: 0.006,
+  },
+};
+```
+
 ---
 
 ## 3. Declarative `KHR_interactivity` Authoring (`userData.interactivity`)
@@ -214,45 +255,46 @@ Any mesh or group inside `<script type="text/three">` can declare interactive st
 
 ---
 
-## 4. Programmatic Plugin Controllers (`xr-live/plugins`)
+## 4. Programmatic Plugin Controllers (`xr-live/spatial`)
 
-When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-live-full.min.js`):
+When importing from `xr-live/spatial` (or using `xr-live-spatial.min.js` /
+`xr-live-full.min.js`):
 
 - **Gemini Live (`gemini-live.ts`):**
 
-  ```ts
-  import { connectGeminiLive } from 'xr-live/plugins';
+    ```ts
+    import { connectGeminiLive } from 'xr-live/spatial';
 
-  const live = connectGeminiLive(xrElement, {
-    url: 'wss://your-backend.example.com/gemini-live', // wss:// required (or ws://localhost)
-    model: 'models/gemini-2.0-flash-exp',
-    systemInstruction: 'You are a spatial assistant.',
-    frameIntervalMs: 1000,   // clamped to [250, 60000] ms
-    streamAudio: true,       // streams 16 kHz PCM mic chunks
-    playAudio: true,         // plays streamed 24 kHz PCM model audio
-    speakReplies: false,     // SpeechSynthesis fallback
-    detectObjects: true,     // auto-registers report_objects tool -> xr-object-detected events
-  });
-  ```
+    const live = connectGeminiLive(xrElement, {
+      url: 'wss://your-backend.example.com/gemini-live', // wss:// required (or ws://localhost)
+      model: 'models/gemini-2.0-flash-exp',
+      systemInstruction: 'You are a spatial assistant.',
+      frameIntervalMs: 1000,   // clamped to [250, 60000] ms
+      streamAudio: true,       // streams 16 kHz PCM mic chunks
+      playAudio: true,         // plays streamed 24 kHz PCM model audio
+      speakReplies: false,     // SpeechSynthesis fallback
+      detectObjects: true,     // auto-registers report_objects tool -> xr-object-detected events
+    });
+    ```
 - **Spatial Paint (`spatial-paint.ts`):**
 
-  ```ts
-  import { getSpatialPaintController } from 'xr-live/plugins';
+    ```ts
+    import { getSpatialPaintController } from 'xr-live/spatial';
 
-  const paint = getSpatialPaintController(xrElement);
-  paint.color = [0.22, 0.74, 0.97, 1.0];
-  paint.radius = 0.008;
-  paint.undo(xrElement.viewer);
-  paint.clear(xrElement.viewer);
-  ```
+    const paint = getSpatialPaintController(xrElement);
+    paint.color = [0.22, 0.74, 0.97, 1.0];
+    paint.radius = 0.008;
+    paint.undo(xrElement.viewer);
+    paint.clear(xrElement.viewer);
+    ```
 - **World Understanding (`world-understanding.ts`):**
 
-  ```ts
-  import { detectObjects, parseDetections, XRTapeMeasure } from 'xr-live/plugins';
+    ```ts
+    import { detectObjects, parseDetections, XRTapeMeasure } from 'xr-live/spatial';
 
-  const detections = parseDetections('[{"label":"chair","box":[200,300,800,700]}]');
-  const located3D = detectObjects(xrElement, detections);
-  ```
+    const detections = parseDetections('[{"label":"chair","box":[200,300,800,700]}]');
+    const located3D = detectObjects(xrElement, detections);
+    ```
 -   **Spatial Measure, Exploded View, Persistent Anchors, Locomotion & Shared
     Room:**
 
@@ -265,7 +307,7 @@ When importing from `xr-live/plugins` (or using `xr-live-plugins.min.js` / `xr-l
       getPersistentAnchorsController,
       getSpatialLocomotionController,
       getSharedRoomController,
-    } from 'xr-live/plugins';
+    } from 'xr-live/spatial';
 
     xrElement.setExplode(0.65);                     // Smoothly animate exploded-view [0..1]
     xrElement.clearMeasurements();                  // Clear locked 3D tape-measure segments

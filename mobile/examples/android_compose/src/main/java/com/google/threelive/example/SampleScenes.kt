@@ -217,6 +217,110 @@ object SampleScenes {
           """
             .trimIndent(),
       ),
+      ScenePreset(
+        name = "CAD CSG & 3D Text",
+        description =
+          "Procedural 2D Shape extrusion with CSG Boolean channels, extruded 3D vector text, and GPU instanced bolts",
+        mode = StudioMode.THREE_LIVE,
+        script =
+          """
+          const profile = new THREE.Shape();
+          profile.absarc(0, 0, 1.15, 0, Math.PI * 2, false);
+          const bore = new THREE.Path();
+          bore.absarc(0, 0, 0.44, 0, Math.PI * 2, true);
+          profile.holes.push(bore);
+
+          const alloyMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.78, roughness: 0.24 });
+          const rawBlank = new THREE.Mesh(
+            new THREE.ExtrudeGeometry(profile, { depth: 0.34, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.03 }),
+            alloyMat
+          );
+          rawBlank.rotation.x = -Math.PI / 2;
+          rawBlank.position.set(0, -0.17, 0);
+
+          const slotX = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.24, 0.3), alloyMat);
+          slotX.position.set(0, 0.1, 0);
+          const machined = THREE.CSG.subtract(rawBlank, slotX);
+          machined.name = "MachinedCADFlange";
+          scene.add(machined);
+
+          const textMesh = new THREE.Mesh(
+            new THREE.TextGeometry("CAD R1", { size: 0.3, depth: 0.08, bevelEnabled: true }),
+            new THREE.MeshStandardMaterial({ color: 0xf8fafc, emissive: 0x38bdf8, emissiveIntensity: 0.55 })
+          );
+          textMesh.name = "ExtrudedTextBadge";
+          textMesh.position.set(-0.7, 0.38, 0);
+          scene.add(textMesh);
+
+          const bolts = new THREE.InstancedMesh(
+            new THREE.CylinderGeometry(0.075, 0.075, 0.44, 16),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 }),
+            8
+          );
+          bolts.name = "InstancedBoltRing";
+          const m4 = new THREE.Matrix4();
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scl = new THREE.Vector3(1, 1, 1);
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+            pos.set(Math.cos(a) * 0.8, 0.02, Math.sin(a) * 0.8);
+            m4.compose(pos, quat, scl);
+            bolts.setMatrixAt(i, m4);
+          }
+          scene.add(bolts);
+          """
+            .trimIndent(),
+      ),
+      ScenePreset(
+        name = "Instanced Field",
+        description =
+          "Hardware GPU InstancedMesh 5x5x5 crystal lattice with per-instance color tints and HDR bloom core",
+        mode = StudioMode.THREE_LIVE,
+        script =
+          """
+          const grid = 5;
+          const total = grid * grid * grid;
+          const instanced = new THREE.InstancedMesh(
+            new THREE.CylinderGeometry(0.0, 0.13, 0.34, 6),
+            new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.85, roughness: 0.15 }),
+            total
+          );
+          instanced.name = "InstancedCrystalLattice";
+          const m4 = new THREE.Matrix4();
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scl = new THREE.Vector3(1, 1, 1);
+          const col = new THREE.Color();
+          let idx = 0;
+          for (let x = 0; x < grid; x++) {
+            for (let y = 0; y < grid; y++) {
+              for (let z = 0; z < grid; z++) {
+                scl.set(x >= 1 && x <= 3 && y >= 1 && y <= 3 && z >= 1 && z <= 3 ? 0.001 : 1, 1, 1);
+                pos.set((x - 2) * 0.55, (y - 2) * 0.55, (z - 2) * 0.55);
+                m4.compose(pos, quat, scl);
+                instanced.setMatrixAt(idx, m4);
+                col.setRGB(0.2 + (x / grid) * 0.75, 0.35 + (y / grid) * 0.6, 0.95 - (z / grid) * 0.5);
+                instanced.setColorAt(idx, col);
+                idx++;
+              }
+            }
+          }
+          scene.add(instanced);
+
+          const core = new THREE.Mesh(
+            new THREE.TorusKnotGeometry(0.38, 0.11, 96, 20),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.85, metalness: 0.9, roughness: 0.1 })
+          );
+          core.name = "LatticeEnergyCore";
+          core.userData.xr = {
+            bloom: { strength: 1.4, threshold: 0.65, radius: 0.5 },
+            outline: { color: "#38bdf8", thickness: 0.025 }
+          };
+          scene.add(core);
+          """
+            .trimIndent(),
+      ),
     )
 
   val XR_LIVE_PRESETS =
@@ -366,6 +470,61 @@ object SampleScenes {
             };
             scene.add(pillar);
           });
+          """
+            .trimIndent(),
+      ),
+      ScenePreset(
+        name = "Robotic Arm IK",
+        description =
+          "Articulated 2-bone inverse kinematics arm (userData.xr.ik) tracking a grabbable 6DoF target orb",
+        mode = StudioMode.XR_LIVE,
+        script =
+          """
+          const armMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.22, metalness: 0.85 });
+          const shoulder = new THREE.Group();
+          shoulder.name = 'Shoulder';
+          shoulder.position.set(-0.22, -0.1, 0);
+          const upper = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.34), armMat);
+          upper.position.set(0, 0, 0.17);
+          shoulder.add(upper);
+
+          const forearm = new THREE.Group();
+          forearm.name = 'Forearm';
+          forearm.position.set(0, 0, 0.34);
+          const lower = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.065, 0.3), armMat);
+          lower.position.set(0, 0, 0.15);
+          forearm.add(lower);
+          shoulder.add(forearm);
+
+          const wrist = new THREE.Mesh(
+            new THREE.SphereGeometry(0.06, 20, 20),
+            new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0x7e22ce, emissiveIntensity: 0.7 })
+          );
+          wrist.name = 'WristEffector';
+          wrist.position.set(0, 0, 0.3);
+          wrist.userData.xr = {
+            ik: { target: 'GripperTarget', poleTarget: 'ElbowPole', solver: 'two-bone', chainLength: 2 }
+          };
+          forearm.add(wrist);
+          scene.add(shoulder);
+
+          const pole = new THREE.Group();
+          pole.name = 'ElbowPole';
+          pole.position.set(-0.22, 0.65, 0);
+          scene.add(pole);
+
+          const target = new THREE.Mesh(
+            new THREE.SphereGeometry(0.075, 24, 24),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x16a34a, emissiveIntensity: 0.85 })
+          );
+          target.name = 'GripperTarget';
+          target.position.set(0.24, 0.18, 0.18);
+          target.userData.xr = {
+            grab: '1-hand',
+            orbit: { target: [0, 0.15, 0.1], radius: 0.25, speed: 1.0, height: 0.05 },
+            outline: { color: '#22c55e', thickness: 0.025 }
+          };
+          scene.add(target);
           """
             .trimIndent(),
       ),

@@ -906,11 +906,14 @@ limitations under the License.
     }
   </style>
   <script src="./xr-live.min.js"></script>
-  <script src="./xr-live-extras.min.js"></script>
-  <script src="./xr-live-plugins.min.js"></script>
+  <script src="./xr-live-sensors.min.js"></script>
+  <script src="./xr-live-spatial.min.js"></script>
   <script src="./xr-live-sim.min.js"></script>
+  <script src="./three-live-studio.min.js"></script>
+  <script src="./three-live-cad.min.js"></script>
+  <script src="./three-live-animation.min.js"></script>
   <script>
-    window.THREE = Object.assign({}, window.XRLive?.THREE, window.XRLive, window.XRLiveExtras);
+    window.THREE = window.XRLive?.THREE || window.THREE;
   </script>
 </head>
 <body>
@@ -920,7 +923,7 @@ limitations under the License.
         <span class="tag-pill">&lt;xr-live&gt;</span>
         Spatial Computing Playground
       </h1>
-      <span class="size-pill"><span data-bundle-size="xr-live.min.js">65.1 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
+      <span class="size-pill"><span data-bundle-size="xr-live.min.js">70.1 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
@@ -995,17 +998,32 @@ limitations under the License.
       <div class="mode-panel" id="panel-workbench">
         <div class="card">
           <div class="card-header">
-            <h2 class="card-title">Spatial Workbench</h2>
-            <span class="tag-pill">XRTraitSystem</span>
+            <h2 class="card-title">Spatial Workbench &amp; IK</h2>
+            <span class="tag-pill">XRTraitSystem + IK</span>
           </div>
           <ol class="guide-list">
-            <li>Demonstrates 6DoF spatial traits: <code>grab</code>, <code>scale</code>, <code>billboard</code>, and <code>anchor</code>.</li>
-            <li>Drag the <strong>AR Passthrough &harr; VR Skybox Blend</strong> slider below to fade between transparent AR and full VR skyboxes.</li>
+            <li>Demonstrates 6DoF spatial traits (<code>grab</code>, <code>scale</code>, <code>billboard</code>, <code>anchor</code>) and 2-Bone / FABRIK <strong>Inverse Kinematics (<code>userData.xr.ik</code>)</strong>.</li>
+            <li>Switch between <strong>6DoF Tabletop</strong> and <strong>🦾 Robotic Arm IK</strong> below, or toggle <strong>HDR Bloom</strong>, <strong>Outline</strong>, and <strong>Tone Mapping</strong>.</li>
             <li>Press <kbd>G</kbd> or click <strong>Cycle Hand Gesture</strong> to simulate 25-joint hand tracking poses.</li>
           </ol>
           <div class="btn-row">
+            <button class="action-btn primary" id="btn-wb-tabletop" onclick="switchWorkbenchPreset('workbench')">🎯 6DoF Tabletop</button>
+            <button class="action-btn" id="btn-wb-ik" onclick="switchWorkbenchPreset('ik')">🦾 Robotic Arm IK</button>
+          </div>
+          <div class="btn-row">
             <button class="action-btn primary" onclick="pulseTraitObjects()">Pulse Grabbable Artifacts</button>
             <button class="action-btn" onclick="cycleHandGesture()">Cycle Hand Gesture (G)</button>
+          </div>
+          <div class="btn-row">
+            <button class="action-btn" id="btn-xr-bloom" onclick="toggleXRBloom()">✨ Bloom: OFF</button>
+            <button class="action-btn" id="btn-xr-outline" onclick="toggleXROutline()">🟦 Outline: OFF</button>
+            <select id="select-xr-tonemap" aria-label="XR Tone Mapping" onchange="updateXRToneMapping(this.value)" style="background:#1e293b; color:#f8fafc; border:1px solid #334155; border-radius:7px; padding:5px 8px; font-size:11px; font-weight:600;">
+              <option value="neutral" selected>Tone: Neutral</option>
+              <option value="aces">Tone: ACES</option>
+              <option value="agx">Tone: AgX</option>
+              <option value="reinhard">Tone: Reinhard</option>
+              <option value="none">Tone: None</option>
+            </select>
           </div>
 
           <div class="slider-row">
@@ -1081,6 +1099,7 @@ limitations under the License.
             <button class="action-btn primary" id="btn-studio-measure" onclick="toggleStudioMeasure()">Dimensions: ON</button>
             <button class="action-btn" id="btn-studio-section" onclick="toggleStudioSection()">Section Cut: OFF</button>
             <button class="action-btn purple" id="btn-studio-room" onclick="toggleStudioSharedRoom()">Shared Room: ON</button>
+            <button class="action-btn" id="btn-studio-voice" onclick="toggleStudioVoice()">🎙️ Spatial Voice: OFF</button>
           </div>
 
           <div class="btn-row">
@@ -1201,6 +1220,7 @@ limitations under the License.
         camera-controls
         shadow-intensity="0.7"
         exposure="1.05"
+        tone-mapping="neutral"
         xr-mode="auto"
         xr-depth="occlusion-physics"
         xr-hands="gestures"
@@ -1363,6 +1383,90 @@ scene.add(orb);
 
 return scene;`,
 
+      ik: `// Robotic Arm Inverse Kinematics (2-Bone + FABRIK userData.xr.ik)
+const scene = new THREE.Scene();
+
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.22, 0.26, 0.08, 32),
+  new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.3, metalness: 0.65 })
+);
+base.name = 'Robot_Turret_Base';
+base.position.set(-0.18, 0.03, 0.04);
+scene.add(base);
+
+const armMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.22, metalness: 0.85 });
+
+// Hierarchical Bone Chain: Shoulder -> Forearm -> WristEffector
+const shoulder = new THREE.Group();
+shoulder.name = 'Shoulder';
+shoulder.position.set(-0.18, 0.08, 0.04);
+const upperMesh = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.22), armMat);
+upperMesh.name = 'Upper_Arm_Link';
+upperMesh.position.set(0, 0, 0.11);
+shoulder.add(upperMesh);
+
+const forearm = new THREE.Group();
+forearm.name = 'Forearm';
+forearm.position.set(0, 0, 0.22);
+const lowerMesh = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.19), armMat);
+lowerMesh.name = 'Forearm_Link';
+lowerMesh.position.set(0, 0, 0.095);
+forearm.add(lowerMesh);
+shoulder.add(forearm);
+
+const wrist = new THREE.Mesh(
+  new THREE.SphereGeometry(0.042, 20, 20),
+  new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0x7e22ce, emissiveIntensity: 0.7 })
+);
+wrist.name = 'WristEffector';
+wrist.position.set(0, 0, 0.19);
+wrist.userData.xr = {
+  ik: {
+    target: 'GripperTarget',
+    poleTarget: 'ElbowPole',
+    solver: 'two-bone',
+    chainLength: 2
+  }
+};
+forearm.add(wrist);
+scene.add(shoulder);
+
+// Pole hint keeping the elbow pointing upward
+const pole = new THREE.Group();
+pole.name = 'ElbowPole';
+pole.position.set(-0.18, 0.55, 0.04);
+scene.add(pole);
+
+// Grabbable 6DoF Target Orb that the robotic arm tracks in real time
+const targetOrb = new THREE.Mesh(
+  new THREE.SphereGeometry(0.052, 24, 24),
+  new THREE.MeshStandardMaterial({
+    color: 0x22c55e,
+    emissive: 0x16a34a,
+    emissiveIntensity: 0.9,
+    roughness: 0.15,
+    metalness: 0.4
+  })
+);
+targetOrb.name = 'GripperTarget';
+targetOrb.position.set(0.14, 0.24, 0.12);
+targetOrb.userData.xr = {
+  grab: '1-hand',
+  orbit: { target: [-0.02, 0.22, 0.08], radius: 0.18, speed: 1.1, height: 0.04 }
+};
+scene.add(targetOrb);
+
+// Extruded 3D Vector Text Label
+const label = new THREE.Mesh(
+  new THREE.TextGeometry('IK ARM', { size: 0.07, depth: 0.018, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.002 }),
+  new THREE.MeshStandardMaterial({ color: 0xf8fafc, emissive: 0x38bdf8, emissiveIntensity: 0.5 })
+);
+label.name = 'IK_Text_Badge';
+label.position.set(-0.34, 0.36, -0.08);
+scene.add(label);
+
+return scene;`,
+
       perception: `// Gemini Spatial Perception & Depth Occlusion Scene
 const scene = new THREE.Scene();
 
@@ -1448,6 +1552,25 @@ dome.userData.xr = {
   explode: { layer: 3, direction: [0, 0.85, 0.5], distance: 0.45, leaderLine: true }
 };
 scene.add(dome);
+
+// Instanced Fastener Ring (EXT_mesh_gpu_instancing) + 3D Text Badge
+const bolts = new THREE.InstancedMesh(
+  new THREE.CylinderGeometry(0.015, 0.015, 0.08, 12),
+  new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 }),
+  6
+);
+bolts.name = 'Chassis_Bolts';
+const bm = new THREE.Matrix4();
+const bp = new THREE.Vector3();
+const bq = new THREE.Quaternion();
+const bs = new THREE.Vector3(1, 1, 1);
+for (let i = 0; i < 6; i++) {
+  const a = (i / 6) * Math.PI * 2;
+  bp.set(Math.cos(a) * 0.17, 0.14, Math.sin(a) * 0.13);
+  bm.compose(bp, bq, bs);
+  bolts.setMatrixAt(i, bm);
+}
+scene.add(bolts);
 
 return scene;`
     };
@@ -1580,6 +1703,8 @@ return scene;`
     };
     let simPreset = 'game';
     let simAudioOn = true;
+    let workbenchPreset = 'workbench';
+    let studioVoiceOn = false;
 
     function setToast(msg) {
       document.getElementById('status-toast').textContent = msg;
@@ -1735,7 +1860,9 @@ return scene;`
       syncStudioAttributes(mode === 'studio');
       syncSimAttributes(mode === 'sim');
 
-      editorEl.value = mode === 'sim' ? SIM_SCRIPTS[simPreset] : PRESET_SCRIPTS[mode];
+      editorEl.value = mode === 'sim'
+        ? SIM_SCRIPTS[simPreset]
+        : (mode === 'workbench' ? PRESET_SCRIPTS[workbenchPreset] : PRESET_SCRIPTS[mode]);
       setToast('Switched to ' + titles[mode]);
       xrRoomEnabled = (mode === 'workbench');
       const btn = document.getElementById('btn-room-toggle');
@@ -2545,6 +2672,56 @@ return scene;`
       await switchMode('sim');
     }
 
+    async function switchWorkbenchPreset(preset) {
+      workbenchPreset = preset;
+      document.getElementById('btn-wb-tabletop')?.classList.toggle('primary', preset === 'workbench');
+      document.getElementById('btn-wb-ik')?.classList.toggle('primary', preset === 'ik');
+      await switchMode('workbench');
+    }
+
+    function toggleXRBloom() {
+      const btn = document.getElementById('btn-xr-bloom');
+      if (xrEl.hasAttribute('bloom')) {
+        xrEl.removeAttribute('bloom');
+        if (btn) {
+          btn.textContent = '✨ Bloom: OFF';
+          btn.classList.remove('primary');
+        }
+        setToast('HDR Emissive Bloom: OFF');
+      } else {
+        xrEl.setAttribute('bloom', '1.2');
+        if (btn) {
+          btn.textContent = '✨ Bloom: ON';
+          btn.classList.add('primary');
+        }
+        setToast('HDR Emissive Bloom: ON');
+      }
+    }
+
+    function toggleXROutline() {
+      const btn = document.getElementById('btn-xr-outline');
+      if (xrEl.hasAttribute('outline')) {
+        xrEl.removeAttribute('outline');
+        if (btn) {
+          btn.textContent = '🟦 Outline: OFF';
+          btn.classList.remove('primary');
+        }
+        setToast('Selection Silhouette Outline: OFF');
+      } else {
+        xrEl.setAttribute('outline', '#38bdf8 0.025');
+        if (btn) {
+          btn.textContent = '🟦 Outline: ON';
+          btn.classList.add('primary');
+        }
+        setToast('Selection Silhouette Outline: ON');
+      }
+    }
+
+    function updateXRToneMapping(mode) {
+      xrEl.setAttribute('tone-mapping', mode);
+      setToast('Tone Mapping: ' + mode.toUpperCase());
+    }
+
     function resetSimScenario() {
       window.XRSim?.resetSimScenario(xrEl);
       document.getElementById('sim-log').textContent = '';
@@ -2612,8 +2789,11 @@ return scene;`
           xrEl.setAttribute('shared-room', 'playground-studio');
           xrEl.setAttribute('peer-name', 'StudioTab');
           xrEl.setAttribute('peer-color', '#38bdf8');
+          if (studioVoiceOn) xrEl.setAttribute('shared-room-voice', '');
+          else xrEl.removeAttribute('shared-room-voice');
         } else {
           xrEl.removeAttribute('shared-room');
+          xrEl.removeAttribute('shared-room-voice');
         }
       } else {
         if (typeof xrEl.setExplode === 'function') xrEl.setExplode(0);
@@ -2632,6 +2812,7 @@ return scene;`
           'persist-url-hash',
           'locomotion',
           'shared-room',
+          'shared-room-voice',
           'peer-name',
           'peer-color'
         ].forEach((a) => xrEl.removeAttribute(a));
@@ -2695,6 +2876,21 @@ return scene;`
       if (studioRoomOn) xrEl.setAttribute('shared-room', 'playground-studio');
       else xrEl.removeAttribute('shared-room');
       setToast('Multi-tab Shared Room sync: ' + (studioRoomOn ? 'ON' : 'OFF'));
+    }
+
+    function toggleStudioVoice() {
+      studioVoiceOn = !studioVoiceOn;
+      const btn = document.getElementById('btn-studio-voice');
+      if (btn) {
+        btn.textContent = '🎙️ Spatial Voice: ' + (studioVoiceOn ? 'ON' : 'OFF');
+        btn.classList.toggle('primary', studioVoiceOn);
+      }
+      if (studioVoiceOn) {
+        xrEl.setAttribute('shared-room-voice', '');
+      } else {
+        xrEl.removeAttribute('shared-room-voice');
+      }
+      setToast('WebRTC Spatialized Voice Chat: ' + (studioVoiceOn ? 'ON (HRTF PannerNode)' : 'OFF'));
     }
 
     function saveStudioAnchors() {

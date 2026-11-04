@@ -1,7 +1,7 @@
 {
   "name": "three-live-monorepo",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "AI-First Native 3D & XR Monorepo: three-live 3D/AR engine, xr-live spatial computing suite, and native Rust/Android/iOS compiler",
   "author": "Google LLC",
   "license": "Apache-2.0",
@@ -76,15 +76,15 @@
       "import": "./xr-live/dist/xr-live-viewer.js",
       "require": "./xr-live/dist/xr-live-viewer.cjs"
     },
-    "./xr-live-extras": {
-      "types": "./xr-live/dist/xr-live-extras.d.ts",
-      "import": "./xr-live/dist/xr-live-extras.js",
-      "require": "./xr-live/dist/xr-live-extras.cjs"
+    "./xr-live-sensors": {
+      "types": "./xr-live/dist/xr-live-sensors.d.ts",
+      "import": "./xr-live/dist/xr-live-sensors.js",
+      "require": "./xr-live/dist/xr-live-sensors.cjs"
     },
-    "./xr-live-plugins": {
-      "types": "./xr-live/dist/xr-live-plugins.d.ts",
-      "import": "./xr-live/dist/xr-live-plugins.js",
-      "require": "./xr-live/dist/xr-live-plugins.cjs"
+    "./xr-live-spatial": {
+      "types": "./xr-live/dist/xr-live-spatial.d.ts",
+      "import": "./xr-live/dist/xr-live-spatial.js",
+      "require": "./xr-live/dist/xr-live-spatial.cjs"
     },
     "./xr-live-sim": {
       "types": "./xr-live/dist/xr-live-sim.d.ts",
@@ -101,10 +101,15 @@
       "import": "./three-live/dist/three-live-viewer.js",
       "require": "./three-live/dist/three-live-viewer.cjs"
     },
-    "./extras": {
-      "types": "./three-live/dist/three-live-extras.d.ts",
-      "import": "./three-live/dist/three-live-extras.js",
-      "require": "./three-live/dist/three-live-extras.cjs"
+    "./studio": {
+      "types": "./three-live/dist/three-live-studio.d.ts",
+      "import": "./three-live/dist/three-live-studio.js",
+      "require": "./three-live/dist/three-live-studio.cjs"
+    },
+    "./cad": {
+      "types": "./three-live/dist/three-live-cad.d.ts",
+      "import": "./three-live/dist/three-live-cad.js",
+      "require": "./three-live/dist/three-live-cad.cjs"
     },
     "./animation": {
       "types": "./three-live/dist/three-live-animation.d.ts",

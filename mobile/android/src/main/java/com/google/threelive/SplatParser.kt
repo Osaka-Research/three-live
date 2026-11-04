@@ -39,7 +39,9 @@ class SplatQuadGeometry(
 )
 
 /** Decoded Gaussian splat cloud (structure of arrays). */
-class SplatData(
+class SplatData
+@JvmOverloads
+constructor(
   val count: Int,
   /** xyz per splat. */
   val positions: FloatArray,
@@ -49,10 +51,30 @@ class SplatData(
   val colors: ByteArray,
   /** Unit quaternion xyzw per splat. */
   val rotations: FloatArray,
+  /** Optional Spherical Harmonics degree (`0`, `1`, `2`, or `3`). */
+  val shDegree: Int = 0,
+  /**
+   * Optional higher-order Spherical Harmonics coefficients in `[-1, 1]` (`count *
+   * SplatParser.shBasisCountForDegree(shDegree) * 3` floats, RGB-interleaved per basis).
+   */
+  val sh: FloatArray? = null,
 ) {
   internal constructor(
-    count: Int
-  ) : this(count, FloatArray(count * 3), FloatArray(count * 3), ByteArray(count * 4), FloatArray(count * 4))
+    count: Int,
+    shDegree: Int = 0,
+  ) : this(
+    count,
+    FloatArray(count * 3),
+    FloatArray(count * 3),
+    ByteArray(count * 4),
+    FloatArray(count * 4),
+    shDegree,
+    if (SplatParser.shBasisCountForDegree(shDegree) > 0) {
+      FloatArray(count * SplatParser.shBasisCountForDegree(shDegree) * 3)
+    } else {
+      null
+    },
+  )
 }
 
 /**
@@ -83,14 +105,39 @@ object SplatParser {
   private const val SPLAT_RECORD_BYTES = 32
   private const val SPZ_MAGIC = 0x5053474e
   private const val SH_C0 = 0.28209479177387814
+  private const val SH_C1 = 0.4886025119029199
+  private const val SH_C2_0 = 1.0925484305920792
+  private const val SH_C2_1 = -1.0925484305920792
+  private const val SH_C2_2 = 0.31539156525252005
+  private const val SH_C2_3 = -1.0925484305920792
+  private const val SH_C2_4 = 0.5462742152960396
+  private const val SH_C3_0 = -0.5900435899266435
+  private const val SH_C3_1 = 2.890611442640554
+  private const val SH_C3_2 = -0.4570457994644658
+  private const val SH_C3_3 = 0.3731763325901154
+  private const val SH_C3_4 = -0.4570457994644658
+  private const val SH_C3_5 = 1.445305721320277
+  private const val SH_C3_6 = -0.5900435899266435
   private const val SQRT1_2 = 0.7071067811865476
   private const val MAX_URL_CHARS = 4096
   private const val NETWORK_TIMEOUT_MS = 15_000
 
+  /** Number of higher-order SH basis functions (excluding DC) for degree `0..3`. */
+  @JvmStatic
+  fun shBasisCountForDegree(shDegree: Int): Int =
+    when (shDegree) {
+      1 -> 3
+      2 -> 8
+      3 -> 15
+      else -> 0
+    }
+
   private fun u8(b: ByteArray, i: Int): Int = b[i].toInt() and 0xFF
 
   private fun u32(b: ByteArray, o: Int): Long =
-    (u8(b, o).toLong() or (u8(b, o + 1).toLong() shl 8) or (u8(b, o + 2).toLong() shl 16) or
+    (u8(b, o).toLong() or
+      (u8(b, o + 1).toLong() shl 8) or
+      (u8(b, o + 2).toLong() shl 16) or
       (u8(b, o + 3).toLong() shl 24))
 
   private fun f32(b: ByteArray, o: Int): Float = java.lang.Float.intBitsToFloat(u32(b, o).toInt())
@@ -114,9 +161,9 @@ object SplatParser {
     }
   }
 
-  private fun allocate(count: Int): SplatData =
+  private fun allocate(count: Int, shDegree: Int = 0): SplatData =
     try {
-      SplatData(count)
+      SplatData(count, shDegree)
     } catch (e: OutOfMemoryError) {
       throw IllegalArgumentException("splat-loader: out of memory allocating $count splats", e)
     }
@@ -178,8 +225,9 @@ object SplatParser {
 
   /**
    * Parses a decompressed `.spz` payload (versions 2 and 3): 16-byte header, then SoA blocks of
-   * 24-bit fixed-point positions, alphas, colors (SH DC), log scales, and rotations (3-byte xyz
-   * for v2, 4-byte smallest-three for v3). Spherical-harmonic bands are ignored.
+   * 24-bit fixed-point positions, alphas, colors (SH DC), log scales, rotations (3-byte xyz for v2,
+   * 4-byte smallest-three for v3), and optional trailing Spherical Harmonics (bands 1–3, header
+   * byte 12).
    */
   @JvmStatic
   fun parseSpzPayload(bytes: ByteArray): SplatData {
@@ -190,12 +238,18 @@ object SplatParser {
     val countL = u32(bytes, 8)
     require(countL <= MAX_SPLATS) { "splat-loader: too many splats" }
     val count = countL.toInt()
+    val rawShDegree = u8(bytes, 12)
+    require(rawShDegree <= 3) { "splat-loader: invalid .spz shDegree $rawShDegree" }
     val fractionalBits = u8(bytes, 13)
     require(fractionalBits <= 24) { "splat-loader: invalid .spz fractional bits" }
     val rotBytes = if (version == 3L) 4 else 3
     val needed = 16L + count.toLong() * (9 + 1 + 3 + 3 + rotBytes)
     require(bytes.size >= needed) { "splat-loader: .spz payload truncated" }
-    val out = allocate(count)
+    val shBasisCount = shBasisCountForDegree(rawShDegree)
+    val shBytesPerSplat = shBasisCount * 3
+    val hasFullShBlock =
+      shBytesPerSplat > 0 && bytes.size >= needed + count.toLong() * shBytesPerSplat
+    val out = allocate(count, if (hasFullShBlock) rawShDegree else 0)
     val fixed = Math.pow(2.0, -fractionalBits.toDouble())
     var o = 16
     for (i in 0 until count * 3) {
@@ -208,6 +262,7 @@ object SplatParser {
     val colorStart = alphaStart + count
     val scaleStart = colorStart + count * 3
     val rotStart = scaleStart + count * 3
+    val shStart = rotStart + count * rotBytes
     for (i in 0 until count) {
       for (k in 0 until 3) {
         val dc = (u8(bytes, colorStart + i * 3 + k) / 255.0 - 0.5) / 0.15
@@ -243,7 +298,249 @@ object SplatParser {
       }
       normalizeQuat(out.rotations, q)
     }
+    val shArr = out.sh
+    if (hasFullShBlock && shArr != null) {
+      val totalSh = count * shBytesPerSplat
+      for (j in 0 until totalSh) {
+        shArr[j] = ((u8(bytes, shStart + j) - 128) / 128.0).toFloat()
+      }
+    }
     return out
+  }
+
+  /**
+   * Evaluates view-dependent RGB color `[0..255]` for splat [index] along unit view direction
+   * `(dirX, dirY, dirZ)` (from camera to splat) using decoded Spherical Harmonics bands 1..3 when
+   * present.
+   */
+  @JvmStatic
+  fun evaluateSplatSH(
+    data: SplatData,
+    index: Int,
+    dirX: Float,
+    dirY: Float,
+    dirZ: Float,
+  ): IntArray {
+    if (index !in 0 until data.count) return intArrayOf(0, 0, 0)
+    val r0 = data.colors[index * 4].toInt() and 0xFF
+    val g0 = data.colors[index * 4 + 1].toInt() and 0xFF
+    val b0 = data.colors[index * 4 + 2].toInt() and 0xFF
+    val deg = data.shDegree
+    val basisCount = shBasisCountForDegree(deg)
+    val sh = data.sh
+    if (deg <= 0 || basisCount <= 0 || sh == null || sh.size < (index + 1) * basisCount * 3) {
+      return intArrayOf(r0, g0, b0)
+    }
+    val len =
+      Math.sqrt((dirX * dirX + dirY * dirY + dirZ * dirZ).toDouble()).let {
+        if (it > 1e-8) it else 1.0
+      }
+    val x = dirX / len
+    val y = dirY / len
+    val z = dirZ / len
+    val offset = index * basisCount * 3
+    var r = r0 / 255.0
+    var g = g0 / 255.0
+    var b = b0 / 255.0
+
+    fun addBasis(basisIdx: Int, weight: Double) {
+      val o = offset + basisIdx * 3
+      r += weight * sh[o]
+      g += weight * sh[o + 1]
+      b += weight * sh[o + 2]
+    }
+
+    if (deg >= 1) {
+      addBasis(0, -SH_C1 * y)
+      addBasis(1, SH_C1 * z)
+      addBasis(2, -SH_C1 * x)
+    }
+    if (deg >= 2) {
+      val xx = x * x
+      val yy = y * y
+      val zz = z * z
+      val xy = x * y
+      val yz = y * z
+      val xz = x * z
+      addBasis(3, SH_C2_0 * xy)
+      addBasis(4, SH_C2_1 * yz)
+      addBasis(5, SH_C2_2 * (2.0 * zz - xx - yy))
+      addBasis(6, SH_C2_3 * xz)
+      addBasis(7, SH_C2_4 * (xx - yy))
+      if (deg >= 3) {
+        addBasis(8, SH_C3_0 * y * (3.0 * xx - yy))
+        addBasis(9, SH_C3_1 * xy * z)
+        addBasis(10, SH_C3_2 * y * (4.0 * zz - xx - yy))
+        addBasis(11, SH_C3_3 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy))
+        addBasis(12, SH_C3_4 * x * (4.0 * zz - xx - yy))
+        addBasis(13, SH_C3_5 * z * (xx - yy))
+        addBasis(14, SH_C3_6 * x * (xx - 3.0 * yy))
+      }
+    }
+    return intArrayOf(
+      Math.round(r * 255.0).toInt().coerceIn(0, 255),
+      Math.round(g * 255.0).toInt().coerceIn(0, 255),
+      Math.round(b * 255.0).toInt().coerceIn(0, 255),
+    )
+  }
+
+  /**
+   * Computes the 6 unique upper-triangular elements `[cxx, cxy, cxz, cyy, cyz, czz]` of the 3D
+   * Gaussian covariance matrix `Sigma = R * S * S^T * R^T` for splat [index].
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun computeCovariance3D(
+    scales: FloatArray,
+    rotations: FloatArray,
+    index: Int,
+    out: FloatArray = FloatArray(6),
+    outOffset: Int = 0,
+  ): FloatArray {
+    val sx = scales[index * 3].toDouble()
+    val sy = scales[index * 3 + 1].toDouble()
+    val sz = scales[index * 3 + 2].toDouble()
+    var qx = rotations[index * 4].toDouble()
+    var qy = rotations[index * 4 + 1].toDouble()
+    var qz = rotations[index * 4 + 2].toDouble()
+    var qw = rotations[index * 4 + 3].toDouble()
+    val qLen = Math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if (qLen > 1e-8) {
+      qx /= qLen
+      qy /= qLen
+      qz /= qLen
+      qw /= qLen
+    } else {
+      qx = 0.0
+      qy = 0.0
+      qz = 0.0
+      qw = 1.0
+    }
+
+    val r00 = 1.0 - 2.0 * (qy * qy + qz * qz)
+    val r01 = 2.0 * (qx * qy - qw * qz)
+    val r02 = 2.0 * (qx * qz + qw * qy)
+    val r10 = 2.0 * (qx * qy + qw * qz)
+    val r11 = 1.0 - 2.0 * (qx * qx + qz * qz)
+    val r12 = 2.0 * (qy * qz - qw * qx)
+    val r20 = 2.0 * (qx * qz - qw * qy)
+    val r21 = 2.0 * (qy * qz + qw * qx)
+    val r22 = 1.0 - 2.0 * (qx * qx + qy * qy)
+
+    val m00 = r00 * sx
+    val m01 = r01 * sy
+    val m02 = r02 * sz
+    val m10 = r10 * sx
+    val m11 = r11 * sy
+    val m12 = r12 * sz
+    val m20 = r20 * sx
+    val m21 = r21 * sy
+    val m22 = r22 * sz
+
+    out[outOffset] = (m00 * m00 + m01 * m01 + m02 * m02).toFloat()
+    out[outOffset + 1] = (m00 * m10 + m01 * m11 + m02 * m12).toFloat()
+    out[outOffset + 2] = (m00 * m20 + m01 * m21 + m02 * m22).toFloat()
+    out[outOffset + 3] = (m10 * m10 + m11 * m11 + m12 * m12).toFloat()
+    out[outOffset + 4] = (m10 * m20 + m11 * m21 + m12 * m22).toFloat()
+    out[outOffset + 5] = (m20 * m20 + m21 * m21 + m22 * m22).toFloat()
+    return out
+  }
+
+  /**
+   * Projects a 3D covariance `[cxx, cxy, cxz, cyy, cyz, czz]` to 2D screen space via the
+   * perspective Jacobian `J` and view transform [modelView] (column-major 4x4): `Sigma_2D = J * W *
+   * Sigma * W^T * J^T + 0.3 * I`.
+   *
+   * Returns a 9-float array `[covXX, covXY, covYY, lambda1, lambda2, majorX, majorY, minorX,
+   * minorY]`.
+   */
+  @JvmStatic
+  @JvmOverloads
+  fun projectCovariance2D(
+    cov3d: FloatArray,
+    modelView: FloatArray,
+    localPos: FloatArray,
+    focalX: Float,
+    focalY: Float = focalX,
+  ): FloatArray {
+    val px = localPos[0].toDouble()
+    val py = localPos[1].toDouble()
+    val pz = localPos[2].toDouble()
+    val vx = modelView[0] * px + modelView[4] * py + modelView[8] * pz + modelView[12]
+    val vy = modelView[1] * px + modelView[5] * py + modelView[9] * pz + modelView[13]
+    val vz = modelView[2] * px + modelView[6] * py + modelView[10] * pz + modelView[14]
+    val tz = Math.max(Math.abs(vz), 1e-3)
+    val signZ = if (vz < 0.0) -1.0 else 1.0
+
+    val j00 = focalX / tz
+    val j02 = (-signZ * focalX * vx) / (tz * tz)
+    val j11 = focalY / tz
+    val j12 = (-signZ * focalY * vy) / (tz * tz)
+
+    val w00 = modelView[0].toDouble()
+    val w01 = modelView[4].toDouble()
+    val w02 = modelView[8].toDouble()
+    val w10 = modelView[1].toDouble()
+    val w11 = modelView[5].toDouble()
+    val w12 = modelView[9].toDouble()
+    val w20 = modelView[2].toDouble()
+    val w21 = modelView[6].toDouble()
+    val w22 = modelView[10].toDouble()
+
+    val t00 = j00 * w00 + j02 * w20
+    val t01 = j00 * w01 + j02 * w21
+    val t02 = j00 * w02 + j02 * w22
+    val t10 = j11 * w10 + j12 * w20
+    val t11 = j11 * w11 + j12 * w21
+    val t12 = j11 * w12 + j12 * w22
+
+    val s00 = cov3d[0].toDouble()
+    val s01 = cov3d[1].toDouble()
+    val s02 = cov3d[2].toDouble()
+    val s11 = cov3d[3].toDouble()
+    val s12 = cov3d[4].toDouble()
+    val s22 = cov3d[5].toDouble()
+
+    val st00 = s00 * t00 + s01 * t01 + s02 * t02
+    val st10 = s01 * t00 + s11 * t01 + s12 * t02
+    val st20 = s02 * t00 + s12 * t01 + s22 * t02
+    val st01 = s00 * t10 + s01 * t11 + s02 * t12
+    val st11 = s01 * t10 + s11 * t11 + s12 * t12
+    val st21 = s02 * t10 + s12 * t11 + s22 * t12
+
+    val a = t00 * st00 + t01 * st10 + t02 * st20 + 0.3
+    val b = t00 * st01 + t01 * st11 + t02 * st21
+    val c = t10 * st01 + t11 * st11 + t12 * st21 + 0.3
+
+    val mid = 0.5 * (a + c)
+    val diff = 0.5 * (a - c)
+    val disc = Math.hypot(diff, b)
+    val lambda1 = Math.max(0.1, mid + disc)
+    val lambda2 = Math.max(0.1, mid - disc)
+
+    var dx = b
+    var dy = lambda1 - a
+    val dLen = Math.hypot(dx, dy)
+    if (dLen > 1e-8) {
+      dx /= dLen
+      dy /= dLen
+    } else {
+      dx = if (a >= c) 1.0 else 0.0
+      dy = if (a >= c) 0.0 else 1.0
+    }
+    val r1 = Math.min(256.0, 3.0 * Math.sqrt(lambda1))
+    val r2 = Math.min(256.0, 3.0 * Math.sqrt(lambda2))
+    return floatArrayOf(
+      a.toFloat(),
+      b.toFloat(),
+      c.toFloat(),
+      lambda1.toFloat(),
+      lambda2.toFloat(),
+      (dx * r1).toFloat(),
+      (dy * r1).toFloat(),
+      (-dy * r2).toFloat(),
+      (dx * r2).toFloat(),
+    )
   }
 
   /** Parses `.spz` bytes, transparently gunzipping when gzip-compressed. */
@@ -264,8 +561,8 @@ object SplatParser {
 
   /**
    * Returns splat indices sorted back-to-front for a column-major model-view-projection matrix,
-   * keyed on clip-space `w` with a single-pass 16-bit counting sort. Pass reusable [out],
-   * [depths], [keys] and [counts] (65536 entries) buffers to avoid per-frame allocation.
+   * keyed on clip-space `w` with a single-pass 16-bit counting sort. Pass reusable [out], [depths],
+   * [keys] and [counts] (65536 entries) buffers to avoid per-frame allocation.
    */
   @JvmStatic
   @JvmOverloads
@@ -288,8 +585,10 @@ object SplatParser {
     var max = Double.NEGATIVE_INFINITY
     for (i in 0 until count) {
       val w =
-        mvp[3] * positions[i * 3].toDouble() + mvp[7] * positions[i * 3 + 1].toDouble() +
-          mvp[11] * positions[i * 3 + 2].toDouble() + mvp[15]
+        mvp[3] * positions[i * 3].toDouble() +
+          mvp[7] * positions[i * 3 + 1].toDouble() +
+          mvp[11] * positions[i * 3 + 2].toDouble() +
+          mvp[15]
       depths[i] = w.toFloat()
       if (w < min) min = w
       if (w > max) max = w
@@ -356,7 +655,8 @@ object SplatParser {
   fun downsample(data: SplatData, maxSplats: Int = DEFAULT_MAX_CPU_SPLATS): SplatData {
     val cap = maxSplats.coerceIn(1, MAX_SPLATS)
     if (data.count <= cap) return data
-    val out = allocate(cap)
+    val out = allocate(cap, data.shDegree)
+    val shValsPerSplat = shBasisCountForDegree(data.shDegree) * 3
     val step = data.count.toDouble() / cap
     for (i in 0 until cap) {
       val src = Math.min(data.count - 1, Math.floor(i * step).toInt())
@@ -364,6 +664,9 @@ object SplatParser {
       System.arraycopy(data.scales, src * 3, out.scales, i * 3, 3)
       System.arraycopy(data.colors, src * 4, out.colors, i * 4, 4)
       System.arraycopy(data.rotations, src * 4, out.rotations, i * 4, 4)
+      if (shValsPerSplat > 0 && data.sh != null && out.sh != null) {
+        System.arraycopy(data.sh, src * shValsPerSplat, out.sh, i * shValsPerSplat, shValsPerSplat)
+      }
     }
     return out
   }
@@ -383,7 +686,12 @@ object SplatParser {
     minAngleDeg: Double = 5.0,
   ): Boolean {
     if (lastCameraWorld == null || lastNodeWorld == null) return true
-    if (lastCameraWorld.size < 16 || cameraWorld.size < 16 || lastNodeWorld.size < 16 || nodeWorld.size < 16) {
+    if (
+      lastCameraWorld.size < 16 ||
+        cameraWorld.size < 16 ||
+        lastNodeWorld.size < 16 ||
+        nodeWorld.size < 16
+    ) {
       return true
     }
     val cdx = (cameraWorld[12] - lastCameraWorld[12]).toDouble()
@@ -402,7 +710,8 @@ object SplatParser {
         lastCameraWorld[10].toDouble() * cameraWorld[10]
     if (fDot < cosLimit) return true
     // Node +X and +Z axes (normalized).
-    val nDot = axisDot(lastNodeWorld, nodeWorld, 0) * 0.5 + axisDot(lastNodeWorld, nodeWorld, 8) * 0.5
+    val nDot =
+      axisDot(lastNodeWorld, nodeWorld, 0) * 0.5 + axisDot(lastNodeWorld, nodeWorld, 8) * 0.5
     return nDot < cosLimit
   }
 
@@ -443,9 +752,9 @@ object SplatParser {
   }
 
   /**
-   * Builds camera-facing billboard quads in world space for [data] in back-to-front [order].
-   * Each splat is sized to `1.5 * max(scale.x, scale.y, scale.z) * maxAxisScale(nodeWorld)`
-   * (matching the web `3.0 * radius` diameter) and oriented along the camera's right and up axes.
+   * Builds camera-facing billboard quads in world space for [data] in back-to-front [order]. Each
+   * splat is sized to `1.5 * max(scale.x, scale.y, scale.z) * maxAxisScale(nodeWorld)` (matching
+   * the web `3.0 * radius` diameter) and oriented along the camera's right and up axes.
    */
   @JvmStatic
   fun buildSplatQuads(
@@ -462,9 +771,18 @@ object SplatParser {
     if (n == 0 || nodeWorld.size < 16 || cameraWorld.size < 16) {
       return SplatQuadGeometry(positions, uvs, colors, indices)
     }
-    val sx = Math.sqrt(nodeWorld[0] * nodeWorld[0] + nodeWorld[1] * nodeWorld[1] + nodeWorld[2] * nodeWorld[2])
-    val sy = Math.sqrt(nodeWorld[4] * nodeWorld[4] + nodeWorld[5] * nodeWorld[5] + nodeWorld[6] * nodeWorld[6])
-    val sz = Math.sqrt(nodeWorld[8] * nodeWorld[8] + nodeWorld[9] * nodeWorld[9] + nodeWorld[10] * nodeWorld[10])
+    val sx =
+      Math.sqrt(
+        nodeWorld[0] * nodeWorld[0] + nodeWorld[1] * nodeWorld[1] + nodeWorld[2] * nodeWorld[2]
+      )
+    val sy =
+      Math.sqrt(
+        nodeWorld[4] * nodeWorld[4] + nodeWorld[5] * nodeWorld[5] + nodeWorld[6] * nodeWorld[6]
+      )
+    val sz =
+      Math.sqrt(
+        nodeWorld[8] * nodeWorld[8] + nodeWorld[9] * nodeWorld[9] + nodeWorld[10] * nodeWorld[10]
+      )
     val nodeScale = maxOf(sx, sy, sz, 1e-6).toFloat()
     val rx = cameraWorld[0]
     val ry = cameraWorld[1]
@@ -472,6 +790,18 @@ object SplatParser {
     val ux = cameraWorld[4]
     val uy = cameraWorld[5]
     val uz = cameraWorld[6]
+    val camX = cameraWorld[12]
+    val camY = cameraWorld[13]
+    val camZ = cameraWorld[14]
+    // Camera right & up transformed into local space via W^T = nodeWorld^T:
+    val lrx = (nodeWorld[0] * rx + nodeWorld[1] * ry + nodeWorld[2] * rz).toFloat()
+    val lry = (nodeWorld[4] * rx + nodeWorld[5] * ry + nodeWorld[6] * rz).toFloat()
+    val lrz = (nodeWorld[8] * rx + nodeWorld[9] * ry + nodeWorld[10] * rz).toFloat()
+    val lux = (nodeWorld[0] * ux + nodeWorld[1] * uy + nodeWorld[2] * uz).toFloat()
+    val luy = (nodeWorld[4] * ux + nodeWorld[5] * uy + nodeWorld[6] * uz).toFloat()
+    val luz = (nodeWorld[8] * ux + nodeWorld[9] * uy + nodeWorld[10] * uz).toFloat()
+    val cov6 = FloatArray(6)
+    val hasSH = data.shDegree > 0 && data.sh != null
 
     for (k in 0 until n) {
       val s = order[k]
@@ -481,15 +811,73 @@ object SplatParser {
       val lz = data.positions[s * 3 + 2].toDouble()
       val wx = (nodeWorld[0] * lx + nodeWorld[4] * ly + nodeWorld[8] * lz + nodeWorld[12]).toFloat()
       val wy = (nodeWorld[1] * lx + nodeWorld[5] * ly + nodeWorld[9] * lz + nodeWorld[13]).toFloat()
-      val wz = (nodeWorld[2] * lx + nodeWorld[6] * ly + nodeWorld[10] * lz + nodeWorld[14]).toFloat()
-      val r0 = maxOf(data.scales[s * 3], data.scales[s * 3 + 1], data.scales[s * 3 + 2])
-      val half = (r0 * nodeScale * 1.5f).coerceIn(0.001f, 10f)
-      val drx = rx * half
-      val dry = ry * half
-      val drz = rz * half
-      val dux = ux * half
-      val duy = uy * half
-      val duz = uz * half
+      val wz =
+        (nodeWorld[2] * lx + nodeWorld[6] * ly + nodeWorld[10] * lz + nodeWorld[14]).toFloat()
+      val scx = data.scales[s * 3]
+      val scy = data.scales[s * 3 + 1]
+      val scz = data.scales[s * 3 + 2]
+      val drx: Float
+      val dry: Float
+      val drz: Float
+      val dux: Float
+      val duy: Float
+      val duz: Float
+      if (scx > 0f && scy > 0f && scz > 0f && (scx != scy || scy != scz)) {
+        computeCovariance3D(data.scales, data.rotations, s, cov6, 0)
+        val c00 = cov6[0]
+        val c01 = cov6[1]
+        val c02 = cov6[2]
+        val c11 = cov6[3]
+        val c12 = cov6[4]
+        val c22 = cov6[5]
+        val sr0 = c00 * lrx + c01 * lry + c02 * lrz
+        val sr1 = c01 * lrx + c11 * lry + c12 * lrz
+        val sr2 = c02 * lrx + c12 * lry + c22 * lrz
+        val su0 = c00 * lux + c01 * luy + c02 * luz
+        val su1 = c01 * lux + c11 * luy + c12 * luz
+        val su2 = c02 * lux + c12 * luy + c22 * luz
+        val a = (lrx * sr0 + lry * sr1 + lrz * sr2).toDouble()
+        val b = (lrx * su0 + lry * su1 + lrz * su2).toDouble()
+        val c = (lux * su0 + luy * su1 + luz * su2).toDouble()
+        val mid = 0.5 * (a + c)
+        val diff = 0.5 * (a - c)
+        val disc = Math.hypot(diff, b)
+        val l1 = Math.max(1e-8, mid + disc)
+        val l2 = Math.max(1e-8, mid - disc)
+        var ex = b
+        var ey = l1 - a
+        val eLen = Math.hypot(ex, ey)
+        if (eLen > 1e-8) {
+          ex /= eLen
+          ey /= eLen
+        } else {
+          ex = if (a >= c) 1.0 else 0.0
+          ey = if (a >= c) 0.0 else 1.0
+        }
+        val half1 = (Math.sqrt(l1) * 1.5).toFloat().coerceIn(0.001f, 10f)
+        val half2 = (Math.sqrt(l2) * 1.5).toFloat().coerceIn(0.001f, 10f)
+        val m1x = (rx * ex + ux * ey).toFloat()
+        val m1y = (ry * ex + uy * ey).toFloat()
+        val m1z = (rz * ex + uz * ey).toFloat()
+        val m2x = (-rx * ey + ux * ex).toFloat()
+        val m2y = (-ry * ey + uy * ex).toFloat()
+        val m2z = (-rz * ey + uz * ex).toFloat()
+        drx = m1x * half1
+        dry = m1y * half1
+        drz = m1z * half1
+        dux = m2x * half2
+        duy = m2y * half2
+        duz = m2z * half2
+      } else {
+        val r0 = maxOf(scx, scy, scz)
+        val half = (r0 * nodeScale * 1.5f).coerceIn(0.001f, 10f)
+        drx = rx * half
+        dry = ry * half
+        drz = rz * half
+        dux = ux * half
+        duy = uy * half
+        duz = uz * half
+      }
 
       val po = k * 12
       positions[po] = wx - drx - dux
@@ -516,9 +904,19 @@ object SplatParser {
       uvs[uo + 7] = 1f
 
       val co = k * 16
-      val c0 = data.colors[s * 4]
-      val c1 = data.colors[s * 4 + 1]
-      val c2 = data.colors[s * 4 + 2]
+      val c0: Byte
+      val c1: Byte
+      val c2: Byte
+      if (hasSH) {
+        val shRgb = evaluateSplatSH(data, s, wx - camX, wy - camY, wz - camZ)
+        c0 = shRgb[0].toByte()
+        c1 = shRgb[1].toByte()
+        c2 = shRgb[2].toByte()
+      } else {
+        c0 = data.colors[s * 4]
+        c1 = data.colors[s * 4 + 1]
+        c2 = data.colors[s * 4 + 2]
+      }
       val c3 = data.colors[s * 4 + 3]
       for (v in 0 until 4) {
         colors[co + v * 4] = c0
@@ -553,12 +951,28 @@ object SplatParser {
     val uvs = FloatArray(n * 8)
     val colors = ByteArray(n * 16)
     val indices = IntArray(n * 6)
+    val cov6 = FloatArray(6)
     for (s in 0 until n) {
       val lx = data.positions[s * 3]
       val ly = data.positions[s * 3 + 1]
       val lz = data.positions[s * 3 + 2]
-      val r0 = maxOf(data.scales[s * 3], data.scales[s * 3 + 1], data.scales[s * 3 + 2])
-      val half = (r0 * 1.5f).coerceIn(0.001f, 10f)
+      val scx = data.scales[s * 3]
+      val scy = data.scales[s * 3 + 1]
+      val scz = data.scales[s * 3 + 2]
+      val halfX: Float
+      val halfY: Float
+      if (scx > 0f && scy > 0f && scz > 0f && (scx != scy || scy != scz)) {
+        computeCovariance3D(data.scales, data.rotations, s, cov6, 0)
+        halfX =
+          (Math.sqrt(Math.max(1e-8, cov6[0].toDouble())) * 1.5).toFloat().coerceIn(0.001f, 10f)
+        halfY =
+          (Math.sqrt(Math.max(1e-8, cov6[3].toDouble())) * 1.5).toFloat().coerceIn(0.001f, 10f)
+      } else {
+        val r0 = maxOf(scx, scy, scz)
+        val half = (r0 * 1.5f).coerceIn(0.001f, 10f)
+        halfX = half
+        halfY = half
+      }
 
       val po = s * 12
       for (v in 0 until 4) {
@@ -568,14 +982,14 @@ object SplatParser {
       }
 
       val uo = s * 8
-      uvs[uo] = -half
-      uvs[uo + 1] = -half
-      uvs[uo + 2] = half
-      uvs[uo + 3] = -half
-      uvs[uo + 4] = half
-      uvs[uo + 5] = half
-      uvs[uo + 6] = -half
-      uvs[uo + 7] = half
+      uvs[uo] = -halfX
+      uvs[uo + 1] = -halfY
+      uvs[uo + 2] = halfX
+      uvs[uo + 3] = -halfY
+      uvs[uo + 4] = halfX
+      uvs[uo + 5] = halfY
+      uvs[uo + 6] = -halfX
+      uvs[uo + 7] = halfY
 
       val co = s * 16
       val c0 = data.colors[s * 4]
@@ -628,8 +1042,8 @@ object SplatParser {
   }
 
   /**
-   * Generates a `[size] x [size]` RGBA8 radial Gaussian falloff texture (`RGB = 255`,
-   * `A = round(255 * exp(-4 * r^2))` for `r <= 1`, `0` outside) matching the web fragment shader.
+   * Generates a `[size] x [size]` RGBA8 radial Gaussian falloff texture (`RGB = 255`, `A =
+   * round(255 * exp(-4 * r^2))` for `r <= 1`, `0` outside) matching the web fragment shader.
    */
   @JvmStatic
   @JvmOverloads
@@ -642,7 +1056,8 @@ object SplatParser {
       for (x in 0 until n) {
         val dx = (x - half) / half
         val r2 = dx * dx + dy * dy
-        val a = if (r2 > 1.0) 0 else Math.round(255.0 * Math.exp(-4.0 * r2)).toInt().coerceIn(0, 255)
+        val a =
+          if (r2 > 1.0) 0 else Math.round(255.0 * Math.exp(-4.0 * r2)).toInt().coerceIn(0, 255)
         buf.put(0xFF.toByte())
         buf.put(0xFF.toByte())
         buf.put(0xFF.toByte())

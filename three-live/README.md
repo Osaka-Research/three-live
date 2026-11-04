@@ -41,11 +41,16 @@ display existing models only, use the viewer-only build:
 
 ## Bundles
 
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | File | Contents |
 | :--- | :--- |
 | `dist/three-live-viewer.min.js` | Viewer only: `.glb` display, PBR, orbit controls, animation |
 | `dist/three-live.min.js` | Standard: viewer + sandboxed `<script type="text/three">` + AR handoff |
-| `dist/three-live-full.min.js` | Standard + all plugins (extras, animation) |
+| `dist/three-live-studio.min.js` | Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, hotspots |
+| `dist/three-live-cad.min.js` | Add-on: 2D `Path`/`Shape`, `ExtrudeGeometry`, 3D `CSG` Booleans, Hershey `TextGeometry` |
+| `dist/three-live-animation.min.js` | Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` |
+| `dist/three-live-full.min.js` | Standard + all plugins (`studio`, `cad`, `animation`) |
+<!-- mdformat on -->
 
 ES module and CommonJS builds are available through the package `exports`.
 

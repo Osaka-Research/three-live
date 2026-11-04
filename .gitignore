@@ -25,7 +25,9 @@ xr-live/dist/
 
 # Generated example bundles & embedded assets (created by `npm run build`)
 examples/three/three-live.js
+examples/**/*.min.js
 three-live/examples/three-live.js
+three-live/examples/*.min.js
 compiler/assets/three-author-engine.min.js
 
 # Per-package LICENSE copies, created from the root LICENSE by `npm pack` /

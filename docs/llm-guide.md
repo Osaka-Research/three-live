@@ -64,6 +64,11 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `holdToAsk`: `{ prompt: 'What is this?', holdMs: 600 } | true`
   - `worldUnderstanding`: `{ planes: true, meshes: false, reticle: true }`
   - `splatUrl`: `'https://.../capture.spz'` (or `.splat`)
+  - `splat`: `{ url: 'https://.../capture.spz', shDegree: 3, maxSplats: 500000 }`
+  - `bloom`: `{ strength: 1.2, threshold: 0.8, radius: 0.5 } | boolean | number`
+  - `outline`: `{ color: '#38bdf8', thickness: 0.03 } | boolean | string`
+  - `ik`: `{ target: 'TargetNodeName', solver: 'two-bone' | 'fabrik', chainLength: 2, poleTarget: 'PoleNodeName', iterations: 10, tolerance: 0.001 }`
+  - `text`: `{ text: '3D Label', size: 0.2, depth: 0.04, bevelEnabled: true }`
   - `audio`: `{ src: 'https://.../sound.mp3', refDistance: 1.0, loop: false }`
   - `character`: `true` or `{ mode: 'third-person' | 'first-person' | 'top-down' | 'fixed-camera', speed: 4, jumpVelocity: 5.5, gravity: 15, radius: 0.35, height: 1.7, cameraDistance: 3.5, cameraHeight: 1.6 }`
   - `agent`: `'patrol'` or `{ behavior: 'patrol' | 'chase' | 'flee' | 'follow' | 'wander', speed: 2.5, waypoints: [[x, y, z], ...], loop: true, sightDistance: 8, sightAngleDeg: 110, reachDistance: 0.6, target: 'character' | 'nodeName', alertBehavior: 'chase' }`
@@ -78,10 +83,10 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 - Respect strict scene quotas: max 1,000 meshes, 100,000 vertices, 300,000 indices, 16 textures, 3-second execution timeout.
 
 ### 3. Allowed `THREE.*` Constructors inside `<script type="text/three">`
-- Math: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`
-- Geometries: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `BufferGeometry`, `BufferAttribute`
-- Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial`
-- Scene Graph: `Scene`, `Group`, `Mesh`, `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`)
+- Math & IK: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`, `IKSolver` (`solveTwoBone`, `solveFABRIK`)
+- Geometries & CAD: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `LatheGeometry`, `TubeGeometry`, `Shape`, `Path`, `ShapeGeometry`, `ExtrudeGeometry`, `TextGeometry`, `CSG` (`union`, `subtract`, `intersect`), `BufferGeometry`, `BufferAttribute`
+- Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` (plus `mesh.userData.variants` for `KHR_materials_variants`)
+- Scene Graph & Instancing: `Scene`, `Group`, `Mesh`, `InstancedMesh` (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`), `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`)
 - Lights & Cameras: `AmbientLight`, `DirectionalLight`, `PointLight`, `Camera`, `PerspectiveCamera`
 ```
 

@@ -531,6 +531,160 @@ export function parseNavigable(raw: unknown): NavigableMode | null {
   return null;
 }
 
+/** Normalized 3D vector text trait (`userData.xr.text`). */
+export interface TextTraitOptions {
+  readonly text: string;
+  readonly size: number;
+  readonly depth: number;
+  readonly color: string;
+}
+
+/** Parses a `text` trait (string or `{text | value, size, depth | height, color}`). */
+export function parseTextTrait(raw: unknown): TextTraitOptions | null {
+  if (typeof raw === 'string') {
+    const text = shortString(raw, 256);
+    return text ? {text, size: 0.12, depth: 0.02, color: '#ffffff'} : null;
+  }
+  const r = asRecord(raw);
+  if (!r) return null;
+  const text = shortString(r['text'] ?? r['value'], 256);
+  if (!text) return null;
+  const size = clampNum(r['size'], 0.005, 10, 0.12);
+  const depth = clampNum(r['depth'] ?? r['height'], 0.001, 5, size * 0.2);
+  const color = safeHexColor(r['color'], '#ffffff');
+  return {text, size, depth, color};
+}
+
+/** Normalized bloom post-processing trait (`userData.xr.bloom`). */
+export interface BloomTraitOptions {
+  readonly enabled: true;
+  readonly strength: number;
+  readonly threshold: number;
+  readonly radius: number;
+}
+
+/** Parses a `bloom` trait (`true`, number strength, or `{strength, threshold, radius}`), returning `null` when disabled. */
+export function parseBloomTrait(raw: unknown): BloomTraitOptions | null {
+  if (raw === false || raw === null || raw === undefined) return null;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return {
+      enabled: true,
+      strength: clampNum(raw, 0, 5, 0.35),
+      threshold: 0.8,
+      radius: 0.5,
+    };
+  }
+  if (raw === true) {
+    return {enabled: true, strength: 0.35, threshold: 0.8, radius: 0.5};
+  }
+  const r = asRecord(raw);
+  if (!r || r['enabled'] === false) return null;
+  const strength = clampNum(r['strength'] ?? r['intensity'], 0, 5, 0.35);
+  if (strength <= 0) return null;
+  return {
+    enabled: true,
+    strength,
+    threshold: clampNum(r['threshold'], 0, 4, 0.8),
+    radius: clampNum(r['radius'], 0, 2, 0.5),
+  };
+}
+
+/** Normalized silhouette outline trait (`userData.xr.outline`). */
+export interface OutlineTraitOptions {
+  readonly enabled: true;
+  readonly color: string;
+  readonly thickness: number;
+  readonly pulse: boolean;
+}
+
+/** Parses an `outline` trait (`true`, color string, or `{color, thickness, pulse}`), returning `null` when disabled. */
+export function parseOutlineTrait(raw: unknown): OutlineTraitOptions | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    return {
+      enabled: true,
+      color: safeHexColor(raw, '#38bdf8'),
+      thickness: 3,
+      pulse: false,
+    };
+  }
+  if (raw === true) {
+    return {enabled: true, color: '#38bdf8', thickness: 3, pulse: false};
+  }
+  const r = asRecord(raw);
+  if (!r || r['enabled'] === false) return null;
+  return {
+    enabled: true,
+    color: safeHexColor(r['color'], '#38bdf8'),
+    thickness: clampNum(r['thickness'] ?? r['width'], 0.5, 20, 3),
+    pulse: r['pulse'] === true,
+  };
+}
+
+/** Normalized inverse-kinematics chain trait (`userData.xr.ik`). */
+export interface IKTraitOptions {
+  readonly root: string;
+  readonly mid?: string;
+  readonly effector: string;
+  readonly target: TraitVec3 | string;
+  readonly pole?: TraitVec3;
+  readonly solver: 'two-bone' | 'fabrik';
+  readonly iterations: number;
+  readonly tolerance: number;
+  readonly weight: number;
+}
+
+/** Parses an `ik` trait (`{root, mid?, effector, target, pole?, solver?, iterations?, tolerance?, weight?}`). */
+export function parseIKTrait(raw: unknown): IKTraitOptions | null {
+  const r = asRecord(raw);
+  if (!r || r['enabled'] === false) return null;
+  const root = safeAnchorId(r['root']);
+  const effector = safeAnchorId(r['effector']);
+  if (!root || !effector) return null;
+  const mid = safeAnchorId(r['mid']);
+  const rawTarget = r['target'];
+  let target: TraitVec3 | string;
+  if (isFiniteVec3(rawTarget)) {
+    target = [
+      clampNum(rawTarget[0], -1000, 1000, 0),
+      clampNum(rawTarget[1], -1000, 1000, 0),
+      clampNum(rawTarget[2], -1000, 1000, 0),
+    ];
+  } else {
+    const tId = safeAnchorId(rawTarget);
+    if (!tId) return null;
+    target = tId;
+  }
+  const rawPole = r['pole'];
+  const pole: TraitVec3 | undefined = isFiniteVec3(rawPole)
+    ? [
+        clampNum(rawPole[0], -1000, 1000, 0),
+        clampNum(rawPole[1], -1000, 1000, 0),
+        clampNum(rawPole[2], -1000, 1000, 0),
+      ]
+    : undefined;
+  const solver: 'two-bone' | 'fabrik' =
+    r['solver'] === 'fabrik'
+      ? 'fabrik'
+      : r['solver'] === 'two-bone'
+        ? 'two-bone'
+        : mid
+          ? 'two-bone'
+          : 'fabrik';
+  return {
+    root,
+    ...(mid ? {mid} : {}),
+    effector,
+    target,
+    ...(pole ? {pole} : {}),
+    solver,
+    iterations: Math.round(clampNum(r['iterations'], 1, 32, 8)),
+    tolerance: clampNum(r['tolerance'], 1e-5, 0.1, 1e-3),
+    weight: clampNum(r['weight'], 0, 1, 1),
+  };
+}
+
 /** Canonical, fully-normalized trait set for one node. */
 export interface NormalizedXRTraits {
   grab?: '1-hand' | '2-hand';
@@ -551,6 +705,7 @@ export interface NormalizedXRTraits {
   holdToAsk?: HoldToAskOptions;
   worldUnderstanding?: WorldUnderstandingTrait;
   splatUrl?: string;
+  splatQuality?: 'standard' | 'high';
   spatialSlot?: string;
   audio?: SpatialAudioTrait;
   dimensions?: DimensionsOptions;
@@ -559,6 +714,10 @@ export interface NormalizedXRTraits {
   gaze?: GazeOptions;
   explode?: ExplodeOptions;
   navigable?: NavigableMode;
+  text?: TextTraitOptions;
+  bloom?: BloomTraitOptions;
+  outline?: OutlineTraitOptions;
+  ik?: IKTraitOptions;
   sync?: boolean;
   pointerEvents?: 'none';
   character?: CharacterOptions;
@@ -693,6 +852,9 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (wu) out.worldUnderstanding = wu;
   const splat = safeMediaUrl(r['splatUrl']);
   if (splat) out.splatUrl = splat;
+  if (r['splatQuality'] === 'high' || r['splatQuality'] === 'standard') {
+    out.splatQuality = r['splatQuality'];
+  }
   const slot = shortString(r['spatialSlot']);
   if (slot) out.spatialSlot = slot;
   const audio = parseSpatialAudio(r['audio']);
@@ -709,6 +871,14 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (explode) out.explode = explode;
   const navigable = parseNavigable(r['navigable']);
   if (navigable) out.navigable = navigable;
+  const textTrait = parseTextTrait(r['text']);
+  if (textTrait) out.text = textTrait;
+  const bloomTrait = parseBloomTrait(r['bloom']);
+  if (bloomTrait) out.bloom = bloomTrait;
+  const outlineTrait = parseOutlineTrait(r['outline']);
+  if (outlineTrait) out.outline = outlineTrait;
+  const ikTrait = parseIKTrait(r['ik']);
+  if (ikTrait) out.ik = ikTrait;
   if (typeof r['sync'] === 'boolean') out.sync = r['sync'];
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
 
@@ -770,7 +940,11 @@ export function buildXRSceneCoreExtension(
   if (n.holdToAsk) comp['holdToAsk'] = {...n.holdToAsk};
   if (n.worldUnderstanding)
     comp['worldUnderstanding'] = {...n.worldUnderstanding};
-  if (n.splatUrl) comp['splat'] = {url: n.splatUrl};
+  if (n.splatUrl) {
+    comp['splat'] = n.splatQuality
+      ? {url: n.splatUrl, quality: n.splatQuality}
+      : {url: n.splatUrl};
+  }
   if (n.spatialSlot) comp['spatialPanel'] = {slot: n.spatialSlot};
   if (n.audio) comp['spatialAudio'] = {...n.audio};
   if (n.dimensions)
@@ -790,6 +964,16 @@ export function buildXRSceneCoreExtension(
     };
   }
   if (n.navigable) comp['navigable'] = {mode: n.navigable};
+  if (n.text) comp['text3d'] = {...n.text};
+  if (n.bloom) comp['bloom'] = {...n.bloom};
+  if (n.outline) comp['outline'] = {...n.outline};
+  if (n.ik) {
+    comp['ik'] = {
+      ...n.ik,
+      ...(Array.isArray(n.ik.target) ? {target: [...n.ik.target]} : {}),
+      ...(n.ik.pole ? {pole: [...n.ik.pole]} : {}),
+    };
+  }
   if (typeof n.sync === 'boolean') comp['sync'] = {enabled: n.sync};
   for (const ext of XR_TRAIT_EXTENSIONS) ext.sceneCore(n, comp);
   return comp;
@@ -846,6 +1030,7 @@ export function flattenXRTraitsForUsd(
   }
   if (n.worldUnderstanding) put('worldUnderstanding', n.worldUnderstanding);
   if (n.splatUrl) out['splatUrl'] = n.splatUrl;
+  if (n.splatQuality) out['splatQuality'] = n.splatQuality;
   if (n.spatialSlot) out['spatialSlot'] = n.spatialSlot;
   if (n.audio) put('audio', n.audio);
   if (n.dimensions) {
@@ -859,6 +1044,10 @@ export function flattenXRTraitsForUsd(
   if (n.gaze) put('gaze', n.gaze);
   if (n.explode) put('explode', n.explode);
   if (n.navigable) out['navigable'] = n.navigable;
+  if (n.text) put('text', n.text);
+  if (n.bloom) put('bloom', n.bloom);
+  if (n.outline) put('outline', n.outline);
+  if (n.ik) put('ik', n.ik);
   if (typeof n.sync === 'boolean') out['sync'] = n.sync;
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
   for (const ext of XR_TRAIT_EXTENSIONS) ext.usd(n, put, out);

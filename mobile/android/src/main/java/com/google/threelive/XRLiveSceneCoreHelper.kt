@@ -125,6 +125,39 @@ data class XRExplodeTrait(
 /** Normalized `anchor` persistence metadata (`persistent-anchors`). */
 data class XRAnchorPersistTrait(val id: String? = null, val persist: Boolean = true)
 
+/** Normalized `bloom` post-processing trait (`postprocessing`). */
+data class XRBloomTrait(
+  val enabled: Boolean = true,
+  val strength: Double = 0.35,
+  val threshold: Double = 0.8,
+  val radius: Double = 0.5,
+)
+
+/** Normalized silhouette `outline` trait (`postprocessing`). */
+data class XROutlineTrait(
+  val enabled: Boolean = true,
+  val color: String = "#38bdf8",
+  val thickness: Double = 3.0,
+  val pulse: Boolean = false,
+)
+
+/** Normalized inverse-kinematics `ik` trait (`userData.xr.ik`). */
+data class XRIKTrait(
+  val root: String,
+  val mid: String? = null,
+  val effector: String,
+  /** Named target node or controller, or `null` when [targetPosition] is used. */
+  val targetName: String? = null,
+  /** Literal target position `(x, y, z)`, or `null` when [targetName] is used. */
+  val targetPosition: List<Double>? = null,
+  val pole: List<Double>? = null,
+  /** `"two-bone"` or `"fabrik"`. */
+  val solver: String = "two-bone",
+  val iterations: Int = 8,
+  val tolerance: Double = 1e-3,
+  val weight: Double = 1.0,
+)
+
 /** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
   /** `head`, `hand-left` or `hand-right`. */
@@ -181,6 +214,9 @@ data class XRLiveNodeTraits(
   val gaze: XRGazeTrait? = null,
   val explode: XRExplodeTrait? = null,
   val anchorPersist: XRAnchorPersistTrait? = null,
+  val bloom: XRBloomTrait? = null,
+  val outline: XROutlineTrait? = null,
+  val ik: XRIKTrait? = null,
   /** `"walkable"` or `"blocked"` when authored via `navigable`. */
   val navigable: String? = null,
   /** Explicit multi-user `shared-room` transform sync flag (`null` inherits grabbable default). */
@@ -274,6 +310,12 @@ interface SceneCoreComponentApplier<EntityT> {
   fun onAttachExplode(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachNavigable(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachBloom(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachOutline(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachIK(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachSync(entity: EntityT, node: XRLiveNodeTraits) {}
 }
@@ -423,6 +465,9 @@ object XRLiveSceneCoreHelper {
     if (trait.gaze != null) applier.onAttachGaze(entity, trait)
     if (trait.explode != null) applier.onAttachExplode(entity, trait)
     if (trait.navigable != null) applier.onAttachNavigable(entity, trait)
+    if (trait.bloom != null) applier.onAttachBloom(entity, trait)
+    if (trait.outline != null) applier.onAttachOutline(entity, trait)
+    if (trait.ik != null) applier.onAttachIK(entity, trait)
     if (trait.sync == true) applier.onAttachSync(entity, trait)
   }
 
@@ -770,6 +815,159 @@ object XRLiveSceneCoreHelper {
     return null
   }
 
+  /** Port of `parseBloomTrait()`. */
+  @JvmStatic
+  fun parseBloom(raw: Any?): XRBloomTrait? {
+    if (raw == null || raw == false) return null
+    if (raw is Number) {
+      val v = raw.toDouble()
+      if (!v.isFinite() || v <= 0.0) return null
+      return XRBloomTrait(enabled = true, strength = clampNum(v, 0.0, 5.0, 0.35))
+    }
+    if (raw == true) return XRBloomTrait()
+    val r = MiniJson.asMap(raw) ?: return null
+    if (r["enabled"] == false) return null
+    val strength = clampNum(r["strength"] ?: r["intensity"], 0.0, 5.0, 0.35)
+    if (strength <= 0.0) return null
+    return XRBloomTrait(
+      enabled = true,
+      strength = strength,
+      threshold = clampNum(r["threshold"], 0.0, 4.0, 0.8),
+      radius = clampNum(r["radius"], 0.0, 2.0, 0.5),
+    )
+  }
+
+  /** Port of `parseOutlineTrait()`. */
+  @JvmStatic
+  fun parseOutline(raw: Any?): XROutlineTrait? {
+    if (!truthy(raw)) return null
+    if (raw is String) {
+      return XROutlineTrait(enabled = true, color = safeHexColor(raw, "#38bdf8"))
+    }
+    if (raw == true) return XROutlineTrait()
+    val r = MiniJson.asMap(raw) ?: return null
+    if (r["enabled"] == false) return null
+    return XROutlineTrait(
+      enabled = true,
+      color = safeHexColor(r["color"], "#38bdf8"),
+      thickness = clampNum(r["thickness"] ?: r["width"], 0.5, 20.0, 3.0),
+      pulse = r["pulse"] == true,
+    )
+  }
+
+  /** Port of `parseIKTrait()`. */
+  @JvmStatic
+  fun parseIK(raw: Any?): XRIKTrait? {
+    val r = MiniJson.asMap(raw) ?: return null
+    if (r["enabled"] == false) return null
+    val root = safeAnchorId(r["root"]) ?: return null
+    val effector = safeAnchorId(r["effector"]) ?: return null
+    val mid = safeAnchorId(r["mid"])
+    val rawTarget = r["target"]
+    val targetVec = finiteVec3(rawTarget)?.map { clampNum(it, -1000.0, 1000.0, 0.0) }
+    val targetName = if (targetVec == null) safeAnchorId(rawTarget) else null
+    if (targetVec == null && targetName == null) return null
+    val poleVec = finiteVec3(r["pole"])?.map { clampNum(it, -1000.0, 1000.0, 0.0) }
+    val solverRaw = r["solver"]
+    val solver =
+      when (solverRaw) {
+        "fabrik" -> "fabrik"
+        "two-bone" -> "two-bone"
+        else -> if (mid != null) "two-bone" else "fabrik"
+      }
+    return XRIKTrait(
+      root = root,
+      mid = mid,
+      effector = effector,
+      targetName = targetName,
+      targetPosition = targetVec,
+      pole = poleVec,
+      solver = solver,
+      iterations = jsRound(clampNum(r["iterations"], 1.0, 32.0, 8.0)).toInt(),
+      tolerance = clampNum(r["tolerance"], 1e-5, 0.1, 1e-3),
+      weight = clampNum(r["weight"], 0.0, 1.0, 1.0),
+    )
+  }
+
+  /**
+   * Evaluates the canonical PBR tone-mapping curve (`neutral`, `aces`, `agx`, `reinhard`, `none`),
+   * matching `evaluateToneMapping()` in `three-view.ts`.
+   */
+  @JvmStatic
+  fun evaluateToneMapping(
+    rIn: Double,
+    gIn: Double,
+    bIn: Double,
+    mode: String,
+    exposure: Double = 1.0,
+  ): DoubleArray {
+    val exp = if (exposure.isFinite()) Math.max(0.0, exposure) else 1.0
+    var r = Math.max(0.0, (if (rIn.isFinite()) rIn else 0.0) * exp)
+    var g = Math.max(0.0, (if (gIn.isFinite()) gIn else 0.0) * exp)
+    var b = Math.max(0.0, (if (bIn.isFinite()) bIn else 0.0) * exp)
+    fun clamp01(v: Double): Double = v.coerceIn(0.0, 1.0)
+    when (mode.lowercase()) {
+      "none" -> return doubleArrayOf(clamp01(r), clamp01(g), clamp01(b))
+      "reinhard" -> return doubleArrayOf(r / (r + 1.0), g / (g + 1.0), b / (b + 1.0))
+      "aces" -> {
+        fun aces(x: Double): Double {
+          val c = x * 0.6
+          return clamp01((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14))
+        }
+        return doubleArrayOf(aces(r), aces(g), aces(b))
+      }
+      "agx" -> {
+        val ir = 0.84247906 * r + 0.0784336 * g + 0.07922375 * b
+        val ig = 0.04232824 * r + 0.87846864 * g + 0.07916613 * b
+        val ib = 0.04237565 * r + 0.0784336 * g + 0.87914297 * b
+        fun sig(v: Double): Double {
+          val ev = clamp01((Math.log(Math.max(v, 1e-6)) / Math.log(2.0) + 12.47393) / 16.5)
+          val x2 = ev * ev
+          val x4 = x2 * x2
+          return 15.5 * x4 * x2 - 40.14 * x4 * ev + 31.96 * x4 - 6.868 * x2 * ev +
+            0.4298 * x2 +
+            0.1191 * ev - 0.00232
+        }
+        val sr = sig(ir)
+        val sg = sig(ig)
+        val sb = sig(ib)
+        val or = 1.196879 * sr - 0.09802088 * sg - 0.09902974 * sb
+        val og = -0.05289685 * sr + 1.15190313 * sg - 0.09896118 * sb
+        val ob = -0.05297164 * sr - 0.09804345 * sg + 1.15107367 * sb
+        return doubleArrayOf(
+          clamp01(Math.pow(Math.max(or, 0.0), 2.2)),
+          clamp01(Math.pow(Math.max(og, 0.0), 2.2)),
+          clamp01(Math.pow(Math.max(ob, 0.0), 2.2)),
+        )
+      }
+      else -> {
+        val startCompression = 0.76
+        val desaturation = 0.15
+        val x = Math.min(r, Math.min(g, b))
+        val offset = if (x < 0.08) x - 6.25 * x * x else 0.04
+        r -= offset
+        g -= offset
+        b -= offset
+        val peak = Math.max(r, Math.max(g, b))
+        if (peak < startCompression) {
+          return doubleArrayOf(clamp01(r), clamp01(g), clamp01(b))
+        }
+        val d = 1.0 - startCompression
+        val newPeak = 1.0 - (d * d) / (peak + d - startCompression)
+        val scale = newPeak / peak
+        r *= scale
+        g *= scale
+        b *= scale
+        val gt = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0)
+        return doubleArrayOf(
+          clamp01(r + (newPeak - r) * gt),
+          clamp01(g + (newPeak - g) * gt),
+          clamp01(b + (newPeak - b) * gt),
+        )
+      }
+    }
+  }
+
   /** JavaScript `Math.round` (half rounds toward +infinity). */
   private fun jsRound(v: Double): Double = Math.floor(v + 0.5)
 
@@ -918,6 +1116,9 @@ object XRLiveSceneCoreHelper {
       gaze = parseGaze(xr["gaze"] ?: sc["gaze"]),
       explode = parseExplode(xr["explode"] ?: sc["explode"]),
       anchorPersist = anchorPersist,
+      bloom = parseBloom(xr["bloom"] ?: sc["bloom"]),
+      outline = parseOutline(xr["outline"] ?: sc["outline"]),
+      ik = parseIK(xr["ik"] ?: sc["ik"]),
       navigable = parseNavigable(xr["navigable"] ?: sc["navigable"]),
       sync = (xr["sync"] as? Boolean) ?: (MiniJson.asMap(sc["sync"])?.get("enabled") as? Boolean),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,

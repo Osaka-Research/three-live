@@ -1769,3 +1769,64 @@ fn test_glb_writer_rejects_invalid_hierarchy_links() {
     assert!(gltf["nodes"][1].get("rotation").is_none(), "non-finite rotation -> identity");
     assert_eq!(gltf["nodes"][1]["translation"], serde_json::json!([0.0, 1.0, 0.0]));
 }
+
+#[test]
+fn test_phase2_cad_extrude_csg_and_text_parity() {
+    let script = r##"
+        const shape = new THREE.Shape();
+        shape.moveTo(-0.5, -0.5);
+        shape.lineTo(0.5, -0.5);
+        shape.lineTo(0.5, 0.5);
+        shape.lineTo(-0.5, 0.5);
+        shape.closePath();
+
+        const hole = new THREE.Path();
+        hole.absarc(0, 0, 0.2, 0, Math.PI * 2, false);
+        shape.holes.push(hole);
+
+        const extrudeGeo = new THREE.ExtrudeGeometry(shape, {
+            depth: 0.25,
+            bevelEnabled: true,
+            bevelThickness: 0.02,
+            bevelSize: 0.02,
+            bevelSegments: 1,
+        });
+        const baseMesh = new THREE.Mesh(
+            extrudeGeo,
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        const cutter = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.2, 0.6));
+        const csgPart = THREE.CSG.subtract(baseMesh, cutter);
+        csgPart.name = "CSGBracket";
+        scene.add(csgPart);
+
+        const label = new THREE.Mesh(
+            new THREE.TextGeometry("CAD-01", { size: 0.15, depth: 0.03 }),
+            new THREE.MeshStandardMaterial({ color: 0xffffff })
+        );
+        label.name = "TextMesh";
+        label.position.set(0, 0.8, 0);
+        scene.add(label);
+
+        const traitLabel = new THREE.Mesh();
+        traitLabel.name = "TraitLabel";
+        traitLabel.userData.xr = { text: { text: "OK", size: 0.1, depth: 0.02, color: "#22c55e" } };
+        scene.add(traitLabel);
+    "##;
+
+    let glb = transcode_three_to_glb(script).expect("CAD + CSG + Text should compile to GLB");
+    let gltf = parse_gltf_json(&glb);
+    let meshes = gltf["meshes"].as_array().expect("meshes array");
+    assert_eq!(meshes.len(), 3, "expected 3 meshes (CSGBracket, TextMesh, TraitLabel)");
+
+    let nodes = gltf["nodes"].as_array().expect("nodes array");
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(
+        nodes[2]["extensions"]["ANDROID_xr_scenecore"]["text3d"]["text"],
+        serde_json::json!("OK")
+    );
+
+    let usdz = three_live_compiler::compile_three_to_usdz(script)
+        .expect("CAD + CSG + Text should compile to USDZ");
+    assert!(usdz.len() > 1000, "USDZ should contain extruded and CSG geometry");
+}

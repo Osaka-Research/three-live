@@ -22,6 +22,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [1.2.2] - 2026-11-04
+
+### Added
+
+-   **Domain-Scoped Modular Sub-Bundles (`three-live` & `xr-live`):**
+    -   `three-live/viewer` (`27.3 KB` gz), `three-live` (`58.6 KB` gz),
+        `three-live/studio` (`21.5 KB` gz), `three-live/cad` (`8.8 KB` gz),
+        `three-live/animation` (`7.8 KB` gz), and `three-live/full` (`90.5 KB`
+        gz).
+    -   `xr-live/viewer` (`49.0 KB` gz), `xr-live` (`70.1 KB` gz),
+        `xr-live/sensors` (`9.5 KB` gz), `xr-live/spatial` (`55.3 KB` gz),
+        `xr-live/sim` (`21.6 KB` gz), and `xr-live/full` (`176.7 KB` gz).
+-   **Mesh Compression, Material Variants & Hardware GPU Instancing:**
+    -   `EXT_meshopt_compression` (`meshopt.ts`): Zero-Wasm LZ77 + zig-zag
+        delta/exponential-Golomb decoder with `VERTEX` (`n*4` / `n*2`),
+        `TRIANGLES`, and `ATTRIBUTES` filters across Web, Android, and iOS.
+    -   `KHR_materials_variants` (`variant_name`, `variants`, `selectVariant`,
+        `variantchange` event) across Web, Android, and iOS.
+    -   `EXT_mesh_gpu_instancing` & `THREE.InstancedMesh` (`setMatrixAt`,
+        `setColorAt`, single-draw-call `drawElementsInstanced` in WebGL2, and
+        USDZ `PointInstancer` transcoding).
+-   **2D Shapes, Beveled Extrusions, CSG Booleans & 3D Vector Text
+    (`three-live/cad`):**
+    -   `THREE.Path` & `THREE.Shape` (`moveTo`, `lineTo`, `quadraticCurveTo`,
+        `bezierCurveTo`, `absarc`, `holes`) with Earcut polygon triangulation
+        and `THREE.ExtrudeGeometry` (multi-segment bevels).
+    -   `THREE.CSG` (`union`, `subtract`, `intersect`) manifold 3D BSP solid
+        modeling and `THREE.TextGeometry` (built-in Hershey simplex vector font
+        table).
+-   **3D Gaussian Splatting (`covariance` & Degree-1 Spherical Harmonics):**
+    -   Full 3D anisotropic scale + quaternion rotation -> 3D covariance
+        $\Sigma$ -> EWA screen-space 2D conic projection with view-dependent
+        degree-1 SH color evaluation across Web, Android, and iOS.
+-   **Filmic Tone Mapping, 3-Level Dual-Kawase HDR Bloom & Silhouette Outlines
+    (`three-live/studio`):**
+    -   `tone-mapping` (`neutral`, `aces`, `agx`, `reinhard`, `none`), `bloom`
+        (`bloom-threshold`, `bloom-radius`, `userData.xr.bloom` with transparent
+        background alpha preservation), and `outline` (`outline-color`,
+        `outline-selected`, `userData.xr.outline` via depth-tested stencil
+        silhouette extrusion) across Web, Android, and iOS.
+-   **Inverse Kinematics & Spatial WebRTC Voice (`three-live/animation` &
+    `xr-live/spatial`):**
+    -   `ikPlugin` & `THREE.IKSolver` (`solveTwoBone`, `solveFABRIK`,
+        `userData.xr.ik` chains) across Web, Android (`IKSolver`), and iOS
+        (`IKSolver`).
+    -   `webrtcVoicePlugin` (`webrtc-voice` attribute, `WebRTCVoice` signaling,
+        and 3D `PannerNode` HRTF spatialization synced with `SharedRoom` peers)
+        across Web, Android (`WebRTCVoice`), and iOS (`WebRTCVoice`).
+
+### Fixed
+
+-   Fixed `mat3NormalFromMat4` in `three-live/src/math.ts` to write $3 \times 3$
+    cofactors in column-major order so rotated meshes keep stable world-space
+    normals during turntable rotation.
+-   Paused `orbit` trait motion when `autoRotate` (`Start Spin` / `Pause Spin`)
+    is disabled.
+
+--------------------------------------------------------------------------------
+
 ## [1.2.1] - 2026-11-03
 
 ### Added
@@ -95,7 +154,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 -   **Renamed `XRBlocks*` to `XRSpatial*` across Web, Android, and iOS:**
-    -   Web: `window.XRSpatial` (`xr-live/plugins`), `xrSpatialPlugins`, and
+    -   Web: `window.XRSpatial` (`xr-live/spatial`), `xrSpatialPlugins`, and
         `xr-spatial` attribute (retaining `window.XRBlocks` / `xr-blocks`
         aliases for backward compatibility).
     -   Android: `XRSpatialFeatures` and `XRSpatialMath`.
@@ -155,9 +214,13 @@ Initial public **Developer Preview** release of **Three-Live**: an AI-first, mul
   - Built-in runtime binary `.glb` and uncompressed `.usdz` packagers for zero-server 1-tap mobile AR handoff to Apple Quick Look and Android Scene Viewer.
 
 - **`<xr-live>` Spatial Computing Suite (`xr-live`):**
-  - Extends `<three-live>` with declarative 6DoF WebXR spatial traits (`grab`, `scale`, `billboard`, `anchor`) via `<xr-anchor>` and procedural `userData.xrTraits`.
-  - Live raycastable 3D HTML UI cards via `<div slot="spatial">`.
-  - Deep XR add-on (`xr-live-extras.min.js`): `XRDepthManager` real-world depth occlusion, `XRHeightfieldPhysics` rigid-body ballistics, 25-joint `XRHandGestureClassifier` (`pinch`, `poke`, `palm-up`), `XRDesktopSimulator` for headset-free keyboard/mouse testing, spatial Web Audio, and WebMCP agent tools.
+    - Extends `<three-live>` with declarative 6DoF WebXR spatial traits (`grab`, `scale`, `billboard`, `anchor`) via `<xr-anchor>` and procedural `userData.xrTraits`.
+    - Live raycastable 3D HTML UI cards via `<div slot="spatial">`.
+    -   Hardware XR sensors add-on (`xr-live-sensors.min.js`): `XRDepthManager`
+        real-world depth occlusion, `XRHeightfieldPhysics` rigid-body
+        ballistics, 25-joint `XRHandGestureClassifier` (`pinch`, `poke`,
+        `palm-up`), `XRDesktopSimulator` for headset-free keyboard/mouse
+        testing, spatial Web Audio, and WebMCP agent tools.
 
 - **Two-Tier Web Sandbox & Security Architecture:**
   - **Tier 1 (Default):** Isolated Web Worker execution (`buildSandboxWorkerSource`) with network/storage primitives stripped, `Object.prototype` frozen, and strict per-frame execution time and geometry quotas (`SceneQuotaValidator`).

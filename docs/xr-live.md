@@ -61,10 +61,10 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 
 `<xr-live>` addresses both web and native apps from a single scene definition:
 
-*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 46 KB gz`
-    for `xr-live-viewer.min.js`, or `< 66 KB gz` for `xr-live.min.js` with live
+*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 50 KB gz`
+    for `xr-live-viewer.min.js`, or `< 83 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
-    each, or `< 52 KB gz` for all 14 combined).
+    each, or `< 56 KB gz` for all 14 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
     `XRLiveRealityKitSession`):** The in-process Rust compiler
     (`ThreeLiveCompiler`) compiles `<script type="text/three">` on-device,
@@ -126,8 +126,8 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 ### Register optional plugins for advanced features
 
 When bundling with Vite, Rollup, esbuild, or Webpack, you can pair the
-`<xr-live>` core (`three-live/xr-live` at `< 66 KB gz`, or
-`three-live/xr-live-viewer` at `< 46 KB gz`) with only the specific plugins your
+`<xr-live>` core (`three-live/xr-live` at `< 83 KB gz`, or
+`three-live/xr-live-viewer` at `< 50 KB gz`) with only the specific plugins your
 application uses:
 
 ```ts
@@ -145,8 +145,9 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 ```
 
 To load all 14 spatial plugins without a bundler, import
-`/dist/xr-live-plugins.min.js` (`< 52 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 151 KB gz`, which also includes the 5 `xr-live-sim` simulation plugins).
+`/dist/xr-live-spatial.min.js` (`< 56 KB gz`) or `/dist/xr-live-full.min.js`
+(`< 177 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
+simulation plugins).
 
 --------------------------------------------------------------------------------
 
@@ -184,8 +185,12 @@ spatial attributes listed in the following table:
 | `<xr-live>` | `snap-turn-deg` | `number` (degrees) | `30` | Horizontal thumbstick snap-turn angle in degrees. |
 | `<xr-live>` | `comfort-vignette` | `boolean` | `true` | Renders a `120ms` peripheral FOV comfort vignette during teleports and snap-turns. |
 | `<xr-live>` | `shared-room` | `'<room-id>'` or `'wss://...'` | — | Enables `xr-live-shared-room` multi-user co-presence via `BroadcastChannel` or WebSocket relay. |
+| `<xr-live>` | `shared-room-voice` | `boolean` | `false` | Enables WebRTC peer-to-peer spatialized voice chat (`PannerNode` HRTF 3D audio + inverse-distance attenuation) in `shared-room`. |
 | `<xr-live>` | `peer-name` | `string` (max `32` chars) | — | Local peer display name broadcast to room participants. |
 | `<xr-live>` | `peer-color` | `'#rrggbb'` | `'#38bdf8'` | Local peer 3D visor and laser ray tint color in `shared-room`. |
+| `<xr-live>` | `bloom` | `boolean \| string` | — | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`). |
+| `<xr-live>` | `outline` | `boolean \| string` | — | Enables silhouette outlines on `selected-mesh` or nodes with `userData.xr.outline` (`outline="#38bdf8 0.03"`). |
+| `<xr-live>` | `variant-name` | `string` | — | Active `KHR_materials_variants` product material variant name. |
 | `<xr-live>` | `webmcp` | `boolean` | `false` | Registers spatial AI tools (`inspect_xr_scene`, `place_xr_object_at_gaze`, `capture_xr_view`) on `navigator.modelContext`. |
 | `<xr-live>` | `webmcp-allow-depth` | `boolean` | `false` | Opt-in gate required before `capture_xr_view` exposes the 8×8 metric `depthGridMeters` array. |
 | `<xr-live>` | `webmcp-omit-pose` | `boolean` | `false` | Omits `headPosition` from `inspect_xr_scene` responses. |
@@ -226,7 +231,12 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`particles`** | `{ preset: 'rain' \| 'snow' \| 'sparks' \| 'confetti', count?: number, area?: number \| [x,y,z], speed?: number }` | Turns the node into a particle emitter volume (`count` up to `2,000`) that collides with the floor and WebXR depth surfaces. |
 | **`holdToAsk`** | `{ prompt?: string, holdMs?: number } \| true` | Press-and-hold on the mesh starts speech recognition and sends a contextual prompt to Gemini Live; emits `xr-hold-to-ask`. |
 | **`worldUnderstanding`** | `{ planes?: boolean, meshes?: boolean, reticle?: boolean, objects?: boolean }` | Opts the scene into WebXR plane and mesh detection and the gaze surface reticle (`__xr_reticle__`). |
-| **`splatUrl`** | `string` (`https://` or relative `.splat` or `.spz` URL) | Loads and back-to-front depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2 and v3, up to `1,000,000` splats). |
+| **`splatUrl`** | `string` (`https://` or relative `.splat` or `.spz` URL) | Loads and back-to-front depth-sorts 3D Gaussian Splats (`.splat` or Niantic `.spz` v2 and v3 with anisotropic 3D covariance and SH degree 1–3, up to `1,000,000` splats). |
+| **`splat`** | `string` **or** `{ url: string, shDegree?: 0 \| 1 \| 2 \| 3, maxSplats?: number }` | Structured 3D Gaussian Splat trait controlling Spherical Harmonics evaluation degree (`0..3`) and splat cap. |
+| **`bloom`** | `{ strength?: number, threshold?: number, radius?: number } \| boolean \| number` | Enables HDR emissive bloom on the scene/node (`strength` in `[0, 5]`, `threshold` in `[0, 2]`, `radius` in `[0, 1]`). |
+| **`outline`** | `{ color?: string, thickness?: number } \| boolean \| string` | Renders an inverted-hull / screen-space silhouette outline (`thickness` in `[0.002, 0.25]`) around the node. |
+| **`ik`** | `{ target: string, solver?: 'two-bone' \| 'fabrik', chainLength?: number, poleTarget?: string, iterations?: number, tolerance?: number }` | Solves analytical 2-bone or multi-joint FABRIK inverse kinematics toward `target` (and optional `poleTarget`) every frame. |
+| **`text`** | `{ text: string, size?: number, depth?: number, bevelEnabled?: boolean, bevelThickness?: number, bevelSize?: number }` | Extruded 3D vector text metadata exported to glTF `extras.xr.text` and USDZ `customData.xr`. |
 | **`audio`** | `string` **or** `{ src: string, refDistance?: number, loop?: boolean }` | Attaches a 3D `PannerNode` HRTF audio source to the mesh. |
 | **`pointerEvents`** | `'none'` | Excludes the mesh from raycast picking so rays pass through it. |
 <!-- mdformat on -->
@@ -236,7 +246,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 ## Spatial plugin suite
 
 All 14 spatial plugins are included in `xr-live-full.min.js` and
-`xr-live-plugins.min.js`, or can be imported individually from
+`xr-live-spatial.min.js`, or can be imported individually from
 `xr-live/src/plugins/<name>` and registered via
 `XRLiveElement.registerPlugin(plugin)`. Every plugin has a corresponding native
 implementation in Android (`mobile/android/src/main/java/com/google/threelive/`)
@@ -275,8 +285,12 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     PRNG and real-world WebXR depth collision (`isOccludedByDepth`).
 *   **`splat-loader` (`xr-live-splat-loader`):** Streams `.splat` (32-byte
     records) and Niantic `.spz` (v2 and v3, raw or gzipped) 3D Gaussian Splat
-    files for any node with `userData.xr.splatUrl`, sorting splats back-to-front
-    with a 16-bit counting sort on each frame.
+    files for any node with `userData.xr.splatUrl` or `userData.xr.splat`,
+    reconstructing full 3D covariance matrices (`computeSplatCovariance3D`),
+    projecting EWA 2D elliptical splat axes (`projectSplatCovariance2D`),
+    evaluating view-dependent Spherical Harmonics degrees 1–3
+    (`evaluateSplatSH`), and sorting splats back-to-front with a 16-bit counting
+    sort on each frame.
 *   **`spatial-measure` (`xr-live-spatial-measure`):** Renders live `W × H × D`
     bounding-box dimension callout bars and procedural 3D vector-glyph labels
     (`userData.xr.dimensions` or `spatial-measure="bounds"`), plus an
@@ -323,8 +337,11 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     head poses and tinted 3D peer visor pills and laser rays, enforces `2000ms`
     optimistic soft-lock ownership leases on grabbed nodes (local grabs on a
     node another peer holds are refused; near-simultaneous grabs resolve to the
-    lowest `peerId` on every peer), and synchronizes `exploded-view` factors and
-    `spatial-paint` 3D tube strokes (`MAX_REMOTE_STROKES = 64`). Dispatches
+    lowest `peerId` on every peer), synchronizes `exploded-view` factors and
+    `spatial-paint` 3D tube strokes (`MAX_REMOTE_STROKES = 64`), and supports
+    optional WebRTC peer-to-peer spatialized voice chat (`shared-room-voice`,
+    routing each peer's audio stream through a 3D HRTF `PannerNode` and
+    `computeSpatialVoiceGain` inverse-distance attenuation). Dispatches
     `peerjoin`, `peerleave`, `peersync`, and `peergrabconflict`.
 
 --------------------------------------------------------------------------------
@@ -364,21 +381,15 @@ Add these keys to `userData.xr` on any mesh or group:
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Trait | Shape |
 | :---------- | :------------------------------------------------- |
-| `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, |
+| `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, clips: { idle, walk, run, jump } }`. Camera modes: `third-person`, `first-person`, `top-down`, `fixed`. |
+| `agent` | A mode string or `{ mode, target, speed, turnSpeed, sightRadius, stopDistance, separationRadius, waypoints, loopWaypoints }`. `target` is a node name or `'user'` (the character, else the viewer). |
+| `integrity` | A max number or `{ max, current, group, showBar, cooldownMs, hideOnDepleted, scoreValue, contactAmount }`. Hits skip nodes in the shooter's own `group`. |
+| `zone` | `'box'`, `'sphere'`, or `{ shape, size, radius, watchGroups, color }`. |
+| `spawner` | A template node name or `{ template, intervalSec, maxActive, totalCount, spawnRadius }`. The template node is hidden. |
+| `objective` | A type or `{ type, amount, tag, radius, required, order, spinSpeed, bobAmplitude, respawnSec }`. Types: `pickup`, `checkpoint`, `key`, `time-bonus`, `restore`. `order > 0` enforces ascending order. |
+| `audioCues` | `{ onTap, onObjective, onHit, onDepleted, onZoneEnter, onZoneExit, onSpawn, onJump, onLand, pitchJitter, volume, spatial }`. Cue names: `confirm`, `error`, `alarm`, `warning`, `pickup`, `jump`, `beam`, `impact`, `burst`, `powerup`, `step`, `pass`, `fail`. |
+| `collidable` | `true` makes the node a wall or floor for characters and agents. |
 <!-- mdformat on -->
-
-\: : clips: { idle, walk, run, jump }
-}`. Camera modes: `third-person`, : : :`first-person`, `top-down`, `fixed`. : |`agent`|
-A mode string
-or`{ mode, target, speed, turnSpeed, sightRadius, | : : stopDistance, separationRadius, waypoints, loopWaypoints }`. `target`: : : is a node name or`'user'`(the character, else the viewer). : |`integrity`|
-A max number
-or`{ max, current, group, showBar, cooldownMs, | : : hideOnDepleted, scoreValue, contactAmount }`. Hits skip nodes in the : : : shooter's own`group`. : |`zone`|`'box'`, `'sphere'`, or`{ shape, size, radius, watchGroups, color }`. | |`spawner`|
-A template node name
-or`{ template, intervalSec, maxActive, | : : totalCount, spawnRadius }`. The template node is hidden. : |`objective`|
-A type
-or`{ type, amount, tag, radius, required, order, spinSpeed, | : : bobAmplitude, respawnSec }`. Types: `pickup`, `checkpoint`, `key`, : : :`time-bonus`, `restore`. `order >
-0`enforces ascending order. : |`audioCues`|`{ onTap, onObjective, onHit, onDepleted, onZoneEnter, onZoneExit, | : : onSpawn, onJump, onLand, pitchJitter, volume, spatial }`. Cue names: : : :`confirm`, `error`, `alarm`, `warning`, `pickup`, `jump`, `beam`, : : :`impact`, `burst`, `powerup`, `step`, `pass`, `fail`. : |`collidable`|`true`
-makes the node a wall or floor for characters and agents. |
 
 `audioCues` is separate from the file-based `audio` trait. Characters and agents
 face local +Z.

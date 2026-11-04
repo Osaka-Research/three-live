@@ -199,7 +199,7 @@ ask a voice question about that specific part.
 
 <script type="module">
   import '/dist/xr-live-full.min.js';
-  import { connectGeminiLive } from '/dist/xr-live-plugins.min.js';
+  import { connectGeminiLive } from '/dist/xr-live-spatial.min.js';
 
   const xr = document.getElementById('gemini-scene');
   xr.addEventListener('xr-transcription', (e) => {
@@ -574,3 +574,195 @@ attribute, and event.
 To build a game instead, add a `character` node (moved with WASD, a gamepad, or
 the touch joystick), set `hit-zones="projectile"`, and give targets an
 `integrity` trait with a `scoreValue`.
+
+--------------------------------------------------------------------------------
+
+## 10. Procedural CAD Extrusion, CSG Booleans, 3D Text & GPU Instancing (`<three-live>`)
+
+Combines 2D `THREE.Shape` + hole paths with `THREE.ExtrudeGeometry`, manifold
+CSG Boolean subtraction (`THREE.CSG.subtract`), extruded 3D vector text
+(`THREE.TextGeometry`), and single-draw-call hardware GPU instancing
+(`THREE.InstancedMesh` -> glTF `EXT_mesh_gpu_instancing` / USDZ
+`PointInstancer`) with ACES Filmic tone mapping and HDR emissive bloom:
+
+```html
+<script type="module" src="/dist/three-live.min.js"></script>
+
+<three-live
+  allow-client-scripts
+  camera-controls
+  auto-rotate
+  ar
+  tone-mapping="aces"
+  bloom="1.2"
+  outline="#38bdf8 0.025"
+  shadow-intensity="0.8"
+  style="width: 100%; height: 540px; display: block;">
+  <script type="text/three">
+    // 1. 2D CAD profile with central bore hole -> ExtrudeGeometry with bevels
+    const flangeProfile = new THREE.Shape();
+    flangeProfile.absarc(0, 0, 0.55, 0, Math.PI * 2, false);
+    const centerHole = new THREE.Path();
+    centerHole.absarc(0, 0, 0.22, 0, Math.PI * 2, true);
+    flangeProfile.holes.push(centerHole);
+
+    const flangeGeo = new THREE.ExtrudeGeometry(flangeProfile, {
+      depth: 0.16,
+      bevelEnabled: true,
+      bevelThickness: 0.025,
+      bevelSize: 0.02,
+      bevelSegments: 2,
+      curveSegments: 32
+    });
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0x94a3b8,
+      metalness: 0.78,
+      roughness: 0.24
+    });
+    const rawFlange = new THREE.Mesh(flangeGeo, steelMat);
+    rawFlange.rotation.x = -Math.PI / 2;
+
+    // 2. CSG Boolean Subtraction: machine a precision cross-slot through the flange
+    const cutter = new THREE.Mesh(
+      new THREE.BoxGeometry(1.3, 0.14, 0.16),
+      steelMat
+    );
+    cutter.position.set(0, 0.12, 0);
+    const machinedPart = THREE.CSG.subtract(rawFlange, cutter);
+    machinedPart.name = 'machined-flange';
+    machinedPart.userData.xr = { outline: { color: '#38bdf8', thickness: 0.02 } };
+    scene.add(machinedPart);
+
+    // 3. 3D Extruded Vector Text badge
+    const badge = new THREE.Mesh(
+      new THREE.TextGeometry('CAD R1', {
+        size: 0.14,
+        depth: 0.035,
+        bevelEnabled: true,
+        bevelThickness: 0.006,
+        bevelSize: 0.005
+      }),
+      new THREE.MeshStandardMaterial({
+        color: 0xf8fafc,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.45,
+        metalness: 0.5,
+        roughness: 0.2
+      })
+    );
+    badge.name = 'cad-badge';
+    badge.position.set(-0.32, 0.28, 0);
+    scene.add(badge);
+
+    // 4. GPU Instanced Bolt Ring (single draw call via EXT_mesh_gpu_instancing)
+    const boltCount = 12;
+    const bolts = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.035, 0.035, 0.22, 16),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 }),
+      boltCount
+    );
+    bolts.name = 'bolt-ring';
+    const mat4 = new THREE.Matrix4();
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3(1, 1, 1);
+    for (let i = 0; i < boltCount; i++) {
+      const a = (i / boltCount) * Math.PI * 2;
+      pos.set(Math.cos(a) * 0.39, 0.09, Math.sin(a) * 0.39);
+      mat4.compose(pos, quat, scl);
+      bolts.setMatrixAt(i, mat4);
+    }
+    scene.add(bolts);
+
+    const key = new THREE.DirectionalLight(0xffffff, 2.4);
+    key.position.set(2, 4, 3);
+    scene.add(key);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</three-live>
+```
+
+--------------------------------------------------------------------------------
+
+## 11. Robotic Arm Inverse Kinematics (2-Bone & FABRIK IK) & Spatial Voice (`<xr-live>`)
+
+Attaches declarative `userData.xr.ik` (`solver: 'two-bone'` or `'fabrik'`) so a
+multi-joint articulated robotic arm continuously solves joint rotations toward a
+grabbable 6DoF target orb, paired with `shared-room-voice` for WebRTC
+peer-to-peer spatialized voice chat:
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  id="ik-workbench"
+  allow-client-scripts
+  bloom="1.3"
+  outline="#38bdf8 0.025"
+  tone-mapping="agx"
+  shared-room="robotics-lab-1"
+  shared-room-voice
+  peer-name="Operator"
+  camera-controls
+  style="width: 100%; height: 560px; display: block;">
+  <script type="text/three">
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.8, roughness: 0.25 });
+
+    // Hierarchical bone chain: Shoulder -> Forearm -> WristEffector
+    const shoulder = new THREE.Group();
+    shoulder.name = 'Shoulder';
+    shoulder.position.set(0, 0.75, -1.1);
+    const upperLink = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.32), armMat);
+    upperLink.position.set(0, 0, 0.16);
+    shoulder.add(upperLink);
+
+    const forearm = new THREE.Group();
+    forearm.name = 'Forearm';
+    forearm.position.set(0, 0, 0.32);
+    const lowerLink = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.065, 0.28), armMat);
+    lowerLink.position.set(0, 0, 0.14);
+    forearm.add(lowerLink);
+    shoulder.add(forearm);
+
+    const effector = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055, 20, 20),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.6 })
+    );
+    effector.name = 'WristEffector';
+    effector.position.set(0, 0, 0.28);
+    effector.userData.xr = {
+      ik: {
+        target: 'GripperTarget',
+        poleTarget: 'ElbowPole',
+        solver: 'two-bone',
+        chainLength: 2
+      }
+    };
+    forearm.add(effector);
+    scene.add(shoulder);
+
+    // Pole vector hint keeping the elbow oriented upward
+    const pole = new THREE.Group();
+    pole.name = 'ElbowPole';
+    pole.position.set(0, 1.35, -0.95);
+    scene.add(pole);
+
+    // Grabbable 6DoF target orb that the robotic arm tracks in real time
+    const targetOrb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.065, 24, 24),
+      new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x16a34a, emissiveIntensity: 0.8 })
+    );
+    targetOrb.name = 'GripperTarget';
+    targetOrb.position.set(0.22, 1.02, -0.78);
+    targetOrb.userData.xr = {
+      grab: '1-hand',
+      outline: { color: '#22c55e', thickness: 0.025 },
+      sync: true
+    };
+    scene.add(targetOrb);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</xr-live>
+```

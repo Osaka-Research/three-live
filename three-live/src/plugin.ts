@@ -19,6 +19,7 @@
 
 export interface ThreeLivePlugin {
   readonly name: string;
+  onRegister?(): void;
   onElementConnected?(element: any): void;
   onAttributeChanged?(
     element: any,
@@ -142,6 +143,26 @@ export interface SharedThreeLiveRegistry {
    * permitted unless explicitly enabled.
    */
   allowClientScripts?: boolean;
+  /** Reference to the host `THREE` namespace installed by `three-author.ts`. */
+  threeNamespace?: unknown;
+  /**
+   * Optional authoring constructors (`Path`, `Shape`, `ShapeGeometry`,
+   * `ExtrudeGeometry`, `TextGeometry`, `CSG`, `IKSolver`) registered by
+   * `cadPlugin` and `ikPlugin` and exposed on `THREE`.
+   */
+  authorNamespace?: Record<string, unknown>;
+  /**
+   * Hook invoked before world-matrix and GLB/USDZ serialization to materialize
+   * declarative `userData.xr.text` and `userData.csg` meshes when `cadPlugin`
+   * is loaded.
+   */
+  materializeDeclarativeGeometry?: (node: unknown) => void;
+  /**
+   * Self-contained worker bootstrap functions `(THREE, reg) => void` serialized
+   * into `buildSandboxWorkerSource` so Web Worker sandboxes install optional
+   * authoring extensions (`cadPlugin`, `ikPlugin`).
+   */
+  workerExtensionInstallers?: Array<(threeNs: unknown, reg: unknown) => void>;
 }
 
 const SHARED_REGISTRY_KEY = '__THREE_LIVE_REGISTRY__';
@@ -172,11 +193,29 @@ export function getSharedRegistry(): SharedThreeLiveRegistry {
 
 export const registeredPlugins: ThreeLivePlugin[] = getSharedRegistry().plugins;
 
+/**
+ * Registers a self-contained installer function that extends `THREE` and the
+ * shared registry both on the host thread and inside isolated Web Worker
+ * sandboxes.
+ */
+export function registerWorkerExtensionInstaller(
+  installer: (threeNs: unknown, reg: unknown) => void,
+): void {
+  const reg = getSharedRegistry();
+  if (!reg.workerExtensionInstallers) {
+    reg.workerExtensionInstallers = [];
+  }
+  if (!reg.workerExtensionInstallers.includes(installer)) {
+    reg.workerExtensionInstallers.push(installer);
+  }
+}
+
 export function registerPlugin(plugin: ThreeLivePlugin): void {
   const plugins = getSharedRegistry().plugins;
   if (!plugins.some((p) => p.name === plugin.name)) {
     plugins.push(plugin);
   }
+  plugin.onRegister?.();
 }
 
 export function getRegisteredPlugins(): readonly ThreeLivePlugin[] {

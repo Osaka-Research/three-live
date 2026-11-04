@@ -134,6 +134,7 @@ export class XRLiveElement extends ThreeLiveElement {
       'snap-turn-deg',
       'comfort-vignette',
       'shared-room',
+      'shared-room-voice',
       'peer-name',
       'peer-color',
     ];
@@ -197,6 +198,22 @@ export class XRLiveElement extends ThreeLiveElement {
       this.setAttribute('sound-feedback', '');
     } else {
       this.removeAttribute('sound-feedback');
+    }
+  }
+
+  /** Opt-in WebRTC spatial voice chat in `shared-room`. Defaults to `false`. */
+  get sharedRoomVoice(): boolean {
+    return (
+      this.hasAttribute('shared-room-voice') &&
+      this.getAttribute('shared-room-voice') !== 'false'
+    );
+  }
+
+  set sharedRoomVoice(value: boolean) {
+    if (value) {
+      this.setAttribute('shared-room-voice', '');
+    } else {
+      this.removeAttribute('shared-room-voice');
     }
   }
 

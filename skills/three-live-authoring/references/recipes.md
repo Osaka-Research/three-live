@@ -192,7 +192,7 @@ without external build steps.
 ```html
 <script type="module">
   import '/dist/xr-live-full.min.js';
-  import { connectGeminiLive } from '/dist/xr-live-plugins.min.js';
+  import { connectGeminiLive } from '/dist/xr-live-spatial.min.js';
 
   const xr = document.getElementById('gemini-xr');
 
@@ -533,4 +533,135 @@ order; out-of-order taps play an `error` cue.
     console.log('Outcome:', e.detail.outcome, 'in', e.detail.elapsedSec, 's');
   });
 </script>
+```
+
+--------------------------------------------------------------------------------
+
+## Recipe 11: Procedural CAD Extrusion, CSG Booleans, 3D Text & GPU Instancing (`<three-live>`)
+
+```html
+<script type="module" src="/dist/three-live.min.js"></script>
+
+<three-live
+  allow-client-scripts
+  camera-controls
+  auto-rotate
+  ar
+  tone-mapping="aces"
+  bloom="1.2"
+  outline="#38bdf8 0.025"
+  style="width: 100%; height: 520px; display: block;">
+  <script type="text/three">
+    const profile = new THREE.Shape();
+    profile.absarc(0, 0, 0.55, 0, Math.PI * 2, false);
+    const hole = new THREE.Path();
+    hole.absarc(0, 0, 0.22, 0, Math.PI * 2, true);
+    profile.holes.push(hole);
+
+    const steel = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.78, roughness: 0.24 });
+    const rawFlange = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(profile, { depth: 0.16, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.015 }),
+      steel
+    );
+    rawFlange.rotation.x = -Math.PI / 2;
+
+    const slotCutter = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.14, 0.16), steel);
+    slotCutter.position.set(0, 0.12, 0);
+    const machined = THREE.CSG.subtract(rawFlange, slotCutter);
+    machined.name = 'machined-flange';
+    machined.userData.xr = { outline: { color: '#38bdf8', thickness: 0.02 } };
+    scene.add(machined);
+
+    const label = new THREE.Mesh(
+      new THREE.TextGeometry('CAD R1', { size: 0.14, depth: 0.035, bevelEnabled: true }),
+      new THREE.MeshStandardMaterial({ color: 0xf8fafc, emissive: 0x0ea5e9, emissiveIntensity: 0.45 })
+    );
+    label.position.set(-0.32, 0.28, 0);
+    scene.add(label);
+
+    const bolts = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.035, 0.035, 0.22, 16),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.15 }),
+      12
+    );
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3(1, 1, 1);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      p.set(Math.cos(a) * 0.39, 0.09, Math.sin(a) * 0.39);
+      m.compose(p, q, s);
+      bolts.setMatrixAt(i, m);
+    }
+    scene.add(bolts);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.4));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  </script>
+</three-live>
+```
+
+--------------------------------------------------------------------------------
+
+## Recipe 12: Articulated Robotic Arm with 2-Bone / FABRIK IK & Spatialized Voice (`<xr-live>`)
+
+```html
+<script type="module" src="/dist/xr-live-full.min.js"></script>
+
+<xr-live
+  allow-client-scripts
+  bloom="1.3"
+  outline="#38bdf8 0.025"
+  tone-mapping="agx"
+  shared-room="robotics-cell"
+  shared-room-voice
+  camera-controls
+  style="width: 100%; height: 540px; display: block;">
+  <script type="text/three">
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.8, roughness: 0.25 });
+    const shoulder = new THREE.Group();
+    shoulder.name = 'Shoulder';
+    shoulder.position.set(0, 0.75, -1.1);
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.32), armMat);
+    upper.position.set(0, 0, 0.16);
+    shoulder.add(upper);
+
+    const forearm = new THREE.Group();
+    forearm.name = 'Forearm';
+    forearm.position.set(0, 0, 0.32);
+    const lower = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.065, 0.28), armMat);
+    lower.position.set(0, 0, 0.14);
+    forearm.add(lower);
+    shoulder.add(forearm);
+
+    const wrist = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055, 20, 20),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.6 })
+    );
+    wrist.name = 'WristEffector';
+    wrist.position.set(0, 0, 0.28);
+    wrist.userData.xr = {
+      ik: { target: 'GripperTarget', poleTarget: 'ElbowPole', solver: 'two-bone', chainLength: 2 }
+    };
+    forearm.add(wrist);
+    scene.add(shoulder);
+
+    const pole = new THREE.Group();
+    pole.name = 'ElbowPole';
+    pole.position.set(0, 1.35, -0.95);
+    scene.add(pole);
+
+    const target = new THREE.Mesh(
+      new THREE.SphereGeometry(0.065, 24, 24),
+      new THREE.MeshStandardMaterial({ color: 0x22c55e, emissive: 0x16a34a, emissiveIntensity: 0.8 })
+    );
+    target.name = 'GripperTarget';
+    target.position.set(0.22, 1.02, -0.78);
+    target.userData.xr = { grab: '1-hand', outline: { color: '#22c55e', thickness: 0.025 } };
+    scene.add(target);
+
+    scene.add(new THREE.DirectionalLight(0xffffff, 2.2));
+  </script>
+</xr-live>
 ```

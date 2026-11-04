@@ -100,6 +100,74 @@ export const MAX_PAINT_MESSAGES_PER_SEC = 8;
 /** Maximum points allowed in a single synced paint stroke message. */
 export const MAX_STROKE_CHUNK_POINTS = 128;
 
+/** Maximum characters allowed for an SDP offer/answer or ICE candidate in `rtc` signaling. */
+export const MAX_RTC_SIGNAL_CHARS = 8192;
+
+/** Maximum WebRTC signaling (`type: 'rtc'`) messages accepted per peer per second. */
+export const MAX_RTC_MESSAGES_PER_SEC = 32;
+
+/** Supported WebRTC signaling message subtypes. */
+export type RtcSignalType = 'offer' | 'answer' | 'ice';
+
+/** Spatialized voice attenuation and stereo panning gains for a remote peer. */
+export interface SpatialVoiceGain {
+  readonly gain: number;
+  readonly pan: number;
+  readonly leftGain: number;
+  readonly rightGain: number;
+}
+
+/**
+ * Computes inverse-distance spatial voice attenuation and equal-power stereo
+ * panning from the listener's 6DoF head pose to a remote peer's head position.
+ */
+export function computeSpatialVoiceGain(
+  listenerPos: readonly [number, number, number],
+  listenerQuat: readonly [number, number, number, number],
+  peerHeadPos: readonly [number, number, number],
+  refDistance = 1,
+  maxDistance = 15,
+  rolloff = 1,
+): SpatialVoiceGain {
+  const dx = peerHeadPos[0] - listenerPos[0];
+  const dy = peerHeadPos[1] - listenerPos[1];
+  const dz = peerHeadPos[2] - listenerPos[2];
+  const dist = Math.hypot(dx, dy, dz);
+
+  const refD = Math.max(0.01, Number.isFinite(refDistance) ? refDistance : 1);
+  const maxD = Math.max(refD, Number.isFinite(maxDistance) ? maxDistance : 15);
+  const roll = Math.max(0, Number.isFinite(rolloff) ? rolloff : 1);
+  const clampedDist = Math.max(refD, Math.min(maxD, dist));
+  const gain = clampNum(refD / (refD + roll * (clampedDist - refD)), 0, 1, 1);
+
+  const qLen =
+    Math.hypot(
+      listenerQuat[0],
+      listenerQuat[1],
+      listenerQuat[2],
+      listenerQuat[3],
+    ) || 1;
+  const qx = listenerQuat[0] / qLen;
+  const qy = listenerQuat[1] / qLen;
+  const qz = listenerQuat[2] / qLen;
+  const qw = listenerQuat[3] / qLen;
+
+  // Listener local +X (right ear) axis in world space
+  const rx = 1 - 2 * (qy * qy + qz * qz);
+  const ry = 2 * (qx * qy + qz * qw);
+  const rz = 2 * (qx * qz - qy * qw);
+
+  const pan =
+    dist > 1e-6 ? clampNum((dx * rx + dy * ry + dz * rz) / dist, -1, 1, 0) : 0;
+  const angle = (pan + 1) * (Math.PI / 4);
+  return {
+    gain,
+    pan,
+    leftGain: gain * Math.cos(angle),
+    rightGain: gain * Math.sin(angle),
+  };
+}
+
 const DEFAULT_PEER_COLOR = '#38bdf8';
 
 /** Pluggable bidirectional room transport (`BroadcastChannel`, `WebSocket`, or test hub). */
@@ -197,9 +265,9 @@ export function hexColorToRgba(
   if (clean.length === 3) {
     clean = clean[0] + clean[0] + clean[1] + clean[1] + clean[2] + clean[2];
   }
-  const r = parseInt(clean.slice(0, 2), 16) / 255;
-  const g = parseInt(clean.slice(2, 4), 16) / 255;
-  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  const r = Number('0x' + clean.slice(0, 2)) / 255;
+  const g = Number('0x' + clean.slice(2, 4)) / 255;
+  const b = Number('0x' + clean.slice(4, 6)) / 255;
   return [
     Number.isFinite(r) ? r : 0.22,
     Number.isFinite(g) ? g : 0.74,
@@ -370,6 +438,17 @@ export type SharedRoomWireMessage =
     }
   | {
       readonly v: 1;
+      readonly type: 'rtc';
+      readonly peerId: string;
+      readonly targetPeerId: string;
+      readonly signalType: RtcSignalType;
+      readonly sdp: string | null;
+      readonly candidate: string | null;
+      readonly sdpMid: string | null;
+      readonly sdpMLineIndex: number | null;
+    }
+  | {
+      readonly v: 1;
       readonly type: 'leave';
       readonly peerId: string;
     };
@@ -521,6 +600,70 @@ export function parseSharedRoomMessage(
       color: sanitizePeerColor(r['color']),
       radius: clampNum(r['radius'], 0.002, 0.1, 0.01),
       points,
+    };
+  }
+
+  if (type === 'rtc') {
+    const targetPeerId = safeAnchorId(r['targetPeerId']);
+    if (!targetPeerId || targetPeerId === peerId) return null;
+    const st = r['signalType'];
+    if (st !== 'offer' && st !== 'answer' && st !== 'ice') return null;
+    if (st === 'offer' || st === 'answer') {
+      const sdp = r['sdp'];
+      if (
+        typeof sdp !== 'string' ||
+        !sdp ||
+        sdp.length > MAX_RTC_SIGNAL_CHARS ||
+        sdp.includes('\x00')
+      ) {
+        return null;
+      }
+      return {
+        v: 1,
+        type: 'rtc',
+        peerId,
+        targetPeerId,
+        signalType: st,
+        sdp,
+        candidate: null,
+        sdpMid: null,
+        sdpMLineIndex: null,
+      };
+    }
+    const cand = r['candidate'];
+    if (
+      typeof cand !== 'string' ||
+      !cand ||
+      cand.length > MAX_RTC_SIGNAL_CHARS ||
+      cand.includes('\x00')
+    ) {
+      return null;
+    }
+    const rawMid = r['sdpMid'];
+    const sdpMid =
+      typeof rawMid === 'string' &&
+      rawMid.length > 0 &&
+      !rawMid.includes('\x00')
+        ? rawMid.slice(0, 64)
+        : null;
+    const rawIdx = r['sdpMLineIndex'];
+    const sdpMLineIndex =
+      typeof rawIdx === 'number' &&
+      Number.isInteger(rawIdx) &&
+      rawIdx >= 0 &&
+      rawIdx <= 64
+        ? rawIdx
+        : null;
+    return {
+      v: 1,
+      type: 'rtc',
+      peerId,
+      targetPeerId,
+      signalType: 'ice',
+      sdp: null,
+      candidate: cand,
+      sdpMid,
+      sdpMLineIndex,
     };
   }
 
@@ -724,6 +867,7 @@ export interface RemotePeerState {
   // tslint:disable-next-line:no-any Dynamic laser mesh.
   laserMesh: any;
   appliedColor: string;
+  voiceGain?: SpatialVoiceGain;
 }
 
 /** Per-element controller for `shared-room`. */
@@ -734,6 +878,10 @@ export class XRSharedRoomController {
   private readonly peers = new Map<string, RemotePeerState>();
   private readonly nodeLeases = new Map<string, NodeSoftLock>();
   private readonly paintRate = new Map<
+    string,
+    {windowStart: number; count: number}
+  >();
+  private readonly rtcRate = new Map<
     string,
     {windowStart: number; count: number}
   >();
@@ -773,12 +921,14 @@ export class XRSharedRoomController {
     name: string;
     color: string;
     headPos: Vec3;
+    voiceGain?: SpatialVoiceGain;
   }> {
     const out: Array<{
       peerId: string;
       name: string;
       color: string;
       headPos: Vec3;
+      voiceGain?: SpatialVoiceGain;
     }> = [];
     for (const p of this.peers.values()) {
       out.push({
@@ -786,6 +936,7 @@ export class XRSharedRoomController {
         name: p.name,
         color: p.color,
         headPos: [...p.headPos] as Vec3,
+        ...(p.voiceGain ? {voiceGain: p.voiceGain} : {}),
       });
     }
     return out;
@@ -1102,6 +1253,87 @@ export class XRSharedRoomController {
     return true;
   }
 
+  /**
+   * Sends a targeted WebRTC voice signaling payload (`offer`, `answer`, or `ice`)
+   * over the room transport to `targetPeerId`.
+   */
+  broadcastRtcSignal(
+    targetPeerId: string,
+    signalType: RtcSignalType,
+    payload: {
+      sdp?: string | null;
+      candidate?: string | null;
+      sdpMid?: string | null;
+      sdpMLineIndex?: number | null;
+    },
+  ): boolean {
+    if (!this.transport) return false;
+    const cleanTarget = safeAnchorId(targetPeerId);
+    if (!cleanTarget || cleanTarget === this.peerId) return false;
+    if (signalType === 'offer' || signalType === 'answer') {
+      const sdp = payload.sdp;
+      if (
+        typeof sdp !== 'string' ||
+        !sdp ||
+        sdp.length > MAX_RTC_SIGNAL_CHARS ||
+        sdp.includes('\x00')
+      ) {
+        return false;
+      }
+      this.sendWire({
+        v: 1,
+        type: 'rtc',
+        peerId: this.peerId,
+        targetPeerId: cleanTarget,
+        signalType,
+        sdp,
+        candidate: null,
+        sdpMid: null,
+        sdpMLineIndex: null,
+      });
+      return true;
+    }
+    if (signalType === 'ice') {
+      const cand = payload.candidate;
+      if (
+        typeof cand !== 'string' ||
+        !cand ||
+        cand.length > MAX_RTC_SIGNAL_CHARS ||
+        cand.includes('\x00')
+      ) {
+        return false;
+      }
+      const rawMid = payload.sdpMid;
+      const sdpMid =
+        typeof rawMid === 'string' &&
+        rawMid.length > 0 &&
+        !rawMid.includes('\x00')
+          ? rawMid.slice(0, 64)
+          : null;
+      const rawIdx = payload.sdpMLineIndex;
+      const sdpMLineIndex =
+        typeof rawIdx === 'number' &&
+        Number.isInteger(rawIdx) &&
+        rawIdx >= 0 &&
+        rawIdx <= 64
+          ? rawIdx
+          : null;
+      this.sendWire({
+        v: 1,
+        type: 'rtc',
+        peerId: this.peerId,
+        targetPeerId: cleanTarget,
+        signalType: 'ice',
+        sdp: null,
+        candidate: cand,
+        sdpMid,
+        sdpMLineIndex,
+      });
+      return true;
+    }
+    return false;
+  }
+
   /** Processes an incoming JSON message, updating peer avatars, soft-locks, and scene state. */
   handleRawMessage(
     rawJson: string,
@@ -1264,6 +1496,28 @@ export class XRSharedRoomController {
       return true;
     }
 
+    if (msg.type === 'rtc') {
+      if (msg.targetPeerId !== this.peerId) {
+        return false;
+      }
+      const bucket = this.rtcRate.get(msg.peerId);
+      if (!bucket || atMs - bucket.windowStart >= 1000) {
+        this.rtcRate.set(msg.peerId, {windowStart: atMs, count: 1});
+      } else if (++bucket.count > MAX_RTC_MESSAGES_PER_SEC) {
+        return false;
+      }
+      emitPluginEvent(element, 'peerrtcsignal', {
+        peerId: msg.peerId,
+        targetPeerId: msg.targetPeerId,
+        signalType: msg.signalType,
+        sdp: msg.sdp,
+        candidate: msg.candidate,
+        sdpMid: msg.sdpMid,
+        sdpMLineIndex: msg.sdpMLineIndex,
+      });
+      return true;
+    }
+
     return false;
   }
 
@@ -1348,6 +1602,7 @@ export class XRSharedRoomController {
     if (!peer) return false;
     this.peers.delete(peerId);
     this.paintRate.delete(peerId);
+    this.rtcRate.delete(peerId);
     removeDynamicMesh(viewer, peer.visorMesh);
     removeDynamicMesh(viewer, peer.laserMesh);
     for (const [nodeId, lease] of Array.from(this.nodeLeases.entries())) {
@@ -1389,12 +1644,19 @@ export class XRSharedRoomController {
     );
     const headWorld = mat4Create();
     mat4Multiply(headWorld, root, headLocal);
+    const headWorldPos = extractPosition(headWorld);
     setWorldTRS(
       viewer,
       peer.visorMesh,
       extractQuaternion(headWorld),
-      extractPosition(headWorld),
+      headWorldPos,
       [1, 1, 1],
+    );
+    const listenerHead = resolveHeadPose(viewer);
+    peer.voiceGain = computeSpatialVoiceGain(
+      listenerHead.position,
+      extractQuaternion(listenerHead.matrix),
+      headWorldPos,
     );
 
     if (colorChanged && peer.laserMesh) {

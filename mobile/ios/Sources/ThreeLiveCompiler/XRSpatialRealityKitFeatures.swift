@@ -71,6 +71,8 @@
     public var onPeerSync: ((_ peerId: String, _ nodeId: String) -> Void)?
     /// A remote peer won a near-simultaneous grab of `nodeId`; the local hold was released.
     public var onPeerGrabConflict: ((_ peerId: String, _ nodeId: String) -> Void)?
+    /// Targeted WebRTC voice signaling payload (`peerrtcsignal`).
+    public var onPeerRtcSignal: ((_ message: SharedRoom.WireMessage) -> Void)?
     /// Paint color, or `nil` to disable spatial paint (the default).
     public var paintColor: SIMD4<Float>?
     /// Optional floor height (world meters) particles collide with.
@@ -1958,6 +1960,11 @@
           remoteStrokeEntities.append(se)
         }
         onPeerSync?(peerId, "paint:\(strokeId)")
+        return true
+      case .rtc(let peerId, let targetPeerId, _, _, _, _, _):
+        guard targetPeerId == selfId else { return false }
+        remotePeers[peerId]?.lastSeenMs = atMs
+        onPeerRtcSignal?(msg)
         return true
       }
     }
