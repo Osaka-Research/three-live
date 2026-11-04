@@ -334,10 +334,10 @@ class ThreeLiveFilamentRenderer(context: Context) : ThreeLiveRenderer {
     val normalized = mode.trim().lowercase()
     val mapper =
       when (normalized) {
-        "aces" -> ToneMapper.ACESLegacyToneMapper()
-        "agx" -> ToneMapper.AgxToneMapper()
-        "reinhard" -> ToneMapper.GenericToneMapper(1.5f, 1.0f, 1.0f, 1.0f)
-        "none" -> ToneMapper.LinearToneMapper()
+        "aces" -> ToneMapper.ACESLegacy()
+        "agx" -> ToneMapper.Agx()
+        "reinhard" -> ToneMapper.Generic(1.5f, 1.0f, 1.0f, 1.0f)
+        "none" -> ToneMapper.Linear()
         else -> ToneMapper.PBRNeutralToneMapper()
       }
     toneMappingMode =
