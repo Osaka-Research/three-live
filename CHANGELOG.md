@@ -26,6 +26,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [1.3.0] - 2026-11-05 (Beta)
+
+### Added
+
+-   **Graduated from Developer Preview (Alpha) to Beta**: Stabilized the core
+    TypeScript, Rust, Swift/RealityKit, and Kotlin/Android XR APIs across
+    `three-live`, `xr-live`, and `three-live-compiler`.
+-   **Zero-Install `npx three-live-cli` Launcher (`bin/three-live-cli.js`)**:
+    Added `bin.three-live-cli` to `package.json` so AI coding agents and web
+    developers can run `npx three-live-cli validate | render | sim` without a
+    local Rust toolchain. Automatically locates local release/debug builds or
+    downloads and caches the platform binary from GitHub Releases into
+    `~/.cache/three-live/v<version>/`.
+-   **Cross-Platform Visual Regression Golden Baselines**: Added perceptual RMSE
+    and SSIM (`compareRmse`, `compareSsim` in `compiler/src/rasterizer.rs`) and
+    deterministic golden assertions across `Orbital Spheres`, `Quantum Core`,
+    `Architecture`, `CAD Flange` (`THREE.CSG`), and `Game Simulator` so Web,
+    Android, and iOS presets stay pixel-aligned in CI.
+-   **Canonical `userData` Trait Schema & JSON Schema Export (`xr-trait-schema`)**:
+    Added a single typed validator (`validateTraits`) and JSON Schema 2020-12
+    generator (`generateTraitJsonSchema`, `three-live-cli schema`) shared across
+    Web (`xr-live`), Rust (`compiler/src/linter.rs`), Android (`XRSceneLoader`),
+    and iOS (`RealityKitSceneLoader`), with typo suggestions (`collectable` ->
+    `collectible`, ` anchor` -> `anchor`, ` exploded` -> `explode`) and dynamic
+    node-name reference checks (`patrolTargets`, `followTarget`, `fleeTarget`).
+-   **WebGL Context Loss Recovery & GPU Resource Disposal**:
+    -   Added automatic `webglcontextlost` / `webglcontextrestored` handling on
+        `WebGLRenderer` and `<three-live>` (pausing animation loops on loss,
+        invalidating stale GPU state maps, and recompiling shaders/programs,
+        textures, VAOs/VBOs, shadows, and post-processing targets on restore
+        while dispatching `contextlost` / `contextrestored` `CustomEvent`s).
+    -   Added `renderer.disposeScene(root)` and `renderer.getMemoryStats()` for
+        deterministic GPU memory reclamation and leak auditing across repeated
+        `<three-live>` and `ThreeLiveStudio` mount/unmount cycles.
+-   **Native Rust Acceleration for Primitives & `THREE.CSG`**: Accelerated
+    `PlaneGeometry`, `TorusGeometry`, and `THREE.CSG` (`subtract`, `union`,
+    `intersect`) in the Rust/Boa compiler (`compiler/src/primitives.rs` and
+    `compiler/src/csg.rs`), achieving up to 17.5x faster compilation on
+    boolean-heavy CAD scenes (`39.2 ms` -> `2.24 ms`).
+
+--------------------------------------------------------------------------------
+
 ## [1.2.4] - 2026-11-05
 
 ### Added

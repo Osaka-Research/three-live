@@ -20,7 +20,7 @@ limitations under the License.
 
 [![CI](https://github.com/google/three-live/actions/workflows/ci.yml/badge.svg)](https://github.com/google/three-live/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/google/three-live?include_prereleases&label=Release)](https://github.com/google/three-live/releases)
-[![Status: Developer Preview](https://img.shields.io/badge/Status-Developer%20Preview%20(Alpha)-orange.svg)](#project-status)
+[![Status: Beta](https://img.shields.io/badge/Status-Beta-blue.svg)](#project-status)
 [![Live Playground](https://img.shields.io/badge/Demo-Live%20Playground-brightgreen.svg)](https://google.github.io/three-live/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
@@ -324,9 +324,10 @@ $ three-live-cli convert scene.js -o output.glb
 
 ## Project status
 
-Three-Live is in **Developer Preview (Alpha)**. It is an experimental
-open-source library exploring AI-driven procedural 3D and spatial computing
-across Web, Android, and Apple platforms.
+Three-Live is in **Beta**. Its core 3D, WebXR, and spatial computing runtime,
+versioned `userData.xr` trait schema (`schemaVersion: 1`), sandboxed JIT
+compiler, and three-target parity across Web, Android XR, and Apple RealityKit
+are feature-complete and ready for integration and evaluation.
 
 *   **Prebuilt distributions:** Standalone web JavaScript bundles
     (`three-live-web-dist.zip`), the Apple XCFramework
@@ -426,7 +427,7 @@ LLM authoring workflows:
 | **[`AGENTS.md`](AGENTS.md)** | Coding agents | Repository rules, three-target cross-platform parity contract, build and test commands, bundle budgets, and security invariants. |
 | **[`skills/`](skills/)** | Agent skills | Progressive-disclosure `SKILL.md` skills for authoring scenes ([`three-live-authoring`](skills/three-live-authoring/SKILL.md)) and developing plugins ([`xr-live-plugin-dev`](skills/xr-live-plugin-dev/SKILL.md)). |
 | **[`llms.txt`](llms.txt) and [`llms-full.txt`](llms-full.txt)** | LLM context feeds | Single-file concise index (`llms.txt`) and complete concatenated reference (`llms-full.txt`) for LLM context windows. |
-| **[`CHANGELOG.md`](CHANGELOG.md)** | All users | Release notes and architectural summary for the Developer Preview release. |
+| **[`CHANGELOG.md`](CHANGELOG.md)** | All users | Release notes and architectural summary for Three-Live releases. |
 <!-- mdformat on -->
 
 ---

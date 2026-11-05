@@ -39,7 +39,12 @@ function resolvePlatformInfo(platform = process.platform, arch = process.arch) {
       : platform === 'win32'
         ? 'windows'
         : 'linux';
-  const archTag = arch === 'arm64' ? 'arm64' : 'x86_64';
+  const archTag =
+    arch === 'arm64'
+      ? platform === 'darwin'
+        ? 'arm64'
+        : 'aarch64'
+      : 'x86_64';
   const artifactName = `three-live-cli-${osTag}-${archTag}${ext}`;
   const repoRoot = path.resolve(__dirname, '..');
   const cacheDir = path.join(

@@ -3,7 +3,7 @@
 Lightweight `<three-live>` web component for 3D, AR, and sandboxed procedural
 Three.js. Part of [Three-Live](https://github.com/google/three-live).
 
-> Developer Preview. APIs may change before a stable release.
+> Status: **Beta**. Minor API details may evolve before General Availability (GA).
 
 ## Install
 
