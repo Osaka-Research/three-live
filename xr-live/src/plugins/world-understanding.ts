@@ -474,12 +474,14 @@ function depthSamplerFor(host: unknown): DepthSampler | undefined {
  * `xr-object-detected` event per located object. Returns the located objects.
  * Pass `camera` (see {@link snapshotDetectionCamera}) to unproject against the
  * camera of the image the detections came from instead of the current one.
+ * `shouldEmit` can stop event delivery if a listener replaces the caller's session.
  */
 export function detectObjects(
   // tslint:disable-next-line:no-any Host element is `<xr-live>`.
   element: any,
   detections: readonly Detection2D[],
   camera?: DetectionCamera,
+  shouldEmit?: () => boolean,
 ): Detection3D[] {
   const viewer: PluginViewer | undefined = element?._view ?? element?.viewer;
   // Depth is only sampled for the live camera; a past frame's depth is gone.
@@ -489,7 +491,10 @@ export function detectObjects(
     camera ? undefined : depthSamplerFor(element),
     camera,
   );
-  for (const d of located) emitPluginEvent(element, 'xr-object-detected', d);
+  for (const d of located) {
+    if (shouldEmit && !shouldEmit()) break;
+    emitPluginEvent(element, 'xr-object-detected', d);
+  }
   return located;
 }
 

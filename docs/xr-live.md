@@ -64,7 +64,7 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 *   **On the web (`<xr-live>`):** Starts with small core bundles (`< 51 KB gz`
     for `xr-live-viewer.min.js`, or `< 72 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
-    each, or `< 56 KB gz` for all 14 combined).
+    each, or `< 57 KB gz` for all 14 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
     `XRLiveRealityKitSession`):** The in-process Rust compiler
     (`ThreeLiveCompiler`) compiles `<script type="text/three">` on-device,
@@ -145,7 +145,7 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 ```
 
 To load all 14 spatial plugins without a bundler, import
-`/dist/xr-live-spatial.min.js` (`< 56 KB gz`) or `/dist/xr-live-full.min.js`
+`/dist/xr-live-spatial.min.js` (`< 57 KB gz`) or `/dist/xr-live-full.min.js`
 (`< 184 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
 simulation plugins).
 
@@ -629,3 +629,12 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
     `XRSpatialRealityKitFeatures.requestGrab(_:)` and cancel the gesture when it
     returns `false` (another peer holds the node); near-simultaneous grabs
     resolve like the web and call `onPeerGrabConflict`.
+
+
+### Gemini Live session ownership
+
+Disconnect, remote closure and replacement revoke old capture, timer, transport,
+transcription, audio and recognition callbacks. Teardown detaches old state before
+external callbacks run. Reentrant replacement keeps the newer session and closes
+superseded transports. Synchronous setup failures clean up the failed session.
+Ordinary text turns retain the existing text-only wire format.

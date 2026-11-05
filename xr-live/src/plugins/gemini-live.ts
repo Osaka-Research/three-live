@@ -96,6 +96,8 @@ export function createWebSocketTransport(url: string): GeminiLiveTransport {
       else if (ws.readyState === 0 && queue.length < 64) queue.push(data);
     },
     close() {
+      queue.length = 0;
+      ws.onopen = ws.onmessage = ws.onclose = null;
       ws.close();
     },
   };
@@ -103,11 +105,13 @@ export function createWebSocketTransport(url: string): GeminiLiveTransport {
     for (const data of queue.splice(0)) ws.send(data);
   };
   ws.onmessage = async (e: MessageEvent) => {
+    // Decoding a Blob can outlive the controller session that received it.
+    const onMessage = transport.onMessage;
     try {
       const text = typeof e.data === 'string' ? e.data : await (e.data as Blob).text();
-      const parsed: unknown = JSON.parse(text);
+      const parsed: unknown = ws.onmessage && JSON.parse(text);
       if (parsed && typeof parsed === 'object') {
-        transport.onMessage?.(parsed as Record<string, unknown>);
+        onMessage?.(parsed as Record<string, unknown>);
       }
     } catch {
       // Ignore malformed frames from the server.
@@ -218,9 +222,10 @@ export class PcmPlayer {
 
   /** Releases the audio context. */
   close(): void {
-    this.flush();
-    void this.ctx?.close?.();
+    const ctx = this.ctx;
     this.ctx = null;
+    this.flush();
+    void ctx?.close?.();
   }
 }
 
@@ -316,6 +321,8 @@ interface CaptureHost {
 export class XRGeminiLiveController {
   readonly transcripts = new TranscriptionManager();
   private transport: GeminiLiveTransport | null = null;
+  /** Invalidates asynchronous work even when a transport object is reused. */
+  private sessionId = 0;
   private frameTimer: ReturnType<typeof setInterval> | null = null;
   private captureInFlight = false;
   private speakReplies = false;
@@ -327,7 +334,11 @@ export class XRGeminiLiveController {
   private frameCamera: DetectionCamera | null = null;
   readonly audio = new PcmPlayer();
 
-  constructor(private readonly element: unknown) {}
+  constructor(private readonly element: unknown) {
+    if (element && typeof element === 'object' && !controllers.has(element)) {
+      controllers.set(element, this);
+    }
+  }
 
   /** Whether a transport is currently attached. */
   get connected(): boolean {
@@ -336,59 +347,104 @@ export class XRGeminiLiveController {
 
   /** Connects (replacing any previous session) and starts frame streaming. */
   connect(options: GeminiLiveOptions): void {
-    this.disconnect();
+    const element = this.element as object;
+    const prevCtrl = controllers.get(element);
+    const prevTransport = this.transport ?? prevCtrl?.transport;
+    const sessionId = this.resetSession(true);
+    if (prevCtrl && prevCtrl !== this) {
+      controllers.set(element, this);
+      prevCtrl.disconnect();
+    }
+    const activeCtrl = controllers.get(element) ?? this;
+    // A close callback or transcript listener may have connected a newer session.
+    if (this.sessionId !== sessionId || activeCtrl !== this) {
+      if (options.transport !== activeCtrl.transport && options.transport !== prevTransport) {
+        options.transport?.close();
+      }
+      return;
+    }
     const transport =
       options.transport ?? (options.url ? createWebSocketTransport(options.url) : null);
     if (!transport) throw new Error('gemini-live: provide a transport or url');
     this.transport = transport;
+    const isCurrentSession = this.sessionGuard();
     this.speakReplies = options.speakReplies === true;
     this.playAudio = options.playAudio !== false;
     this.detectObjects = options.detectObjects === true;
     this.frameCamera = null;
-    transport.onMessage = (m) => this.handleServerMessage(m);
+    transport.onMessage = (m) => {
+      if (isCurrentSession()) this.handleServerMessage(m);
+    };
     transport.onClose = () => {
-      if (this.transport === transport) this.stopFrames();
-      if (this.transport === transport) this.transport = null;
+      if (isCurrentSession()) this.resetSession(false);
     };
     const setup = this.detectObjects ? withDetectionTool(options.setup) : options.setup;
-    if (setup) transport.send({setup});
-    if (options.streamFrames !== false) {
-      const interval = clampNum(options.frameIntervalMs, 250, 10000, 1000);
-      this.frameTimer = setInterval(() => void this.sendFrame(), interval);
+    try {
+      if (setup) transport.send({setup});
+    } catch (err) {
+      if (isCurrentSession()) this.resetSession(true);
+      throw err;
     }
+    if (options.streamFrames !== false && isCurrentSession()) {
+      const interval = clampNum(options.frameIntervalMs, 250, 10000, 1000);
+      this.frameTimer = setInterval(() => {
+        if (isCurrentSession()) void this.sendFrame();
+      }, interval);
+    }
+  }
+
+  /** A callback lease; replacement and remote closure revoke it. */
+  sessionGuard(): () => boolean {
+    const id = this.sessionId;
+    return () => this.sessionId === id;
   }
 
   /** Stops streaming and closes the transport. */
   disconnect(): void {
-    this.stopFrames();
-    const t = this.transport;
-    this.transport = null;
-    t?.close();
-    this.audio.close();
-    for (const ev of this.transcripts.finalize()) this.emitTranscript(ev);
+    if (this.transport || holdState.has(this.element as object)) this.resetSession(true);
   }
 
-  /** Captures and sends one viewport frame; skipped while one is in flight. */
+  private resetSession(closeTransport: boolean): number {
+    const id = ++this.sessionId;
+    if (this.frameTimer !== null) clearInterval(this.frameTimer);
+    const transport = this.transport;
+    this.frameTimer = this.frameCamera = this.transport = null;
+    this.captureInFlight = false;
+    this.turnHasOutputTranscription = false;
+    const finalized = this.transcripts.finalize();
+    const element = this.element as object;
+    const hold = holdState.get(element);
+    holdState.delete(element);
+    // Detach old state before invoking any external cleanup or event listener.
+    this.audio.close();
+    if (this.sessionId === id) cancelSpeech();
+    cancelHold(hold);
+    if (closeTransport && this.transport !== transport) transport?.close();
+    for (const event of finalized) {
+      if (this.sessionId !== id) break;
+      this.emitTranscript(event);
+    }
+    return id;
+  }
+
+  /** Captures one frame; the originating session owns its admission lock. */
   async sendFrame(): Promise<boolean> {
     const host = this.element as CaptureHost;
-    if (!this.transport || this.captureInFlight || typeof host?.captureViewFrame !== 'function') {
-      return false;
-    }
+    const transport = this.transport;
+    const current = this.sessionGuard();
+    if (!transport || this.captureInFlight || typeof host?.captureViewFrame !== 'function') return false;
     this.captureInFlight = true;
     try {
-      // The frame renders from the camera at capture time.
       const camera = this.detectObjects ? snapshotDetectionCamera(this.element) : null;
       const frame = await host.captureViewFrame({format: 'image/jpeg', quality: 0.6});
-      if (!frame?.base64 || !this.transport) return false;
-      if (camera) this.frameCamera = camera;
-      this.transport.send({
-        realtimeInput: {mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}]},
-      });
+      if (!frame?.base64 || !current()) return false;
+      this.frameCamera = camera;
+      transport.send({realtimeInput: {mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}]}});
       return true;
     } catch {
       return false;
     } finally {
-      this.captureInFlight = false;
+      if (current()) this.captureInFlight = false;
     }
   }
 
@@ -402,42 +458,51 @@ export class XRGeminiLiveController {
     });
   }
 
-  /** Sends a completed user text turn. */
+  /** Sends a completed user text turn; the wire format is unchanged. */
   sendText(text: string): void {
     if (!this.transport) return;
     const clipped = String(text ?? '').slice(0, MAX_TEXT_CHARS);
     if (!clipped) return;
-    this.transport.send({
-      clientContent: {turns: [{role: 'user', parts: [{text: clipped}]}], turnComplete: true},
-    });
+    this.transport.send({clientContent: {turns: [{role: 'user', parts: [{text: clipped}]}], turnComplete: true}});
   }
 
   /** Processes one server message (exposed for custom transports and tests). */
   handleServerMessage(message: Record<string, unknown>): void {
+    if (!this.transport) return;
+    // Event listeners may synchronously disconnect or replace this session.
+    const isCurrentSession = this.sessionGuard();
     const toolCall = message?.['toolCall'];
-    if (toolCall && typeof toolCall === 'object') this.handleToolCall(toolCall as Record<string, unknown>);
+    if (toolCall && typeof toolCall === 'object') {
+      this.handleToolCall(toolCall as Record<string, unknown>, isCurrentSession);
+    }
+    if (!isCurrentSession()) return;
     const content = message?.['serverContent'] as Record<string, unknown> | undefined;
     if (!content || typeof content !== 'object') return;
     if (content['interrupted'] === true) {
       cancelSpeech();
       this.audio.flush();
       emitPluginEvent(this.element, 'xr-gemini-interrupted', {});
+      if (!isCurrentSession()) return;
     }
     const input = (content['inputTranscription'] as {text?: unknown})?.text;
     if (typeof input === 'string' && input) this.emitTranscript(this.transcripts.append('user', input));
+    if (!isCurrentSession()) return;
     const output = (content['outputTranscription'] as {text?: unknown})?.text;
     if (typeof output === 'string' && output) {
       this.turnHasOutputTranscription = true;
       this.emitTranscript(this.transcripts.append('model', output));
+      if (!isCurrentSession()) return;
     }
     const parts = (content['modelTurn'] as {parts?: unknown})?.parts;
     if (Array.isArray(parts)) {
       for (const part of parts) {
+        if (!isCurrentSession()) return;
         const text = (part as {text?: unknown})?.text;
         // In AUDIO mode the transcript comes from outputTranscription; avoid
         // double-appending any accompanying text parts.
         if (typeof text === 'string' && text && !this.turnHasOutputTranscription) {
           this.emitTranscript(this.transcripts.append('model', text));
+          if (!isCurrentSession()) return;
         }
         const inline = (part as {inlineData?: {mimeType?: unknown; data?: unknown}})?.inlineData;
         if (
@@ -455,11 +520,12 @@ export class XRGeminiLiveController {
         }
       }
     }
-    if (content['turnComplete'] === true) {
+    if (content['turnComplete'] === true && isCurrentSession()) {
       this.turnHasOutputTranscription = false;
       for (const ev of this.transcripts.finalize()) {
+        if (!isCurrentSession()) return;
         this.emitTranscript(ev);
-        if (ev.speaker === 'model' && this.speakReplies) speak(ev.text);
+        if (isCurrentSession() && ev.speaker === 'model' && this.speakReplies) speak(ev.text);
       }
     }
   }
@@ -470,29 +536,28 @@ export class XRGeminiLiveController {
    * through the same validation as the `detections` prop. Other functions
    * are left to the host.
    */
-  private handleToolCall(toolCall: Record<string, unknown>): void {
+  private handleToolCall(toolCall: Record<string, unknown>, isCurrentSession: () => boolean): void {
     const calls = toolCall['functionCalls'];
-    if (!this.detectObjects || !this.transport || !Array.isArray(calls)) return;
+    const transport = this.transport;
+    if (!this.detectObjects || !transport || !Array.isArray(calls)) return;
     const functionResponses: Array<Record<string, unknown>> = [];
     for (const call of calls.slice(0, MAX_TOOL_CALLS)) {
       const c = call as {id?: unknown; name?: unknown; args?: unknown} | null;
       if (c?.name !== REPORT_OBJECTS_TOOL) continue;
       const objects = (c.args as {objects?: unknown} | null)?.objects;
-      const located = detectObjects(this.element, detectionsFromList(objects), this.frameCamera ?? undefined);
+      const located = detectObjects(
+        this.element, detectionsFromList(objects), this.frameCamera ?? undefined, isCurrentSession,
+      );
+      if (!isCurrentSession()) return;
       const response: Record<string, unknown> = {name: REPORT_OBJECTS_TOOL, response: {ok: true, located: located.length}};
       if (typeof c.id === 'string') response['id'] = c.id.slice(0, 256);
       functionResponses.push(response);
     }
-    if (functionResponses.length) this.transport.send({toolResponse: {functionResponses}});
+    if (functionResponses.length) transport.send({toolResponse: {functionResponses}});
   }
 
   private emitTranscript(ev: TranscriptEvent): void {
     emitPluginEvent(this.element, 'xr-transcription', ev);
-  }
-
-  private stopFrames(): void {
-    if (this.frameTimer !== null) clearInterval(this.frameTimer);
-    this.frameTimer = null;
   }
 }
 
@@ -528,7 +593,8 @@ export function buildHoldToAskPrompt(
 const controllers = new WeakMap<object, XRGeminiLiveController>();
 interface HoldState {
   timer: ReturnType<typeof setTimeout> | null;
-  recognizer: {stop?: () => void} | null;
+  recognizer: Recognition | null;
+  active: boolean;
   hand: string;
 }
 
@@ -538,18 +604,20 @@ function cancelHold(state: HoldState | undefined): void {
   if (!state) return;
   if (state.timer !== null) clearTimeout(state.timer);
   state.timer = null;
-  state.recognizer?.stop?.();
+  state.active = false;
+  const rec = state.recognizer;
+  state.recognizer = null;
+  if (rec) {
+    rec.onresult = null;
+    if (rec.abort) rec.abort();
+    else rec.stop?.();
+  }
 }
 const listeners = new WeakMap<object, Array<[string, EventListener]>>();
 
 /** Returns (creating on first use) the Gemini Live controller for `element`. */
 export function getGeminiLiveController(element: object): XRGeminiLiveController {
-  let c = controllers.get(element);
-  if (!c) {
-    c = new XRGeminiLiveController(element);
-    controllers.set(element, c);
-  }
-  return c;
+  return controllers.get(element) ?? new XRGeminiLiveController(element);
 }
 
 /** Convenience: connects `element` to Gemini Live and returns its controller. */
@@ -559,10 +627,16 @@ export function connectGeminiLive(element: object, options: GeminiLiveOptions): 
   return c;
 }
 
-function startRecognition(onText: (text: string) => void): {stop?: () => void} | null {
+interface Recognition {
+  stop?: () => void;
+  abort?: () => void;
+  onresult: ((event: unknown) => void) | null;
+}
+
+function startRecognition(onText: (text: string) => void): Recognition | null {
   const g = globalThis as Record<string, unknown>;
   const Ctor = (g['SpeechRecognition'] ?? g['webkitSpeechRecognition']) as
-    | (new () => {lang: string; interimResults: boolean; onresult: ((e: unknown) => void) | null; start(): void; stop(): void})
+    | (new () => {lang: string; interimResults: boolean; onresult: ((e: unknown) => void) | null; start(): void; stop(): void; abort?(): void})
     | undefined;
   if (typeof Ctor !== 'function') return null;
   try {
@@ -585,10 +659,11 @@ interface SelectDetail {
   readonly hit?: {mesh?: {name?: string}} | null;
 }
 
-function finishHold(element: object, meshName: string, options: HoldToAskOptions, transcript: string): void {
+function finishHold(element: object, meshName: string, options: HoldToAskOptions, transcript: string, current: () => boolean): void {
+  if (!current()) return;
   const prompt = buildHoldToAskPrompt(meshName, options, transcript);
   emitPluginEvent(element, 'xr-hold-to-ask', {mesh: meshName, transcript, prompt});
-  controllers.get(element)?.sendText(prompt);
+  if (current()) controllers.get(element)?.sendText(prompt);
 }
 
 /** `ThreeLivePlugin` wiring press-and-hold object queries to Gemini Live. */
@@ -604,23 +679,39 @@ export const geminiLivePlugin: ThreeLivePlugin = {
       const options = parseHoldToAsk(mesh ? getMeshXRTraits(mesh)?.holdToAsk : null);
       if (!mesh || !options) return;
       const name = mesh.name ?? '';
-      const state: HoldState = {timer: null, recognizer: null, hand: detail?.hand ?? 'screen'};
+      const session = getGeminiLiveController(element).sessionGuard();
+      const state: HoldState = {timer: null, recognizer: null, active: true, hand: detail?.hand ?? 'screen'};
+      const current = () => state.active && holdState.get(element) === state && session();
       cancelHold(holdState.get(element));
       holdState.set(element, state);
       state.timer = setTimeout(() => {
         state.timer = null;
+        if (!current()) return;
         emitPluginEvent(element, 'xr-hold-to-ask-listening', {mesh: name});
-        state.recognizer = startRecognition((text) => finishHold(element, name, options, text));
-        if (!state.recognizer) finishHold(element, name, options, '');
+        if (!current()) return;
+        const complete = (text: string) => {
+          finishHold(element, name, options, text, current);
+          if (holdState.get(element) === state) {
+            holdState.delete(element);
+            cancelHold(state);
+          }
+        };
+        state.recognizer = startRecognition(complete);
+        if (!current()) cancelHold(state);
+        else if (!state.recognizer) complete('');
       }, options.holdMs);
     };
     const onEnd = (e: Event): void => {
       const state = holdState.get(element);
       const hand = (e as CustomEvent<SelectDetail>).detail?.hand ?? 'screen';
       if (!state || state.hand !== hand) return;
-      // stop() on a running recognizer delivers its final result first.
-      cancelHold(state);
-      holdState.delete(element);
+      // A normal release may deliver final speech. Cancellation/reconnect uses
+      // cancelHold instead, revoking the callback before aborting recognition.
+      if (state.recognizer) state.recognizer.stop?.();
+      else {
+        holdState.delete(element);
+        cancelHold(state);
+      }
     };
     const bound: Array<[string, EventListener]> = [
       ['xr-select-start', onStart],

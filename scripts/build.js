@@ -857,7 +857,7 @@ function reportSizes() {
     {name: 'xr-live-viewer.min.js', budgetKb: '51'},
     {name: 'xr-live.min.js', budgetKb: '72'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
-    {name: 'xr-live-spatial.min.js', budgetKb: '56'},
+    {name: 'xr-live-spatial.min.js', budgetKb: '57'},
     {name: 'xr-live-sim.min.js', budgetKb: '22'},
     {name: 'xr-live-full.min.js', budgetKb: '184'},
   ];

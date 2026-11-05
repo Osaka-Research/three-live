@@ -103,7 +103,7 @@ without shipping unused code. Every bundle and plugin works on both prebuilt
     (`XRHandGestureClassifier`), the desktop 6DoF keyboard/mouse simulator
     (`XRDesktopSimulator`), HRTF spatial audio earcons, and WebMCP agent tools.
 *   **Spatial computing plugins (`xr-live-spatial.min.js`, 14 plugins,
-    `< 56 KB gz`):** Each advanced spatial capability in
+    `< 57 KB gz`):** Each advanced spatial capability in
     `xr-live-spatial.min.js` is a standalone, zero-dependency plugin
     (`~2 to 5 KB gz` each) with a matching native implementation in the Android
     and iOS SDKs.
@@ -404,7 +404,7 @@ following table lists each bundle and its enforced gzipped budget:
 | **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 51 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
 |  | **`xr-live.min.js`** | **`< 72 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ and GLB compiler. |
 |  | **`xr-live-sensors.min.js`** | **`< 10 KB gz`** | Add-on plugin: Hardware XR sensors (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
-|  | **`xr-live-spatial.min.js`** | **`< 56 KB gz`** | Add-on plugin bundle registering all 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`). |
+|  | **`xr-live-spatial.min.js`** | **`< 57 KB gz`** | Add-on plugin bundle registering all 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`). |
 |  | **`xr-live-sim.min.js`** | **`< 22 KB gz`** | Add-on simulation plugin bundle registering all five simulation plugins (`character-controller`, `steering-agents`, `hit-zones`, `objectives`, `synth-audio`). |
 |  | **`xr-live-full.min.js`** | **`< 184 KB gz`** | All-in-one 3D, XR, and simulation bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 14 spatial plugins + all 5 simulation plugins). |
 <!-- mdformat on -->
