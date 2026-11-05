@@ -1053,47 +1053,61 @@ export class BoxGeometry extends BufferGeometry {
       -1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
       -1, 0, 0,
     ];
-    const uvs = [
-      0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0,
-      0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1,
-    ];
+    const uvs: number[] = [];
     const indices: number[] = [];
     for (let f = 0; f < 6; f++) {
       const o = f * 4;
+      uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
       indices.push(o, o + 1, o + 2, o, o + 2, o + 3);
     }
-    this.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3),
-    );
-    this.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-    this.setIndex(indices);
+    this.setFromBuffers(positions, normals, uvs, indices);
   }
 }
 
 export class PlaneGeometry extends BufferGeometry {
-  constructor(width: number = 1, height: number = 1) {
+  constructor(
+    width: number = 1,
+    height: number = 1,
+    widthSegments: number = 1,
+    heightSegments: number = 1,
+  ) {
     super();
-    const w2 = width / 2,
-      h2 = height / 2;
-    const positions = [-w2, h2, 0, w2, h2, 0, -w2, -h2, 0, w2, -h2, 0];
-    const normals = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
-    const uvs = [0, 1, 1, 1, 0, 0, 1, 0];
-    const indices = [0, 2, 1, 2, 3, 1];
-    this.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3),
-    );
-    this.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-    this.setIndex(indices);
+    widthSegments = Math.max(1, Math.floor(widthSegments));
+    heightSegments = Math.max(1, Math.floor(heightSegments));
+    if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+      const nativeFn = (globalThis as any).__three_live_native_plane__;
+      if (typeof nativeFn === 'function') {
+        const native = nativeFn(width, height, widthSegments, heightSegments);
+        this.setFromBuffers(
+          native.positions,
+          native.normals,
+          native.uvs,
+          native.indices,
+        );
+        return;
+      }
+    }
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+
+    for (let j = 0; j <= heightSegments; j++) {
+      const v = j / heightSegments;
+      for (let i = 0; i <= widthSegments; i++) {
+        const u = i / widthSegments;
+        positions.push((u - 0.5) * width, (0.5 - v) * height, 0);
+        normals.push(0, 0, 1);
+        uvs.push(u, 1 - v);
+        if (j > 0 && i > 0) {
+          const a = (widthSegments + 1) * j + i - 1;
+          const b = a - (widthSegments + 1);
+          indices.push(b, a, b + 1, a, a + 1, b + 1);
+        }
+      }
+    }
+
+    this.setFromBuffers(positions, normals, uvs, indices);
   }
 }
 
@@ -1110,10 +1124,12 @@ export class SphereGeometry extends BufferGeometry {
       const nativeFn = (globalThis as any).__three_live_native_sphere__;
       if (typeof nativeFn === 'function') {
         const native = nativeFn(radius, widthSegments, heightSegments);
-        this.setAttribute('position', new BufferAttribute(native.positions, 3));
-        this.setAttribute('normal', new BufferAttribute(native.normals, 3));
-        this.setAttribute('uv', new BufferAttribute(native.uvs, 2));
-        this.setIndex(native.indices);
+        this.setFromBuffers(
+          native.positions,
+          native.normals,
+          native.uvs,
+          native.indices,
+        );
         return;
       }
     }
@@ -1121,48 +1137,31 @@ export class SphereGeometry extends BufferGeometry {
     const normals: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-    const grid: number[][] = [];
 
-    for (let iy = 0; iy <= heightSegments; iy++) {
-      const row: number[] = [];
-      const v = iy / heightSegments;
-      for (let ix = 0; ix <= widthSegments; ix++) {
-        const u = ix / widthSegments;
+    for (let j = 0; j <= heightSegments; j++) {
+      const v = j / heightSegments;
+      for (let i = 0; i <= widthSegments; i++) {
+        const u = i / widthSegments;
         const theta = u * Math.PI * 2;
         const phi = v * Math.PI;
-        const x = -radius * Math.cos(theta) * Math.sin(phi);
-        const y = radius * Math.cos(phi);
-        const z = radius * Math.sin(theta) * Math.sin(phi);
-        positions.push(x, y, z);
-        const len = Math.hypot(x, y, z) || 1.0;
-        normals.push(x / len, y / len, z / len);
+        const nx = -Math.cos(theta) * Math.sin(phi);
+        const ny = Math.cos(phi);
+        const nz = Math.sin(theta) * Math.sin(phi);
+        positions.push(radius * nx, radius * ny, radius * nz);
+        normals.push(nx, ny, nz);
         uvs.push(u, 1 - v);
-        row.push(positions.length / 3 - 1);
-      }
-      grid.push(row);
-    }
-
-    for (let iy = 0; iy < heightSegments; iy++) {
-      for (let ix = 0; ix < widthSegments; ix++) {
-        const a = grid[iy][ix + 1];
-        const b = grid[iy][ix];
-        const c = grid[iy + 1][ix];
-        const d = grid[iy + 1][ix + 1];
-        if (iy !== 0) indices.push(a, b, d);
-        if (iy !== heightSegments - 1) indices.push(b, c, d);
+        if (j > 0 && i > 0) {
+          const d = (widthSegments + 1) * j + i;
+          const a = d - (widthSegments + 1);
+          const b = a - 1;
+          const c = d - 1;
+          if (j !== 1) indices.push(a, b, d);
+          if (j !== heightSegments) indices.push(b, c, d);
+        }
       }
     }
 
-    this.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3),
-    );
-    this.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-    this.setIndex(indices);
+    this.setFromBuffers(positions, normals, uvs, indices);
   }
 }
 
@@ -1184,10 +1183,12 @@ export class CylinderGeometry extends BufferGeometry {
           height,
           radialSegments,
         );
-        this.setAttribute('position', new BufferAttribute(native.positions, 3));
-        this.setAttribute('normal', new BufferAttribute(native.normals, 3));
-        this.setAttribute('uv', new BufferAttribute(native.uvs, 2));
-        this.setIndex(native.indices);
+        this.setFromBuffers(
+          native.positions,
+          native.normals,
+          native.uvs,
+          native.indices,
+        );
         return;
       }
     }
@@ -1262,16 +1263,7 @@ export class CylinderGeometry extends BufferGeometry {
       }
     }
 
-    this.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3),
-    );
-    this.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-    this.setIndex(indices);
+    this.setFromBuffers(positions, normals, uvs, indices);
   }
 }
 
@@ -1290,11 +1282,31 @@ export class TorusGeometry extends BufferGeometry {
     radius: number = 1,
     tube: number = 0.4,
     radialSegments: number = 12,
-    tubularSegments: number = 32,
+    tubularSegments: number = 48,
+    arc: number = Math.PI * 2,
   ) {
     super();
     radialSegments = Math.max(3, Math.floor(radialSegments));
     tubularSegments = Math.max(3, Math.floor(tubularSegments));
+    if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+      const nativeFn = (globalThis as any).__three_live_native_torus__;
+      if (typeof nativeFn === 'function') {
+        const native = nativeFn(
+          radius,
+          tube,
+          radialSegments,
+          tubularSegments,
+          arc,
+        );
+        this.setFromBuffers(
+          native.positions,
+          native.normals,
+          native.uvs,
+          native.indices,
+        );
+        return;
+      }
+    }
     const positions: number[] = [];
     const normals: number[] = [];
     const uvs: number[] = [];
@@ -1302,44 +1314,24 @@ export class TorusGeometry extends BufferGeometry {
 
     for (let j = 0; j <= radialSegments; j++) {
       const v = (j / radialSegments) * Math.PI * 2;
+      const cv = Math.cos(v),
+        sv = Math.sin(v);
       for (let i = 0; i <= tubularSegments; i++) {
-        const u = (i / tubularSegments) * Math.PI * 2;
-        const x = (radius + tube * Math.cos(v)) * Math.cos(u);
-        const y = (radius + tube * Math.cos(v)) * Math.sin(u);
-        const z = tube * Math.sin(v);
-        positions.push(x, y, z);
-
-        const cx = radius * Math.cos(u),
-          cy = radius * Math.sin(u);
-        const nx = x - cx,
-          ny = y - cy,
-          nz = z;
-        const len = Math.hypot(nx, ny, nz) || 1.0;
-        normals.push(nx / len, ny / len, nz / len);
+        const u = (i / tubularSegments) * arc;
+        const cu = Math.cos(u),
+          su = Math.sin(u);
+        positions.push((radius + tube * cv) * cu, (radius + tube * cv) * su, tube * sv);
+        normals.push(cv * cu, cv * su, sv);
         uvs.push(i / tubularSegments, j / radialSegments);
+        if (j > 0 && i > 0) {
+          const a = (tubularSegments + 1) * j + i - 1;
+          const b = a - (tubularSegments + 1);
+          indices.push(a, b, a + 1, b, b + 1, a + 1);
+        }
       }
     }
 
-    for (let j = 1; j <= radialSegments; j++) {
-      for (let i = 1; i <= tubularSegments; i++) {
-        const a = (tubularSegments + 1) * j + i - 1;
-        const b = (tubularSegments + 1) * (j - 1) + i - 1;
-        const c = (tubularSegments + 1) * (j - 1) + i;
-        const d = (tubularSegments + 1) * j + i;
-        indices.push(a, b, d, b, c, d);
-      }
-    }
-
-    this.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3),
-    );
-    this.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-    this.setIndex(indices);
+    this.setFromBuffers(positions, normals, uvs, indices);
   }
 }
 
@@ -1366,10 +1358,12 @@ export class TorusKnotGeometry extends BufferGeometry {
           p,
           q,
         );
-        this.setAttribute('position', new BufferAttribute(native.positions, 3));
-        this.setAttribute('normal', new BufferAttribute(native.normals, 3));
-        this.setAttribute('uv', new BufferAttribute(native.uvs, 2));
-        this.setIndex(native.indices);
+        this.setFromBuffers(
+          native.positions,
+          native.normals,
+          native.uvs,
+          native.indices,
+        );
         return;
       }
     }
@@ -1436,16 +1430,7 @@ export class TorusKnotGeometry extends BufferGeometry {
       }
     }
 
-    this.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3),
-    );
-    this.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2));
-    this.setIndex(indices);
+    this.setFromBuffers(positions, normals, uvs, indices);
   }
 }
 

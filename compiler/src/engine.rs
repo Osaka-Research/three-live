@@ -262,7 +262,10 @@ impl ThreeEngine {
                     '__three_live_native_torus_knot__',
                     '__three_live_native_sphere__',
                     '__three_live_native_cylinder__',
-                    '__three_live_native_box__'
+                    '__three_live_native_box__',
+                    '__three_live_native_plane__',
+                    '__three_live_native_torus__',
+                    '__three_live_native_csg_boolean__'
                 ];
                 for (const hookName of nativeHooks) {
                     if (typeof globalThis[hookName] === 'function') {

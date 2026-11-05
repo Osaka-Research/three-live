@@ -730,10 +730,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         }
       }
 
-      this.setAttribute('position', new BufferAttribute(f32From(positions), 3));
-      this.setAttribute('normal', new BufferAttribute(f32From(normals), 3));
-      this.setAttribute('uv', new BufferAttribute(f32From(uvs), 2));
-      this.setIndex(indices);
+      setGeoBuffers(this, f32From(positions), f32From(normals), f32From(uvs), indices);
     }
   }
 
@@ -742,6 +739,15 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const out = new Float32Array(n);
     for (let i = 0; i < n; i++) out[i] = arr[i];
     return out;
+  }
+
+  // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
+  function setGeoBuffers(geo: any, pos: Float32Array, norm: Float32Array, uv: Float32Array, idx: number[] | Uint32Array): any {
+    geo.setAttribute('position', new BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new BufferAttribute(norm, 3));
+    geo.setAttribute('uv', new BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    return geo;
   }
 
   function computeContourOffsetNormals(ring: Vec2Like[]): Vec2Like[] {
@@ -991,10 +997,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         }
       }
 
-      this.setAttribute('position', new BufferAttribute(f32From(positions), 3));
-      this.setAttribute('normal', new BufferAttribute(f32From(normals), 3));
-      this.setAttribute('uv', new BufferAttribute(f32From(uvs), 2));
-      this.setIndex(indices);
+      setGeoBuffers(this, f32From(positions), f32From(normals), f32From(uvs), indices);
     }
   }
 
@@ -1414,11 +1417,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       }
     }
 
-    const out = new BufferGeometry();
-    out.setAttribute('position', new BufferAttribute(f32From(positions), 3));
-    out.setAttribute('normal', new BufferAttribute(f32From(normals), 3));
-    out.setAttribute('uv', new BufferAttribute(f32From(uvs), 2));
-    out.setIndex(indices);
+    const out = setGeoBuffers(
+      new BufferGeometry(),
+      f32From(positions),
+      f32From(normals),
+      f32From(uvs),
+      indices,
+    );
     // tslint:disable-next-line:no-any Cache polygons for chained CSG calls.
     (out as any)._csgPolygons = polys;
     return out;
@@ -1551,6 +1556,38 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     matrixB: any = null,
     // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
   ): any {
+    if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+      const nativeFn = (globalThis as any).__three_live_native_csg_boolean__;
+      if (
+        typeof nativeFn === 'function' &&
+        geomA?.attributes?.position?.array &&
+        geomB?.attributes?.position?.array
+      ) {
+        const opCode = op === 'subtract' ? 0 : op === 'union' ? 1 : 2;
+        const native = nativeFn(
+          geomA.attributes.position.array,
+          geomA.attributes.normal ? geomA.attributes.normal.array : null,
+          geomA.attributes.uv ? geomA.attributes.uv.array : null,
+          geomA.index ? geomA.index.array : null,
+          matrixA ? matrixA.elements : null,
+          geomB.attributes.position.array,
+          geomB.attributes.normal ? geomB.attributes.normal.array : null,
+          geomB.attributes.uv ? geomB.attributes.uv.array : null,
+          geomB.index ? geomB.index.array : null,
+          matrixB ? matrixB.elements : null,
+          opCode,
+        );
+        if (native) {
+          return setGeoBuffers(
+            new BufferGeometry(),
+            native.positions,
+            native.normals,
+            native.uvs,
+            native.indices,
+          );
+        }
+      }
+    }
     const polysA = geometryToCSGPolygons(geomA, matrixA);
     const polysB = geometryToCSGPolygons(geomB, matrixB);
     return csgPolygonsToGeometry(evaluateCSGBoolean(polysA, polysB, op));

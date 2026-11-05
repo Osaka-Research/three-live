@@ -19,8 +19,9 @@
 
 use crate::constants::*;
 use boa_engine::{
+    builtins::typed_array::TypedArrayKind,
     js_string,
-    object::builtins::{JsFloat32Array, JsUint32Array},
+    object::builtins::{JsArrayBuffer, JsFloat32Array, JsTypedArray, JsUint32Array},
     Context, JsNativeError, JsObject, JsResult, JsValue, NativeFunction,
 };
 
@@ -418,7 +419,900 @@ pub fn generate_box(width: f32, height: f32, depth: f32) -> NativeGeometry {
     NativeGeometry { positions, normals, uvs, indices }
 }
 
+/// Generates a Plane geometry with width_segments x height_segments subdivisions.
+pub fn generate_plane(
+    width: f32,
+    height: f32,
+    width_segments: usize,
+    height_segments: usize,
+) -> NativeGeometry {
+    let width_segments = width_segments.clamp(1, 2048);
+    let height_segments = height_segments.clamp(1, 2048);
+    let vertex_count = (width_segments + 1) * (height_segments + 1);
+
+    let mut positions = Vec::with_capacity(vertex_count * 3);
+    let mut normals = Vec::with_capacity(vertex_count * 3);
+    let mut uvs = Vec::with_capacity(vertex_count * 2);
+    let mut indices = Vec::with_capacity(width_segments * height_segments * 6);
+
+    let width_half = width / 2.0;
+    let height_half = height / 2.0;
+    let grid_x = width_segments;
+    let grid_y = height_segments;
+    let segment_width = width / grid_x as f32;
+    let segment_height = height / grid_y as f32;
+
+    for iy in 0..=grid_y {
+        let y = iy as f32 * segment_height - height_half;
+        let v = 1.0 - (iy as f32 / grid_y as f32);
+        for ix in 0..=grid_x {
+            let x = ix as f32 * segment_width - width_half;
+            positions.push(x);
+            positions.push(-y);
+            positions.push(0.0);
+
+            normals.push(0.0);
+            normals.push(0.0);
+            normals.push(1.0);
+
+            uvs.push(ix as f32 / grid_x as f32);
+            uvs.push(v);
+        }
+    }
+
+    let stride = (grid_x + 1) as u32;
+    for iy in 0..grid_y as u32 {
+        for ix in 0..grid_x as u32 {
+            let a = ix + stride * iy;
+            let b = ix + stride * (iy + 1);
+            let c = (ix + 1) + stride * (iy + 1);
+            let d = (ix + 1) + stride * iy;
+            indices.push(a);
+            indices.push(b);
+            indices.push(d);
+            indices.push(b);
+            indices.push(c);
+            indices.push(d);
+        }
+    }
+
+    NativeGeometry { positions, normals, uvs, indices }
+}
+
+/// Generates a Torus geometry using native toroidal coordinate math.
+pub fn generate_torus(
+    radius: f32,
+    tube: f32,
+    radial_segments: usize,
+    tubular_segments: usize,
+    arc: f32,
+) -> NativeGeometry {
+    let radial_segments = radial_segments.clamp(3, 2048);
+    let tubular_segments = tubular_segments.clamp(3, 2048);
+    let arc = if arc <= 0.0 || !arc.is_finite() { std::f32::consts::TAU } else { arc };
+    let vertex_count = (radial_segments + 1) * (tubular_segments + 1);
+
+    let mut positions = Vec::with_capacity(vertex_count * 3);
+    let mut normals = Vec::with_capacity(vertex_count * 3);
+    let mut uvs = Vec::with_capacity(vertex_count * 2);
+    let mut indices = Vec::with_capacity(radial_segments * tubular_segments * 6);
+
+    for j in 0..=radial_segments {
+        let v = (j as f32 / radial_segments as f32) * std::f32::consts::TAU;
+        let cos_v = v.cos();
+        let sin_v = v.sin();
+
+        for i in 0..=tubular_segments {
+            let u = (i as f32 / tubular_segments as f32) * arc;
+            let cos_u = u.cos();
+            let sin_u = u.sin();
+
+            let x = (radius + tube * cos_v) * cos_u;
+            let y = (radius + tube * cos_v) * sin_u;
+            let z = tube * sin_v;
+
+            positions.push(x);
+            positions.push(y);
+            positions.push(z);
+
+            let cx = radius * cos_u;
+            let cy = radius * sin_u;
+            let nx = x - cx;
+            let ny = y - cy;
+            let nz = z;
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            if len > 1e-5 {
+                normals.push(nx / len);
+                normals.push(ny / len);
+                normals.push(nz / len);
+            } else {
+                normals.push(0.0);
+                normals.push(1.0);
+                normals.push(0.0);
+            }
+
+            uvs.push(i as f32 / tubular_segments as f32);
+            uvs.push(j as f32 / radial_segments as f32);
+        }
+    }
+
+    let stride = (tubular_segments + 1) as u32;
+    for j in 1..=radial_segments as u32 {
+        for i in 1..=tubular_segments as u32 {
+            let a = stride * j + i - 1;
+            let b = stride * (j - 1) + i - 1;
+            let c = stride * (j - 1) + i;
+            let d = stride * j + i;
+            indices.push(a);
+            indices.push(b);
+            indices.push(d);
+            indices.push(b);
+            indices.push(c);
+            indices.push(d);
+        }
+    }
+
+    NativeGeometry { positions, normals, uvs, indices }
+}
+
+// --- Native CSG Boolean Engine ---
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CSGVertex {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub nx: f32,
+    pub ny: f32,
+    pub nz: f32,
+    pub u: f32,
+    pub v: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CSGPolygon {
+    pub vertices: Vec<CSGVertex>,
+    pub nx: f32,
+    pub ny: f32,
+    pub nz: f32,
+    pub w: f32,
+}
+
+impl CSGPolygon {
+    pub fn from_vertices(vertices: Vec<CSGVertex>) -> Option<Self> {
+        if vertices.len() < 3 {
+            return None;
+        }
+        let a = &vertices[0];
+        let b = &vertices[1];
+        let c = &vertices[2];
+        let ab = [b.x - a.x, b.y - a.y, b.z - a.z];
+        let ac = [c.x - a.x, c.y - a.y, c.z - a.z];
+        let mut nx = ab[1] * ac[2] - ab[2] * ac[1];
+        let mut ny = ab[2] * ac[0] - ab[0] * ac[2];
+        let mut nz = ab[0] * ac[1] - ab[1] * ac[0];
+        let len = (nx * nx + ny * ny + nz * nz).sqrt();
+        if len <= 1e-6 {
+            return None;
+        }
+        nx /= len;
+        ny /= len;
+        nz /= len;
+        let w = nx * a.x + ny * a.y + nz * a.z;
+        Some(CSGPolygon { vertices, nx, ny, nz, w })
+    }
+
+    pub fn flip(&mut self) {
+        self.vertices.reverse();
+        for v in &mut self.vertices {
+            v.nx = -v.nx;
+            v.ny = -v.ny;
+            v.nz = -v.nz;
+        }
+        self.nx = -self.nx;
+        self.ny = -self.ny;
+        self.nz = -self.nz;
+        self.w = -self.w;
+    }
+}
+
+const CSG_EPSILON: f32 = 1e-4;
+const COPLANAR: i32 = 0;
+const FRONT: i32 = 1;
+const BACK: i32 = 2;
+const SPANNING: i32 = 3;
+
+enum SplitPoly {
+    CoplanarFront(CSGPolygon),
+    CoplanarBack(CSGPolygon),
+    Front(CSGPolygon),
+    Back(CSGPolygon),
+    Spanning(CSGPolygon, CSGPolygon),
+}
+
+fn split_csg_poly(plane: [f32; 4], poly: &CSGPolygon) -> SplitPoly {
+    let nx = plane[0];
+    let ny = plane[1];
+    let nz = plane[2];
+    let w = plane[3];
+
+    let mut poly_type = 0;
+    let mut types = Vec::with_capacity(poly.vertices.len());
+    for v in &poly.vertices {
+        let t = nx * v.x + ny * v.y + nz * v.z - w;
+        let vtype = if t < -CSG_EPSILON {
+            BACK
+        } else if t > CSG_EPSILON {
+            FRONT
+        } else {
+            COPLANAR
+        };
+        poly_type |= vtype;
+        types.push(vtype);
+    }
+
+    match poly_type {
+        COPLANAR => {
+            let dot = nx * poly.nx + ny * poly.ny + nz * poly.nz;
+            if dot > 0.0 {
+                SplitPoly::CoplanarFront(poly.clone())
+            } else {
+                SplitPoly::CoplanarBack(poly.clone())
+            }
+        }
+        FRONT => SplitPoly::Front(poly.clone()),
+        BACK => SplitPoly::Back(poly.clone()),
+        SPANNING => {
+            let mut f_verts = Vec::new();
+            let mut b_verts = Vec::new();
+            let n = poly.vertices.len();
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let ti = types[i];
+                let tj = types[j];
+                let vi = &poly.vertices[i];
+                let vj = &poly.vertices[j];
+
+                if ti != BACK {
+                    f_verts.push(*vi);
+                }
+                if ti != FRONT {
+                    b_verts.push(*vi);
+                }
+
+                if (ti | tj) == SPANNING {
+                    let ti_dist = nx * vi.x + ny * vi.y + nz * vi.z - w;
+                    let tj_dist = nx * vj.x + ny * vj.y + nz * vj.z - w;
+                    let denom = ti_dist - tj_dist;
+                    let t =
+                        if denom.abs() > 1e-7 { (ti_dist / denom).clamp(0.0, 1.0) } else { 0.5 };
+                    let v = CSGVertex {
+                        x: vi.x + (vj.x - vi.x) * t,
+                        y: vi.y + (vj.y - vi.y) * t,
+                        z: vi.z + (vj.z - vi.z) * t,
+                        nx: vi.nx + (vj.nx - vi.nx) * t,
+                        ny: vi.ny + (vj.ny - vi.ny) * t,
+                        nz: vi.nz + (vj.nz - vi.nz) * t,
+                        u: vi.u + (vj.u - vi.u) * t,
+                        v: vi.v + (vj.v - vi.v) * t,
+                    };
+                    f_verts.push(v);
+                    b_verts.push(v);
+                }
+            }
+            if f_verts.len() >= 3 && b_verts.len() >= 3 {
+                SplitPoly::Spanning(
+                    CSGPolygon {
+                        vertices: f_verts,
+                        nx: poly.nx,
+                        ny: poly.ny,
+                        nz: poly.nz,
+                        w: poly.w,
+                    },
+                    CSGPolygon {
+                        vertices: b_verts,
+                        nx: poly.nx,
+                        ny: poly.ny,
+                        nz: poly.nz,
+                        w: poly.w,
+                    },
+                )
+            } else if f_verts.len() >= 3 {
+                SplitPoly::Front(CSGPolygon {
+                    vertices: f_verts,
+                    nx: poly.nx,
+                    ny: poly.ny,
+                    nz: poly.nz,
+                    w: poly.w,
+                })
+            } else if b_verts.len() >= 3 {
+                SplitPoly::Back(CSGPolygon {
+                    vertices: b_verts,
+                    nx: poly.nx,
+                    ny: poly.ny,
+                    nz: poly.nz,
+                    w: poly.w,
+                })
+            } else {
+                SplitPoly::Front(poly.clone())
+            }
+        }
+        _ => SplitPoly::Front(poly.clone()),
+    }
+}
+
+#[derive(Default)]
+pub struct CSGNode {
+    pub plane: Option<[f32; 4]>,
+    pub front: Option<Box<CSGNode>>,
+    pub back: Option<Box<CSGNode>>,
+    pub polygons: Vec<CSGPolygon>,
+}
+
+impl CSGNode {
+    pub fn new() -> Self {
+        Self { plane: None, front: None, back: None, polygons: Vec::new() }
+    }
+
+    pub fn from_polygons(polygons: &[CSGPolygon]) -> Self {
+        let mut node = Self::new();
+        node.build(polygons, 0);
+        node
+    }
+
+    pub fn invert(&mut self) {
+        for p in &mut self.polygons {
+            p.flip();
+        }
+        if let Some(plane) = &mut self.plane {
+            plane[0] = -plane[0];
+            plane[1] = -plane[1];
+            plane[2] = -plane[2];
+            plane[3] = -plane[3];
+        }
+        if let Some(f) = &mut self.front {
+            f.invert();
+        }
+        if let Some(b) = &mut self.back {
+            b.invert();
+        }
+        std::mem::swap(&mut self.front, &mut self.back);
+    }
+
+    pub fn clip_polygons(&self, polygons: &[CSGPolygon], depth: usize) -> Vec<CSGPolygon> {
+        let plane = match self.plane {
+            Some(p) => p,
+            None => return polygons.to_vec(),
+        };
+        if depth >= 64 || polygons.is_empty() {
+            return polygons.to_vec();
+        }
+
+        let mut front = Vec::new();
+        let mut back = Vec::new();
+        for p in polygons {
+            match split_csg_poly(plane, p) {
+                SplitPoly::CoplanarFront(p) | SplitPoly::Front(p) => front.push(p),
+                SplitPoly::CoplanarBack(p) | SplitPoly::Back(p) => back.push(p),
+                SplitPoly::Spanning(f, b) => {
+                    front.push(f);
+                    back.push(b);
+                }
+            }
+        }
+
+        let clipped_front =
+            if let Some(f) = &self.front { f.clip_polygons(&front, depth + 1) } else { front };
+
+        let clipped_back =
+            if let Some(b) = &self.back { b.clip_polygons(&back, depth + 1) } else { Vec::new() };
+
+        let mut out = clipped_front;
+        out.extend(clipped_back);
+        out
+    }
+
+    pub fn clip_to(&mut self, bsp: &CSGNode, depth: usize) {
+        if !self.polygons.is_empty() {
+            self.polygons = bsp.clip_polygons(&self.polygons, 0);
+        }
+        if depth < 64 {
+            if let Some(f) = &mut self.front {
+                f.clip_to(bsp, depth + 1);
+            }
+            if let Some(b) = &mut self.back {
+                b.clip_to(bsp, depth + 1);
+            }
+        }
+    }
+
+    pub fn all_polygons(&self, out: &mut Vec<CSGPolygon>) {
+        out.extend(self.polygons.clone());
+        if let Some(f) = &self.front {
+            f.all_polygons(out);
+        }
+        if let Some(b) = &self.back {
+            b.all_polygons(out);
+        }
+    }
+
+    pub fn build(&mut self, polygons: &[CSGPolygon], depth: usize) {
+        if polygons.is_empty() || depth >= 64 {
+            return;
+        }
+        if self.plane.is_none() {
+            let split_poly = &polygons[polygons.len() / 2];
+            self.plane = Some([split_poly.nx, split_poly.ny, split_poly.nz, split_poly.w]);
+        }
+        let plane = self.plane.unwrap();
+
+        let mut front = Vec::new();
+        let mut back = Vec::new();
+        for p in polygons {
+            match split_csg_poly(plane, p) {
+                SplitPoly::CoplanarFront(p) | SplitPoly::CoplanarBack(p) => self.polygons.push(p),
+                SplitPoly::Front(p) => front.push(p),
+                SplitPoly::Back(p) => back.push(p),
+                SplitPoly::Spanning(f, b) => {
+                    front.push(f);
+                    back.push(b);
+                }
+            }
+        }
+
+        if !front.is_empty() {
+            let mut f_node = self.front.take().unwrap_or_else(|| Box::new(CSGNode::new()));
+            f_node.build(&front, depth + 1);
+            self.front = Some(f_node);
+        }
+        if !back.is_empty() {
+            let mut b_node = self.back.take().unwrap_or_else(|| Box::new(CSGNode::new()));
+            b_node.build(&back, depth + 1);
+            self.back = Some(b_node);
+        }
+    }
+}
+
+pub fn evaluate_csg(
+    polys_a: &[CSGPolygon],
+    polys_b: &[CSGPolygon],
+    op: u32, // 0 = subtract, 1 = union, 2 = intersect
+) -> Vec<CSGPolygon> {
+    if polys_a.is_empty() {
+        return if op == 1 { polys_b.to_vec() } else { Vec::new() };
+    }
+    if polys_b.is_empty() {
+        return if op == 2 { Vec::new() } else { polys_a.to_vec() };
+    }
+
+    // AABB pre-filtering
+    let mut b_min = [f32::INFINITY; 3];
+    let mut b_max = [-f32::INFINITY; 3];
+    for p in polys_b {
+        for v in &p.vertices {
+            b_min[0] = b_min[0].min(v.x);
+            b_min[1] = b_min[1].min(v.y);
+            b_min[2] = b_min[2].min(v.z);
+            b_max[0] = b_max[0].max(v.x);
+            b_max[1] = b_max[1].max(v.y);
+            b_max[2] = b_max[2].max(v.z);
+        }
+    }
+    b_min = [b_min[0] - 1e-4, b_min[1] - 1e-4, b_min[2] - 1e-4];
+    b_max = [b_max[0] + 1e-4, b_max[1] + 1e-4, b_max[2] + 1e-4];
+
+    let mut a_overlap = Vec::new();
+    let mut a_disjoint = Vec::new();
+    for p in polys_a {
+        let mut p_min = [f32::INFINITY; 3];
+        let mut p_max = [-f32::INFINITY; 3];
+        for v in &p.vertices {
+            p_min[0] = p_min[0].min(v.x);
+            p_min[1] = p_min[1].min(v.y);
+            p_min[2] = p_min[2].min(v.z);
+            p_max[0] = p_max[0].max(v.x);
+            p_max[1] = p_max[1].max(v.y);
+            p_max[2] = p_max[2].max(v.z);
+        }
+        if p_max[0] < b_min[0]
+            || p_min[0] > b_max[0]
+            || p_max[1] < b_min[1]
+            || p_min[1] > b_max[1]
+            || p_max[2] < b_min[2]
+            || p_min[2] > b_max[2]
+        {
+            a_disjoint.push(p.clone());
+        } else {
+            a_overlap.push(p.clone());
+        }
+    }
+
+    if a_overlap.is_empty() {
+        return match op {
+            1 => {
+                let mut out = polys_a.to_vec();
+                out.extend_from_slice(polys_b);
+                out
+            }
+            0 => polys_a.to_vec(),
+            _ => Vec::new(),
+        };
+    }
+
+    let mut a = CSGNode::from_polygons(&a_overlap);
+    let mut b = CSGNode::from_polygons(polys_b);
+
+    match op {
+        1 => {
+            // union
+            a.clip_to(&b, 0);
+            b.clip_to(&a, 0);
+            b.invert();
+            b.clip_to(&a, 0);
+            b.invert();
+            let mut b_polys = Vec::new();
+            b.all_polygons(&mut b_polys);
+            a.build(&b_polys, 0);
+            let mut result = a_disjoint;
+            a.all_polygons(&mut result);
+            result
+        }
+        0 => {
+            // subtract
+            a.invert();
+            a.clip_to(&b, 0);
+            b.clip_to(&a, 0);
+            b.invert();
+            b.clip_to(&a, 0);
+            b.invert();
+            let mut b_polys = Vec::new();
+            b.all_polygons(&mut b_polys);
+            a.build(&b_polys, 0);
+            a.invert();
+            let mut result = a_disjoint;
+            a.all_polygons(&mut result);
+            result
+        }
+        _ => {
+            // intersect
+            a.invert();
+            b.clip_to(&a, 0);
+            b.invert();
+            a.clip_to(&b, 0);
+            b.clip_to(&a, 0);
+            let mut b_polys = Vec::new();
+            b.all_polygons(&mut b_polys);
+            a.build(&b_polys, 0);
+            a.invert();
+            let mut result = Vec::new();
+            a.all_polygons(&mut result);
+            result
+        }
+    }
+}
+
+pub fn csg_polygons_to_geometry(polys: &[CSGPolygon]) -> NativeGeometry {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+
+    for poly in polys {
+        let n = poly.vertices.len();
+        if n < 3 {
+            continue;
+        }
+        let base = (positions.len() / 3) as u32;
+        for v in &poly.vertices {
+            positions.push(v.x);
+            positions.push(v.y);
+            positions.push(v.z);
+
+            let has_n = v.nx.is_finite() && (v.nx * v.nx + v.ny * v.ny + v.nz * v.nz) > 0.5;
+            if has_n {
+                normals.push(v.nx);
+                normals.push(v.ny);
+                normals.push(v.nz);
+            } else {
+                normals.push(poly.nx);
+                normals.push(poly.ny);
+                normals.push(poly.nz);
+            }
+            uvs.push(v.u);
+            uvs.push(v.v);
+        }
+        for i in 1..(n - 1) as u32 {
+            indices.push(base);
+            indices.push(base + i);
+            indices.push(base + i + 1);
+        }
+    }
+
+    NativeGeometry { positions, normals, uvs, indices }
+}
+
+pub fn buffers_to_csg_polygons(
+    positions: &[f32],
+    normals: Option<&[f32]>,
+    uvs: Option<&[f32]>,
+    indices: Option<&[u32]>,
+    matrix: Option<&[f32]>,
+) -> Vec<CSGPolygon> {
+    let vert_count = positions.len() / 3;
+    let tri_count = if let Some(idx) = indices { idx.len() / 3 } else { vert_count / 3 };
+
+    let (m, nm, flip_winding) = if let Some(m) = matrix {
+        if m.len() >= 16 {
+            let det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2])
+                + m[8] * (m[1] * m[6] - m[5] * m[2]);
+            let m00 = m[0];
+            let m01 = m[4];
+            let m02 = m[8];
+            let m10 = m[1];
+            let m11 = m[5];
+            let m12 = m[9];
+            let m20 = m[2];
+            let m21 = m[6];
+            let m22 = m[10];
+            let c00 = m11 * m22 - m12 * m21;
+            let c01 = -(m10 * m22 - m12 * m20);
+            let c02 = m10 * m21 - m11 * m20;
+            let c10 = -(m01 * m22 - m02 * m21);
+            let c11 = m00 * m22 - m02 * m20;
+            let c12 = -(m00 * m21 - m01 * m20);
+            let c20 = m01 * m12 - m02 * m11;
+            let c21 = -(m00 * m12 - m02 * m10);
+            let c22 = m00 * m11 - m01 * m10;
+            let inv_det = if det.abs() > 1e-6 { 1.0 / det } else { 1.0 };
+            let nm = [
+                c00 * inv_det,
+                c01 * inv_det,
+                c02 * inv_det,
+                c10 * inv_det,
+                c11 * inv_det,
+                c12 * inv_det,
+                c20 * inv_det,
+                c21 * inv_det,
+                c22 * inv_det,
+            ];
+            (Some(m), Some(nm), det < 0.0)
+        } else {
+            (None, None, false)
+        }
+    } else {
+        (None, None, false)
+    };
+
+    let read_vert = |vi: usize| -> CSGVertex {
+        let vi3 = vi * 3;
+        let mut x = positions.get(vi3).copied().unwrap_or(0.0);
+        let mut y = positions.get(vi3 + 1).copied().unwrap_or(0.0);
+        let mut z = positions.get(vi3 + 2).copied().unwrap_or(0.0);
+
+        let mut nx = normals.and_then(|n| n.get(vi3).copied()).unwrap_or(f32::NAN);
+        let mut ny = normals.and_then(|n| n.get(vi3 + 1).copied()).unwrap_or(f32::NAN);
+        let mut nz = normals.and_then(|n| n.get(vi3 + 2).copied()).unwrap_or(f32::NAN);
+
+        if let (Some(m), Some(nm)) = (m, nm) {
+            let tx = m[0] * x + m[4] * y + m[8] * z + m[12];
+            let ty = m[1] * x + m[5] * y + m[9] * z + m[13];
+            let tz = m[2] * x + m[6] * y + m[10] * z + m[14];
+            x = tx;
+            y = ty;
+            z = tz;
+
+            if nx.is_finite() && ny.is_finite() && nz.is_finite() {
+                let tnx = nm[0] * nx + nm[3] * ny + nm[6] * nz;
+                let tny = nm[1] * nx + nm[4] * ny + nm[7] * nz;
+                let tnz = nm[2] * nx + nm[5] * ny + nm[8] * nz;
+                let n_len = (tnx * tnx + tny * tny + tnz * tnz).sqrt();
+                if n_len > 1e-6 {
+                    nx = tnx / n_len;
+                    ny = tny / n_len;
+                    nz = tnz / n_len;
+                }
+            }
+        }
+
+        let vi2 = vi * 2;
+        let u = uvs.and_then(|u| u.get(vi2).copied()).unwrap_or(0.0);
+        let v = uvs.and_then(|u| u.get(vi2 + 1).copied()).unwrap_or(0.0);
+
+        CSGVertex { x, y, z, nx, ny, nz, u, v }
+    };
+
+    let mut polys = Vec::with_capacity(tri_count);
+    for t in 0..tri_count {
+        let (i0, i1, i2) = if let Some(idx) = indices {
+            (idx[t * 3] as usize, idx[t * 3 + 1] as usize, idx[t * 3 + 2] as usize)
+        } else {
+            (t * 3, t * 3 + 1, t * 3 + 2)
+        };
+        let verts = if flip_winding {
+            vec![read_vert(i0), read_vert(i2), read_vert(i1)]
+        } else {
+            vec![read_vert(i0), read_vert(i1), read_vert(i2)]
+        };
+        if let Some(poly) = CSGPolygon::from_vertices(verts) {
+            polys.push(poly);
+        }
+    }
+    polys
+}
+
+fn extract_f32_slice(val: &JsValue, context: &mut Context) -> Option<Vec<f32>> {
+    let obj = val.as_object()?;
+    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+        let buf_val = typed_arr.buffer(context).ok()?;
+        let buf_obj = buf_val.as_object()?;
+        let arr_buf = JsArrayBuffer::from_object(buf_obj.clone()).ok()?;
+        let data = arr_buf.data()?;
+        let offset = typed_arr.byte_offset(context).unwrap_or(0);
+        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
+        let end = offset.saturating_add(len).min(data.len());
+        let start = offset.min(end);
+        let slice = &data[start..end];
+        let floats: Vec<f32> = slice
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        return Some(floats);
+    }
+    None
+}
+
+fn extract_u32_slice(val: &JsValue, context: &mut Context) -> Option<Vec<u32>> {
+    let obj = val.as_object()?;
+    if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+        let buf_val = typed_arr.buffer(context).ok()?;
+        let buf_obj = buf_val.as_object()?;
+        let arr_buf = JsArrayBuffer::from_object(buf_obj.clone()).ok()?;
+        let data = arr_buf.data()?;
+        let offset = typed_arr.byte_offset(context).unwrap_or(0);
+        let len = typed_arr.byte_length(context).unwrap_or(data.len().saturating_sub(offset));
+        let end = offset.saturating_add(len).min(data.len());
+        let start = offset.min(end);
+        let slice = &data[start..end];
+        match typed_arr.kind() {
+            Some(TypedArrayKind::Uint32) => {
+                let ints: Vec<u32> = slice
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                Some(ints)
+            }
+            Some(TypedArrayKind::Uint16) => {
+                let ints: Vec<u32> = slice
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_ne_bytes([c[0], c[1]]) as u32)
+                    .collect();
+                Some(ints)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
 // --- Boa Native Function Bindings ---
+
+pub fn native_plane(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let width = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let height = args.get(1).and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let width_segments =
+        (args.get(2).and_then(|v| v.as_number()).unwrap_or(1.0) as usize).clamp(1, 2048);
+    let height_segments =
+        (args.get(3).and_then(|v| v.as_number()).unwrap_or(1.0) as usize).clamp(1, 2048);
+
+    let projected_vertices = (width_segments + 1) * (height_segments + 1);
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "Plane projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_plane(width, height, width_segments, height_segments);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+pub fn native_torus(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let radius = args.first().and_then(|v| v.as_number()).unwrap_or(1.0) as f32;
+    let tube = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.4) as f32;
+    let radial_segments =
+        (args.get(2).and_then(|v| v.as_number()).unwrap_or(12.0) as usize).clamp(3, 2048);
+    let tubular_segments =
+        (args.get(3).and_then(|v| v.as_number()).unwrap_or(48.0) as usize).clamp(3, 2048);
+    let arc = args.get(4).and_then(|v| v.as_number()).unwrap_or(std::f64::consts::TAU) as f32;
+
+    let projected_vertices = (radial_segments + 1) * (tubular_segments + 1);
+    if projected_vertices > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "Torus projected vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                projected_vertices, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let geo = generate_torus(radius, tube, radial_segments, tubular_segments, arc);
+    geo.to_js_object(context).map(JsValue::from)
+}
+
+pub fn native_csg_boolean(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let pos_a = args
+        .first()
+        .and_then(|v| extract_f32_slice(v, context))
+        .ok_or_else(|| JsNativeError::typ().with_message("Missing position buffer for Mesh A"))?;
+    let norm_a = args.get(1).and_then(|v| extract_f32_slice(v, context));
+    let uv_a = args.get(2).and_then(|v| extract_f32_slice(v, context));
+    let idx_a = args.get(3).and_then(|v| extract_u32_slice(v, context));
+    let mat_a = args.get(4).and_then(|v| extract_f32_slice(v, context));
+
+    let pos_b = args
+        .get(5)
+        .and_then(|v| extract_f32_slice(v, context))
+        .ok_or_else(|| JsNativeError::typ().with_message("Missing position buffer for Mesh B"))?;
+    let norm_b = args.get(6).and_then(|v| extract_f32_slice(v, context));
+    let uv_b = args.get(7).and_then(|v| extract_f32_slice(v, context));
+    let idx_b = args.get(8).and_then(|v| extract_u32_slice(v, context));
+    let mat_b = args.get(9).and_then(|v| extract_f32_slice(v, context));
+
+    let op_code = args.get(10).and_then(|v| v.as_number()).unwrap_or(0.0) as u32;
+
+    let polys_a = buffers_to_csg_polygons(
+        &pos_a,
+        norm_a.as_deref(),
+        uv_a.as_deref(),
+        idx_a.as_deref(),
+        mat_a.as_deref(),
+    );
+    let polys_b = buffers_to_csg_polygons(
+        &pos_b,
+        norm_b.as_deref(),
+        uv_b.as_deref(),
+        idx_b.as_deref(),
+        mat_b.as_deref(),
+    );
+
+    let total_in = polys_a.len() + polys_b.len();
+    if total_in > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "CSG combined polygon count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                total_in, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    let result_polys = evaluate_csg(&polys_a, &polys_b, op_code);
+    let geo = csg_polygons_to_geometry(&result_polys);
+
+    let vert_count = geo.positions.len() / 3;
+    if vert_count > SECURITY_3D_MAX_VERTICES {
+        return Err(JsNativeError::range()
+            .with_message(format!(
+                "CSG output vertex count ({}) exceeds SECURITY_3D_MAX_VERTICES ({})",
+                vert_count, SECURITY_3D_MAX_VERTICES
+            ))
+            .into());
+    }
+
+    geo.to_js_object(context).map(JsValue::from)
+}
 
 pub fn native_torus_knot(
     _this: &JsValue,
@@ -528,6 +1422,21 @@ pub fn register_native_geometry_callables(context: &mut Context) -> JsResult<()>
         js_string!("__three_live_native_box__"),
         3,
         NativeFunction::from_fn_ptr(native_box),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_plane__"),
+        4,
+        NativeFunction::from_fn_ptr(native_plane),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_torus__"),
+        5,
+        NativeFunction::from_fn_ptr(native_torus),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_csg_boolean__"),
+        11,
+        NativeFunction::from_fn_ptr(native_csg_boolean),
     )?;
     Ok(())
 }

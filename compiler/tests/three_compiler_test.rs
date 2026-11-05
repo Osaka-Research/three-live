@@ -2559,3 +2559,128 @@ fn test_phase4_temporal_animation_interactivity_and_sim_runner() {
     assert_eq!(glb_sim_report.ticks_simulated, 30);
     assert_eq!(glb_sim_report.explode_factor, 0.5);
 }
+
+#[test]
+fn test_plane_geometry_native_acceleration() {
+    let script = r#"
+        const geo = new THREE.PlaneGeometry(10, 10, 8, 8);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x38bdf8 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.name = "NativePlane";
+        scene.add(mesh);
+    "#;
+
+    let scene = validate_three_script(script).expect("Plane validation should succeed");
+    assert_eq!(scene.meshes.len(), 1);
+    let plane = &scene.meshes[0];
+    assert_eq!(plane.positions.len(), (8 + 1) * (8 + 1));
+    assert_eq!(plane.indices.len(), 8 * 8 * 6);
+    assert_eq!(plane.normals.len(), plane.positions.len());
+    assert_eq!(plane.uvs.len(), (8 + 1) * (8 + 1));
+
+    let glb = transcode_three_to_glb(script).expect("Plane transcoding to GLB should succeed");
+    assert!(!glb.is_empty());
+}
+
+#[test]
+fn test_torus_geometry_native_acceleration() {
+    let script = r#"
+        const geo = new THREE.TorusGeometry(3.0, 0.8, 16, 32);
+        const mat = new THREE.MeshStandardMaterial({ color: 0xf59e0b });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.name = "NativeTorus";
+        scene.add(mesh);
+    "#;
+
+    let scene = validate_three_script(script).expect("Torus validation should succeed");
+    assert_eq!(scene.meshes.len(), 1);
+    let torus = &scene.meshes[0];
+    assert_eq!(torus.positions.len(), (16 + 1) * (32 + 1));
+    assert_eq!(torus.indices.len(), 16 * 32 * 6);
+    assert_eq!(torus.normals.len(), torus.positions.len());
+    assert_eq!(torus.uvs.len(), (16 + 1) * (32 + 1));
+
+    let glb = transcode_three_to_glb(script).expect("Torus transcoding to GLB should succeed");
+    assert!(!glb.is_empty());
+}
+
+#[test]
+fn test_native_csg_boolean_operations() {
+    let script = r#"
+        const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+        const cylMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3, 16));
+
+        // Test subtraction
+        const sub = THREE.CSG.subtract(boxMesh, cylMesh);
+        sub.name = "CSG_Subtracted";
+
+        // Test union
+        const unionMesh = THREE.CSG.union(boxMesh, cylMesh);
+        unionMesh.name = "CSG_Union";
+
+        // Test intersection
+        const intersectMesh = THREE.CSG.intersect(boxMesh, cylMesh);
+        intersectMesh.name = "CSG_Intersect";
+
+        scene.add(sub);
+        scene.add(unionMesh);
+        scene.add(intersectMesh);
+    "#;
+
+    let scene = validate_three_script(script).expect("CSG validation should succeed");
+    assert_eq!(scene.meshes.len(), 3);
+    for m in &scene.meshes {
+        assert!(!m.positions.is_empty(), "CSG mesh {} positions should not be empty", m.name);
+        assert!(!m.indices.is_empty(), "CSG mesh {} indices should not be empty", m.name);
+        assert!(!m.normals.is_empty(), "CSG mesh {} normals should not be empty", m.name);
+    }
+
+    let glb = transcode_three_to_glb(script).expect("CSG scene transcoding should succeed");
+    assert!(!glb.is_empty());
+}
+
+#[test]
+fn test_cad_flange_scene_compilation() {
+    let script = r#"
+        const profile = new THREE.Shape();
+        profile.absarc(0, 0, 1.25, 0, Math.PI * 2, false);
+        const bore = new THREE.Path();
+        bore.absarc(0, 0, 0.48, 0, Math.PI * 2, true);
+        profile.holes.push(bore);
+
+        const alloyMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+        const rawBlank = new THREE.Mesh(
+            new THREE.ExtrudeGeometry(profile, {
+                depth: 0.36,
+                bevelEnabled: true,
+                bevelThickness: 0.05,
+                bevelSize: 0.04,
+                bevelSegments: 2,
+                curveSegments: 36
+            }),
+            alloyMat
+        );
+        rawBlank.rotation.x = -Math.PI / 2;
+        rawBlank.position.set(0, -0.18, 0);
+
+        const slotX = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.26, 0.32), alloyMat);
+        slotX.position.set(0, 0.12, 0);
+        const slotZ = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.26, 2.8), alloyMat);
+        slotZ.position.set(0, 0.12, 0);
+
+        const step1 = THREE.CSG.subtract(rawBlank, slotX);
+        const machinedFlange = THREE.CSG.subtract(step1, slotZ);
+        machinedFlange.name = "MachinedCADFlange";
+        scene.add(machinedFlange);
+    "#;
+
+    let scene =
+        validate_three_script(script).expect("Machined CAD flange must succeed without timeout");
+    assert_eq!(scene.meshes.len(), 1);
+    let flange = &scene.meshes[0];
+    assert!(flange.positions.len() > 1000);
+    assert!(flange.indices.len() > 1000);
+
+    let glb = transcode_three_to_glb(script).expect("CAD flange transcoding to GLB should succeed");
+    assert!(!glb.is_empty());
+}
