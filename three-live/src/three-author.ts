@@ -230,6 +230,17 @@ export class Vector3 {
     return Math.hypot(this.x - v.x, this.y - v.y, this.z - v.z);
   }
 
+  public lerp(v: Vector3, alpha: number): this {
+    return this.lerpVectors(this, v, alpha);
+  }
+
+  public lerpVectors(v1: Vector3, v2: Vector3, alpha: number): this {
+    this.x = v1.x + (v2.x - v1.x) * alpha;
+    this.y = v1.y + (v2.y - v1.y) * alpha;
+    this.z = v1.z + (v2.z - v1.z) * alpha;
+    return this;
+  }
+
   public applyMatrix4(m: Matrix4): this {
     const x = this.x,
       y = this.y,
@@ -432,12 +443,31 @@ export class Quaternion {
   public setFromAxisAngle(axis: Vector3, angle: number): this {
     const halfAngle = angle / 2;
     const s = Math.sin(halfAngle);
-    this._x = axis.x * s;
-    this._y = axis.y * s;
-    this._z = axis.z * s;
-    this._w = Math.cos(halfAngle);
-    this._onChangeCallback?.();
-    return this;
+    return this.set(axis.x * s, axis.y * s, axis.z * s, Math.cos(halfAngle));
+  }
+
+  public normalize(): this {
+    const l = Math.hypot(this._x, this._y, this._z, this._w);
+    return l === 0
+      ? this.set(0, 0, 0, 1)
+      : this.set(this._x / l, this._y / l, this._z / l, this._w / l);
+  }
+
+  public setFromUnitVectors(vFrom: Vector3, vTo: Vector3): this {
+    const r = vFrom.dot(vTo) + 1;
+    if (r < 1e-6) {
+      return (
+        Math.abs(vFrom.x) > Math.abs(vFrom.z)
+          ? this.set(-vFrom.y, vFrom.x, 0, 0)
+          : this.set(0, -vFrom.z, vFrom.y, 0)
+      ).normalize();
+    }
+    return this.set(
+      vFrom.y * vTo.z - vFrom.z * vTo.y,
+      vFrom.z * vTo.x - vFrom.x * vTo.z,
+      vFrom.x * vTo.y - vFrom.y * vTo.x,
+      r,
+    ).normalize();
   }
 
   public multiply(q: Quaternion): this {
@@ -4364,47 +4394,45 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     }
 
     const diagnostics: SchemaDiagnostic[] = [];
-    for (const warn of getAuthorWarnings()) {
-      if (
-        warn.includes('ShaderMaterial') ||
-        warn.includes('RawShaderMaterial') ||
-        warn.includes('unsupported material')
-      ) {
-        diagnostics.push({
-          code: 'TL101',
-          severity: 'warning',
-          message: warn,
-          hint: 'Use THREE.MeshStandardMaterial({ color, metalness, roughness }) instead of custom GLSL shaders.',
-        });
-      } else if (warn.includes('requestAnimationFrame')) {
-        diagnostics.push({
-          code: 'TL104',
-          severity: 'warning',
-          message: warn,
-          hint: 'Static exports evaluate a single frame; use userData.xr.orbit, userData.interactivity, or define function animate(t) for time-stepped rendering.',
-        });
-      } else if (warn.includes('THREE.')) {
-        diagnostics.push({
-          code: 'TL103',
-          severity: 'warning',
-          message: warn,
-          hint: "Load external models via <three-live src='...'> or <xr-anchor src='...'>; camera controls and post-processing are managed by the host viewer.",
-        });
-      } else if (warn.includes('larger than')) {
-        diagnostics.push({
-          code: 'TL105',
-          severity: 'warning',
-          message: warn,
-          hint: 'Keep per-node userData.xr metadata under 15 KB.',
-        });
-      } else {
-        diagnostics.push({
-          code: 'TL102',
-          severity: 'warning',
-          message: warn,
-          hint: 'Use core primitives (BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, TorusKnotGeometry, PlaneGeometry) and DirectionalLight / PointLight / AmbientLight.',
-        });
-      }
+    for (const message of getAuthorWarnings()) {
+      const [code, hint] =
+        message.includes('ShaderMaterial') ||
+        message.includes('RawShaderMaterial') ||
+        message.includes('unsupported material')
+          ? [
+              'TL101',
+              'Use THREE.MeshStandardMaterial({ color, metalness, roughness }) instead of custom GLSL shaders.',
+            ]
+          : message.includes('requestAnimationFrame')
+            ? [
+                'TL104',
+                'Static exports evaluate a single frame; use userData.xr.orbit, userData.interactivity, or define function animate(t) for time-stepped rendering.',
+              ]
+            : message.includes('Controls')
+              ? [
+                  'TL106',
+                  'Remove THREE.OrbitControls; <three-live camera-controls> and <xr-live> provide built-in camera controls.',
+                ]
+              : message.includes('EffectComposer') || message.includes('Pass')
+                ? [
+                    'TL107',
+                    'Use <three-live bloom="0.5" outline-selected> or mesh.userData.xr = { bloom, outline } instead of EffectComposer passes.',
+                  ]
+                : message.includes('THREE.')
+                  ? [
+                      'TL103',
+                      "Load external models via <three-live src='...'> or <xr-anchor src='...'>; camera controls and post-processing are managed by the host viewer.",
+                    ]
+                  : message.includes('larger than')
+                    ? [
+                        'TL105',
+                        'Keep per-node userData.xr metadata under 15 KB.',
+                      ]
+                    : [
+                        'TL102',
+                        'Use core primitives (BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, TorusKnotGeometry, PlaneGeometry) and DirectionalLight / PointLight / AmbientLight.',
+                      ];
+      diagnostics.push({code, severity: 'warning', message, hint});
     }
 
     const nodeNameSet = new Set<string>();

@@ -34,6 +34,9 @@
   "main": "three-live/dist/three-live.cjs",
   "module": "three-live/dist/three-live.js",
   "types": "three-live.d.ts",
+  "bin": {
+    "three-live-cli": "./bin/three-live-cli.js"
+  },
   "sideEffects": [
     "three-live/dist/*.js",
     "three-live/dist/*.cjs",

@@ -654,6 +654,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var sync: Bool?
   /// `true` when `pointerEvents: "none"` (node is not pickable).
   public var pointerEventsNone: Bool
+  /// Canonical XR trait schema version (`1` by default).
+  public var schemaVersion: Int = 1
 
   public init() {
     pointerEventsNone = false
@@ -1161,6 +1163,9 @@ public enum XRLiveTraitParser {
     out.navigable = parseNavigable(r["navigable"])
     out.sync = XRJSON.bool(r["sync"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
+    if let sv = XRJSON.number(r["schemaVersion"]), sv >= 1 {
+      out.schemaVersion = Int(sv)
+    }
 
     return out.isEmpty ? nil : out
   }
@@ -1183,7 +1188,7 @@ public enum XRLiveTraitParser {
     var r: [String: Any] = [:]
     for key in [
       "grab", "billboard", "anchor", "physics", "splatUrl", "spatialSlot", "navigable",
-      "sync", "pointerEvents",
+      "sync", "pointerEvents", "schemaVersion",
     ] {
       if let v = d[key] { r[key] = v }
     }

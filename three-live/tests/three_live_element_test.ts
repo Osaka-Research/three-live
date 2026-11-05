@@ -884,6 +884,126 @@ async function runElementTests() {
     'instance.resetTurntableRotation(theta) delegates to viewer.resetTurntableRotation',
   );
 
+  // Test GA telemetry events (three-load, three-error) and declarative [slot="poster"] / [slot="error"]
+  const posterSlotEl: any = {hidden: false, style: {display: 'block'}};
+  const errorSlotEl: any = {hidden: true, style: {display: 'none'}};
+  (instance as any).querySelector = (sel: string) => {
+    if (sel === '[slot="poster"]') return posterSlotEl;
+    if (sel === '[slot="error"]') return errorSlotEl;
+    return null;
+  };
+  let threeLoadDetail: any = null;
+  let threeErrorDetail: any = null;
+  instance.addEventListener('three-load', (e: any) => {
+    threeLoadDetail = e.detail;
+  });
+  instance.addEventListener('three-error', (e: any) => {
+    threeErrorDetail = e.detail;
+  });
+
+  const validMockGlb = {
+    gltf: {asset: {version: '2.0'}, meshes: []},
+    bin: new ArrayBuffer(0),
+  };
+  (instance as any).viewer.loadGLBData = () => {};
+  (instance as any).viewer.setSelectedMesh = () => {};
+  await instance.loadModel(validMockGlb as any);
+  assert(
+    threeLoadDetail !== null &&
+      threeLoadDetail.source === 'model' &&
+      Array.isArray(threeLoadDetail.model?.gltf?.meshes),
+    'loadModel dispatches three-load CustomEvent with { model, source }',
+  );
+  assert(
+    posterSlotEl.hidden === true && posterSlotEl.style.display === 'none',
+    'loadModel hides [slot="poster"] child',
+  );
+  assert(
+    errorSlotEl.hidden === true && errorSlotEl.style.display === 'none',
+    'loadModel keeps [slot="error"] child hidden',
+  );
+
+  (instance as any).viewer.loadGLBData = () => {
+    throw new Error('corrupt GLB');
+  };
+  let loadFailed = false;
+  try {
+    await instance.loadModel(validMockGlb as any);
+  } catch {
+    loadFailed = true;
+  }
+  assert(loadFailed, 'loadModel rejects when viewer.loadGLBData throws');
+  assert(
+    threeErrorDetail !== null &&
+      threeErrorDetail.stage === 'load' &&
+      threeErrorDetail.message === 'corrupt GLB',
+    'failed loadModel dispatches three-error CustomEvent with { error, message, stage: "load" }',
+  );
+  assert(
+    errorSlotEl.hidden === false && errorSlotEl.style.display === '',
+    'failed loadModel reveals [slot="error"] child',
+  );
+
+  // Test three-context-lost and three-context-restored forwarding from canvas
+  const canvasListeners = new Map<string, Function>();
+  const mockCanvasForCtx: any = {
+    style: {},
+    addEventListener: (type: string, cb: Function) => {
+      canvasListeners.set(type, cb);
+    },
+  };
+  (instance as any).querySelector = (sel: string) => {
+    if (sel === 'canvas') return mockCanvasForCtx;
+    if (sel === '[slot="poster"]') return posterSlotEl;
+    if (sel === '[slot="error"]') return errorSlotEl;
+    return null;
+  };
+  (instance as any).setupDOM();
+  let ctxLostEvent: any = null;
+  let ctxRestoredEvent: any = null;
+  instance.addEventListener('three-context-lost', (e: any) => {
+    ctxLostEvent = e.detail;
+  });
+  instance.addEventListener('three-context-restored', (e: any) => {
+    ctxRestoredEvent = e.detail;
+  });
+  canvasListeners.get('webglcontextlost')?.({type: 'webglcontextlost'});
+  canvasListeners.get('webglcontextrestored')?.({type: 'webglcontextrestored'});
+  assert(
+    ctxLostEvent?.originalEvent?.type === 'webglcontextlost',
+    'webglcontextlost on canvas dispatches three-context-lost on <three-live>',
+  );
+  assert(
+    ctxRestoredEvent?.originalEvent?.type === 'webglcontextrestored',
+    'webglcontextrestored on canvas dispatches three-context-restored on <three-live>',
+  );
+
+  // Test package.json bin wrapper and three-live.d.ts attribute parity (Workstream #4)
+  const fs = require('fs');
+  const path = require('path');
+  const rootDir = path.resolve(__dirname, '../..');
+  const pkgPath = path.join(rootDir, 'package.json');
+  const dtsPath = path.join(rootDir, 'three-live.d.ts');
+  if (fs.existsSync(pkgPath) && fs.existsSync(dtsPath)) {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    assert(
+      pkg.bin && pkg.bin['three-live-cli'] === './bin/three-live-cli.js',
+      'package.json declares bin.three-live-cli',
+    );
+    assert(
+      fs.existsSync(path.join(rootDir, 'bin/three-live-cli.js')),
+      'bin/three-live-cli.js wrapper exists',
+    );
+    const dts = fs.readFileSync(dtsPath, 'utf8');
+    const missingFromDts = ThreeLiveElement.observedAttributes.filter(
+      (attr) => !dts.includes(`'${attr}'`) && !dts.includes(` ${attr}?:`),
+    );
+    assert(
+      missingFromDts.length === 0,
+      `three-live.d.ts covers all observedAttributes (missing: ${missingFromDts.join(', ')})`,
+    );
+  }
+
   console.log(
     `\n🏆 <three-live> Element Test Results: ${passed} Passed, ${failed} Failed.`,
   );

@@ -118,6 +118,13 @@ export interface CameraState {
   distance?: number;
 }
 
+const vec3WithUnits = (x: number, y: number, z: number) => ({
+  x,
+  y,
+  z,
+  toString: () => `${x}m ${y}m ${z}m`,
+});
+
 const BaseElement =
   typeof HTMLElement !== 'undefined'
     ? HTMLElement
@@ -371,30 +378,18 @@ export class ThreeLiveElement extends BaseElement {
       plugin.onElementDisconnected?.(this);
     }
 
-    if (this.scriptHandle) {
-      this.scriptHandle.terminate();
-      this.scriptHandle = null;
-    }
-    if (this.mutationObserver) {
-      this.mutationObserver.disconnect();
-      this.mutationObserver = null;
-    }
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-      this.resizeObserver = null;
-    }
-    if (this.activeXRSession) {
-      this.activeXRSession.stop?.().catch?.(() => {});
-      this.activeXRSession = null;
-    }
-    if (this.toastTimer) {
-      clearTimeout(this.toastTimer);
-      this.toastTimer = null;
-    }
-    if (this.viewer) {
-      this.viewer.destroy();
-      this.viewer = null;
-    }
+    this.scriptHandle?.terminate();
+    this.scriptHandle = null;
+    this.mutationObserver?.disconnect();
+    this.mutationObserver = null;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.activeXRSession?.stop?.().catch?.(() => {});
+    this.activeXRSession = null;
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = null;
+    this.viewer?.destroy();
+    this.viewer = null;
     this.isModelLoaded = false;
   }
 
@@ -835,17 +830,39 @@ export class ThreeLiveElement extends BaseElement {
     return this.viewer ? this.viewer.getAvailableVariants() : [];
   }
 
+  protected fireEvent(type: string, detail?: unknown): void {
+    this.dispatchEvent(
+      new CustomEvent(type, {bubbles: true, composed: true, detail}),
+    );
+  }
+
+  private setSlotVisible(slot: string, visible: boolean): void {
+    const el =
+      typeof this.querySelector === 'function'
+        ? this.querySelector<HTMLElement>(`[slot="${slot}"]`)
+        : null;
+    if (!el) return;
+    el.hidden = !visible;
+    if (el.style) el.style.display = visible ? '' : 'none';
+  }
+
+  protected emitError(error: any, stage = 'script'): void {
+    this.setSlotVisible('error', true);
+    this.fireEvent('error', {error});
+    this.fireEvent('three-error', {
+      error,
+      message: error?.message || String(error),
+      stage,
+    });
+  }
+
   selectVariant(name: string | null): boolean {
     if (!this.viewer) return false;
     const applied = this.viewer.selectVariant(name);
     if (applied) {
-      this.dispatchEvent(
-        new CustomEvent('variant-applied', {
-          bubbles: true,
-          composed: true,
-          detail: {variantName: this.viewer.getVariantName()},
-        }),
-      );
+      this.fireEvent('variant-applied', {
+        variantName: this.viewer.getVariantName(),
+      });
     }
     return applied;
   }
@@ -924,17 +941,7 @@ export class ThreeLiveElement extends BaseElement {
     z: number;
     toString(): string;
   } {
-    if (this.viewer) {
-      return this.viewer.getCameraTarget();
-    }
-    return {
-      x: 0,
-      y: 0,
-      z: 0,
-      toString() {
-        return '0m 0m 0m';
-      },
-    };
+    return this.viewer ? this.viewer.getCameraTarget() : vec3WithUnits(0, 0, 0);
   }
 
   public getFieldOfView(): number {
@@ -946,9 +953,7 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   public toDataURL(type?: string, quality?: any): string {
-    if (this.viewer) {
-      this.viewer.render?.();
-    }
+    this.viewer?.render?.();
     return this.canvas ? this.canvas.toDataURL(type, quality) : '';
   }
 
@@ -956,9 +961,7 @@ export class ThreeLiveElement extends BaseElement {
     mimeType?: string;
     qualityArgument?: number;
   }): Promise<Blob> {
-    if (this.viewer) {
-      this.viewer.render?.();
-    }
+    this.viewer?.render?.();
     return new Promise((resolve, reject) => {
       if (!this.canvas || typeof this.canvas.toBlob !== 'function') {
         reject(
@@ -984,28 +987,13 @@ export class ThreeLiveElement extends BaseElement {
     position: {x: number; y: number; z: number; toString(): string};
     normal: {x: number; y: number; z: number; toString(): string};
   } | null {
-    if (!this.viewer) return null;
-    const hit = this.viewer.raycastFromScreenPoint(pixelX, pixelY);
+    const hit = this.viewer?.raycastFromScreenPoint(pixelX, pixelY);
     if (!hit) return null;
     const [px, py, pz] = hit.hitPoint || (hit as any).point;
     const [nx, ny, nz] = hit.normal;
     return {
-      position: {
-        x: px,
-        y: py,
-        z: pz,
-        toString() {
-          return `${px}m ${py}m ${pz}m`;
-        },
-      },
-      normal: {
-        x: nx,
-        y: ny,
-        z: nz,
-        toString() {
-          return `${nx}m ${ny}m ${nz}m`;
-        },
-      },
+      position: vec3WithUnits(px, py, pz),
+      normal: vec3WithUnits(nx, ny, nz),
     };
   }
 
@@ -1049,6 +1037,7 @@ export class ThreeLiveElement extends BaseElement {
       this.currentModelLimits = limits;
       this.isModelLoaded = true;
       this.hidePoster();
+      this.setSlotVisible('error', false);
       this.updateHotspots();
 
       const selected = this.getAttribute('selected-mesh');
@@ -1060,21 +1049,13 @@ export class ThreeLiveElement extends BaseElement {
         this.selectVariant(initialVariant);
       }
 
-      this.dispatchEvent(
-        new CustomEvent('load', {
-          bubbles: true,
-          composed: true,
-          detail: {model: glbData},
-        }),
-      );
+      this.fireEvent('load', {model: glbData});
+      this.fireEvent('three-load', {
+        model: glbData,
+        source: typeof model === 'string' ? 'src' : 'model',
+      });
     } catch (err: any) {
-      this.dispatchEvent(
-        new CustomEvent('error', {
-          bubbles: true,
-          composed: true,
-          detail: {error: err},
-        }),
-      );
+      this.emitError(err, 'load');
       throw err;
     }
   }
@@ -1090,21 +1071,16 @@ export class ThreeLiveElement extends BaseElement {
       this.appendChild(toast);
     }
     toast.textContent = message;
-    if (this.toastTimer) {
-      clearTimeout(this.toastTimer);
-      this.toastTimer = null;
-    }
-    if (typeof requestAnimationFrame !== 'undefined') {
-      requestAnimationFrame(() => {
-        if (toast) {
-          toast.style.opacity = '1';
-          toast.style.transform = 'translateX(-50%) translateY(0)';
-        }
-      });
-    } else {
-      toast.style.opacity = '1';
-      toast.style.transform = 'translateX(-50%) translateY(0)';
-    }
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    const show = () => {
+      if (toast) {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(-50%) translateY(0)';
+      }
+    };
+    if (typeof requestAnimationFrame !== 'undefined')
+      requestAnimationFrame(show);
+    else show();
     this.toastTimer = setTimeout(() => {
       if (toast) {
         toast.style.opacity = '0';
@@ -1115,41 +1091,27 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   public async activateAR(): Promise<ARLaunchResult> {
-    if (
-      this.activeXRSession &&
-      typeof this.activeXRSession.isSessionActive === 'function' &&
-      this.activeXRSession.isSessionActive()
-    ) {
+    if (this.activeXRSession?.isSessionActive?.()) {
       await this.activeXRSession.stop().catch(() => {});
       this.activeXRSession = null;
     }
 
-    if (!this.currentModel) {
-      const err = new Error('No 3D model is loaded in <three-live>.');
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'failed', error: err},
-        }),
-      );
-      this.showToast(err.message, 6000);
+    const failAR = (err: Error, msg = err.message): never => {
+      this.fireEvent('ar-status', {status: 'failed', error: err});
+      this.showToast(msg, 6000);
       throw err;
+    };
+
+    if (!this.currentModel) {
+      failAR(new Error('No 3D model is loaded in <three-live>.'));
     }
 
     if (!ThreeLiveElement.arProvider) {
-      const err = new Error(
-        "AR module not bundled. Use the default 'three-live' bundle or call ThreeLiveElement.registerAR().",
+      failAR(
+        new Error(
+          "AR module not bundled. Use the default 'three-live' bundle or call ThreeLiveElement.registerAR().",
+        ),
       );
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'failed', error: err},
-        }),
-      );
-      this.showToast(err.message, 6000);
-      throw err;
     }
 
     const iosSrc = this.getAttribute('ios-src');
@@ -1158,13 +1120,7 @@ export class ThreeLiveElement extends BaseElement {
       .filter(Boolean) as ARMode[];
 
     try {
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'session-started'},
-        }),
-      );
+      this.fireEvent('ar-status', {status: 'session-started'});
       const result = await ThreeLiveElement.arProvider.activateAR({
         model: (iosSrc || this.currentModel) as any,
         glbUrl:
@@ -1177,23 +1133,11 @@ export class ThreeLiveElement extends BaseElement {
         webXROptions: {
           onExit: () => {
             this.activeXRSession = null;
-            this.dispatchEvent(
-              new CustomEvent('ar-status', {
-                bubbles: true,
-                composed: true,
-                detail: {status: 'not-presenting'},
-              }),
-            );
+            this.fireEvent('ar-status', {status: 'not-presenting'});
           },
           onError: (err) => {
             this.activeXRSession = null;
-            this.dispatchEvent(
-              new CustomEvent('ar-status', {
-                bubbles: true,
-                composed: true,
-                detail: {status: 'failed', error: err},
-              }),
-            );
+            this.fireEvent('ar-status', {status: 'failed', error: err});
             this.showToast(`AR error: ${err.message}`, 6000);
           },
         },
@@ -1207,6 +1151,9 @@ export class ThreeLiveElement extends BaseElement {
           !(typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1);
         const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
 
+        const fallbackMsg =
+          result.error?.message ||
+          'AR requires an iOS (Quick Look) or Android (WebXR / Scene Viewer) device.';
         if (
           isDesktopMac &&
           !isMobile &&
@@ -1235,53 +1182,33 @@ export class ThreeLiveElement extends BaseElement {
               5000,
             );
           } catch {
-            this.showToast(
-              result.error?.message ||
-                'AR requires an iOS (Quick Look) or Android (WebXR / Scene Viewer) device.',
-              6000,
-            );
+            this.showToast(fallbackMsg, 6000);
           }
         } else {
-          this.showToast(
-            result.error?.message ||
-              'AR requires an iOS (Quick Look) or Android (WebXR / Scene Viewer) device.',
-            6000,
-          );
+          this.showToast(fallbackMsg, 6000);
         }
 
         if (result.error) {
-          this.dispatchEvent(
-            new CustomEvent('ar-status', {
-              bubbles: true,
-              composed: true,
-              detail: {status: 'failed', error: result.error},
-            }),
-          );
+          this.fireEvent('ar-status', {status: 'failed', error: result.error});
         }
       } else {
         if (result.session) {
           this.activeXRSession = result.session;
         }
-        if (result.mode === 'quick-look') {
-          this.showToast('Opening Apple AR Quick Look...');
-        } else if (result.mode === 'scene-viewer') {
-          this.showToast('Opening Google Scene Viewer...');
-        } else if (result.mode === 'webxr') {
-          this.showToast('WebXR AR session started.');
-        }
+        const modeMsg =
+          result.mode === 'quick-look'
+            ? 'Opening Apple AR Quick Look...'
+            : result.mode === 'scene-viewer'
+              ? 'Opening Google Scene Viewer...'
+              : result.mode === 'webxr'
+                ? 'WebXR AR session started.'
+                : '';
+        if (modeMsg) this.showToast(modeMsg);
       }
       return result;
     } catch (err: any) {
       this.activeXRSession = null;
-      this.dispatchEvent(
-        new CustomEvent('ar-status', {
-          bubbles: true,
-          composed: true,
-          detail: {status: 'failed', error: err},
-        }),
-      );
-      this.showToast(`AR error: ${err.message || String(err)}`, 6000);
-      throw err;
+      return failAR(err, `AR error: ${err.message || String(err)}`);
     }
   }
 
@@ -1293,15 +1220,27 @@ export class ThreeLiveElement extends BaseElement {
     let canvas = this.querySelector<HTMLCanvasElement>('canvas');
     if (!canvas) {
       canvas = document.createElement('canvas');
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.display = 'block';
-      canvas.style.touchAction = this.cameraControls ? 'none' : 'auto';
-      canvas.style.outline = 'none';
+      canvas.style.cssText = `width:100%;height:100%;display:block;touch-action:${this.cameraControls ? 'none' : 'auto'};outline:none`;
       this.appendChild(canvas);
     }
     this.canvas = canvas;
+    if (
+      typeof canvas.addEventListener === 'function' &&
+      !(canvas as any).__tlCtxBound
+    ) {
+      (canvas as any).__tlCtxBound = true;
+      canvas.addEventListener('webglcontextlost', (e) =>
+        this.fireEvent('three-context-lost', {originalEvent: e}),
+      );
+      canvas.addEventListener('webglcontextrestored', (e) =>
+        this.fireEvent('three-context-restored', {originalEvent: e}),
+      );
+    }
 
+    this.setSlotVisible('error', false);
+    if (!this.isModelLoaded) {
+      this.setSlotVisible('poster', true);
+    }
     const posterSrc = this.getAttribute('poster');
     if (posterSrc) {
       this.updatePoster(posterSrc);
@@ -1354,26 +1293,14 @@ export class ThreeLiveElement extends BaseElement {
       minCameraOrbit: minOrbit,
       maxCameraOrbit: maxOrbit,
       onMeshClick: (hit: HitDetail) => {
-        this.dispatchEvent(
-          new CustomEvent('meshclick', {
-            bubbles: true,
-            composed: true,
-            detail: hit,
-          }),
-        );
+        this.fireEvent('meshclick', hit);
       },
       onCameraChange: (cam: CameraDetail) => {
         this.updateHotspots();
         for (const plugin of ThreeView.getRegisteredPlugins()) {
           plugin.onCameraChange?.(this.viewer!, this);
         }
-        this.dispatchEvent(
-          new CustomEvent('camera-change', {
-            bubbles: true,
-            composed: true,
-            detail: cam,
-          }),
-        );
+        this.fireEvent('camera-change', cam);
       },
     });
 
@@ -1418,14 +1345,8 @@ export class ThreeLiveElement extends BaseElement {
     if (!this.posterEl) {
       this.posterEl = document.createElement('img');
       this.posterEl.setAttribute('alt', '3D Scene Preview');
-      this.posterEl.style.position = 'absolute';
-      this.posterEl.style.inset = '0';
-      this.posterEl.style.width = '100%';
-      this.posterEl.style.height = '100%';
-      this.posterEl.style.objectFit = 'cover';
-      this.posterEl.style.transition = 'opacity 0.35s ease-out';
-      this.posterEl.style.pointerEvents = 'none';
-      this.posterEl.style.zIndex = '1';
+      this.posterEl.style.cssText =
+        'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:opacity .35s ease-out;pointer-events:none;z-index:1';
       this.appendChild(this.posterEl);
     }
 
@@ -1436,6 +1357,7 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   private hidePoster(): void {
+    this.setSlotVisible('poster', false);
     if (this.posterEl) {
       this.posterEl.style.opacity = '0';
       setTimeout(() => {
@@ -1461,32 +1383,25 @@ export class ThreeLiveElement extends BaseElement {
       const svgNs = 'http://www.w3.org/2000/svg';
       if (typeof document.createElementNS === 'function') {
         const svg = document.createElementNS(svgNs, 'svg');
-        svg.setAttribute('width', '20');
-        svg.setAttribute('height', '20');
-        svg.setAttribute('viewBox', '0 0 24 24');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round');
-        svg.setAttribute('stroke-linejoin', 'round');
+        for (const [k, v] of [
+          ['width', '20'],
+          ['height', '20'],
+          ['viewBox', '0 0 24 24'],
+          ['fill', 'none'],
+          ['stroke', 'currentColor'],
+          ['stroke-width', '2'],
+          ['stroke-linecap', 'round'],
+          ['stroke-linejoin', 'round'],
+        ]) {
+          svg.setAttribute(k, v);
+        }
         svg.style.marginRight = '6px';
-
         const path = document.createElementNS(svgNs, 'path');
         path.setAttribute(
           'd',
-          'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
+          'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16zM3.27 6.96 12 12.01l8.73-5.05M12 22.08V12',
         );
-        const polyline = document.createElementNS(svgNs, 'polyline');
-        polyline.setAttribute('points', '3.27 6.96 12 12.01 20.73 6.96');
-        const line = document.createElementNS(svgNs, 'line');
-        line.setAttribute('x1', '12');
-        line.setAttribute('y1', '22.08');
-        line.setAttribute('x2', '12');
-        line.setAttribute('y2', '12');
-
         svg.appendChild(path);
-        svg.appendChild(polyline);
-        svg.appendChild(line);
         btn.appendChild(svg);
       }
       const span = document.createElement('span');
@@ -1569,21 +1484,13 @@ export class ThreeLiveElement extends BaseElement {
     distance?: number;
   } {
     if (!str) return {};
-    const parts = str.trim().split(/\s+/);
-    const result: {theta?: number; phi?: number; distance?: number} = {};
-    if (parts.length > 0 && parts[0] !== 'auto') {
-      const theta = this.parseFieldOfView(parts[0]);
-      if (theta !== undefined) result.theta = theta;
-    }
-    if (parts.length > 1 && parts[1] !== 'auto') {
-      const phi = this.parseFieldOfView(parts[1]);
-      if (phi !== undefined) result.phi = phi;
-    }
-    if (parts.length > 2 && parts[2] !== 'auto') {
-      const dist = parseFloat(parts[2].replace(/m$/, ''));
-      if (!isNaN(dist)) result.distance = dist;
-    }
-    return result;
+    const [p0, p1, p2] = str.trim().split(/\s+/);
+    const dist = p2 && p2 !== 'auto' ? parseFloat(p2) : NaN;
+    return {
+      theta: p0 && p0 !== 'auto' ? this.parseFieldOfView(p0) : undefined,
+      phi: p1 && p1 !== 'auto' ? this.parseFieldOfView(p1) : undefined,
+      distance: isNaN(dist) ? undefined : dist,
+    };
   }
 
   private applyOrbitLimits(): void {
@@ -1604,10 +1511,7 @@ export class ThreeLiveElement extends BaseElement {
     targetStr: string | null,
   ): [number, number, number] | undefined {
     if (!targetStr) return undefined;
-    const parts = targetStr
-      .trim()
-      .split(/\s+/)
-      .map((s) => parseFloat(s.replace(/m$/, '')));
+    const parts = targetStr.trim().split(/\s+/).map(parseFloat);
     return parts.length >= 3 && !parts.some(isNaN)
       ? [parts[0], parts[1], parts[2]]
       : undefined;
@@ -1615,10 +1519,12 @@ export class ThreeLiveElement extends BaseElement {
 
   private parseFieldOfView(fovStr: string | null): number | undefined {
     if (!fovStr) return undefined;
-    const fov = fovStr.endsWith('rad')
-      ? (parseFloat(fovStr) * 180) / Math.PI
-      : parseFloat(fovStr.replace(/deg$/, ''));
-    return isNaN(fov) ? undefined : fov;
+    const v = parseFloat(fovStr);
+    return isNaN(v)
+      ? undefined
+      : fovStr.endsWith('rad')
+        ? (v * 180) / Math.PI
+        : v;
   }
 
   private parseRotationPerSecond(rpsStr: string | null): number {
@@ -1683,13 +1589,7 @@ export class ThreeLiveElement extends BaseElement {
         'Procedural script execution requires "three-live/full" or ThreeLiveElement.registerScriptRunner().',
       );
       this.showToast(error.message);
-      this.dispatchEvent(
-        new CustomEvent('error', {
-          bubbles: true,
-          composed: true,
-          detail: {error},
-        }),
-      );
+      this.emitError(error, 'script');
       return Promise.reject(error);
     }
 
@@ -1726,13 +1626,7 @@ export class ThreeLiveElement extends BaseElement {
           this.viewer?.updateMeshTransforms(transforms),
         onError: (error) => {
           this.showToast(error.message);
-          this.dispatchEvent(
-            new CustomEvent('error', {
-              bubbles: true,
-              composed: true,
-              detail: {error},
-            }),
-          );
+          this.emitError(error, 'script');
           if (!settled) {
             settled = true;
             reject(error);
@@ -1789,13 +1683,7 @@ export class ThreeLiveElement extends BaseElement {
     if (!this.allowClientScripts) {
       const error = new Error(CLIENT_SCRIPTS_DISABLED_ERROR);
       this.showToast(CLIENT_SCRIPTS_DISABLED_TOAST);
-      this.dispatchEvent(
-        new CustomEvent('error', {
-          bubbles: true,
-          composed: true,
-          detail: {error},
-        }),
-      );
+      this.emitError(error, 'security');
       return Promise.reject(error);
     }
     return this.runWithScriptRunner((runner, callbacks) =>

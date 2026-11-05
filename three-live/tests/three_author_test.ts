@@ -47,6 +47,7 @@ import THREE, {
   MeshStandardMaterial,
   PerspectiveCamera,
   PointLight,
+  Quaternion,
   Scene,
   SphereGeometry,
   TorusGeometry,
@@ -80,6 +81,52 @@ function runThreeAuthorTests() {
   v1.add(v2);
   assert(v1.x === 5 && v1.y === 7 && v1.z === 9, 'Vector3 addition');
   assert(v1.dot(v2) === 5 * 4 + 7 * 5 + 9 * 6, 'Vector3 dot product');
+
+  const vLerp = new Vector3(0, 10, 20).lerp(new Vector3(10, 20, 40), 0.25);
+  assert(
+    vLerp.x === 2.5 && vLerp.y === 12.5 && vLerp.z === 25,
+    'Vector3.lerp interpolates components',
+  );
+  const vLerpVecs = new Vector3().lerpVectors(
+    new Vector3(-2, 0, 4),
+    new Vector3(6, 8, -4),
+    0.5,
+  );
+  assert(
+    vLerpVecs.x === 2 && vLerpVecs.y === 4 && vLerpVecs.z === 0,
+    'Vector3.lerpVectors interpolates between v1 and v2',
+  );
+
+  const qNorm = new Quaternion(0, 0, 2, 2).normalize();
+  assert(
+    Math.abs(Math.hypot(qNorm.x, qNorm.y, qNorm.z, qNorm.w) - 1) < 1e-6 &&
+      Math.abs(qNorm.z - Math.SQRT1_2) < 1e-6,
+    'Quaternion.normalize normalizes to unit length',
+  );
+  const qZero = new Quaternion(0, 0, 0, 0).normalize();
+  assert(
+    qZero.x === 0 && qZero.y === 0 && qZero.z === 0 && qZero.w === 1,
+    'Quaternion.normalize handles zero quaternion safely',
+  );
+  const qUnit = new Quaternion().setFromUnitVectors(
+    new Vector3(0, 1, 0),
+    new Vector3(1, 0, 0),
+  );
+  assert(
+    Math.abs(qUnit.z + Math.SQRT1_2) < 1e-6 &&
+      Math.abs(qUnit.w - Math.SQRT1_2) < 1e-6,
+    'Quaternion.setFromUnitVectors 90-degree rotation (+Y to +X)',
+  );
+  const qOpposite = new Quaternion().setFromUnitVectors(
+    new Vector3(0, 1, 0),
+    new Vector3(0, -1, 0),
+  );
+  assert(
+    Math.abs(
+      Math.hypot(qOpposite.x, qOpposite.y, qOpposite.z, qOpposite.w) - 1,
+    ) < 1e-6 && Math.abs(qOpposite.w) < 1e-6,
+    'Quaternion.setFromUnitVectors 180-degree opposite vectors',
+  );
 
   const c = new Color(0xff0000);
   assert(c.r === 1 && c.g === 0 && c.b === 0, 'Color hex parsing');

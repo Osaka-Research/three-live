@@ -283,11 +283,7 @@ export function safeMediaUrl(raw: unknown): string | undefined {
 
 /** Parses an `audio` trait (string URL or `{src, refDistance, loop}`). */
 export function parseSpatialAudio(raw: unknown): SpatialAudioTrait | null {
-  if (typeof raw === 'string') {
-    const src = safeMediaUrl(raw);
-    return src ? {src, refDistance: 1, loop: false} : null;
-  }
-  const r = asRecord(raw);
+  const r = typeof raw === 'string' ? {src: raw} : asRecord(raw);
   const src = safeMediaUrl(r?.['src']);
   if (!r || !src) return null;
   return {
@@ -411,13 +407,7 @@ export interface SnapSocketOptions {
 
 /** Parses a `snapSocket` trait (tag string or options), returning `null` without a tag. */
 export function parseSnapSocket(raw: unknown): SnapSocketOptions | null {
-  if (typeof raw === 'string') {
-    const tag = shortString(raw, 128);
-    return tag
-      ? {tag, radius: 0.15, alignRotation: true, highlightColor: '#22c55e'}
-      : null;
-  }
-  const r = asRecord(raw);
+  const r = typeof raw === 'string' ? {tag: raw} : asRecord(raw);
   const tag = shortString(r?.['tag'], 128);
   if (!r || !tag) return null;
   return {
@@ -541,18 +531,16 @@ export interface TextTraitOptions {
 
 /** Parses a `text` trait (string or `{text | value, size, depth | height, color}`). */
 export function parseTextTrait(raw: unknown): TextTraitOptions | null {
-  if (typeof raw === 'string') {
-    const text = shortString(raw, 256);
-    return text ? {text, size: 0.12, depth: 0.02, color: '#ffffff'} : null;
-  }
-  const r = asRecord(raw);
-  if (!r) return null;
-  const text = shortString(r['text'] ?? r['value'], 256);
-  if (!text) return null;
+  const r = typeof raw === 'string' ? {text: raw} : asRecord(raw);
+  const text = shortString(r?.['text'] ?? r?.['value'], 256);
+  if (!r || !text) return null;
   const size = clampNum(r['size'], 0.005, 10, 0.12);
-  const depth = clampNum(r['depth'] ?? r['height'], 0.001, 5, size * 0.2);
-  const color = safeHexColor(r['color'], '#ffffff');
-  return {text, size, depth, color};
+  return {
+    text,
+    size,
+    depth: clampNum(r['depth'] ?? r['height'], 0.001, 5, size * 0.2),
+    color: safeHexColor(r['color'], '#ffffff'),
+  };
 }
 
 /** Normalized bloom post-processing trait (`userData.xr.bloom`). */
@@ -565,29 +553,25 @@ export interface BloomTraitOptions {
 
 /** Parses a `bloom` trait (`true`, number strength, or `{strength, threshold, radius}`), returning `null` when disabled. */
 export function parseBloomTrait(raw: unknown): BloomTraitOptions | null {
-  if (raw === false || raw === null || raw === undefined) return null;
-  if (typeof raw === 'number') {
-    if (!Number.isFinite(raw) || raw <= 0) return null;
-    return {
-      enabled: true,
-      strength: clampNum(raw, 0, 5, 0.35),
-      threshold: 0.8,
-      radius: 0.5,
-    };
+  if (!raw || (typeof raw === 'number' && !(raw > 0 && Number.isFinite(raw)))) {
+    return null;
   }
-  if (raw === true) {
-    return {enabled: true, strength: 0.35, threshold: 0.8, radius: 0.5};
-  }
-  const r = asRecord(raw);
+  const r =
+    raw === true
+      ? {}
+      : typeof raw === 'number'
+        ? {strength: raw}
+        : asRecord(raw);
   if (!r || r['enabled'] === false) return null;
   const strength = clampNum(r['strength'] ?? r['intensity'], 0, 5, 0.35);
-  if (strength <= 0) return null;
-  return {
-    enabled: true,
-    strength,
-    threshold: clampNum(r['threshold'], 0, 4, 0.8),
-    radius: clampNum(r['radius'], 0, 2, 0.5),
-  };
+  return strength > 0
+    ? {
+        enabled: true,
+        strength,
+        threshold: clampNum(r['threshold'], 0, 4, 0.8),
+        radius: clampNum(r['radius'], 0, 2, 0.5),
+      }
+    : null;
 }
 
 /** Normalized silhouette outline trait (`userData.xr.outline`). */
@@ -601,18 +585,12 @@ export interface OutlineTraitOptions {
 /** Parses an `outline` trait (`true`, color string, or `{color, thickness, pulse}`), returning `null` when disabled. */
 export function parseOutlineTrait(raw: unknown): OutlineTraitOptions | null {
   if (!raw) return null;
-  if (typeof raw === 'string') {
-    return {
-      enabled: true,
-      color: safeHexColor(raw, '#38bdf8'),
-      thickness: 3,
-      pulse: false,
-    };
-  }
-  if (raw === true) {
-    return {enabled: true, color: '#38bdf8', thickness: 3, pulse: false};
-  }
-  const r = asRecord(raw);
+  const r =
+    raw === true
+      ? {}
+      : typeof raw === 'string'
+        ? {color: raw}
+        : asRecord(raw);
   if (!r || r['enabled'] === false) return null;
   const rawT = r['thickness'] ?? r['width'];
   return {
@@ -900,6 +878,9 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   return Object.keys(out).length > 0 ? out : null;
 }
 
+/** Canonical schema version for `ANDROID_xr_scenecore` and USD `customData.xr`. */
+export const XR_TRAIT_SCHEMA_VERSION = 1;
+
 /**
  * Builds the `ANDROID_xr_scenecore` node extension (Jetpack XR SceneCore
  * component descriptors) for a normalized trait set.
@@ -907,7 +888,9 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
 export function buildXRSceneCoreExtension(
   n: NormalizedXRTraits,
 ): Record<string, unknown> {
-  const comp: Record<string, unknown> = {};
+  const comp: Record<string, unknown> = {
+    schemaVersion: XR_TRAIT_SCHEMA_VERSION,
+  };
   if (n.grab) {
     comp['interactable'] = {mode: n.grab};
     comp['movable'] = {
@@ -1003,7 +986,9 @@ export type UsdCustomValue = string | number | boolean | readonly number[];
 export function flattenXRTraitsForUsd(
   n: NormalizedXRTraits,
 ): Record<string, UsdCustomValue> {
-  const out: Record<string, UsdCustomValue> = {};
+  const out: Record<string, UsdCustomValue> = {
+    schemaVersion: XR_TRAIT_SCHEMA_VERSION,
+  };
   const put = (prefix: string, obj: object): void => {
     for (const [k, v] of Object.entries(obj)) {
       const key = prefix + k[0].toUpperCase() + k.slice(1);
@@ -1209,6 +1194,7 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'audioCues',
   'collidable',
   'traits',
+  'schemaVersion',
 ]);
 
 const XR_KEY_SYNONYMS: Readonly<
@@ -1463,15 +1449,19 @@ export function validateXRTraits(
 ): SchemaDiagnostic[] {
   const diags: SchemaDiagnostic[] = [];
   if (raw === undefined || raw === null) return diags;
+  const pushDiag = (
+    code: string,
+    message: string,
+    hint: string,
+    severity: 'warning' | 'error' = 'warning',
+  ) => diags.push({code, severity, node: nodeName, message, hint});
   const r = asRecord(raw);
   if (!r) {
-    diags.push({
-      code: 'TL201',
-      severity: 'warning',
-      node: nodeName,
-      message: `userData.xr on node '${nodeName}' must be a plain object.`,
-      hint: 'Assign an object such as mesh.userData.xr = { grab: true }.',
-    });
+    pushDiag(
+      'TL201',
+      `userData.xr on node '${nodeName}' must be a plain object.`,
+      'Assign an object such as mesh.userData.xr = { grab: true }.',
+    );
     return diags;
   }
 
@@ -1479,26 +1469,22 @@ export function validateXRTraits(
     if (CANONICAL_XR_KEYS.has(key)) continue;
     const syn = XR_KEY_SYNONYMS[key] ?? XR_KEY_SYNONYMS[key.toLowerCase()];
     if (syn) {
-      diags.push({
-        code: 'TL201',
-        severity: 'warning',
-        node: nodeName,
-        message: `Unrecognized key '${key}' in userData.xr on node '${nodeName}'; did you mean '${syn.target}'?`,
-        hint: syn.hint,
-      });
+      pushDiag(
+        'TL201',
+        `Unrecognized key '${key}' in userData.xr on node '${nodeName}'; did you mean '${syn.target}'?`,
+        syn.hint,
+      );
     } else {
       const closest = closestCanonicalTrait(key);
-      diags.push({
-        code: 'TL201',
-        severity: 'warning',
-        node: nodeName,
-        message: closest
+      pushDiag(
+        'TL201',
+        closest
           ? `Unknown key '${key}' on node '${nodeName}'; did you mean '${closest}'?`
           : `Unknown key '${key}' in userData.xr on node '${nodeName}'.`,
-        hint: closest
+        closest
           ? `Replace '${key}' with '${closest}'.`
           : 'Supported userData.xr traits include: grab, scale, billboard, follow, anchor, physics, orbit, handles, particles, holdToAsk, audio, dimensions, snapTo, snapSocket, gaze, explode, navigable, text, bloom, outline, ik, character, agent, integrity, zone, spawner, objective, audioCues, collidable.',
-      });
+      );
     }
   }
 
@@ -1508,19 +1494,16 @@ export function validateXRTraits(
         const syn =
           XR_KEY_SYNONYMS[item] ?? XR_KEY_SYNONYMS[item.toLowerCase()];
         const closest = syn?.target ?? closestCanonicalTrait(item);
-        diags.push({
-          code: 'TL201',
-          severity: 'warning',
-          node: nodeName,
-          message: closest
+        pushDiag(
+          'TL201',
+          closest
             ? `Unknown trait '${item}' in userData.xr.traits on node '${nodeName}'; did you mean '${closest}'?`
             : `Unknown trait '${item}' in userData.xr.traits on node '${nodeName}'.`,
-          hint:
-            syn?.hint ??
+          syn?.hint ??
             (closest
               ? `Use '${closest}' instead of '${item}'.`
               : 'Use canonical trait keys on userData.xr directly.'),
-        });
+        );
       }
     }
   }
@@ -1533,24 +1516,20 @@ export function validateXRTraits(
   ): void => {
     if (typeof val !== 'number') return;
     if (!Number.isFinite(val)) {
-      diags.push({
-        code: 'TL202',
-        severity: 'warning',
-        node: nodeName,
-        message: `Numeric trait parameter '${path}' on node '${nodeName}' is non-finite (${val}); clamped to default.`,
-        hint: `Provide a finite number in [${lo}, ${hi}] for '${path}'.`,
-      });
+      pushDiag(
+        'TL202',
+        `Numeric trait parameter '${path}' on node '${nodeName}' is non-finite (${val}); clamped to default.`,
+        `Provide a finite number in [${lo}, ${hi}] for '${path}'.`,
+      );
       return;
     }
     if (val < lo || val > hi) {
       const clamped = Math.max(lo, Math.min(hi, val));
-      diags.push({
-        code: 'TL202',
-        severity: 'warning',
-        node: nodeName,
-        message: `Numeric trait parameter '${path}' (${val}) on node '${nodeName}' is out of range [${lo}, ${hi}]; clamped to ${clamped}.`,
-        hint: `Keep '${path}' within [${lo}, ${hi}].`,
-      });
+      pushDiag(
+        'TL202',
+        `Numeric trait parameter '${path}' (${val}) on node '${nodeName}' is out of range [${lo}, ${hi}]; clamped to ${clamped}.`,
+        `Keep '${path}' within [${lo}, ${hi}].`,
+      );
     }
   };
 
@@ -1739,25 +1718,23 @@ export function validateXRTraits(
   const checkUrl = (field: string, val: unknown): void => {
     if (val === undefined || val === null) return;
     if (!safeMediaUrl(val)) {
-      diags.push({
-        code: 'TL203',
-        severity: 'error',
-        node: nodeName,
-        message: `Unsafe or disallowed media URL in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeMediaUrl().`,
-        hint: "Use an 'https://' URL or a clean relative path without '..', '\\\\', '%', or custom schemes (e.g. http:, javascript:, file:, data:).",
-      });
+      pushDiag(
+        'TL203',
+        `Unsafe or disallowed media URL in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeMediaUrl().`,
+        "Use an 'https://' URL or a clean relative path without '..', '\\\\', '%', or custom schemes (e.g. http:, javascript:, file:, data:).",
+        'error',
+      );
     }
   };
   const checkAnchorIdField = (field: string, val: unknown): void => {
     if (val === undefined || val === null) return;
     if (!safeAnchorId(val)) {
-      diags.push({
-        code: 'TL203',
-        severity: 'error',
-        node: nodeName,
-        message: `Unsafe or invalid identifier in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeAnchorId().`,
-        hint: "Anchor and bone identifiers must be non-empty strings without control characters or prototype-pollution keys ('__proto__', 'constructor', 'prototype').",
-      });
+      pushDiag(
+        'TL203',
+        `Unsafe or invalid identifier in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeAnchorId().`,
+        "Anchor and bone identifiers must be non-empty strings without control characters or prototype-pollution keys ('__proto__', 'constructor', 'prototype').",
+        'error',
+      );
     }
   };
 
@@ -1770,13 +1747,11 @@ export function validateXRTraits(
     if (audioObj['src'] !== undefined) {
       checkUrl('audio.src', audioObj['src']);
     } else if (Object.keys(audioObj).some((k) => k.startsWith('on'))) {
-      diags.push({
-        code: 'TL201',
-        severity: 'warning',
-        node: nodeName,
-        message: `userData.xr.audio on node '${nodeName}' contains event keys without 'src'; did you mean 'audioCues'?`,
-        hint: 'Use \'audioCues: { onTap: "confirm", onHit: "impact" }\' for procedural synth cues, or provide \'audio: { src: "https://..." }\' for spatial audio files.',
-      });
+      pushDiag(
+        'TL201',
+        `userData.xr.audio on node '${nodeName}' contains event keys without 'src'; did you mean 'audioCues'?`,
+        'Use \'audioCues: { onTap: "confirm", onHit: "impact" }\' for procedural synth cues, or provide \'audio: { src: "https://..." }\' for spatial audio files.',
+      );
     }
   }
   const checkSimIdField = (field: string, val: unknown): void => {
@@ -1787,13 +1762,12 @@ export function validateXRTraits(
       !/^[A-Za-z0-9_.:-]{1,64}$/.test(s) ||
       FORBIDDEN_ANCHOR_IDS.has(s)
     ) {
-      diags.push({
-        code: 'TL203',
-        severity: 'error',
-        node: nodeName,
-        message: `Unsafe or invalid identifier in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeSimId().`,
-        hint: "Simulation group/tag IDs must be 1-64 characters of [A-Za-z0-9_.:-] and must not use prototype-pollution keys ('__proto__', 'constructor', 'prototype').",
-      });
+      pushDiag(
+        'TL203',
+        `Unsafe or invalid identifier in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeSimId().`,
+        "Simulation group/tag IDs must be 1-64 characters of [A-Za-z0-9_.:-] and must not use prototype-pollution keys ('__proto__', 'constructor', 'prototype').",
+        'error',
+      );
     }
   };
   const intRec = asRecord(r['integrity']);

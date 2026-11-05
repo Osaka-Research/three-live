@@ -1851,7 +1851,18 @@ fn test_phase1_structured_compiler_and_schema_diagnostics() {
         scene.add(icosa);
 
         const loader = new THREE.GLTFLoader();
+        const controls = new THREE.OrbitControls();
+        const composer = new THREE.EffectComposer();
+        const bloomPass = new THREE.UnrealBloomPass();
         requestAnimationFrame(() => {});
+
+        const vA = new THREE.Vector3(0, 0, 0).lerp(new THREE.Vector3(2, 4, 6), 0.5);
+        const vB = new THREE.Vector3().lerpVectors(new THREE.Vector3(1, 1, 1), vA, 0.5);
+        const q = new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            vB.clone().normalize()
+        ).normalize();
+        icosa.quaternion.copy(q);
     "#;
 
     let (scene_opt, diags) = three_live_compiler::validate_scene_source(script, "test_diag.js");
@@ -1861,6 +1872,12 @@ fn test_phase1_structured_compiler_and_schema_diagnostics() {
     assert!(codes.contains(&"TL102"), "expected TL102 for IcosahedronGeometry, got {:?}", codes);
     assert!(codes.contains(&"TL103"), "expected TL103 for THREE.GLTFLoader, got {:?}", codes);
     assert!(codes.contains(&"TL104"), "expected TL104 for requestAnimationFrame, got {:?}", codes);
+    assert!(codes.contains(&"TL106"), "expected TL106 for THREE.OrbitControls, got {:?}", codes);
+    assert!(
+        codes.contains(&"TL107"),
+        "expected TL107 for THREE.EffectComposer / UnrealBloomPass, got {:?}",
+        codes
+    );
     assert!(codes.contains(&"TL201"), "expected TL201 for grabbable/health, got {:?}", codes);
     assert!(codes.contains(&"TL202"), "expected TL202 for gaze.dwellMs=50, got {:?}", codes);
     assert!(codes.contains(&"TL203"), "expected TL203 for unsafe splatUrl, got {:?}", codes);

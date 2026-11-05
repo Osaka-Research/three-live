@@ -226,6 +226,8 @@ data class XRLiveNodeTraits(
   val sync: Boolean? = null,
   /** `"none"` when the node must not receive pointer events. */
   val pointerEvents: String? = null,
+  /** Canonical XR trait schema version (defaults to 1). */
+  val schemaVersion: Int = 1,
 ) {
   /** Binary-compatible constructor matching the original 8-parameter signature. */
   constructor(
@@ -1139,6 +1141,8 @@ object XRLiveSceneCoreHelper {
       navigable = parseNavigable(xr["navigable"] ?: sc["navigable"]),
       sync = (xr["sync"] as? Boolean) ?: (MiniJson.asMap(sc["sync"])?.get("enabled") as? Boolean),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,
+      schemaVersion =
+        ((sc["schemaVersion"] ?: xr["schemaVersion"]) as? Number)?.toInt()?.takeIf { it >= 1 } ?: 1,
     )
   }
 

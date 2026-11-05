@@ -43,6 +43,7 @@ import {
   normalizeXRTraits,
   registerXRTraitSerializer,
   validateXRTraits,
+  XR_TRAIT_SCHEMA_VERSION,
 } from '../src/xr-trait-schema';
 
 let passed = 0;
@@ -512,6 +513,14 @@ function testExportPipelines() {
   );
   assert(heroNode?.extras?.xr?.customKey === 'kept', 'glTF keeps unknown keys');
   assert(
+    XR_TRAIT_SCHEMA_VERSION === 1,
+    'XR_TRAIT_SCHEMA_VERSION is 1',
+  );
+  assert(
+    heroNode?.extensions?.ANDROID_xr_scenecore?.schemaVersion === 1,
+    'ANDROID_xr_scenecore stamps schemaVersion = 1',
+  );
+  assert(
     heroNode?.extensions?.ANDROID_xr_scenecore?.integrity?.group === 'player',
     'ANDROID_xr_scenecore carries integrity',
   );
@@ -525,6 +534,10 @@ function testExportPipelines() {
   );
 
   const usda = generateUSDA(scene);
+  assert(
+    usda.includes('double schemaVersion = 1'),
+    'USDA customData stamps schemaVersion = 1',
+  );
   assert(usda.includes('double characterSpeed = 20'), 'USDA character speed');
   assert(usda.includes('string characterClipWalk = "Walk"'), 'USDA clip name');
   assert(usda.includes('string agentTarget = "Hero"'), 'USDA agent target');
@@ -535,6 +548,7 @@ function testValidateXRTraits() {
   console.log('\n🩺 validateXRTraits (TL201, TL202, TL203)');
   const clean = validateXRTraits(
     {
+      schemaVersion: 1,
       grab: '2-hand',
       gaze: {dwellMs: 1200},
       splatUrl: 'https://example.com/room.splat',

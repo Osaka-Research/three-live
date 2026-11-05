@@ -169,6 +169,18 @@ export interface ThreeLiveAttributes {
   'shadow-softness'?: number | string;
   /** Tone mapping mode ("neutral", "aces", "agx", "reinhard", "none"). */
   'tone-mapping'?: string;
+  /** Dual-Kawase bloom intensity (0.0 to 5.0). */
+  'bloom'?: number | string;
+  /** Luminance threshold for bloom extraction (default: 0.8). */
+  'bloom-threshold'?: number | string;
+  /** Blur radius multiplier for bloom passes (default: 0.5). */
+  'bloom-radius'?: number | string;
+  /** Declarative silhouette outline toggle or config. */
+  'outline'?: boolean | string;
+  /** Highlight the currently `selected-mesh` with a silhouette outline. */
+  'outline-selected'?: boolean | string;
+  /** Silhouette outline CSS hex color (default: "#38bdf8"). */
+  'outline-color'?: string;
   /** Enable or disable interactive camera orbit/pan/zoom controls (default: true). */
   'camera-controls'?: boolean | string;
   /** Automatically start keyframe animation playback. */
@@ -210,6 +222,16 @@ export interface ThreeLiveAttributes {
   // React 19 / JSX Event Listeners
   onload?: (e: CustomEvent<{model: GLBData}>) => void;
   onerror?: (e: CustomEvent<{error: any}>) => void;
+  'onthree-load'?: (
+    e: CustomEvent<{model: GLBData; source?: 'src' | 'model'}>,
+  ) => void;
+  'onthree-error'?: (
+    e: CustomEvent<{error: any; message: string; stage: string}>,
+  ) => void;
+  'onthree-context-lost'?: (e: CustomEvent<{originalEvent?: Event}>) => void;
+  'onthree-context-restored'?: (
+    e: CustomEvent<{originalEvent?: Event}>,
+  ) => void;
   onmeshclick?: (e: CustomEvent<HitDetail>) => void;
   'oncamera-change'?: (e: CustomEvent<CameraDetail>) => void;
   'onvariant-applied'?: (e: CustomEvent<{variantName: string | null}>) => void;

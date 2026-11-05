@@ -111,6 +111,7 @@ export {
   parseTextTrait,
   parseWorldUnderstanding,
   registerXRTraitSerializer,
+  XR_TRAIT_SCHEMA_VERSION,
   type BloomTraitOptions,
   type IKTraitOptions,
   type NormalizedXRTraits,
