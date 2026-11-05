@@ -730,19 +730,12 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         }
       }
 
-      setGeoBuffers(this, f32From(positions), f32From(normals), f32From(uvs), indices);
+      setGeoBuffers(this, positions, normals, uvs, indices);
     }
   }
 
-  function f32From(arr: number[]): Float32Array {
-    const n = arr.length;
-    const out = new Float32Array(n);
-    for (let i = 0; i < n; i++) out[i] = arr[i];
-    return out;
-  }
-
   // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
-  function setGeoBuffers(geo: any, pos: Float32Array, norm: Float32Array, uv: Float32Array, idx: number[] | Uint32Array): any {
+  function setGeoBuffers(geo: any, pos: number[] | Float32Array, norm: number[] | Float32Array, uv: number[] | Float32Array, idx: number[] | Uint32Array): any {
     geo.setAttribute('position', new BufferAttribute(pos, 3));
     geo.setAttribute('normal', new BufferAttribute(norm, 3));
     geo.setAttribute('uv', new BufferAttribute(uv, 2));
@@ -997,7 +990,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         }
       }
 
-      setGeoBuffers(this, f32From(positions), f32From(normals), f32From(uvs), indices);
+      setGeoBuffers(this, positions, normals, uvs, indices);
     }
   }
 
@@ -1419,9 +1412,9 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
     const out = setGeoBuffers(
       new BufferGeometry(),
-      f32From(positions),
-      f32From(normals),
-      f32From(uvs),
+      positions,
+      normals,
+      uvs,
       indices,
     );
     // tslint:disable-next-line:no-any Cache polygons for chained CSG calls.
@@ -2468,10 +2461,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         cursorX += isLower ? charAdvance * 0.88 : charAdvance;
       }
 
-      this.setAttribute('position', new BufferAttribute(f32From(positions), 3));
-      this.setAttribute('normal', new BufferAttribute(f32From(normals), 3));
-      this.setAttribute('uv', new BufferAttribute(f32From(uvs), 2));
-      this.setIndex(indices);
+      setGeoBuffers(this, positions, normals, uvs, indices);
 
       if (options.center !== false) {
         this.center();

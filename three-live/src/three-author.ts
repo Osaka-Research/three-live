@@ -791,14 +791,12 @@ export class BufferGeometry {
     if (indices instanceof BufferAttribute) {
       this.index = indices;
     } else if (Array.isArray(indices)) {
-      const n = indices.length;
       let maxIdx = 0;
-      for (let i = 0; i < n; i++) {
-        if (indices[i] > maxIdx) maxIdx = indices[i];
-      }
-      const typed = maxIdx > 65535 ? new Uint32Array(n) : new Uint16Array(n);
-      for (let i = 0; i < n; i++) typed[i] = indices[i];
-      this.index = new BufferAttribute(typed, 1);
+      for (const v of indices) if (v > maxIdx) maxIdx = v;
+      this.index = new BufferAttribute(
+        new (maxIdx > 65535 ? Uint32Array : Uint16Array)(indices),
+        1,
+      );
     } else if (indices && indices.buffer) {
       this.index = new BufferAttribute(indices, 1);
     }
@@ -876,29 +874,9 @@ export class BufferGeometry {
     uvs: ArrayLike<number>,
     indices: ArrayLike<number>,
   ): void {
-    this.setAttribute(
-      'position',
-      new BufferAttribute(
-        positions instanceof Float32Array
-          ? positions
-          : new Float32Array(positions),
-        3,
-      ),
-    );
-    this.setAttribute(
-      'normal',
-      new BufferAttribute(
-        normals instanceof Float32Array ? normals : new Float32Array(normals),
-        3,
-      ),
-    );
-    this.setAttribute(
-      'uv',
-      new BufferAttribute(
-        uvs instanceof Float32Array ? uvs : new Float32Array(uvs),
-        2,
-      ),
-    );
+    this.setAttribute('position', new BufferAttribute(positions, 3));
+    this.setAttribute('normal', new BufferAttribute(normals, 3));
+    this.setAttribute('uv', new BufferAttribute(uvs, 2));
     this.setIndex(indices);
   }
 
