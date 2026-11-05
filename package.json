@@ -135,7 +135,7 @@
     "demo:android": "make android-demo"
   },
   "devDependencies": {
-    "esbuild": "^0.23.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.3.3"
   }
 }
