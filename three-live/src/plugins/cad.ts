@@ -1047,7 +1047,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const nx = a.nx + (b.nx - a.nx) * t;
     const ny = a.ny + (b.ny - a.ny) * t;
     const nz = a.nz + (b.nz - a.nz) * t;
-    const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    const len = Math.hypot(nx, ny, nz) || 1;
     return {
       x: a.x + (b.x - a.x) * t,
       y: a.y + (b.y - a.y) * t,
@@ -1074,21 +1074,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     let nx = aby * acz - abz * acy;
     let ny = abz * acx - abx * acz;
     let nz = abx * acy - aby * acx;
-    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    const len = Math.hypot(nx, ny, nz);
     if (len < 1e-9) return null;
     nx /= len;
     ny /= len;
     nz /= len;
     const w = nx * a.x + ny * a.y + nz * a.z;
     return {vertices, nx, ny, nz, w};
-  }
-
-  function csgClonePolygon(p: CSGPolygon): CSGPolygon {
-    const vertices = new Array<CSGVertex>(p.vertices.length);
-    for (let i = 0; i < p.vertices.length; i++) {
-      vertices[i] = csgCloneVertex(p.vertices[i]);
-    }
-    return {vertices, nx: p.nx, ny: p.ny, nz: p.nz, w: p.w};
   }
 
   function csgFlipPolygon(p: CSGPolygon): void {
@@ -1194,9 +1186,8 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     declare polygons: CSGPolygon[];
     declare front: CSGNode | null;
     declare back: CSGNode | null;
-    declare unbuilt: CSGPolygon[] | null;
 
-    constructor(polygons?: CSGPolygon[]) {
+    constructor(polygons?: CSGPolygon[], depth = 0) {
       this.nx = 0;
       this.ny = 0;
       this.nz = 0;
@@ -1205,52 +1196,108 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       this.polygons = [];
       this.front = null;
       this.back = null;
-      this.unbuilt =
-        polygons && polygons.length > 0 ? polygons.slice() : null;
+      if (polygons && polygons.length > 0) {
+        this.build(polygons, depth);
+      }
     }
 
-    expandOneLevel(d: number): void {
-      const polys = this.unbuilt;
-      if (!polys || polys.length === 0) {
-        this.unbuilt = null;
-        return;
+    invert(): void {
+      for (let i = 0; i < this.polygons.length; i++) {
+        csgFlipPolygon(this.polygons[i]);
       }
-      this.unbuilt = null;
-      // Convex meshes build a chain as deep as their plane count. Dumping the
-      // remainder into one node here would give wrong booleans, so fail loudly.
-      if (d >= maxBspDepth) {
+      this.nx = -this.nx;
+      this.ny = -this.ny;
+      this.nz = -this.nz;
+      this.w = -this.w;
+      if (this.front) this.front.invert();
+      if (this.back) this.back.invert();
+      const temp = this.front;
+      this.front = this.back;
+      this.back = temp;
+    }
+
+    clipPolygons(polygons: CSGPolygon[], depth = 0): CSGPolygon[] {
+      if (!this.hasPlane || polygons.length === 0) {
+        return polygons.slice();
+      }
+      // Never return unclipped polygons at the depth cap: that silently keeps
+      // fragments which should have been removed.
+      if (depth >= maxBspDepth) {
         throw new RangeError(
           `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
         );
       }
+      let front: CSGPolygon[] = [];
+      let back: CSGPolygon[] = [];
+      for (let i = 0; i < polygons.length; i++) {
+        csgSplitPolygon(
+          this.nx,
+          this.ny,
+          this.nz,
+          this.w,
+          polygons[i],
+          front,
+          back,
+          front,
+          back,
+        );
+      }
+      if (this.front && front.length > 0) {
+        front = this.front.clipPolygons(front, depth + 1);
+      }
+      if (this.back) {
+        back = back.length > 0 ? this.back.clipPolygons(back, depth + 1) : [];
+      } else {
+        back = [];
+      }
+      return front.concat(back);
+    }
+
+    clipTo(bsp: CSGNode, depth = 0): void {
+      if (this.polygons.length > 0) {
+        this.polygons = bsp.clipPolygons(this.polygons, 0);
+      }
+      if (depth < maxBspDepth) {
+        if (this.front) this.front.clipTo(bsp, depth + 1);
+        if (this.back) this.back.clipTo(bsp, depth + 1);
+      }
+    }
+
+    allPolygons(out: CSGPolygon[] = []): CSGPolygon[] {
+      for (let i = 0; i < this.polygons.length; i++) {
+        out.push(this.polygons[i]);
+      }
+      if (this.front) this.front.allPolygons(out);
+      if (this.back) this.back.allPolygons(out);
+      return out;
+    }
+
+    build(polygons: CSGPolygon[], depth = 0): void {
+      if (!polygons.length) return;
       if (!this.hasPlane) {
-        let splitPoly = polys[0];
-        for (let i = 0; i < polys.length; i++) {
-          const p = polys[i];
-          if (
-            Math.abs(p.nx) > 0.999 ||
-            Math.abs(p.ny) > 0.999 ||
-            Math.abs(p.nz) > 0.999
-          ) {
-            splitPoly = p;
-            break;
-          }
-        }
+        const splitPoly = polygons[polygons.length >> 1];
         this.nx = splitPoly.nx;
         this.ny = splitPoly.ny;
         this.nz = splitPoly.nz;
         this.w = splitPoly.w;
         this.hasPlane = true;
       }
+      // Convex meshes build a chain as deep as their plane count. Dumping the
+      // remainder into one node here would give wrong booleans, so fail loudly.
+      if (depth >= maxBspDepth) {
+        throw new RangeError(
+          `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
+        );
+      }
       const front: CSGPolygon[] = [];
       const back: CSGPolygon[] = [];
-      for (let i = 0; i < polys.length; i++) {
+      for (let i = 0; i < polygons.length; i++) {
         csgSplitPolygon(
           this.nx,
           this.ny,
           this.nz,
           this.w,
-          polys[i],
+          polygons[i],
           this.polygons,
           this.polygons,
           front,
@@ -1258,212 +1305,19 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         );
       }
       if (front.length > 0) {
-        if (!this.front) {
-          this.front = new CSGNode(front);
-        } else if (this.front.unbuilt) {
-          for (let i = 0; i < front.length; i++) {
-            this.front.unbuilt.push(front[i]);
-          }
-        } else {
-          this.front.build(front, d + 1);
-        }
+        if (!this.front) this.front = new CSGNode();
+        this.front.build(front, depth + 1);
       }
       if (back.length > 0) {
-        if (!this.back) {
-          this.back = new CSGNode(back);
-        } else if (this.back.unbuilt) {
-          for (let i = 0; i < back.length; i++) {
-            this.back.unbuilt.push(back[i]);
-          }
-        } else {
-          this.back.build(back, d + 1);
-        }
-      }
-    }
-
-    invert(): void {
-      const stack: CSGNode[] = [this];
-      while (stack.length > 0) {
-        const node = stack.pop()!;
-        if (node.unbuilt) {
-          for (let i = 0; i < node.unbuilt.length; i++) {
-            csgFlipPolygon(node.unbuilt[i]);
-          }
-        }
-        for (let i = 0; i < node.polygons.length; i++) {
-          csgFlipPolygon(node.polygons[i]);
-        }
-        if (node.hasPlane) {
-          node.nx = -node.nx;
-          node.ny = -node.ny;
-          node.nz = -node.nz;
-          node.w = -node.w;
-        }
-        const temp = node.front;
-        node.front = node.back;
-        node.back = temp;
-        if (node.front) stack.push(node.front);
-        if (node.back) stack.push(node.back);
-      }
-    }
-
-    clipPolygons(
-      polygons: CSGPolygon[],
-      depth = 0,
-      discardCoplanar = false,
-    ): CSGPolygon[] {
-      if (polygons.length === 0) {
-        return [];
-      }
-      const out: CSGPolygon[] = [];
-      const stack: Array<{node: CSGNode; polys: CSGPolygon[]; d: number}> = [
-        {node: this, polys: polygons, d: depth},
-      ];
-      while (stack.length > 0) {
-        const {node, polys, d} = stack.pop()!;
-        if (node.unbuilt) {
-          node.expandOneLevel(d);
-        }
-        if (!node.hasPlane || polys.length === 0) {
-          for (let i = 0; i < polys.length; i++) out.push(polys[i]);
-          continue;
-        }
-        // Never return unclipped polygons at the depth cap: that silently keeps
-        // fragments which should have been removed.
-        if (d >= maxBspDepth) {
-          throw new RangeError(
-            `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
-          );
-        }
-        const front: CSGPolygon[] = [];
-        const back: CSGPolygon[] = [];
-        const copFront = discardCoplanar ? back : front;
-        for (let i = 0; i < polys.length; i++) {
-          csgSplitPolygon(
-            node.nx,
-            node.ny,
-            node.nz,
-            node.w,
-            polys[i],
-            copFront,
-            back,
-            front,
-            back,
-          );
-        }
-        if (node.back && back.length > 0) {
-          stack.push({node: node.back, polys: back, d: d + 1});
-        }
-        if (front.length > 0) {
-          if (node.front) {
-            stack.push({node: node.front, polys: front, d: d + 1});
-          } else {
-            for (let i = 0; i < front.length; i++) out.push(front[i]);
-          }
-        }
-      }
-      return out;
-    }
-
-    clipTo(bsp: CSGNode, depth = 0): void {
-      const stack: Array<{node: CSGNode; d: number}> = [{node: this, d: depth}];
-      while (stack.length > 0) {
-        const {node, d} = stack.pop()!;
-        if (node.unbuilt) {
-          node.expandOneLevel(d);
-        }
-        if (node.polygons.length > 0) {
-          node.polygons = bsp.clipPolygons(node.polygons, 0);
-        }
-        if (d < maxBspDepth) {
-          if (node.back) stack.push({node: node.back, d: d + 1});
-          if (node.front) stack.push({node: node.front, d: d + 1});
-        }
-      }
-    }
-
-    allPolygons(out: CSGPolygon[] = []): CSGPolygon[] {
-      const stack: Array<{node: CSGNode; d: number}> = [{node: this, d: 0}];
-      while (stack.length > 0) {
-        const {node, d} = stack.pop()!;
-        if (node.unbuilt) {
-          node.expandOneLevel(d);
-        }
-        for (let i = 0; i < node.polygons.length; i++) {
-          out.push(node.polygons[i]);
-        }
-        if (node.back) stack.push({node: node.back, d: d + 1});
-        if (node.front) stack.push({node: node.front, d: d + 1});
-      }
-      return out;
-    }
-
-    build(polygons: CSGPolygon[], depth = 0): void {
-      if (!polygons.length) return;
-      if (this.unbuilt) {
-        for (let i = 0; i < polygons.length; i++) {
-          this.unbuilt.push(polygons[i]);
-        }
-        return;
-      }
-      if (!this.hasPlane && !this.front && !this.back && depth === 0) {
-        this.unbuilt = polygons.slice();
-        return;
-      }
-      const stack: Array<{node: CSGNode; polys: CSGPolygon[]; d: number}> = [
-        {node: this, polys: polygons, d: depth},
-      ];
-      while (stack.length > 0) {
-        const {node, polys, d} = stack.pop()!;
-        if (!polys.length) continue;
-        if (node.unbuilt) {
-          node.expandOneLevel(d);
-        }
-        if (!node.hasPlane) {
-          const splitPoly = polys[0];
-          node.nx = splitPoly.nx;
-          node.ny = splitPoly.ny;
-          node.nz = splitPoly.nz;
-          node.w = splitPoly.w;
-          node.hasPlane = true;
-        }
-        if (d >= maxBspDepth) {
-          throw new RangeError(
-            `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
-          );
-        }
-        const front: CSGPolygon[] = [];
-        const back: CSGPolygon[] = [];
-        for (let i = 0; i < polys.length; i++) {
-          csgSplitPolygon(
-            node.nx,
-            node.ny,
-            node.nz,
-            node.w,
-            polys[i],
-            node.polygons,
-            node.polygons,
-            front,
-            back,
-          );
-        }
-        if (back.length > 0) {
-          if (!node.back) node.back = new CSGNode(back);
-          else stack.push({node: node.back, polys: back, d: d + 1});
-        }
-        if (front.length > 0) {
-          if (!node.front) node.front = new CSGNode(front);
-          else stack.push({node: node.front, polys: front, d: d + 1});
-        }
+        if (!this.back) this.back = new CSGNode();
+        this.back.build(back, depth + 1);
       }
     }
   }
 
   // tslint:disable-next-line:no-any Dynamic BufferGeometry and Matrix4 from threeNs.
   function geometryToCSGPolygons(geo: any, matrix: any): CSGPolygon[] {
-    if (!matrix && geo._csgPolygons) {
-      return geo._csgPolygons;
-    }
+    if (!matrix && geo._csgPolygons) return geo._csgPolygons;
     const pos = geo.attributes.position;
     if (!pos || pos.count === 0) return [];
     const norm = geo.attributes.normal;
@@ -1490,18 +1344,14 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     const nm: ArrayLike<number> | null = m
       ? new Matrix3().getNormalMatrix(matrix).elements
       : null;
-    const posArr = pos.array;
-    const normArr = norm ? norm.array : null;
-    const uvArr = uv ? uv.array : null;
     const readVert = (vi: number): CSGVertex => {
-      const i3 = vi * 3;
-      let x = posArr[i3];
-      let y = posArr[i3 + 1];
-      let z = posArr[i3 + 2];
+      let x = pos.getX(vi);
+      let y = pos.getY(vi);
+      let z = pos.getZ(vi);
       // Without a normal attribute, NaN marks "use the face normal" on output.
-      let nx = normArr ? normArr[i3] : NaN;
-      let ny = normArr ? normArr[i3 + 1] : NaN;
-      let nz = normArr ? normArr[i3 + 2] : NaN;
+      let nx = norm ? norm.getX(vi) : NaN;
+      let ny = norm ? norm.getY(vi) : NaN;
+      let nz = norm ? norm.getZ(vi) : NaN;
       if (m && nm) {
         const tx = m[0] * x + m[4] * y + m[8] * z + m[12];
         const ty = m[1] * x + m[5] * y + m[9] * z + m[13];
@@ -1512,14 +1362,13 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         const tnx = nm[0] * nx + nm[3] * ny + nm[6] * nz;
         const tny = nm[1] * nx + nm[4] * ny + nm[7] * nz;
         const tnz = nm[2] * nx + nm[5] * ny + nm[8] * nz;
-        const nLen = Math.sqrt(tnx * tnx + tny * tny + tnz * tnz) || 1;
+        const nLen = Math.hypot(tnx, tny, tnz) || 1;
         nx = tnx / nLen;
         ny = tny / nLen;
         nz = tnz / nLen;
       }
-      const i2 = vi * 2;
-      const u = uvArr ? uvArr[i2] : 0;
-      const v = uvArr ? uvArr[i2 + 1] : 0;
+      const u = uv ? uv.getX(vi) : 0;
+      const v = uv ? uv.getY(vi) : 0;
       return {x, y, z, nx, ny, nz, u, v};
     };
 
@@ -1540,514 +1389,38 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
   // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
   function csgPolygonsToGeometry(polys: CSGPolygon[]): any {
-    let totalVerts = 0;
-    let totalTris = 0;
-    for (let p = 0; p < polys.length; p++) {
-      const vLen = polys[p].vertices.length;
-      if (vLen < 3) continue;
-      totalVerts += vLen;
-      totalTris += vLen - 2;
-    }
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
 
-    const posArr = new Float32Array(totalVerts * 3);
-    const normArr = new Float32Array(totalVerts * 3);
-    const uvArr = new Float32Array(totalVerts * 2);
-    const idxArr =
-      totalVerts > 65535
-        ? new Uint32Array(totalTris * 3)
-        : new Uint16Array(totalTris * 3);
-
-    let vCursor = 0;
-    let iCursor = 0;
-    for (let p = 0; p < polys.length; p++) {
-      const poly = polys[p];
+    for (const poly of polys) {
       const verts = poly.vertices;
-      const vLen = verts.length;
-      if (vLen < 3) continue;
-      const base = vCursor;
-      for (let j = 0; j < vLen; j++) {
-        const v = verts[j];
-        const i3 = vCursor * 3;
-        const i2 = vCursor * 2;
-        posArr[i3] = v.x;
-        posArr[i3 + 1] = v.y;
-        posArr[i3 + 2] = v.z;
+      if (verts.length < 3) continue;
+      const base = positions.length / 3;
+      for (const v of verts) {
+        positions.push(v.x, v.y, v.z);
+        // Keep interpolated vertex normals (smooth surfaces stay smooth); fall
+        // back to the polygon's plane normal when missing or degenerate.
         const hasN =
-          !Number.isNaN(v.nx) && v.nx * v.nx + v.ny * v.ny + v.nz * v.nz > 0.5;
-        if (hasN) {
-          normArr[i3] = v.nx;
-          normArr[i3 + 1] = v.ny;
-          normArr[i3 + 2] = v.nz;
-        } else {
-          normArr[i3] = poly.nx;
-          normArr[i3 + 1] = poly.ny;
-          normArr[i3 + 2] = poly.nz;
-        }
-        uvArr[i2] = v.u;
-        uvArr[i2 + 1] = v.v;
-        vCursor++;
+          Number.isFinite(v.nx) &&
+          v.nx * v.nx + v.ny * v.ny + v.nz * v.nz > 0.5;
+        if (hasN) normals.push(v.nx, v.ny, v.nz);
+        else normals.push(poly.nx, poly.ny, poly.nz);
+        uvs.push(v.u, v.v);
       }
-      for (let i = 1; i < vLen - 1; i++) {
-        idxArr[iCursor++] = base;
-        idxArr[iCursor++] = base + i;
-        idxArr[iCursor++] = base + i + 1;
+      for (let i = 1; i < verts.length - 1; i++) {
+        indices.push(base, base + i, base + i + 1);
       }
     }
 
     const out = new BufferGeometry();
-    out.setAttribute('position', new BufferAttribute(posArr, 3));
-    out.setAttribute('normal', new BufferAttribute(normArr, 3));
-    out.setAttribute('uv', new BufferAttribute(uvArr, 2));
-    out.setIndex(new BufferAttribute(idxArr, 1));
+    out.setAttribute('position', new BufferAttribute(f32From(positions), 3));
+    out.setAttribute('normal', new BufferAttribute(f32From(normals), 3));
+    out.setAttribute('uv', new BufferAttribute(f32From(uvs), 2));
+    out.setIndex(indices);
     // tslint:disable-next-line:no-any Cache polygons for chained CSG calls.
     (out as any)._csgPolygons = polys;
-    return out;
-  }
-
-  interface CSGAABB {
-    minX: number;
-    minY: number;
-    minZ: number;
-    maxX: number;
-    maxY: number;
-    maxZ: number;
-  }
-
-  function computePolygonsAABB(polys: CSGPolygon[], padScale = 1e-4): CSGAABB {
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    for (let i = 0; i < polys.length; i++) {
-      const verts = polys[i].vertices;
-      for (let j = 0; j < verts.length; j++) {
-        const v = verts[j];
-        if (v.x < minX) minX = v.x;
-        if (v.y < minY) minY = v.y;
-        if (v.z < minZ) minZ = v.z;
-        if (v.x > maxX) maxX = v.x;
-        if (v.y > maxY) maxY = v.y;
-        if (v.z > maxZ) maxZ = v.z;
-      }
-    }
-    const diag =
-      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-    const pad = diag * padScale;
-    return {
-      minX: minX - pad,
-      minY: minY - pad,
-      minZ: minZ - pad,
-      maxX: maxX + pad,
-      maxY: maxY + pad,
-      maxZ: maxZ + pad,
-    };
-  }
-
-  function polyOverlapsAABB(poly: CSGPolygon, box: CSGAABB): boolean {
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    const verts = poly.vertices;
-    for (let i = 0; i < verts.length; i++) {
-      const v = verts[i];
-      if (v.x < minX) minX = v.x;
-      if (v.y < minY) minY = v.y;
-      if (v.z < minZ) minZ = v.z;
-      if (v.x > maxX) maxX = v.x;
-      if (v.y > maxY) maxY = v.y;
-      if (v.z > maxZ) maxZ = v.z;
-    }
-    return (
-      maxX >= box.minX &&
-      minX <= box.maxX &&
-      maxY >= box.minY &&
-      minY <= box.maxY &&
-      maxZ >= box.minZ &&
-      minZ <= box.maxZ
-    );
-  }
-
-  function filterClassifierPolygons(
-    polys: CSGPolygon[],
-    targetBox: CSGAABB,
-    directOverlap: CSGPolygon[],
-  ): CSGPolygon[] {
-    if (polys.length <= 48) return polys.map(csgClonePolygon);
-    if (directOverlap.length > 0) {
-      // Also include one representative per axis-aligned bounding plane so
-      // target fragments inside the solid remain enclosed on all 6 axes.
-      const out = directOverlap.map(csgClonePolygon);
-      const seenAxisPlanes = new Set<string>();
-      for (let i = 0; i < directOverlap.length; i++) {
-        const p = directOverlap[i];
-        if (
-          Math.abs(p.nx) > 0.999 ||
-          Math.abs(p.ny) > 0.999 ||
-          Math.abs(p.nz) > 0.999
-        ) {
-          seenAxisPlanes.add(
-            `${Math.round(p.nx)},${Math.round(p.ny)},${Math.round(p.nz)},${p.w.toFixed(4)}`,
-          );
-        }
-      }
-      for (let i = 0; i < polys.length; i++) {
-        const p = polys[i];
-        if (
-          Math.abs(p.nx) > 0.999 ||
-          Math.abs(p.ny) > 0.999 ||
-          Math.abs(p.nz) > 0.999
-        ) {
-          const key = `${Math.round(p.nx)},${Math.round(p.ny)},${Math.round(p.nz)},${p.w.toFixed(4)}`;
-          if (!seenAxisPlanes.has(key)) {
-            seenAxisPlanes.add(key);
-            out.push(csgClonePolygon(p));
-          }
-        }
-      }
-      return out;
-    }
-    return polys.map(csgClonePolygon);
-  }
-
-  function computePolyBounds(poly: CSGPolygon): CSGAABB {
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    const verts = poly.vertices;
-    for (let i = 0; i < verts.length; i++) {
-      const v = verts[i];
-      if (v.x < minX) minX = v.x;
-      if (v.y < minY) minY = v.y;
-      if (v.z < minZ) minZ = v.z;
-      if (v.x > maxX) maxX = v.x;
-      if (v.y > maxY) maxY = v.y;
-      if (v.z > maxZ) maxZ = v.z;
-    }
-    return {minX, minY, minZ, maxX, maxY, maxZ};
-  }
-
-  function pointInPolygon3D(
-    px: number,
-    py: number,
-    pz: number,
-    poly: CSGPolygon,
-    eps: number,
-  ): boolean {
-    const verts = poly.vertices;
-    const n = verts.length;
-    const nx = poly.nx;
-    const ny = poly.ny;
-    const nz = poly.nz;
-    for (let i = 0; i < n; i++) {
-      const a = verts[i];
-      const b = verts[(i + 1) % n];
-      const ex = b.x - a.x;
-      const ey = b.y - a.y;
-      const ez = b.z - a.z;
-      // Inward edge normal = poly.normal x edge
-      const inx = ny * ez - nz * ey;
-      const iny = nz * ex - nx * ez;
-      const inz = nx * ey - ny * ex;
-      const d = inx * (px - a.x) + iny * (py - a.y) + inz * (pz - a.z);
-      if (d < -eps) return false;
-    }
-    return true;
-  }
-
-  function clipPolygonsAgainstLargeSolid(
-    targetPolys: CSGPolygon[],
-    solidPolys: CSGPolygon[],
-    solidBox: CSGAABB,
-    overlapSolidPolys: CSGPolygon[],
-    keepInside: boolean,
-    coplanarKeepSameNormal: boolean,
-    discardAllCoplanar: boolean,
-  ): CSGPolygon[] {
-    if (targetPolys.length === 0) return [];
-    if (solidPolys.length > maxBspDepth * 2) {
-      throw new RangeError(
-        `SecurityError: CSG BSP depth exceeds MAX_BSP_DEPTH (${maxBspDepth})`,
-      );
-    }
-    const diag =
-      Math.hypot(
-        solidBox.maxX - solidBox.minX,
-        solidBox.maxY - solidBox.minY,
-        solidBox.maxZ - solidBox.minZ,
-      ) || 1;
-    const eps = Math.min(csgEps, diag * 1e-5);
-    const pad = diag * 1e-4;
-
-    const targetBox = computePolygonsAABB(targetPolys);
-    const rayPolys: CSGPolygon[] = [];
-    const rayBounds: CSGAABB[] = [];
-    for (let i = 0; i < solidPolys.length; i++) {
-      const f = solidPolys[i];
-      if (Math.abs(f.nx) < 1e-12) continue;
-      const b = computePolyBounds(f);
-      if (
-        b.maxX < targetBox.minX - pad ||
-        b.maxY < targetBox.minY - pad ||
-        b.minY > targetBox.maxY + pad ||
-        b.maxZ < targetBox.minZ - pad ||
-        b.minZ > targetBox.maxZ + pad
-      ) {
-        continue;
-      }
-      rayPolys.push(f);
-      rayBounds.push(b);
-    }
-
-    const overlapBounds = new Array<CSGAABB>(overlapSolidPolys.length);
-    for (let i = 0; i < overlapSolidPolys.length; i++) {
-      overlapBounds[i] = computePolyBounds(overlapSolidPolys[i]);
-    }
-
-    const isPointInsideSolid = (cx: number, cy: number, cz: number): boolean => {
-      if (
-        cx < solidBox.minX ||
-        cx > solidBox.maxX ||
-        cy < solidBox.minY ||
-        cy > solidBox.maxY ||
-        cz < solidBox.minZ ||
-        cz > solidBox.maxZ
-      ) {
-        return false;
-      }
-      // Perturb (y, z) by tiny irrational offsets scaled by diag so +X ray
-      // never lands directly on a mesh edge or vertex.
-      const y0 = cy + diag * 1.3189e-7;
-      const z0 = cz + diag * 2.7183e-7;
-      let hits = 0;
-      for (let i = 0; i < rayPolys.length; i++) {
-        const b = rayBounds[i];
-        if (
-          b.maxX <= cx ||
-          y0 < b.minY ||
-          y0 > b.maxY ||
-          z0 < b.minZ ||
-          z0 > b.maxZ
-        ) {
-          continue;
-        }
-        const f = rayPolys[i];
-        const xHit = (f.w - f.ny * y0 - f.nz * z0) / f.nx;
-        if (xHit <= cx) continue;
-        const verts = f.vertices;
-        let inside2D = false;
-        for (let j = 0, k = verts.length - 1; j < verts.length; k = j++) {
-          const vj = verts[j];
-          const vk = verts[k];
-          if (
-            vj.y > y0 !== vk.y > y0 &&
-            z0 < ((vk.z - vj.z) * (y0 - vj.y)) / (vk.y - vj.y) + vj.z
-          ) {
-            inside2D = !inside2D;
-          }
-        }
-        if (inside2D) hits++;
-      }
-      return (hits & 1) === 1;
-    };
-
-    const out: CSGPolygon[] = [];
-    for (let tIdx = 0; tIdx < targetPolys.length; tIdx++) {
-      const poly = targetPolys[tIdx];
-      const pb = computePolyBounds(poly);
-      const pMinX = pb.minX - pad;
-      const pMinY = pb.minY - pad;
-      const pMinZ = pb.minZ - pad;
-      const pMaxX = pb.maxX + pad;
-      const pMaxY = pb.maxY + pad;
-      const pMaxZ = pb.maxZ + pad;
-
-      const planes: Array<{
-        nx: number;
-        ny: number;
-        nz: number;
-        w: number;
-        minX: number;
-        minY: number;
-        minZ: number;
-        maxX: number;
-        maxY: number;
-        maxZ: number;
-      }> = [];
-      const coplanarCandidates: Array<{poly: CSGPolygon; bounds: CSGAABB}> = [];
-
-      for (let i = 0; i < overlapSolidPolys.length; i++) {
-        const fb = overlapBounds[i];
-        if (
-          fb.maxX < pMinX ||
-          fb.minX > pMaxX ||
-          fb.maxY < pMinY ||
-          fb.minY > pMaxY ||
-          fb.maxZ < pMinZ ||
-          fb.minZ > pMaxZ
-        ) {
-          continue;
-        }
-        const f = overlapSolidPolys[i];
-        const dotN = poly.nx * f.nx + poly.ny * f.ny + poly.nz * f.nz;
-        if (
-          Math.abs(dotN) > 1 - 1e-4 &&
-          Math.abs(poly.w - (dotN > 0 ? f.w : -f.w)) <= eps * 10
-        ) {
-          coplanarCandidates.push({poly: f, bounds: fb});
-          continue;
-        }
-        // Check if poly straddles f's plane
-        let minDP = Infinity;
-        let maxDP = -Infinity;
-        for (let vIdx = 0; vIdx < poly.vertices.length; vIdx++) {
-          const v = poly.vertices[vIdx];
-          const d = f.nx * v.x + f.ny * v.y + f.nz * v.z - f.w;
-          if (d < minDP) minDP = d;
-          if (d > maxDP) maxDP = d;
-        }
-        if (minDP >= -eps || maxDP <= eps) continue;
-
-        // Check if f touches or straddles poly's plane
-        let minDF = Infinity;
-        let maxDF = -Infinity;
-        for (let vIdx = 0; vIdx < f.vertices.length; vIdx++) {
-          const u = f.vertices[vIdx];
-          const d = poly.nx * u.x + poly.ny * u.y + poly.nz * u.z - poly.w;
-          if (d < minDF) minDF = d;
-          if (d > maxDF) maxDF = d;
-        }
-        if (minDF > eps * 4 || maxDF < -eps * 4) continue;
-
-        const fSpan = Math.max(
-          fb.maxX - fb.minX,
-          fb.maxY - fb.minY,
-          fb.maxZ - fb.minZ,
-          pad * 4,
-        );
-        const fPad = fSpan * 0.25 + pad;
-
-        // Deduplicate plane and merge its active bounds
-        let duplicate = false;
-        for (let k = 0; k < planes.length; k++) {
-          const pl = planes[k];
-          const dDot = pl.nx * f.nx + pl.ny * f.ny + pl.nz * f.nz;
-          if (
-            Math.abs(dDot) > 1 - 1e-5 &&
-            Math.abs(pl.w - (dDot > 0 ? f.w : -f.w)) < eps * 4
-          ) {
-            if (fb.minX - fPad < pl.minX) pl.minX = fb.minX - fPad;
-            if (fb.minY - fPad < pl.minY) pl.minY = fb.minY - fPad;
-            if (fb.minZ - fPad < pl.minZ) pl.minZ = fb.minZ - fPad;
-            if (fb.maxX + fPad > pl.maxX) pl.maxX = fb.maxX + fPad;
-            if (fb.maxY + fPad > pl.maxY) pl.maxY = fb.maxY + fPad;
-            if (fb.maxZ + fPad > pl.maxZ) pl.maxZ = fb.maxZ + fPad;
-            duplicate = true;
-            break;
-          }
-        }
-        if (!duplicate) {
-          planes.push({
-            nx: f.nx,
-            ny: f.ny,
-            nz: f.nz,
-            w: f.w,
-            minX: fb.minX - fPad,
-            minY: fb.minY - fPad,
-            minZ: fb.minZ - fPad,
-            maxX: fb.maxX + fPad,
-            maxY: fb.maxY + fPad,
-            maxZ: fb.maxZ + fPad,
-          });
-        }
-      }
-
-      let fragments: CSGPolygon[] = [csgClonePolygon(poly)];
-      for (let pIdx = 0; pIdx < planes.length; pIdx++) {
-        const pl = planes[pIdx];
-        const nextFragments: CSGPolygon[] = [];
-        for (let fIdx = 0; fIdx < fragments.length; fIdx++) {
-          const frag = fragments[fIdx];
-          if (!polyOverlapsAABB(frag, pl)) {
-            nextFragments.push(frag);
-            continue;
-          }
-          csgSplitPolygon(
-            pl.nx,
-            pl.ny,
-            pl.nz,
-            pl.w,
-            frag,
-            nextFragments,
-            nextFragments,
-            nextFragments,
-            nextFragments,
-          );
-        }
-        fragments = nextFragments;
-      }
-
-      for (let fIdx = 0; fIdx < fragments.length; fIdx++) {
-        const frag = fragments[fIdx];
-        const verts = frag.vertices;
-        let cx = 0;
-        let cy = 0;
-        let cz = 0;
-        for (let vIdx = 0; vIdx < verts.length; vIdx++) {
-          cx += verts[vIdx].x;
-          cy += verts[vIdx].y;
-          cz += verts[vIdx].z;
-        }
-        const invN = 1 / verts.length;
-        cx *= invN;
-        cy *= invN;
-        cz *= invN;
-
-        let coplanarFace: CSGPolygon | null = null;
-        for (let i = 0; i < coplanarCandidates.length; i++) {
-          const cand = coplanarCandidates[i];
-          const fb = cand.bounds;
-          if (
-            cx < fb.minX - pad ||
-            cx > fb.maxX + pad ||
-            cy < fb.minY - pad ||
-            cy > fb.maxY + pad ||
-            cz < fb.minZ - pad ||
-            cz > fb.maxZ + pad
-          ) {
-            continue;
-          }
-          if (pointInPolygon3D(cx, cy, cz, cand.poly, eps * 4)) {
-            coplanarFace = cand.poly;
-            break;
-          }
-        }
-
-        if (coplanarFace) {
-          if (discardAllCoplanar) continue;
-          const sameNormal =
-            frag.nx * coplanarFace.nx +
-              frag.ny * coplanarFace.ny +
-              frag.nz * coplanarFace.nz >
-            0;
-          if (sameNormal === coplanarKeepSameNormal) {
-            out.push(frag);
-          }
-        } else {
-          const inside = isPointInsideSolid(cx, cy, cz);
-          if (inside === keepInside) {
-            out.push(frag);
-          }
-        }
-      }
-    }
     return out;
   }
 
@@ -2068,121 +1441,101 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       return op === 'intersect' ? [] : polysA;
     }
 
-    const boxA = computePolygonsAABB(polysA);
-    const boxB = computePolygonsAABB(polysB);
+    let bMinX = Infinity,
+      bMinY = Infinity,
+      bMinZ = Infinity;
+    let bMaxX = -Infinity,
+      bMaxY = -Infinity,
+      bMaxZ = -Infinity;
+    for (let i = 0; i < polysB.length; i++) {
+      const vs = polysB[i].vertices;
+      for (let j = 0; j < vs.length; j++) {
+        const v = vs[j];
+        if (v.x < bMinX) bMinX = v.x;
+        if (v.y < bMinY) bMinY = v.y;
+        if (v.z < bMinZ) bMinZ = v.z;
+        if (v.x > bMaxX) bMaxX = v.x;
+        if (v.y > bMaxY) bMaxY = v.y;
+        if (v.z > bMaxZ) bMaxZ = v.z;
+      }
+    }
+    bMinX -= 1e-4;
+    bMinY -= 1e-4;
+    bMinZ -= 1e-4;
+    bMaxX += 1e-4;
+    bMaxY += 1e-4;
+    bMaxZ += 1e-4;
     const aOverlap: CSGPolygon[] = [];
     const aDisjoint: CSGPolygon[] = [];
     for (let i = 0; i < polysA.length; i++) {
-      if (polyOverlapsAABB(polysA[i], boxB)) aOverlap.push(polysA[i]);
-      else aDisjoint.push(polysA[i]);
+      const p = polysA[i];
+      const vs = p.vertices;
+      let pMinX = Infinity,
+        pMinY = Infinity,
+        pMinZ = Infinity;
+      let pMaxX = -Infinity,
+        pMaxY = -Infinity,
+        pMaxZ = -Infinity;
+      for (let j = 0; j < vs.length; j++) {
+        const v = vs[j];
+        if (v.x < pMinX) pMinX = v.x;
+        if (v.y < pMinY) pMinY = v.y;
+        if (v.z < pMinZ) pMinZ = v.z;
+        if (v.x > pMaxX) pMaxX = v.x;
+        if (v.y > pMaxY) pMaxY = v.y;
+        if (v.z > pMaxZ) pMaxZ = v.z;
+      }
+      if (
+        pMaxX < bMinX ||
+        pMinX > bMaxX ||
+        pMaxY < bMinY ||
+        pMinY > bMaxY ||
+        pMaxZ < bMinZ ||
+        pMinZ > bMaxZ
+      ) {
+        aDisjoint.push(p);
+      } else {
+        aOverlap.push(p);
+      }
     }
-    const bOverlap: CSGPolygon[] = [];
-    const bDisjoint: CSGPolygon[] = [];
-    for (let i = 0; i < polysB.length; i++) {
-      if (polyOverlapsAABB(polysB[i], boxA)) bOverlap.push(polysB[i]);
-      else bDisjoint.push(polysB[i]);
+    if (aOverlap.length === 0) {
+      return op === 'union'
+        ? polysA.concat(polysB)
+        : op === 'subtract'
+          ? polysA
+          : [];
     }
 
-    const useLarge = polysA.length > 64 || polysB.length > 64;
-    const a = useLarge
-      ? null
-      : new CSGNode(filterClassifierPolygons(polysA, boxB, aOverlap));
-    const b = useLarge
-      ? null
-      : new CSGNode(filterClassifierPolygons(polysB, boxA, bOverlap));
+    const a = new CSGNode(aOverlap);
+    const b = new CSGNode(polysB);
 
     if (op === 'union') {
-      const aClipped = b
-        ? b.clipPolygons(aOverlap, 0, false)
-        : clipPolygonsAgainstLargeSolid(
-            aOverlap,
-            polysB,
-            boxB,
-            bOverlap,
-            false,
-            true,
-            false,
-          );
-      const bClipped = a
-        ? a.clipPolygons(bOverlap, 0, true)
-        : clipPolygonsAgainstLargeSolid(
-            bOverlap,
-            polysA,
-            boxA,
-            aOverlap,
-            false,
-            false,
-            true,
-          );
-      return aDisjoint.concat(aClipped, bDisjoint, bClipped);
+      a.clipTo(b);
+      b.clipTo(a);
+      b.invert();
+      b.clipTo(a);
+      b.invert();
+      a.build(b.allPolygons());
+      return aDisjoint.concat(a.allPolygons());
     } else if (op === 'subtract') {
-      let aClipped: CSGPolygon[];
-      if (b) {
-        const aFlipped = aOverlap.map((p) => {
-          const copy = csgClonePolygon(p);
-          csgFlipPolygon(copy);
-          return copy;
-        });
-        aClipped = b.clipPolygons(aFlipped, 0, false);
-        for (let i = 0; i < aClipped.length; i++) csgFlipPolygon(aClipped[i]);
-      } else {
-        aClipped = clipPolygonsAgainstLargeSolid(
-          aOverlap,
-          polysB,
-          boxB,
-          bOverlap,
-          false,
-          false,
-          false,
-        );
-      }
-      let bClipped: CSGPolygon[];
-      if (a) {
-        a.invert();
-        bClipped = a.clipPolygons(bOverlap, 0, true);
-      } else {
-        bClipped = clipPolygonsAgainstLargeSolid(
-          bOverlap,
-          polysA,
-          boxA,
-          aOverlap,
-          true,
-          false,
-          true,
-        );
-      }
-      for (let i = 0; i < bClipped.length; i++) csgFlipPolygon(bClipped[i]);
-      return aDisjoint.concat(aClipped, bClipped);
+      a.invert();
+      a.clipTo(b);
+      b.clipTo(a);
+      b.invert();
+      b.clipTo(a);
+      b.invert();
+      a.build(b.allPolygons());
+      a.invert();
+      return aDisjoint.concat(a.allPolygons());
     } else {
-      if (a && b) {
-        a.invert();
-        b.clipTo(a);
-        b.invert();
-        a.clipTo(b);
-        b.clipTo(a);
-        a.build(b.allPolygons());
-        a.invert();
-        return a.allPolygons();
-      }
-      const aClipped = clipPolygonsAgainstLargeSolid(
-        aOverlap,
-        polysB,
-        boxB,
-        bOverlap,
-        true,
-        true,
-        false,
-      );
-      const bClipped = clipPolygonsAgainstLargeSolid(
-        bOverlap,
-        polysA,
-        boxA,
-        aOverlap,
-        true,
-        false,
-        true,
-      );
-      return aClipped.concat(bClipped);
+      a.invert();
+      b.clipTo(a);
+      b.invert();
+      a.clipTo(b);
+      b.clipTo(a);
+      a.build(b.allPolygons());
+      a.invert();
+      return a.allPolygons();
     }
   }
 

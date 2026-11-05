@@ -553,7 +553,7 @@ fn main() {
             };
             let is_input_glb = input_bytes.len() >= 4 && &input_bytes[0..4] == b"glTF";
             let filename = input.to_string_lossy().to_string();
-            let mut scene = if is_input_glb {
+            let scene = if is_input_glb {
                 match read_glb(&input_bytes) {
                     Ok(s) => s,
                     Err(e) => {
