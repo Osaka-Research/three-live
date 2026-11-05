@@ -16,6 +16,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Structured compiler, schema, spatial, or HTML host diagnostic (`TL1xx–TL4xx`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct Diagnostic {
+    pub code: String,
+    pub severity: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SceneGraph {
     pub meshes: Vec<Mesh3D>,
@@ -34,6 +50,9 @@ pub struct SceneGraph {
     /// falls back to the legacy one-flat-node-per-mesh layout.
     #[serde(default)]
     pub nodes: Vec<SceneNode>,
+    /// Compiler, fallback, schema, and spatial diagnostics collected during evaluation.
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One glTF node: a local transform, an optional mesh, and XR traits.
@@ -66,6 +85,10 @@ pub struct SceneNode {
     pub instance_matrices: Vec<f32>,
     #[serde(default)]
     pub instance_colors: Vec<f32>,
+    #[serde(default)]
+    pub interactivity_events: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactivity: Option<serde_json::Value>,
 }
 
 impl Default for SceneNode {
@@ -83,6 +106,8 @@ impl Default for SceneNode {
             xr_hubs: None,
             instance_matrices: Vec::new(),
             instance_colors: Vec::new(),
+            interactivity_events: Vec::new(),
+            interactivity: None,
         }
     }
 }

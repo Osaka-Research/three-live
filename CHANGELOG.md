@@ -26,6 +26,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [1.2.4] - 2026-11-05
+
+### Added
+
+-   **AI-First Testing & Verification Toolkit (`three-live-cli`)**:
+    -   `three-live-cli validate --json`: Headless JS scene execution with
+        structured `TL1xx–TL4xx` diagnostics (`TL101` syntax error, `TL102`
+        unknown `THREE.*` class with typo suggestions, `TL103` runtime error,
+        `TL104` no visible geometry, `TL105` 250 ms execution ceiling, `TL201`
+        unknown `xr-live-sim` trait, `TL202` missing `Player` character,
+        `TL301–TL307` spatial/camera/overlap/floor linter warnings).
+    -   `three-live-cli render`: Pure-Rust headless software rasterizer
+        producing 4-up contact sheets (`--view=quad --grid --annotations` with
+        Camera, Front +Z, Top +Y with frustum cone, and Iso 45° panels),
+        time-stepped horizontal filmstrips (`--frames=N --duration=T`),
+        interactive trigger verification (`--trigger-select=<node>`), and
+        animated GIFs (`--output=out.gif`).
+    -   `three-live-cli sim`: Headless `xr-live-sim` physics, AI steering, and
+        CAD exploded-view step runner (`--actions`, `--snapshots`, `--json`)
+        with full event trace logging (`onCollect`, `onDamage`, `onScoreChange`,
+        `onWin`, `onLose`).
+
+### Fixed
+
+-   **Consistent counter-clockwise rotation (`Orbital Spheres`)**: Updated
+    `Orbital Spheres` orbit speed to `-0.4` across Web, iOS, and Android presets
+    so all demo scenes rotate counter-clockwise around `+Y`.
+-   **Headless `THREE.CSG` & TypedArray performance in Boa**: Optimized
+    `ShapeGeometry`, `ExtrudeGeometry`, `TextGeometry`, and chained
+    `THREE.CSG.subtract` operations with direct typed-array population, YZ beam
+    culling, and polygon caching.
+
+--------------------------------------------------------------------------------
+
 ## [1.2.3] - 2026-11-04
 
 ### Fixed

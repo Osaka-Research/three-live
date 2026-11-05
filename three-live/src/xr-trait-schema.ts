@@ -1161,3 +1161,676 @@ export function registerXRTraitSerializer(): void {
     // Already registered (e.g. a second bundle on the same page).
   }
 }
+
+/** Structured compiler/schema diagnostic emitted during scene validation. */
+export interface SchemaDiagnostic {
+  readonly code: string;
+  readonly severity: 'error' | 'warning' | 'info';
+  readonly message: string;
+  readonly node?: string;
+  readonly hint?: string;
+}
+
+const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
+  'grab',
+  'scale',
+  'billboard',
+  'follow',
+  'anchor',
+  'anchorPersist',
+  'physics',
+  'orbit',
+  'handles',
+  'particles',
+  'holdToAsk',
+  'worldUnderstanding',
+  'splatUrl',
+  'splatQuality',
+  'spatialSlot',
+  'audio',
+  'dimensions',
+  'snapTo',
+  'snapSocket',
+  'gaze',
+  'explode',
+  'navigable',
+  'text',
+  'bloom',
+  'outline',
+  'ik',
+  'sync',
+  'pointerEvents',
+  'character',
+  'agent',
+  'integrity',
+  'zone',
+  'spawner',
+  'objective',
+  'audioCues',
+  'collidable',
+  'traits',
+]);
+
+const XR_KEY_SYNONYMS: Readonly<
+  Record<string, {target: string; hint: string}>
+> = {
+  grabbable: {
+    target: 'grab',
+    hint: "Use 'grab: true' or 'grab: \"1-hand\" | \"2-hand\"' instead of 'grabbable'.",
+  },
+  draggable: {
+    target: 'grab',
+    hint: "Use 'grab: true' or 'grab: \"1-hand\" | \"2-hand\"' instead of 'draggable'.",
+  },
+  movable: {
+    target: 'grab',
+    hint: "Use 'grab: true' or 'grab: \"1-hand\" | \"2-hand\"' instead of 'movable'.",
+  },
+  interactable: {
+    target: 'grab',
+    hint: "Use 'grab: true' or 'userData.interactivity' instead of 'interactable'.",
+  },
+  scalable: {
+    target: 'scale',
+    hint: "Use 'scale: { min: 0.05, max: 5 }' instead of 'scalable'.",
+  },
+  resizable: {
+    target: 'handles',
+    hint: "Use 'handles: true' or 'scale: { min, max }' instead of 'resizable'.",
+  },
+  health: {
+    target: 'integrity',
+    hint: "Use 'integrity: { max: 100, group: \"...\" }' instead of 'health'.",
+  },
+  hp: {
+    target: 'integrity',
+    hint: "Use 'integrity: { max: 100, group: \"...\" }' instead of 'hp'.",
+  },
+  hitpoints: {
+    target: 'integrity',
+    hint: "Use 'integrity: { max: 100, group: \"...\" }' instead of 'hitpoints'.",
+  },
+  damage: {
+    target: 'integrity',
+    hint: "Use 'integrity: { contactAmount: ... }' instead of 'damage'.",
+  },
+  team: {
+    target: 'integrity',
+    hint: "Use 'integrity: { group: \"...\" }' instead of 'team'.",
+  },
+  faction: {
+    target: 'integrity',
+    hint: "Use 'integrity: { group: \"...\" }' instead of 'faction'.",
+  },
+  collides: {
+    target: 'collidable',
+    hint: "Use 'collidable: true' or 'physics: \"static\" | \"dynamic\"' instead of 'collides'.",
+  },
+  collider: {
+    target: 'collidable',
+    hint: "Use 'collidable: true' or 'physics: \"static\" | \"dynamic\"' instead of 'collider'.",
+  },
+  solid: {
+    target: 'collidable',
+    hint: "Use 'collidable: true' instead of 'solid'.",
+  },
+  obstacle: {
+    target: 'collidable',
+    hint: "Use 'collidable: true' instead of 'obstacle'.",
+  },
+  walkable: {
+    target: 'navigable',
+    hint: "Use 'navigable: \"walkable\"' instead of 'walkable'.",
+  },
+  floor: {
+    target: 'anchor',
+    hint: "Use 'anchor: \"floor\"' or 'navigable: \"walkable\"' instead of 'floor'.",
+  },
+  ground: {
+    target: 'anchor',
+    hint: "Use 'anchor: \"floor\"' or 'navigable: \"walkable\"' instead of 'ground'.",
+  },
+  teleport: {
+    target: 'navigable',
+    hint: "Use 'navigable: \"walkable\"' instead of 'teleport'.",
+  },
+  sound: {
+    target: 'audio',
+    hint: "Use 'audio: { src: \"...\" }' or 'audioCues' instead of 'sound'.",
+  },
+  sfx: {
+    target: 'audioCues',
+    hint: "Use 'audioCues: { onTap: \"confirm\" }' instead of 'sfx'.",
+  },
+  measure: {
+    target: 'dimensions',
+    hint: "Use 'dimensions: true' instead of 'measure'.",
+  },
+  measurement: {
+    target: 'dimensions',
+    hint: "Use 'dimensions: true' instead of 'measurement'.",
+  },
+  ruler: {
+    target: 'dimensions',
+    hint: "Use 'dimensions: true' instead of 'ruler'.",
+  },
+  snap: {
+    target: 'snapTo',
+    hint: "Use 'snapTo' or 'snapSocket' instead of 'snap'.",
+  },
+  magnetic: {
+    target: 'snapTo',
+    hint: "Use 'snapTo' or 'snapSocket' instead of 'magnetic'.",
+  },
+  dwell: {
+    target: 'gaze',
+    hint: "Use 'gaze: { dwellMs: 1200 }' instead of 'dwell'.",
+  },
+  exploded: {
+    target: 'explode',
+    hint: "Use 'explode: { distance: 0.35, layer: 1 }' instead of 'exploded'.",
+  },
+  disassemble: {
+    target: 'explode',
+    hint: "Use 'explode: true' instead of 'disassemble'.",
+  },
+  label: {
+    target: 'text',
+    hint: "Use 'text: { text: \"...\", size: 0.12 }' instead of 'label'.",
+  },
+  caption: {
+    target: 'text',
+    hint: "Use 'text: { text: \"...\", size: 0.12 }' instead of 'caption'.",
+  },
+  glow: {
+    target: 'bloom',
+    hint: "Use 'bloom: { strength: 0.5 }' or 'outline' instead of 'glow'.",
+  },
+  emissive: {
+    target: 'bloom',
+    hint: "Use 'bloom: { strength: 0.5 }' on userData.xr or material.emissive.",
+  },
+  ai: {
+    target: 'agent',
+    hint: 'Use \'agent: { mode: "patrol" | "chase" | "wander" }\' instead of \'ai\'.',
+  },
+  npc: {
+    target: 'agent',
+    hint: "Use 'agent: { mode: \"wander\" }' instead of 'npc'.",
+  },
+  enemy: {
+    target: 'agent',
+    hint: "Use 'agent: { mode: \"chase\" }' and 'integrity: { group: \"enemy\" }' instead of 'enemy'.",
+  },
+  bot: {
+    target: 'agent',
+    hint: "Use 'agent: { mode: \"patrol\" }' instead of 'bot'.",
+  },
+  steering: {
+    target: 'agent',
+    hint: "Use 'agent' instead of 'steering'.",
+  },
+  player: {
+    target: 'character',
+    hint: "Use 'character: { speed: 4, cameraMode: \"third-person\" }' instead of 'player'.",
+  },
+  avatar: {
+    target: 'character',
+    hint: "Use 'character: true' instead of 'avatar'.",
+  },
+  controller: {
+    target: 'character',
+    hint: "Use 'character: true' instead of 'controller'.",
+  },
+  trigger: {
+    target: 'zone',
+    hint: "Use 'zone: { shape: \"box\", size: [1, 1, 1] }' instead of 'trigger'.",
+  },
+  hitbox: {
+    target: 'zone',
+    hint: "Use 'zone' or 'integrity' instead of 'hitbox'.",
+  },
+  sensor: {
+    target: 'zone',
+    hint: "Use 'zone' instead of 'sensor'.",
+  },
+  spawn: {
+    target: 'spawner',
+    hint: "Use 'spawner: { template: \"...\" }' instead of 'spawn'.",
+  },
+  emitter: {
+    target: 'particles',
+    hint: "Use 'particles: { preset: \"sparks\" }' or 'spawner' instead of 'emitter'.",
+  },
+  goal: {
+    target: 'objective',
+    hint: 'Use \'objective: { type: "pickup" | "checkpoint" }\' instead of \'goal\'.',
+  },
+  quest: {
+    target: 'objective',
+    hint: "Use 'objective' instead of 'quest'.",
+  },
+  collectible: {
+    target: 'objective',
+    hint: "Use 'objective: { type: \"pickup\" }' instead of 'collectible'.",
+  },
+  pickup: {
+    target: 'objective',
+    hint: "Use 'objective: { type: \"pickup\" }' instead of 'pickup'.",
+  },
+};
+
+function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[] = Array.from({length: n + 1}, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] =
+        a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  return dp[n];
+}
+
+function closestCanonicalTrait(key: string): string | null {
+  const lower = key.toLowerCase();
+  let best: string | null = null;
+  let bestDist = 4;
+  for (const cand of CANONICAL_XR_KEYS) {
+    if (cand === 'traits') continue;
+    const d = editDistance(lower, cand.toLowerCase());
+    if (d < bestDist) {
+      bestDist = d;
+      best = cand;
+    }
+  }
+  return best;
+}
+
+/**
+ * Validates an authored `userData.xr` bag and returns structured `TL201`
+ * (unknown/synonym key), `TL202` (clamped numeric range), and `TL203`
+ * (security rejection) diagnostics.
+ */
+export function validateXRTraits(
+  raw: unknown,
+  nodeName = 'unnamed',
+): SchemaDiagnostic[] {
+  const diags: SchemaDiagnostic[] = [];
+  if (raw === undefined || raw === null) return diags;
+  const r = asRecord(raw);
+  if (!r) {
+    diags.push({
+      code: 'TL201',
+      severity: 'warning',
+      node: nodeName,
+      message: `userData.xr on node '${nodeName}' must be a plain object.`,
+      hint: 'Assign an object such as mesh.userData.xr = { grab: true }.',
+    });
+    return diags;
+  }
+
+  for (const key of Object.keys(r)) {
+    if (CANONICAL_XR_KEYS.has(key)) continue;
+    const syn = XR_KEY_SYNONYMS[key] ?? XR_KEY_SYNONYMS[key.toLowerCase()];
+    if (syn) {
+      diags.push({
+        code: 'TL201',
+        severity: 'warning',
+        node: nodeName,
+        message: `Unrecognized key '${key}' in userData.xr on node '${nodeName}'; did you mean '${syn.target}'?`,
+        hint: syn.hint,
+      });
+    } else {
+      const closest = closestCanonicalTrait(key);
+      diags.push({
+        code: 'TL201',
+        severity: 'warning',
+        node: nodeName,
+        message: closest
+          ? `Unknown key '${key}' on node '${nodeName}'; did you mean '${closest}'?`
+          : `Unknown key '${key}' in userData.xr on node '${nodeName}'.`,
+        hint: closest
+          ? `Replace '${key}' with '${closest}'.`
+          : 'Supported userData.xr traits include: grab, scale, billboard, follow, anchor, physics, orbit, handles, particles, holdToAsk, audio, dimensions, snapTo, snapSocket, gaze, explode, navigable, text, bloom, outline, ik, character, agent, integrity, zone, spawner, objective, audioCues, collidable.',
+      });
+    }
+  }
+
+  if (Array.isArray(r['traits'])) {
+    for (const item of r['traits']) {
+      if (typeof item === 'string' && !CANONICAL_XR_KEYS.has(item)) {
+        const syn =
+          XR_KEY_SYNONYMS[item] ?? XR_KEY_SYNONYMS[item.toLowerCase()];
+        const closest = syn?.target ?? closestCanonicalTrait(item);
+        diags.push({
+          code: 'TL201',
+          severity: 'warning',
+          node: nodeName,
+          message: closest
+            ? `Unknown trait '${item}' in userData.xr.traits on node '${nodeName}'; did you mean '${closest}'?`
+            : `Unknown trait '${item}' in userData.xr.traits on node '${nodeName}'.`,
+          hint:
+            syn?.hint ??
+            (closest
+              ? `Use '${closest}' instead of '${item}'.`
+              : 'Use canonical trait keys on userData.xr directly.'),
+        });
+      }
+    }
+  }
+
+  const checkRange = (
+    path: string,
+    val: unknown,
+    lo: number,
+    hi: number,
+  ): void => {
+    if (typeof val !== 'number') return;
+    if (!Number.isFinite(val)) {
+      diags.push({
+        code: 'TL202',
+        severity: 'warning',
+        node: nodeName,
+        message: `Numeric trait parameter '${path}' on node '${nodeName}' is non-finite (${val}); clamped to default.`,
+        hint: `Provide a finite number in [${lo}, ${hi}] for '${path}'.`,
+      });
+      return;
+    }
+    if (val < lo || val > hi) {
+      const clamped = Math.max(lo, Math.min(hi, val));
+      diags.push({
+        code: 'TL202',
+        severity: 'warning',
+        node: nodeName,
+        message: `Numeric trait parameter '${path}' (${val}) on node '${nodeName}' is out of range [${lo}, ${hi}]; clamped to ${clamped}.`,
+        hint: `Keep '${path}' within [${lo}, ${hi}].`,
+      });
+    }
+  };
+
+  // Range checks (TL202)
+  const scaleObj = asRecord(r['scale']);
+  if (scaleObj) {
+    checkRange('scale.min', scaleObj['min'], 0.001, 1000);
+    const min = clampNum(scaleObj['min'], 0.001, 1000, 0.05);
+    checkRange('scale.max', scaleObj['max'], min, 1000);
+  }
+  const followObj = asRecord(r['follow']);
+  if (followObj && followObj['lazy'] !== false) {
+    checkRange('follow.distance', followObj['distance'], 0.1, 10);
+    checkRange('follow.deadzoneDeg', followObj['deadzoneDeg'], 0, 90);
+    checkRange('follow.stiffness', followObj['stiffness'], 0.5, 40);
+    checkRange('follow.height', followObj['height'], -2, 2);
+  }
+  const orbitObj = asRecord(r['orbit']);
+  if (orbitObj) {
+    checkRange('orbit.radius', orbitObj['radius'], 0.01, 50);
+    checkRange('orbit.speed', orbitObj['speed'], -20, 20);
+    checkRange('orbit.height', orbitObj['height'], -10, 10);
+    checkRange('orbit.phase', orbitObj['phase'], -1e6, 1e6);
+  }
+  const handlesObj = asRecord(r['handles']);
+  if (handlesObj) {
+    checkRange('handles.minScale', handlesObj['minScale'], 0.001, 1000);
+    const minS = clampNum(handlesObj['minScale'], 0.001, 1000, 0.1);
+    checkRange('handles.maxScale', handlesObj['maxScale'], minS, 1000);
+  }
+  const particlesObj = asRecord(r['particles']);
+  if (particlesObj) {
+    checkRange(
+      'particles.count',
+      particlesObj['count'],
+      1,
+      MAX_PARTICLES_PER_EMITTER,
+    );
+    checkRange('particles.speed', particlesObj['speed'], 0.05, 10);
+    if (typeof particlesObj['area'] === 'number') {
+      checkRange('particles.area', particlesObj['area'], 0.05, 50);
+    } else if (Array.isArray(particlesObj['area'])) {
+      for (let i = 0; i < Math.min(3, particlesObj['area'].length); i++) {
+        checkRange(`particles.area[${i}]`, particlesObj['area'][i], 0.05, 50);
+      }
+    }
+  }
+  const holdObj = asRecord(r['holdToAsk']);
+  if (holdObj) {
+    checkRange('holdToAsk.holdMs', holdObj['holdMs'], 100, 5000);
+  }
+  const audioObj = asRecord(r['audio']);
+  if (audioObj) {
+    checkRange('audio.refDistance', audioObj['refDistance'], 0.01, 1000);
+  }
+  const snapToObj = asRecord(r['snapTo']);
+  if (snapToObj) {
+    checkRange('snapTo.angleDeg', snapToObj['angleDeg'], 0, 180);
+    checkRange('snapTo.radius', snapToObj['radius'], 0.01, 2.0);
+    if (typeof snapToObj['grid'] === 'number' && snapToObj['grid'] > 0) {
+      checkRange('snapTo.grid', snapToObj['grid'], 0.001, 100);
+    } else if (Array.isArray(snapToObj['grid'])) {
+      for (let i = 0; i < Math.min(3, snapToObj['grid'].length); i++) {
+        checkRange(`snapTo.grid[${i}]`, snapToObj['grid'][i], 0.001, 100);
+      }
+    }
+  }
+  const snapSocketObj = asRecord(r['snapSocket']);
+  if (snapSocketObj) {
+    checkRange('snapSocket.radius', snapSocketObj['radius'], 0.01, 2.0);
+  }
+  const gazeObj = asRecord(r['gaze']);
+  if (gazeObj && gazeObj['enabled'] !== false) {
+    checkRange('gaze.dwellMs', gazeObj['dwellMs'], 250, 10000);
+  }
+  const explodeObj = asRecord(r['explode']);
+  if (explodeObj && explodeObj['enabled'] !== false) {
+    checkRange('explode.distance', explodeObj['distance'], 0, 10);
+    checkRange('explode.layer', explodeObj['layer'], 1, 10);
+  }
+  const textObj = asRecord(r['text']);
+  if (textObj) {
+    checkRange('text.size', textObj['size'], 0.005, 10);
+    checkRange('text.depth', textObj['depth'] ?? textObj['height'], 0.001, 5);
+  }
+  if (typeof r['bloom'] === 'number' && r['bloom'] > 0) {
+    checkRange('bloom', r['bloom'], 0, 5);
+  } else {
+    const bloomObj = asRecord(r['bloom']);
+    if (bloomObj && bloomObj['enabled'] !== false) {
+      checkRange(
+        'bloom.strength',
+        bloomObj['strength'] ?? bloomObj['intensity'],
+        0,
+        5,
+      );
+      checkRange('bloom.threshold', bloomObj['threshold'], 0, 4);
+      checkRange('bloom.radius', bloomObj['radius'], 0, 2);
+    }
+  }
+  const outlineObj = asRecord(r['outline']);
+  if (outlineObj && outlineObj['enabled'] !== false) {
+    const rawT = outlineObj['thickness'] ?? outlineObj['width'];
+    if (typeof rawT === 'number' && !(rawT > 0 && rawT < 0.25)) {
+      checkRange('outline.thickness', rawT, 0.5, 20);
+    }
+  }
+  const ikObj = asRecord(r['ik']);
+  if (ikObj && ikObj['enabled'] !== false) {
+    checkRange('ik.iterations', ikObj['iterations'], 1, 32);
+    checkRange('ik.tolerance', ikObj['tolerance'], 1e-5, 0.1);
+    checkRange('ik.weight', ikObj['weight'], 0, 1);
+  }
+  const charObj = asRecord(r['character']);
+  if (charObj && charObj['enabled'] !== false) {
+    checkRange('character.speed', charObj['speed'], 0.1, 20);
+    checkRange('character.runMultiplier', charObj['runMultiplier'], 1, 4);
+    checkRange('character.jumpVelocity', charObj['jumpVelocity'], 0, 30);
+    checkRange('character.gravity', charObj['gravity'], 0, 50);
+    checkRange('character.radius', charObj['radius'], 0.05, 5);
+    const rad = clampNum(charObj['radius'], 0.05, 5, 0.35);
+    checkRange('character.height', charObj['height'], rad * 2, 10);
+    checkRange('character.cameraDistance', charObj['cameraDistance'], 0.5, 50);
+    checkRange('character.cameraHeight', charObj['cameraHeight'], -10, 50);
+  }
+  const agentObj = asRecord(r['agent']);
+  if (agentObj && agentObj['enabled'] !== false) {
+    checkRange('agent.speed', agentObj['speed'], 0.1, 20);
+    checkRange('agent.turnSpeed', agentObj['turnSpeed'], 0.1, 50);
+    checkRange('agent.sightRadius', agentObj['sightRadius'], 0, 100);
+    checkRange('agent.stopDistance', agentObj['stopDistance'], 0.01, 10);
+    checkRange('agent.separationRadius', agentObj['separationRadius'], 0, 10);
+  }
+  if (typeof r['integrity'] === 'number') {
+    checkRange('integrity.max', r['integrity'], 1, 1e6);
+  } else {
+    const intObj = asRecord(r['integrity']);
+    if (intObj && intObj['enabled'] !== false) {
+      checkRange('integrity.max', intObj['max'], 1, 1e6);
+      const maxI = clampNum(intObj['max'], 1, 1e6, 100);
+      checkRange('integrity.current', intObj['current'], 0, maxI);
+      checkRange('integrity.cooldownMs', intObj['cooldownMs'], 0, 10000);
+      checkRange('integrity.scoreValue', intObj['scoreValue'], -1e6, 1e6);
+      checkRange('integrity.contactAmount', intObj['contactAmount'], 0, 1e6);
+    }
+  }
+  const zoneObj = asRecord(r['zone']);
+  if (zoneObj && zoneObj['enabled'] !== false) {
+    checkRange('zone.radius', zoneObj['radius'], 0.01, 1000);
+    if (typeof zoneObj['size'] === 'number') {
+      checkRange('zone.size', zoneObj['size'], 0.01, 1000);
+    } else if (Array.isArray(zoneObj['size'])) {
+      for (let i = 0; i < Math.min(3, zoneObj['size'].length); i++) {
+        checkRange(`zone.size[${i}]`, zoneObj['size'][i], 0.01, 1000);
+      }
+    }
+  }
+  const spawnerObj = asRecord(r['spawner']);
+  if (spawnerObj && spawnerObj['enabled'] !== false) {
+    checkRange('spawner.intervalSec', spawnerObj['intervalSec'], 0.05, 3600);
+    checkRange('spawner.maxActive', spawnerObj['maxActive'], 1, 32);
+    checkRange('spawner.totalCount', spawnerObj['totalCount'], 0, 10000);
+    checkRange('spawner.spawnRadius', spawnerObj['spawnRadius'], 0, 100);
+  }
+  const objTrait = asRecord(r['objective']);
+  if (objTrait && objTrait['enabled'] !== false) {
+    checkRange(
+      'objective.amount',
+      objTrait['amount'] ?? objTrait['points'],
+      -1e6,
+      1e6,
+    );
+    checkRange('objective.radius', objTrait['radius'], 0.05, 50);
+    checkRange('objective.order', objTrait['order'], 0, 1000);
+    checkRange('objective.spinSpeed', objTrait['spinSpeed'], -50, 50);
+    checkRange('objective.bobAmplitude', objTrait['bobAmplitude'], 0, 5);
+    checkRange('objective.respawnSec', objTrait['respawnSec'], 0, 3600);
+  }
+  const audioCuesObj = asRecord(r['audioCues']);
+  if (audioCuesObj) {
+    checkRange('audioCues.pitchJitter', audioCuesObj['pitchJitter'], 0, 0.5);
+    checkRange('audioCues.volume', audioCuesObj['volume'], 0, 1);
+  }
+
+  // Security checks (TL203)
+  const checkUrl = (field: string, val: unknown): void => {
+    if (val === undefined || val === null) return;
+    if (!safeMediaUrl(val)) {
+      diags.push({
+        code: 'TL203',
+        severity: 'error',
+        node: nodeName,
+        message: `Unsafe or disallowed media URL in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeMediaUrl().`,
+        hint: "Use an 'https://' URL or a clean relative path without '..', '\\\\', '%', or custom schemes (e.g. http:, javascript:, file:, data:).",
+      });
+    }
+  };
+  const checkAnchorIdField = (field: string, val: unknown): void => {
+    if (val === undefined || val === null) return;
+    if (!safeAnchorId(val)) {
+      diags.push({
+        code: 'TL203',
+        severity: 'error',
+        node: nodeName,
+        message: `Unsafe or invalid identifier in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeAnchorId().`,
+        hint: "Anchor and bone identifiers must be non-empty strings without control characters or prototype-pollution keys ('__proto__', 'constructor', 'prototype').",
+      });
+    }
+  };
+
+  if (r['splatUrl'] !== undefined && r['splatUrl'] !== null) {
+    checkUrl('splatUrl', r['splatUrl']);
+  }
+  if (typeof r['audio'] === 'string') {
+    checkUrl('audio', r['audio']);
+  } else if (audioObj) {
+    if (audioObj['src'] !== undefined) {
+      checkUrl('audio.src', audioObj['src']);
+    } else if (Object.keys(audioObj).some((k) => k.startsWith('on'))) {
+      diags.push({
+        code: 'TL201',
+        severity: 'warning',
+        node: nodeName,
+        message: `userData.xr.audio on node '${nodeName}' contains event keys without 'src'; did you mean 'audioCues'?`,
+        hint: 'Use \'audioCues: { onTap: "confirm", onHit: "impact" }\' for procedural synth cues, or provide \'audio: { src: "https://..." }\' for spatial audio files.',
+      });
+    }
+  }
+  const checkSimIdField = (field: string, val: unknown): void => {
+    if (val === undefined || val === null || val === '') return;
+    const s = typeof val === 'string' ? val.trim() : '';
+    if (
+      !s ||
+      !/^[A-Za-z0-9_.:-]{1,64}$/.test(s) ||
+      FORBIDDEN_ANCHOR_IDS.has(s)
+    ) {
+      diags.push({
+        code: 'TL203',
+        severity: 'error',
+        node: nodeName,
+        message: `Unsafe or invalid identifier in '${field}' (${JSON.stringify(val)}) on node '${nodeName}' rejected by safeSimId().`,
+        hint: "Simulation group/tag IDs must be 1-64 characters of [A-Za-z0-9_.:-] and must not use prototype-pollution keys ('__proto__', 'constructor', 'prototype').",
+      });
+    }
+  };
+  const intRec = asRecord(r['integrity']);
+  if (intRec && intRec['group'] !== undefined) {
+    checkSimIdField('integrity.group', intRec['group']);
+  }
+  if (zoneObj && zoneObj['watchGroups'] !== undefined) {
+    const wg = Array.isArray(zoneObj['watchGroups'])
+      ? zoneObj['watchGroups']
+      : [zoneObj['watchGroups']];
+    for (let i = 0; i < wg.length; i++) {
+      checkSimIdField(`zone.watchGroups[${i}]`, wg[i]);
+    }
+  }
+  if (objTrait && objTrait['tag'] !== undefined) {
+    checkSimIdField('objective.tag', objTrait['tag']);
+  }
+  const anchorRec = asRecord(r['anchor']);
+  if (anchorRec && anchorRec['id'] !== undefined) {
+    checkAnchorIdField('anchor.id', anchorRec['id']);
+  }
+  const anchorPersistRec = asRecord(r['anchorPersist']);
+  if (anchorPersistRec && anchorPersistRec['id'] !== undefined) {
+    checkAnchorIdField('anchorPersist.id', anchorPersistRec['id']);
+  }
+  if (ikObj && ikObj['enabled'] !== false) {
+    checkAnchorIdField('ik.root', ikObj['root']);
+    checkAnchorIdField('ik.effector', ikObj['effector']);
+    if (ikObj['mid'] !== undefined) checkAnchorIdField('ik.mid', ikObj['mid']);
+    if (ikObj['target'] !== undefined && !Array.isArray(ikObj['target'])) {
+      checkAnchorIdField('ik.target', ikObj['target']);
+    }
+    const rawPole = ikObj['pole'] ?? ikObj['poleTarget'];
+    if (rawPole !== undefined && !Array.isArray(rawPole)) {
+      checkAnchorIdField('ik.pole', rawPole);
+    }
+  }
+
+  return diags;
+}

@@ -17,14 +17,49 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
 use std::path::PathBuf;
+use std::time::Instant;
 use three_live_compiler::{
-    transcode_glb_to_usdz, transcode_three_to_glb, transcode_three_to_usdz, validate_three_script,
+    build_validation_report, compute_node_world_aabbs, compute_node_world_matrices,
+    encode_gif_frames, encode_png_rgba, evaluate_temporal_keyframes, extract_and_lint_html,
+    is_html_source, read_glb, render_scene_rgba, render_viewport_rgba,
+    simulate_scenario_from_source, stitch_filmstrip_horizontal, transcode_glb_to_usdz,
+    transcode_three_to_glb, transcode_three_to_usdz, validate_scene_source, CameraConfig,
+    RenderOptions, RenderViewMode, SimAction, WorldAABB, SIM_DT_SEC,
 };
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]
+enum CliViewMode {
+    Camera,
+    Front,
+    Top,
+    Right,
+    Iso,
+    Quad,
+}
+
+impl From<CliViewMode> for RenderViewMode {
+    fn from(v: CliViewMode) -> Self {
+        match v {
+            CliViewMode::Camera => RenderViewMode::Camera,
+            CliViewMode::Front => RenderViewMode::Front,
+            CliViewMode::Top => RenderViewMode::Top,
+            CliViewMode::Right => RenderViewMode::Right,
+            CliViewMode::Iso => RenderViewMode::Iso,
+            CliViewMode::Quad => RenderViewMode::Quad,
+        }
+    }
+}
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]
 enum Format {
     Glb,
     Usdz,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]
+enum DiagnosticFormat {
+    Text,
+    Json,
 }
 
 #[derive(Parser)]
@@ -37,9 +72,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Convert a Three.js scene script or GLB into a binary container (GLB or USDZ)
+    /// Convert a Three.js scene script, HTML file, or GLB into a binary container (GLB or USDZ)
     Convert {
-        /// Input file path (.js script or .glb model)
+        /// Input file path (.js script, .html page, or .glb model)
         input: PathBuf,
 
         /// Output file path (defaults to <input>.<format>)
@@ -51,16 +86,97 @@ enum Commands {
         format: Option<Format>,
     },
 
-    /// Validate Three.js script syntax and inspect scene graph statistics
+    /// Validate Three.js script or HTML file and report compiler/schema/spatial diagnostics
     Validate {
-        /// Input JavaScript file path
+        /// Input JavaScript (.js) or HTML (.html) file path
         input: PathBuf,
+
+        /// Output structured JSON diagnostics report
+        #[arg(long)]
+        json: bool,
+
+        /// Diagnostic output format (text or json)
+        #[arg(long, value_enum, default_value_t = DiagnosticFormat::Text)]
+        diagnostic_format: DiagnosticFormat,
     },
 
     /// Inspect a binary 3D container (GLB or USDZ)
     Info {
         /// Input file path (.glb or .usdz)
         input: PathBuf,
+    },
+
+    /// Render a Three.js script, HTML page, or GLB headlessly to a PNG contact sheet or GIF89a
+    /// turntable
+    Render {
+        /// Input file path (.js, .html, or .glb)
+        input: PathBuf,
+
+        /// Output image file path (.png or .gif)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Viewport layout (camera, front, top, right, iso, or quad)
+        #[arg(long, value_enum, default_value_t = CliViewMode::Quad)]
+        view: CliViewMode,
+
+        /// Output image width in pixels (defaults to 1024 for quad, 512 for single view)
+        #[arg(long)]
+        width: Option<u32>,
+
+        /// Output image height in pixels (defaults to 1024 for quad, 512 for single view)
+        #[arg(long)]
+        height: Option<u32>,
+
+        /// Draw 1.0m / 0.25m reference ground grid and X/Y/Z origin axes
+        #[arg(long)]
+        grid: bool,
+
+        /// Draw 3D AABB wireframes and 2D node name callouts
+        #[arg(long)]
+        annotations: bool,
+
+        /// Render a 360-degree turntable orbit around the scene
+        #[arg(long)]
+        turntable: bool,
+
+        /// Number of frames for temporal filmstrip or GIF animation
+        #[arg(long)]
+        frames: Option<usize>,
+
+        /// Total duration in seconds for multi-frame capture
+        #[arg(long, default_value_t = 2.0)]
+        duration: f64,
+
+        /// Optional interactive node name to trigger at t = 0
+        #[arg(long)]
+        trigger_select: Option<String>,
+    },
+
+    /// Simulate interactive KHR_interactivity, orbit/explode, and xr-live-sim scenarios at 60 Hz
+    Sim {
+        /// Input file path (.js, .html, or .glb)
+        input: PathBuf,
+
+        /// Simulation duration in seconds (default 2.0s)
+        #[arg(long, default_value_t = 2.0)]
+        duration: f64,
+
+        /// JSON array of timed actions (e.g. '[{"at":0.2,"type":"select","target":"crystal"}]')
+        #[arg(long, default_value = "[]")]
+        actions: String,
+
+        /// Comma-separated 60Hz tick indices to render into --output-strip (e.g. "0,12,60,120")
+        #[arg(long)]
+        snapshot_frames: Option<String>,
+
+        /// Optional output path for a keyframe filmstrip PNG or animated GIF
+        #[arg(long)]
+        output_strip: Option<PathBuf>,
+
+        /// Output structured JSON simulation report
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -243,12 +359,19 @@ fn main() {
                     }
                 }
             } else {
-                let script = match String::from_utf8(input_bytes) {
+                let raw_source = match String::from_utf8(input_bytes) {
                     Ok(s) => s,
                     Err(_) => {
                         eprintln!("Input script is not valid UTF-8");
                         std::process::exit(1);
                     }
+                };
+                let filename = input.to_string_lossy();
+                let script = if is_html_source(&raw_source, &filename) {
+                    let (scripts, _) = extract_and_lint_html(&raw_source);
+                    scripts.join("\n;\n")
+                } else {
+                    raw_source
                 };
                 match target_format {
                     Format::Glb => match transcode_three_to_glb(&script) {
@@ -281,33 +404,100 @@ fn main() {
             );
         }
 
-        Commands::Validate { input } => {
-            let script = match fs::read_to_string(&input) {
-                Ok(s) => s,
+        Commands::Validate { input, json: json_flag, diagnostic_format } => {
+            let input_bytes = match fs::read(&input) {
+                Ok(b) => b,
                 Err(e) => {
                     eprintln!("Error reading input file {:?}: {}", input, e);
                     std::process::exit(1);
                 }
             };
 
-            match validate_three_script(&script) {
-                Ok(scene) => {
-                    println!("Scene validation successful:");
-                    println!("  Meshes: {}", scene.meshes.len());
-                    for (i, m) in scene.meshes.iter().enumerate() {
+            let filename = input.to_string_lossy().to_string();
+            let start = Instant::now();
+            let (scene_opt, base_diags) = if input_bytes.len() >= 4 && &input_bytes[0..4] == b"glTF"
+            {
+                match read_glb(&input_bytes) {
+                    Ok(scene) => (Some(scene), Vec::new()),
+                    Err(e) => (
+                        None,
+                        vec![three_live_compiler::Diagnostic {
+                            code: "TL100".to_string(),
+                            severity: "error".to_string(),
+                            message: e,
+                            ..Default::default()
+                        }],
+                    ),
+                }
+            } else {
+                let source = match String::from_utf8(input_bytes) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        eprintln!("Input script is not valid UTF-8");
+                        std::process::exit(1);
+                    }
+                };
+                validate_scene_source(&source, &filename)
+            };
+            let elapsed_ms = (start.elapsed().as_secs_f64() * 1000.0 * 10.0).round() / 10.0;
+            let report =
+                build_validation_report(&filename, elapsed_ms, scene_opt.as_ref(), base_diags);
+            let emit_json = json_flag || diagnostic_format == DiagnosticFormat::Json;
+
+            if emit_json {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+                if !report.valid {
+                    std::process::exit(1);
+                }
+            } else {
+                if let Some(ref summary) = report.summary {
+                    println!(
+                        "Scene validation {} ({:.1} ms):",
+                        if !report.valid { "completed with errors" } else { "successful" },
+                        elapsed_ms
+                    );
+                    println!(
+                        "  Meshes: {} (visible: {}), Nodes: {}, Vertices: {}, Indices: {}",
+                        summary.mesh_count,
+                        summary.camera.visible_mesh_count,
+                        summary.node_count,
+                        summary.vertex_count,
+                        summary.index_count
+                    );
+                    if let Some(ref wb) = summary.world_bounds {
                         println!(
-                            "    [{}] '{}' - {} vertices, {} indices",
-                            i,
-                            m.name,
-                            m.positions.len(),
-                            m.indices.len()
+                            "  World Bounds: min={:?}, max={:?}, size={:?}",
+                            wb.min, wb.max, wb.size
                         );
                     }
-                    println!("  Materials: {}", scene.materials.len());
-                    println!("  Lights: {}", scene.lights.len());
+                    println!(
+                        "  Materials: {}, Lights: {}",
+                        summary.material_count, summary.light_count
+                    );
+                } else {
+                    eprintln!("Validation failed ({:.1} ms):", elapsed_ms);
                 }
-                Err(err) => {
-                    eprintln!("Validation failed: {}", err);
+                for d in &report.diagnostics {
+                    let loc = match (d.line, d.column) {
+                        (Some(l), Some(c)) => format!(" (line {}, col {})", l, c),
+                        (Some(l), None) => format!(" (line {})", l),
+                        _ => String::new(),
+                    };
+                    let node_str =
+                        d.node.as_ref().map(|n| format!(" [node: {}]", n)).unwrap_or_default();
+                    println!(
+                        "  [{}] {}{}{}: {}",
+                        d.code,
+                        d.severity.to_uppercase(),
+                        node_str,
+                        loc,
+                        d.message
+                    );
+                    if let Some(ref hint) = d.hint {
+                        println!("    Hint: {}", hint);
+                    }
+                }
+                if !report.valid {
                     std::process::exit(1);
                 }
             }
@@ -338,6 +528,337 @@ fn main() {
             } else {
                 eprintln!("Unrecognized format (neither GLB 'glTF' nor USDZ/ZIP 'PK\\x03\\x04')");
                 std::process::exit(1);
+            }
+        }
+
+        Commands::Render {
+            input,
+            output,
+            view,
+            width,
+            height,
+            grid,
+            annotations,
+            turntable,
+            frames,
+            duration,
+            trigger_select,
+        } => {
+            let input_bytes = match fs::read(&input) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Error reading input file {:?}: {}", input, e);
+                    std::process::exit(1);
+                }
+            };
+            let is_input_glb = input_bytes.len() >= 4 && &input_bytes[0..4] == b"glTF";
+            let filename = input.to_string_lossy().to_string();
+            let mut scene = if is_input_glb {
+                match read_glb(&input_bytes) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error parsing GLB {:?}: {}", input, e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                let source = match String::from_utf8(input_bytes.clone()) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        eprintln!("Input script is not valid UTF-8");
+                        std::process::exit(1);
+                    }
+                };
+                let (scene_opt, diags) = validate_scene_source(&source, &filename);
+                match scene_opt {
+                    Some(s) => s,
+                    None => {
+                        for d in diags {
+                            eprintln!("[{}] {}: {}", d.code, d.severity.to_uppercase(), d.message);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            };
+
+            let render_view: RenderViewMode = view.into();
+            let default_dim = if render_view == RenderViewMode::Quad { 1024 } else { 512 };
+            let w = width.unwrap_or(default_dim).clamp(64, 2048);
+            let h = height.unwrap_or(default_dim).clamp(64, 2048);
+
+            let out_path = output.unwrap_or_else(|| {
+                if turntable {
+                    input.with_extension("gif")
+                } else {
+                    input.with_extension("png")
+                }
+            });
+            let is_gif = out_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("gif"))
+                .unwrap_or(turntable);
+
+            let frame_count = frames
+                .unwrap_or(if turntable || is_gif {
+                    12
+                } else if trigger_select.is_some() {
+                    8
+                } else {
+                    1
+                })
+                .clamp(1, 60);
+
+            if turntable || frame_count > 1 || trigger_select.is_some() {
+                let world_matrices = compute_node_world_matrices(&scene);
+                let node_aabbs = compute_node_world_aabbs(&scene, &world_matrices);
+                let mut bounds = WorldAABB::empty();
+                for aabb in node_aabbs.iter().flatten() {
+                    bounds.union(aabb);
+                }
+                if !bounds.is_valid() {
+                    bounds.min = [-1.0, 0.0, -1.0];
+                    bounds.max = [1.0, 1.5, 1.0];
+                }
+                let center = bounds.center();
+                let radius = (bounds.diagonal() * 1.35).max(2.5);
+                let mut captured = Vec::with_capacity(frame_count);
+                let frame_view = if render_view == RenderViewMode::Quad {
+                    RenderViewMode::Camera
+                } else {
+                    render_view
+                };
+
+                let temporal_keyframes = if !turntable {
+                    evaluate_temporal_keyframes(
+                        &input_bytes,
+                        is_input_glb,
+                        frame_count,
+                        duration,
+                        trigger_select.as_deref(),
+                    )
+                    .ok()
+                } else {
+                    None
+                };
+
+                for k in 0..frame_count {
+                    let (t_sec, mut frame_scene) = if let Some(ref kf) = temporal_keyframes {
+                        kf.get(k).cloned().unwrap_or((0.0, scene.clone()))
+                    } else {
+                        let t = if frame_count > 1 {
+                            (k as f64) * duration / ((frame_count - 1) as f64)
+                        } else {
+                            0.0
+                        };
+                        (t, scene.clone())
+                    };
+                    if turntable {
+                        let angle = (k as f32) * std::f32::consts::TAU / (frame_count as f32);
+                        frame_scene.camera = Some(CameraConfig {
+                            fov: 40.0,
+                            position: [
+                                center[0] + radius * angle.sin(),
+                                center[1] + radius * 0.45,
+                                center[2] + radius * angle.cos(),
+                            ],
+                            target: center,
+                        });
+                    }
+                    let label = if turntable {
+                        format!("TURNTABLE {:03} DEG", ((k * 360) / frame_count.max(1)))
+                    } else {
+                        format!("T={:.2}S", t_sec)
+                    };
+                    let rgba = render_viewport_rgba(
+                        &frame_scene,
+                        w,
+                        h,
+                        frame_view,
+                        grid,
+                        annotations,
+                        Some(&label),
+                    );
+                    captured.push(rgba);
+                }
+
+                let bytes = if is_gif {
+                    let delay_cs =
+                        ((duration * 100.0 / (frame_count as f64)).round() as u16).max(4);
+                    match encode_gif_frames(w, h, &captured, delay_cs) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("GIF encoding error: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    let (sw, sh, strip) = stitch_filmstrip_horizontal(w, h, &captured);
+                    match encode_png_rgba(sw, sh, &strip) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("PNG encoding error: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                };
+                if let Err(e) = fs::write(&out_path, &bytes) {
+                    eprintln!("Error writing output image {:?}: {}", out_path, e);
+                    std::process::exit(1);
+                }
+                println!(
+                    "Rendered {} frame(s) -> {:?} ({} bytes)",
+                    frame_count,
+                    out_path,
+                    bytes.len()
+                );
+            } else {
+                let opts = RenderOptions {
+                    width: w,
+                    height: h,
+                    view: render_view,
+                    show_grid: grid,
+                    show_annotations: annotations,
+                    label_override: None,
+                };
+                let (out_w, out_h, rgba) = render_scene_rgba(&scene, &opts);
+                let png = match encode_png_rgba(out_w, out_h, &rgba) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("PNG encoding error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                if let Err(e) = fs::write(&out_path, &png) {
+                    eprintln!("Error writing output PNG {:?}: {}", out_path, e);
+                    std::process::exit(1);
+                }
+                println!(
+                    "Rendered {:?} ({}x{}) -> {:?} ({} bytes)",
+                    render_view,
+                    out_w,
+                    out_h,
+                    out_path,
+                    png.len()
+                );
+            }
+        }
+
+        Commands::Sim {
+            input,
+            duration,
+            actions,
+            snapshot_frames,
+            output_strip,
+            json: json_flag,
+        } => {
+            let input_bytes = match fs::read(&input) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("Error reading input file {:?}: {}", input, e);
+                    std::process::exit(1);
+                }
+            };
+            let is_input_glb = input_bytes.len() >= 4 && &input_bytes[0..4] == b"glTF";
+            let parsed_actions: Vec<SimAction> = match serde_json::from_str(&actions) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("Error parsing --actions JSON: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let total_ticks = ((duration.max(0.0) / SIM_DT_SEC).round() as usize).max(1);
+            let mut snap_ticks: Vec<usize> = if let Some(ref sf) = snapshot_frames {
+                sf.split(',').filter_map(|t| t.trim().parse::<usize>().ok()).collect()
+            } else if output_strip.is_some() {
+                vec![0, total_ticks / 3, (total_ticks * 2) / 3, total_ticks]
+            } else {
+                Vec::new()
+            };
+            snap_ticks.sort_unstable();
+            snap_ticks.dedup();
+
+            let (report, snapshots) = match simulate_scenario_from_source(
+                &input_bytes,
+                is_input_glb,
+                duration,
+                &parsed_actions,
+                &snap_ticks,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Simulation error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            if let Some(strip_path) = output_strip {
+                if !snapshots.is_empty() {
+                    let fw = 320u32;
+                    let fh = 320u32;
+                    let captured: Vec<Vec<u8>> = snapshots
+                        .iter()
+                        .map(|(t_sec, snap_scene)| {
+                            let label = format!("T={:.2}S", t_sec);
+                            render_viewport_rgba(
+                                snap_scene,
+                                fw,
+                                fh,
+                                RenderViewMode::Camera,
+                                true,
+                                true,
+                                Some(&label),
+                            )
+                        })
+                        .collect();
+                    let is_gif = strip_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("gif"))
+                        .unwrap_or(false);
+                    let img_bytes = if is_gif {
+                        encode_gif_frames(fw, fh, &captured, 20).unwrap_or_default()
+                    } else {
+                        let (sw, sh, strip) = stitch_filmstrip_horizontal(fw, fh, &captured);
+                        encode_png_rgba(sw, sh, &strip).unwrap_or_default()
+                    };
+                    if let Err(e) = fs::write(&strip_path, &img_bytes) {
+                        eprintln!("Error writing snapshot strip {:?}: {}", strip_path, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            if json_flag {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+            } else {
+                println!(
+                    "Simulation completed ({:.2}s, {} ticks): state={}, score={}",
+                    report.duration_sec,
+                    report.ticks_simulated,
+                    report.scenario_state,
+                    report.score
+                );
+                if !report.completed_objectives.is_empty() {
+                    println!("  Completed objectives: {:?}", report.completed_objectives);
+                }
+                if !report.triggered_events.is_empty() {
+                    println!("  Triggered events: {:?}", report.triggered_events);
+                }
+                if !report.audio_cues_fired.is_empty() {
+                    println!("  Audio cues fired: {:?}", report.audio_cues_fired);
+                }
+                for b in &report.bodies {
+                    println!(
+                        "  [{}] {}: pos {:?} -> {:?}, visible={}, destroyed={}",
+                        b.index,
+                        b.name,
+                        b.initial_translation,
+                        b.final_translation,
+                        b.visible,
+                        b.destroyed
+                    );
+                }
             }
         }
     }

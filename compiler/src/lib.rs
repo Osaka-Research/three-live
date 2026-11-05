@@ -19,7 +19,10 @@ pub mod engine;
 pub mod ffi;
 pub mod geometry;
 pub mod glb;
+pub mod render;
 pub mod scene;
+pub mod sim;
+pub mod spatial_lint;
 pub mod time;
 pub mod usdz;
 
@@ -32,10 +35,13 @@ pub mod jni;
 use std::cell::RefCell;
 
 pub use constants::*;
-pub use engine::ThreeEngine;
+pub use engine::{classify_script_error, ThreeEngine};
 pub use geometry::*;
-pub use glb::write_glb;
-pub use scene::SceneGraph;
+pub use glb::{read_glb, write_glb};
+pub use render::*;
+pub use scene::{CameraConfig, Diagnostic, SceneGraph};
+pub use sim::*;
+pub use spatial_lint::*;
 pub use usdz::*;
 
 #[cfg(any(feature = "wasm", target_arch = "wasm32"))]
@@ -215,6 +221,398 @@ pub fn transcode_three_to_usdz(script: &str) -> Result<Vec<u8>, String> {
 /// Transcodes a binary glTF 2.0 (GLB) buffer into an Apple 64-byte aligned binary USDZ archive.
 pub fn transcode_glb_to_usdz(glb: &[u8]) -> Result<Vec<u8>, String> {
     with_three_engine(|engine| engine.glb_to_usdz(glb))
+}
+
+/// Returns `true` when `source` or `filename` looks like an HTML document containing
+/// `<three-live>`, `<xr-live>`, or `<script type="text/three">`.
+pub fn is_html_source(source: &str, filename: &str) -> bool {
+    let lower_name = filename.to_ascii_lowercase();
+    if lower_name.ends_with(".html") || lower_name.ends_with(".htm") {
+        return true;
+    }
+    let trimmed = source.trim_start();
+    if trimmed.starts_with("<!DOCTYPE")
+        || trimmed.starts_with("<!doctype")
+        || trimmed.starts_with("<html")
+        || trimmed.starts_with("<three-live")
+        || trimmed.starts_with("<xr-live")
+    {
+        return true;
+    }
+    let lower_src = source.to_ascii_lowercase();
+    lower_src.contains("<three-live")
+        || lower_src.contains("<xr-live")
+        || lower_src.contains("type=\"text/three\"")
+        || lower_src.contains("type='text/three'")
+}
+
+const XR_ONLY_ATTRS: &[&str] = &[
+    "xr-mode",
+    "xr-depth",
+    "xr-hands",
+    "xr-hit-test",
+    "xr-planes",
+    "xr-meshes",
+    "xr-anchors",
+    "xr-lighting",
+    "xr-dom-overlay",
+    "spatial-measure",
+    "shared-room",
+    "room-id",
+    "signaling-url",
+    "voice",
+    "passthrough",
+];
+
+const XR_ONLY_PLUGINS: &[&str] = &[
+    "xr-depth",
+    "xr-hands",
+    "spatial-measure",
+    "shared-room",
+    "world-understanding",
+    "gaussian-splats",
+    "persistent-anchors",
+    "gaze-dwell",
+    "magnetic-snap",
+    "exploded-view",
+    "spatial-locomotion",
+    "character-controller",
+    "steering-agents",
+    "hit-zones",
+    "objectives",
+    "synth-audio",
+];
+
+fn find_tag_end(s: &str, start: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut in_quote: Option<u8> = None;
+    let mut i = start;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if b == q {
+                in_quote = None;
+            }
+        } else if b == b'"' || b == b'\'' {
+            in_quote = Some(b);
+        } else if b == b'>' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parses an opening HTML tag `<tag ...>` into `(attr_name_lower, Option<attr_value>)` pairs,
+/// properly respecting single- and double-quoted attribute values.
+fn parse_open_tag_attrs(open_tag: &str) -> Vec<(String, Option<String>)> {
+    let mut attrs = Vec::new();
+    let bytes = open_tag.as_bytes();
+    let mut i = 0usize;
+    // Skip `<tag_name`
+    while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' && bytes[i] != b'/'
+    {
+        i += 1;
+    }
+    while i < bytes.len() {
+        while i < bytes.len()
+            && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/' || bytes[i] == b'>')
+        {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let name_start = i;
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'='
+            && bytes[i] != b'>'
+            && bytes[i] != b'/'
+        {
+            i += 1;
+        }
+        if i == name_start {
+            i += 1;
+            continue;
+        }
+        let name = open_tag[name_start..i].to_ascii_lowercase();
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let quote = bytes[i];
+                i += 1;
+                let val_start = i;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+                let val = open_tag[val_start..i].to_string();
+                if i < bytes.len() {
+                    i += 1;
+                }
+                attrs.push((name, Some(val)));
+            } else {
+                let val_start = i;
+                while i < bytes.len()
+                    && !bytes[i].is_ascii_whitespace()
+                    && bytes[i] != b'>'
+                    && bytes[i] != b'/'
+                {
+                    i += 1;
+                }
+                let val = open_tag[val_start..i].to_string();
+                attrs.push((name, Some(val)));
+            }
+        } else {
+            attrs.push((name, None));
+        }
+    }
+    attrs
+}
+
+fn strip_html_comments(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + 4..];
+        if let Some(end) = after_start.find("-->") {
+            // Preserve newlines so line numbers remain stable if needed
+            for ch in after_start[..end].chars() {
+                if ch == '\n' {
+                    out.push('\n');
+                }
+            }
+            rest = &after_start[end + 3..];
+        } else {
+            return out;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn extract_three_scripts_from_fragment(fragment: &str) -> Vec<String> {
+    let mut scripts = Vec::new();
+    let lower = fragment.to_ascii_lowercase();
+    let mut cursor = 0usize;
+    while let Some(rel) = lower[cursor..].find("<script") {
+        let tag_start = cursor + rel;
+        let Some(tag_end) = find_tag_end(&lower, tag_start + 7) else {
+            break;
+        };
+        let open_tag = &fragment[tag_start..=tag_end];
+        let attrs = parse_open_tag_attrs(open_tag);
+        let is_three = attrs.iter().any(|(k, v)| {
+            k == "type"
+                && v.as_deref()
+                    .map(|s| s.trim().eq_ignore_ascii_case("text/three"))
+                    .unwrap_or(false)
+        });
+        let content_start = tag_end + 1;
+        if let Some(close_rel) = lower[content_start..].find("</script") {
+            let content_end = content_start + close_rel;
+            if is_three {
+                scripts.push(fragment[content_start..content_end].to_string());
+            }
+            cursor = content_end + 8;
+        } else {
+            break;
+        }
+    }
+    scripts
+}
+
+/// Extracts `<script type="text/three">` blocks from an HTML document and validates
+/// `<three-live>` / `<xr-live>` host attributes (`TL401`, `TL402`).
+pub fn extract_and_lint_html(html: &str) -> (Vec<String>, Vec<Diagnostic>) {
+    let cleaned = strip_html_comments(html);
+    let mut scripts = Vec::new();
+    let mut diagnostics = Vec::new();
+    let lower = cleaned.to_ascii_lowercase();
+
+    for tag_name in ["three-live", "xr-live"] {
+        let open_pat = format!("<{}", tag_name);
+        let close_pat = format!("</{}", tag_name);
+        let mut cursor = 0usize;
+        while let Some(rel) = lower[cursor..].find(&open_pat) {
+            let tag_start = cursor + rel;
+            let after_name = tag_start + open_pat.len();
+            if after_name < lower.len() {
+                let next_b = lower.as_bytes()[after_name];
+                if !next_b.is_ascii_whitespace() && next_b != b'>' && next_b != b'/' {
+                    cursor = after_name;
+                    continue;
+                }
+            }
+            let Some(open_end) = find_tag_end(&lower, after_name) else {
+                break;
+            };
+            let open_tag = &cleaned[tag_start..=open_end];
+            let attrs = parse_open_tag_attrs(open_tag);
+            let has_attr = |name: &str| attrs.iter().any(|(k, _)| k == name);
+            let get_attr = |name: &str| -> Option<&str> {
+                attrs.iter().find(|(k, _)| k == name).and_then(|(_, v)| v.as_deref())
+            };
+
+            let is_self_closing = open_tag.trim_end().ends_with("/>");
+            let inner_start = open_end + 1;
+            let (inner_html, inner_lower, next_cursor) = if is_self_closing {
+                ("", "", inner_start)
+            } else if let Some(close_rel) = lower[inner_start..].find(&close_pat) {
+                let close_start = inner_start + close_rel;
+                (
+                    &cleaned[inner_start..close_start],
+                    &lower[inner_start..close_start],
+                    close_start + close_pat.len(),
+                )
+            } else {
+                (&cleaned[inner_start..], &lower[inner_start..], cleaned.len())
+            };
+
+            let elem_scripts = extract_three_scripts_from_fragment(inner_html);
+            let has_script_attr = has_attr("script");
+            if (!elem_scripts.is_empty() || has_script_attr) && !has_attr("allow-client-scripts") {
+                diagnostics.push(Diagnostic {
+                    code: "TL401".to_string(),
+                    severity: "error".to_string(),
+                    message: format!(
+                        "<{}> contains an inline <script type=\"text/three\"> but is missing the mandatory 'allow-client-scripts' attribute.",
+                        tag_name
+                    ),
+                    node: None,
+                    line: None,
+                    column: None,
+                    hint: Some(format!(
+                        "Add 'allow-client-scripts' to <{} allow-client-scripts> so the sandboxed script runner is permitted to execute.",
+                        tag_name
+                    )),
+                });
+            }
+            for s in elem_scripts {
+                scripts.push(s);
+            }
+
+            if tag_name == "three-live" {
+                let mut flagged = Vec::new();
+                for &xr_attr in XR_ONLY_ATTRS {
+                    if has_attr(xr_attr) {
+                        flagged.push(xr_attr.to_string());
+                    }
+                }
+                if let Some(plugins_val) = get_attr("plugins") {
+                    for token in plugins_val.split(|c: char| c == ',' || c.is_ascii_whitespace()) {
+                        let t = token.trim().to_ascii_lowercase();
+                        if XR_ONLY_PLUGINS.contains(&t.as_str()) && !flagged.contains(&t) {
+                            flagged.push(t);
+                        }
+                    }
+                }
+                if inner_lower.contains("slot=\"spatial\"")
+                    || inner_lower.contains("slot='spatial'")
+                {
+                    flagged.push("<div slot=\"spatial\">".to_string());
+                }
+                if inner_lower.contains("<xr-anchor") {
+                    flagged.push("<xr-anchor>".to_string());
+                }
+                for feat in flagged {
+                    diagnostics.push(Diagnostic {
+                        code: "TL402".to_string(),
+                        severity: "warning".to_string(),
+                        message: format!(
+                            "<three-live> element uses <xr-live>-only feature '{}'; it will be ignored unless upgraded to <xr-live>.",
+                            feat
+                        ),
+                        node: None,
+                        line: None,
+                        column: None,
+                        hint: Some(
+                            "Replace <three-live> with <xr-live> and include xr-live.min.js (plus xr-live-spatial.min.js or xr-live-sim.min.js if needed)."
+                                .to_string(),
+                        ),
+                    });
+                }
+            }
+
+            cursor = next_cursor;
+        }
+    }
+
+    if scripts.is_empty() {
+        scripts = extract_three_scripts_from_fragment(&cleaned);
+    }
+
+    (scripts, diagnostics)
+}
+
+/// Extracts either raw JS source or `<script type="text/three">` blocks from HTML source,
+/// returning `(combined_script, html_diagnostics)`.
+pub fn extract_script_from_source(source: &str) -> (String, Vec<Diagnostic>) {
+    if is_html_source(source, "") {
+        let (scripts, diags) = extract_and_lint_html(source);
+        (scripts.join("\n;\n"), diags)
+    } else {
+        (source.to_string(), Vec::new())
+    }
+}
+
+/// Validates a `.js` or `.html` scene source, returning the extracted [`SceneGraph`] (when JS
+/// execution succeeded) along with all structured `TL1xx`, `TL2xx`, and `TL4xx` diagnostics.
+pub fn validate_scene_source(
+    source: &str,
+    filename: &str,
+) -> (Option<SceneGraph>, Vec<Diagnostic>) {
+    if is_html_source(source, filename) {
+        let (scripts, mut html_diags) = extract_and_lint_html(source);
+        if scripts.is_empty() {
+            return (
+                Some(SceneGraph { diagnostics: html_diags.clone(), ..Default::default() }),
+                html_diags,
+            );
+        }
+        let combined = scripts.join("\n;\n");
+        match validate_three_script(&combined) {
+            Ok(mut scene) => {
+                let mut all_diags = html_diags;
+                all_diags.append(&mut scene.diagnostics);
+                scene.diagnostics = all_diags.clone();
+                (Some(scene), all_diags)
+            }
+            Err(err_msg) => {
+                html_diags.push(classify_script_error(&err_msg, &combined));
+                (None, html_diags)
+            }
+        }
+    } else {
+        match validate_three_script(source) {
+            Ok(scene) => {
+                let diags = scene.diagnostics.clone();
+                (Some(scene), diags)
+            }
+            Err(err_msg) => {
+                let diag = classify_script_error(&err_msg, source);
+                (None, vec![diag])
+            }
+        }
+    }
+}
+
+/// Validates a `.js` or `.html` scene source and runs the full Phase 2 spatial, frustum,
+/// grounding, and lighting linter (`TL301–TL307`), returning a structured [`ValidationReport`].
+pub fn validate_and_lint_scene(
+    source: &str,
+    filename: &str,
+    execution_time_ms: f64,
+) -> ValidationReport {
+    let (scene_opt, base_diags) = validate_scene_source(source, filename);
+    build_validation_report(filename, execution_time_ms, scene_opt.as_ref(), base_diags)
 }
 
 #[cfg(test)]

@@ -59,7 +59,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "hands-androidxr"
-      version = "1.2.3"
+      version = "1.2.4"
       afterEvaluate { from(components["release"]) }
 
       pom {

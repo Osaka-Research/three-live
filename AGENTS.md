@@ -207,6 +207,25 @@ make test-rust         # or: cd compiler && cargo test
 make test
 ```
 
+### 4.1 AI Agent Verification Loop (Closed-Loop CLI)
+
+Whenever you author or modify a `<script type="text/three">` scene or `.html`
+demo, verify it headlessly without a browser using `three-live-cli`:
+
+```bash
+# 1. Static + Spatial Linting (Structured JSON Diagnostics TL100-TL402 + Frustum/Grounding/Lighting)
+three-live-cli validate scene.js --json
+
+# 2. Visual Verification (2x2 Orthographic + Camera Contact Sheet with 1m Grid & AABB Annotations)
+three-live-cli render scene.js -o preview.png --view=quad --grid --annotations
+
+# 3. Temporal & Interactive Verification (4-Frame Filmstrip PNG or Animated GIF89a)
+three-live-cli render scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=crystal
+
+# 4. Headless 60Hz Scenario & KHR_interactivity Simulation
+three-live-cli sim scene.js --duration=5.0 --actions='[{"at":0.5,"type":"select","target":"crystal"}]' --json
+```
+
 ---
 
 ## 5. Security Invariants (Never Bypass)

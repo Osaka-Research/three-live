@@ -21,7 +21,7 @@
 
 use crate::constants::*;
 use crate::geometry::register_native_geometry_callables;
-use crate::scene::{CameraConfig, Light3D, Material3D, Mesh3D, SceneGraph, SceneNode};
+use crate::scene::{CameraConfig, Diagnostic, Light3D, Material3D, Mesh3D, SceneGraph, SceneNode};
 use crate::time::Stopwatch;
 use crate::usdz::register_native_usdz_callables;
 use boa_engine::{
@@ -77,7 +77,7 @@ impl ThreeEngine {
         // 1. Set strict runtime limits for DoS / infinite loop protection
         let mut limits = boa_engine::vm::RuntimeLimits::default();
         limits.set_loop_iteration_limit(250_000);
-        limits.set_recursion_limit(64);
+        limits.set_recursion_limit(256);
         limits.set_stack_size_limit(1024 * 256);
         context.set_runtime_limits(limits);
 
@@ -481,6 +481,71 @@ impl ThreeEngine {
         let _ = self.reset_scene();
 
         Ok(scene_graph)
+    }
+
+    /// Evaluates `script` at `t = 0.0` and steps `globalThis.animate(t, dt)` (or the
+    /// captured `requestAnimationFrame` callback) at 60 Hz across each timestamp in
+    /// `sample_times_sec`, returning the extracted [`SceneGraph`] at each requested timestamp.
+    pub fn execute_time_series(
+        &mut self,
+        script: &str,
+        sample_times_sec: &[f64],
+    ) -> Result<Vec<SceneGraph>, String> {
+        if self.poisoned {
+            return Err("SecurityError: JS engine is poisoned after a prior timeout".to_string());
+        }
+        if script.len() > SECURITY_3D_MAX_SCRIPT_BYTES {
+            return Err(format!(
+                "Script length ({} bytes) exceeds SECURITY_3D_MAX_SCRIPT_BYTES ({})",
+                script.len(),
+                SECURITY_3D_MAX_SCRIPT_BYTES
+            ));
+        }
+
+        let clock = Stopwatch::start();
+        if let Err(e) = self.eval_isolated_script(script, &clock) {
+            let _ = self.reset_scene();
+            return Err(e);
+        }
+
+        let times: Vec<f64> =
+            if sample_times_sec.is_empty() { vec![0.0] } else { sample_times_sec.to_vec() };
+        let mut results = Vec::with_capacity(times.len());
+        let mut current_t = 0.0f64;
+        let dt = 1.0f64 / 60.0f64;
+
+        for &target_t in &times {
+            let clamped_t = target_t.clamp(0.0, 60.0);
+            while current_t + 1e-6 < clamped_t {
+                let step_dt = (clamped_t - current_t).min(dt);
+                current_t += step_dt;
+                let step_call =
+                    format!("__three_live_step_js__({:.6}, {:.6});", current_t, step_dt);
+                if let Err(e) = self.eval_with_deadline(
+                    &step_call,
+                    &clock,
+                    SECURITY_3D_TRANSCODE_CEILING_MS,
+                    "SECURITY_3D_TRANSCODE_CEILING_MS",
+                    "animate(t) step error",
+                ) {
+                    let _ = self.reset_scene();
+                    return Err(e);
+                }
+            }
+            let sg = self.extract_scene_raw(&clock).map_err(|e| {
+                let _ = self.reset_scene();
+                match e {
+                    RawExtractionError::Quota(q_err) => q_err,
+                    RawExtractionError::Format(fmt_err) => {
+                        format!("Direct scene graph extraction failed: {}", fmt_err)
+                    }
+                }
+            })?;
+            results.push(sg);
+        }
+
+        let _ = self.reset_scene();
+        Ok(results)
     }
 
     /// Directly compiles a Three.js scene script into an Apple 64-byte aligned USDZ archive.
@@ -999,6 +1064,17 @@ impl ThreeEngine {
         )
         .filter(|v| v.is_object());
 
+        let diagnostics: Vec<Diagnostic> = scene_obj
+            .get(js_string!("diagnostics_json"), &mut self.context)
+            .ok()
+            .and_then(|v| {
+                v.as_string()
+                    .filter(|s| s.len() <= MAX_INTERACTIVITY_JSON_BYTES)
+                    .map(|s| s.to_std_string_escaped())
+            })
+            .and_then(|json_str| serde_json::from_str::<Vec<Diagnostic>>(&json_str).ok())
+            .unwrap_or_default();
+
         // 5. Scene hierarchy (absent on legacy engine assets -> flat layout).
         let nodes = self.extract_nodes(&scene_obj, rust_meshes.len())?;
 
@@ -1010,6 +1086,7 @@ impl ThreeEngine {
             interactivity,
             variants,
             nodes,
+            diagnostics,
         })
     }
 
@@ -1111,6 +1188,22 @@ impl ThreeEngine {
             let instance_colors =
                 extract_float_buffer(&inst_col_val, &mut self.context).unwrap_or_default();
 
+            let interactivity_events: Vec<String> = node_obj
+                .get(js_string!("interactivity_events_json"), &mut self.context)
+                .ok()
+                .and_then(|v| {
+                    v.as_string().filter(|s| s.len() <= 4096).map(|s| s.to_std_string_escaped())
+                })
+                .and_then(|json_str| serde_json::from_str::<Vec<String>>(&json_str).ok())
+                .unwrap_or_default();
+
+            let interactivity = read_json_field(
+                &node_obj,
+                "interactivity_raw_json",
+                MAX_XR_JSON_BYTES,
+                &mut self.context,
+            );
+
             nodes.push(SceneNode {
                 name,
                 parent,
@@ -1124,10 +1217,109 @@ impl ThreeEngine {
                 xr_hubs,
                 instance_matrices,
                 instance_colors,
+                interactivity_events,
+                interactivity,
             });
         }
         Ok(nodes)
     }
+}
+
+/// Parses Boa JS parse/runtime errors into a structured `TL100` (syntax/runtime) or
+/// `TL105` (security/quota) [`Diagnostic`], adjusting line numbers by `-1` for the
+/// `{\n` block wrapper in [`ThreeEngine::eval_isolated_script`].
+pub fn classify_script_error(err_msg: &str, script: &str) -> Diagnostic {
+    let lower = err_msg.to_ascii_lowercase();
+    let is_quota = err_msg.contains("SECURITY_3D")
+        || lower.contains("exceeded")
+        || lower.contains("exceeds")
+        || lower.contains("maximum allowed")
+        || lower.contains("loop iteration limit")
+        || lower.contains("recursion limit")
+        || lower.contains("stack size limit")
+        || lower.contains("sandbox string limit")
+        || lower.contains("poisoned")
+        || lower.contains("out of bounds");
+
+    if is_quota {
+        return Diagnostic {
+            code: "TL105".to_string(),
+            severity: "error".to_string(),
+            message: err_msg.to_string(),
+            node: None,
+            line: None,
+            column: None,
+            hint: Some(
+                "Reduce geometry segment counts, use THREE.InstancedMesh for repeated props, or keep scripts within SECURITY_3D_MAX_* quotas."
+                    .to_string(),
+            ),
+        };
+    }
+
+    let max_line = script.lines().count().max(1) as u32;
+    let (raw_line, column) = parse_boa_line_col(err_msg);
+    let line = raw_line.map(|l| l.saturating_sub(1).clamp(1, max_line));
+
+    let hint = if err_msg.contains("EvalError") || err_msg.contains("Dynamic code evaluation") {
+        "Avoid eval() and new Function(); write declarative Three.js scene construction directly."
+    } else if err_msg.contains("ReferenceError") {
+        "Use standard Three.js globals provided by the sandbox: THREE, scene, camera, window, document."
+    } else {
+        "Fix the JavaScript syntax or runtime error in your Three.js scene script."
+    };
+
+    Diagnostic {
+        code: "TL100".to_string(),
+        severity: "error".to_string(),
+        message: err_msg.to_string(),
+        node: None,
+        line,
+        column,
+        hint: Some(hint.to_string()),
+    }
+}
+
+fn parse_boa_line_col(msg: &str) -> (Option<u32>, Option<u32>) {
+    // Pattern 1: "at line <L>, col <C>" or "at line <L>, column <C>"
+    let lower = msg.to_ascii_lowercase();
+    if let Some(pos) = lower.find("line ") {
+        let rest = &lower[pos + 5..];
+        let line_digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(line) = line_digits.parse::<u32>() {
+            let after_line = &rest[line_digits.len()..];
+            let col = after_line
+                .find("col")
+                .map(|cpos| {
+                    let after_col = &after_line[cpos..];
+                    let digits: String = after_col
+                        .chars()
+                        .skip_while(|c| !c.is_ascii_digit())
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    digits.parse::<u32>().ok()
+                })
+                .flatten();
+            return (Some(line), col);
+        }
+    }
+    // Pattern 2: ":<L>:<C>" at the end or inside parentheses
+    let bytes = msg.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] == b':' || bytes[i] == b'(' {
+            let s1 = &msg[i + 1..];
+            let d1: String = s1.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !d1.is_empty() && s1[d1.len()..].starts_with(':') {
+                let s2 = &s1[d1.len() + 1..];
+                let d2: String = s2.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if !d2.is_empty() {
+                    if let (Ok(l), Ok(c)) = (d1.parse::<u32>(), d2.parse::<u32>()) {
+                        return (Some(l), Some(c));
+                    }
+                }
+            }
+        }
+    }
+    (None, None)
 }
 
 /// Maximum number of glTF nodes (groups, lights, empties and meshes).

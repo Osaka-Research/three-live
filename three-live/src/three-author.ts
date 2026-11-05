@@ -55,6 +55,8 @@ import {
   buildXRSceneCoreExtension,
   normalizeXRTraits,
   registerXRTraitSerializer,
+  type SchemaDiagnostic,
+  validateXRTraits,
 } from './xr-trait-schema';
 
 declare const SECURITY_3D_MAX_CONCURRENT_TASKS: number;
@@ -789,12 +791,13 @@ export class BufferGeometry {
     if (indices instanceof BufferAttribute) {
       this.index = indices;
     } else if (Array.isArray(indices)) {
+      const n = indices.length;
       let maxIdx = 0;
-      for (let i = 0; i < indices.length; i++) {
+      for (let i = 0; i < n; i++) {
         if (indices[i] > maxIdx) maxIdx = indices[i];
       }
-      const typed =
-        maxIdx > 65535 ? new Uint32Array(indices) : new Uint16Array(indices);
+      const typed = maxIdx > 65535 ? new Uint32Array(n) : new Uint16Array(n);
+      for (let i = 0; i < n; i++) typed[i] = indices[i];
       this.index = new BufferAttribute(typed, 1);
     } else if (indices && indices.buffer) {
       this.index = new BufferAttribute(indices, 1);
@@ -2195,6 +2198,12 @@ export class WebGLRenderer {
 }
 
 function readClockTimeMs(): number {
+  if (
+    typeof globalThis !== 'undefined' &&
+    typeof (globalThis as any).__three_live_sim_time_ms__ === 'number'
+  ) {
+    return (globalThis as any).__three_live_sim_time_ms__;
+  }
   return typeof performance !== 'undefined' &&
     typeof performance.now === 'function'
     ? performance.now()
@@ -3913,8 +3922,19 @@ if (typeof globalRoot.THREE === 'undefined') {
   globalRoot.THREE = THREE;
 }
 if (typeof globalRoot.requestAnimationFrame !== 'function') {
-  globalRoot.requestAnimationFrame = () => {
-    warnUnsupported('requestAnimationFrame', 'single-frame static evaluation');
+  globalRoot.requestAnimationFrame = (cb?: unknown) => {
+    if (
+      typeof cb === 'function' &&
+      typeof globalRoot.__three_live_raf_cb__ !== 'function'
+    ) {
+      globalRoot.__three_live_raf_cb__ = cb;
+    }
+    if (!globalRoot.__three_live_in_step__) {
+      warnUnsupported(
+        'requestAnimationFrame',
+        'single-frame static evaluation',
+      );
+    }
     return 0;
   };
 }
@@ -3966,6 +3986,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   }
   const resetSceneFn = function (): void {
     clearAuthorWarnings();
+    delete globalRoot.__three_live_sim_time_ms__;
+    delete globalRoot.__three_live_raf_cb__;
+    delete globalRoot.__three_live_in_step__;
     defaultScene = new Scene();
     defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
     defaultCamera.position.set(0, 2, 5);
@@ -3974,6 +3997,24 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   };
   Object.defineProperty(globalRoot, '__three_live_reset_scene__', {
     value: resetSceneFn,
+    writable: false,
+    configurable: false,
+  });
+  const stepJsFn = function (elapsedSec: number, dtSec: number): void {
+    globalRoot.__three_live_sim_time_ms__ = elapsedSec * 1000;
+    globalRoot.__three_live_in_step__ = true;
+    try {
+      if (typeof globalRoot.animate === 'function') {
+        globalRoot.animate(elapsedSec, dtSec);
+      } else if (typeof globalRoot.__three_live_raf_cb__ === 'function') {
+        globalRoot.__three_live_raf_cb__(elapsedSec * 1000);
+      }
+    } finally {
+      globalRoot.__three_live_in_step__ = false;
+    }
+  };
+  Object.defineProperty(globalRoot, '__three_live_step_js__', {
+    value: stepJsFn,
     writable: false,
     configurable: false,
   });
@@ -4294,11 +4335,26 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       const safeXR = toSafeJson(node.userData?.xr);
       // `sceneToCanvas3D` only serializes truthy `userData.xr`.
       const hasXR = Boolean(node.userData?.xr) && safeXR !== null;
+      const inter = toSafeJson(node.userData?.interactivity);
       const nodeIdx = rawNodes.length;
       const isInstanced =
         node instanceof InstancedMesh &&
         node.count > 0 &&
         node.instanceMatrix?.array;
+      const interEvents: string[] = [];
+      if (inter && typeof inter === 'object') {
+        for (const evKey of [
+          'onSelect',
+          'onHoverIn',
+          'onHoverOut',
+          'onStart',
+          'onReceive',
+        ]) {
+          if ((inter as Record<string, unknown>)[evKey]) {
+            interEvents.push(evKey);
+          }
+        }
+      }
       rawNodes.push({
         name: typeof node.name === 'string' ? node.name.slice(0, 1024) : '',
         parent: parentIdx,
@@ -4307,6 +4363,9 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         scale,
         mesh: meshIdx,
         xr_traits_json: hasXR ? JSON.stringify(safeXR) : null,
+        interactivity_events_json:
+          interEvents.length > 0 ? JSON.stringify(interEvents) : null,
+        interactivity_raw_json: inter ? JSON.stringify(inter) : null,
         ...(hasXR ? serializeXRForCompiler(safeXR) : {}),
         ...(isInstanced
           ? {
@@ -4322,7 +4381,6 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             }
           : {}),
       });
-      const inter = toSafeJson(node.userData?.interactivity);
       nodeInteractivity.push(inter);
       if (inter) anyNodeInteractivity = true;
       // One past the Rust cap is enough for it to reject the scene; stop
@@ -4340,6 +4398,241 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       }
 
       pushChildren(node, nodeIdx);
+    }
+
+    const diagnostics: SchemaDiagnostic[] = [];
+    for (const warn of getAuthorWarnings()) {
+      if (
+        warn.includes('ShaderMaterial') ||
+        warn.includes('RawShaderMaterial') ||
+        warn.includes('unsupported material')
+      ) {
+        diagnostics.push({
+          code: 'TL101',
+          severity: 'warning',
+          message: warn,
+          hint: 'Use THREE.MeshStandardMaterial({ color, metalness, roughness }) instead of custom GLSL shaders.',
+        });
+      } else if (warn.includes('requestAnimationFrame')) {
+        diagnostics.push({
+          code: 'TL104',
+          severity: 'warning',
+          message: warn,
+          hint: 'Static exports evaluate a single frame; use userData.xr.orbit, userData.interactivity, or define function animate(t) for time-stepped rendering.',
+        });
+      } else if (warn.includes('THREE.')) {
+        diagnostics.push({
+          code: 'TL103',
+          severity: 'warning',
+          message: warn,
+          hint: "Load external models via <three-live src='...'> or <xr-anchor src='...'>; camera controls and post-processing are managed by the host viewer.",
+        });
+      } else if (warn.includes('larger than')) {
+        diagnostics.push({
+          code: 'TL105',
+          severity: 'warning',
+          message: warn,
+          hint: 'Keep per-node userData.xr metadata under 15 KB.',
+        });
+      } else {
+        diagnostics.push({
+          code: 'TL102',
+          severity: 'warning',
+          message: warn,
+          hint: 'Use core primitives (BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, TorusKnotGeometry, PlaneGeometry) and DirectionalLight / PointLight / AmbientLight.',
+        });
+      }
+    }
+
+    const nodeNameSet = new Set<string>();
+    for (const rn of rawNodes) {
+      if (typeof rn.name === 'string' && rn.name.trim().length > 0) {
+        nodeNameSet.add(rn.name);
+      }
+    }
+
+    for (let i = 0; i < rawNodes.length; i++) {
+      const rn = rawNodes[i];
+      const explicitName =
+        typeof rn.name === 'string' && rn.name.trim().length > 0 ? rn.name : '';
+      const nodeLabel =
+        explicitName ||
+        (rn.mesh >= 0 && rawMeshes[rn.mesh]?.name) ||
+        `Node_${i}`;
+      const inter = nodeInteractivity[i];
+      let parsedXR: Record<string, any> | null = null;
+      if (rn.xr_traits_json) {
+        try {
+          parsedXR = JSON.parse(rn.xr_traits_json);
+        } catch {
+          parsedXR = null;
+        }
+      }
+
+      if ((parsedXR || inter) && !explicitName) {
+        diagnostics.push({
+          code: 'TL205',
+          severity: 'warning',
+          node: nodeLabel,
+          message: `Interactive node '${nodeLabel}' is missing an explicit mesh.name.`,
+          hint: "Assign a unique mesh.name = '...' so raycasting, meshclick, and WebMCP tools can target it.",
+        });
+      }
+
+      if (parsedXR !== null) {
+        for (const d of validateXRTraits(parsedXR, nodeLabel)) {
+          diagnostics.push(d);
+        }
+        const checkTargetNode = (fieldPath: string, targetName: unknown) => {
+          if (
+            typeof targetName === 'string' &&
+            targetName.trim().length > 0 &&
+            !nodeNameSet.has(targetName)
+          ) {
+            diagnostics.push({
+              code: 'TL204',
+              severity: 'warning',
+              node: nodeLabel,
+              message: `userData.xr.${fieldPath} on node '${nodeLabel}' references target node '${targetName}', which does not exist in scene.`,
+              hint: `Ensure a node with mesh.name = '${targetName}' is added to scene via scene.add().`,
+            });
+          }
+        };
+        if (parsedXR.orbit && typeof parsedXR.orbit === 'object') {
+          checkTargetNode('orbit.target', parsedXR.orbit.target);
+        }
+        if (typeof parsedXR.spawner === 'string') {
+          checkTargetNode('spawner.template', parsedXR.spawner);
+        } else if (parsedXR.spawner && typeof parsedXR.spawner === 'object') {
+          checkTargetNode('spawner.template', parsedXR.spawner.template);
+        }
+        if (parsedXR.agent && typeof parsedXR.agent === 'object') {
+          const at = parsedXR.agent.target;
+          if (at !== 'user' && at !== 'camera') {
+            checkTargetNode('agent.target', at);
+          }
+        }
+        if (
+          parsedXR.ik &&
+          typeof parsedXR.ik === 'object' &&
+          parsedXR.ik.enabled !== false
+        ) {
+          checkTargetNode('ik.root', parsedXR.ik.root);
+          checkTargetNode('ik.mid', parsedXR.ik.mid);
+          checkTargetNode('ik.effector', parsedXR.ik.effector);
+          if (!Array.isArray(parsedXR.ik.target)) {
+            checkTargetNode('ik.target', parsedXR.ik.target);
+          }
+          const poleRef = parsedXR.ik.pole ?? parsedXR.ik.poleTarget;
+          if (!Array.isArray(poleRef)) {
+            checkTargetNode('ik.pole', poleRef);
+          }
+        }
+      }
+
+      if (inter && typeof inter === 'object') {
+        const VALID_TRIGGERS = new Set([
+          'onSelect',
+          'onHoverIn',
+          'onHoverOut',
+          'onStart',
+          'onReceive',
+        ]);
+        const VALID_ACTIONS = new Set([
+          'interpolate',
+          'toggleTransform',
+          'setProperty',
+          'toggleVisibility',
+          'cycleMaterialColor',
+          'playAnimation',
+          'stopAnimation',
+          'sendEvent',
+        ]);
+        const inspectActionList = (list: unknown, triggerName: string) => {
+          const arr = Array.isArray(list) ? list : [list];
+          for (const act of arr) {
+            if (!act || typeof act !== 'object') continue;
+            const actionKind = (act as Record<string, unknown>)['action'];
+            if (
+              typeof actionKind === 'string' &&
+              !VALID_ACTIONS.has(actionKind)
+            ) {
+              diagnostics.push({
+                code: 'TL201',
+                severity: 'warning',
+                node: nodeLabel,
+                message: `Unrecognized action '${actionKind}' in userData.interactivity.${triggerName} on node '${nodeLabel}'.`,
+                hint: 'Supported interactivity actions: interpolate, toggleTransform, setProperty, toggleVisibility, cycleMaterialColor, playAnimation, stopAnimation, sendEvent.',
+              });
+            }
+            const target = (act as Record<string, unknown>)['target'];
+            if (
+              typeof target === 'string' &&
+              target.length > 0 &&
+              !nodeNameSet.has(target)
+            ) {
+              diagnostics.push({
+                code: 'TL204',
+                severity: 'warning',
+                node: nodeLabel,
+                message: `userData.interactivity.${triggerName} on node '${nodeLabel}' references target node '${target}', which does not exist in scene.`,
+                hint: `Ensure a node with mesh.name = '${target}' is added to scene via scene.add().`,
+              });
+            }
+            const targetNode = (act as Record<string, unknown>)['targetNode'];
+            if (
+              typeof targetNode === 'number' &&
+              (targetNode < 0 || targetNode >= rawNodes.length)
+            ) {
+              diagnostics.push({
+                code: 'TL204',
+                severity: 'warning',
+                node: nodeLabel,
+                message: `userData.interactivity.${triggerName} on node '${nodeLabel}' references out-of-range targetNode ${targetNode} (scene has ${rawNodes.length} nodes).`,
+                hint: "Prefer referencing nodes by name via target: '<nodeName>'.",
+              });
+            }
+          }
+        };
+        const interObj = inter as Record<string, unknown>;
+        for (const key of Object.keys(interObj)) {
+          if (!VALID_TRIGGERS.has(key)) {
+            const lowerK = key.toLowerCase();
+            const suggested =
+              lowerK === 'onclick' ||
+              lowerK === 'ontap' ||
+              lowerK === 'onpointerdown'
+                ? 'onSelect'
+                : lowerK === 'onhover' || lowerK === 'onmouseenter'
+                  ? 'onHoverIn'
+                  : lowerK === 'onmouseleave'
+                    ? 'onHoverOut'
+                    : null;
+            diagnostics.push({
+              code: 'TL201',
+              severity: 'warning',
+              node: nodeLabel,
+              message: suggested
+                ? `Unrecognized trigger '${key}' in userData.interactivity on node '${nodeLabel}'; did you mean '${suggested}'?`
+                : `Unrecognized trigger '${key}' in userData.interactivity on node '${nodeLabel}'.`,
+              hint: 'Supported interactivity triggers: onSelect, onHoverIn, onHoverOut, onStart, onReceive.',
+            });
+          }
+        }
+        for (const trig of ['onSelect', 'onHoverIn', 'onHoverOut', 'onStart']) {
+          if (interObj[trig]) inspectActionList(interObj[trig], trig);
+        }
+        if (
+          interObj['onReceive'] &&
+          typeof interObj['onReceive'] === 'object'
+        ) {
+          for (const [evKey, acts] of Object.entries(
+            interObj['onReceive'] as Record<string, unknown>,
+          )) {
+            inspectActionList(acts, `onReceive.${evKey}`);
+          }
+        }
+      }
     }
 
     // Compile `userData.interactivity` with the same compiler as the web
@@ -4398,6 +4691,8 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         variantNames.length > 0
           ? JSON.stringify({variants: variantNames.map((name) => ({name}))})
           : null,
+      diagnostics_json:
+        diagnostics.length > 0 ? JSON.stringify(diagnostics) : null,
       camera: {
         fov: activeCam.fov || 45,
         position: activeCam.position

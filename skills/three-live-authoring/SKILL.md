@@ -138,6 +138,26 @@ Read these reference files when you need detailed schemas, copy-pasteable recipe
     Snapping + Persistent `#xr-state` + Locomotion, Multi-User `shared-room`
     Co-Presence, and an `xr-live-sim` training drill).
 -   **[`references/debugging-and-csp.md`](references/debugging-and-csp.md)**:
-    Diagnosing blank scenes, inspecting `THREE.getAuthorWarnings()`, configuring
-    Worker/iframe sandboxes & `connect-src wss:` under strict CSP / Trusted
-    Types, and verifying bundle budgets.
+    Diagnosing blank scenes, inspecting `THREE.getAuthorWarnings()`, running
+    closed-loop `three-live-cli validate --json` / `render --view=quad` /
+    `sim --json` checks (`TL100–TL402`), configuring Worker/iframe sandboxes &
+    `connect-src wss:` under strict CSP / Trusted Types, and verifying bundle
+    budgets.
+
+--------------------------------------------------------------------------------
+
+## 5. Closed-Loop CLI Verification (`three-live-cli`)
+
+Always verify authored `.js`, `.html`, or `.glb` scenes headlessly using
+`three-live-cli`:
+
+1.  **Validate & Spatial Lint:** `three-live-cli validate scene.js --json` — fix
+    all `TL100–TL402` errors and spatial warnings (`inFrustum`,
+    `screenCoveragePct`, `grounded`, broken target references) before rendering.
+2.  **Render 4-Up Quad Contact Sheet:** `three-live-cli render scene.js -o
+    preview.png --view=quad --grid --annotations` — inspect perspective camera
+    framing (`CAMERA`), front/right elevation (`FRONT`, `RIGHT`), and top-down
+    layout (`TOP`) with `1 m` gridlines and AABB labels.
+3.  **Simulate Interactivity & Temporal Motion:** `three-live-cli render
+    scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=<node>` or
+    `three-live-cli sim scene.js --duration=5.0 --actions='[...]' --json`.

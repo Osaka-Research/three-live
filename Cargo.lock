@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "three-live-compiler"
-version = "1.2.3"
+version = "1.2.4"
 dependencies = [
  "boa_engine",
  "clap",

@@ -162,7 +162,7 @@
               orbit: {
                 target: [0, 0, 0],
                 radius: 1.3,
-                speed: 0.9,
+                speed: -0.4,
                 height: Math.sin(angle) * 0.4,
                 phase: angle,
                 faceCenter: true

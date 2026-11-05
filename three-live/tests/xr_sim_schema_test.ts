@@ -42,6 +42,7 @@ import {
   flattenXRTraitsForUsd,
   normalizeXRTraits,
   registerXRTraitSerializer,
+  validateXRTraits,
 } from '../src/xr-trait-schema';
 
 let passed = 0;
@@ -530,6 +531,117 @@ function testExportPipelines() {
   assert(usda.includes('string audioCuesOnHit = "impact"'), 'USDA cue');
 }
 
+function testValidateXRTraits() {
+  console.log('\n🩺 validateXRTraits (TL201, TL202, TL203)');
+  const clean = validateXRTraits(
+    {
+      grab: '2-hand',
+      gaze: {dwellMs: 1200},
+      splatUrl: 'https://example.com/room.splat',
+    },
+    'CleanNode',
+  );
+  assert(clean.length === 0, 'clean traits produce 0 diagnostics');
+
+  const syn = validateXRTraits(
+    {
+      grabbable: true,
+      health: 100,
+      collides: true,
+      billbord: 'capsule',
+    },
+    'BotNode',
+  );
+  assert(
+    syn.some(
+      (d) =>
+        d.code === 'TL201' &&
+        d.message.includes('grabbable') &&
+        d.hint?.includes('grab'),
+    ),
+    'TL201 synonym suggestion for grabbable',
+  );
+  assert(
+    syn.some(
+      (d) =>
+        d.code === 'TL201' &&
+        d.message.includes('health') &&
+        d.message.includes('integrity'),
+    ),
+    'TL201 synonym suggestion for health -> integrity',
+  );
+  assert(
+    syn.some(
+      (d) =>
+        d.code === 'TL201' &&
+        d.message.includes('collides') &&
+        d.message.includes('collidable'),
+    ),
+    'TL201 synonym suggestion for collides -> collidable',
+  );
+  assert(
+    syn.some(
+      (d) =>
+        d.code === 'TL201' &&
+        d.message.includes('billbord') &&
+        d.message.includes('billboard'),
+    ),
+    'TL201 Levenshtein suggestion for billbord -> billboard',
+  );
+
+  const clamped = validateXRTraits(
+    {
+      gaze: {dwellMs: 50},
+      particles: {count: 9999, speed: -5},
+    },
+    'GazeNode',
+  );
+  assert(
+    clamped.some(
+      (d) =>
+        d.code === 'TL202' &&
+        d.message.includes('gaze.dwellMs') &&
+        d.message.includes('250'),
+    ),
+    'TL202 reports gaze.dwellMs clamped to 250',
+  );
+  assert(
+    clamped.some(
+      (d) => d.code === 'TL202' && d.message.includes('particles.count'),
+    ),
+    'TL202 reports particles.count clamped to 2000',
+  );
+
+  const unsafe = validateXRTraits(
+    {
+      splatUrl: 'javascript:alert(1)',
+      audio: 'http://insecure.example.com/a.mp3',
+      anchor: {id: '__proto__', persist: true},
+      integrity: {group: 'bad group!'},
+      zone: {watchGroups: ['__proto__']},
+    },
+    'UnsafeNode',
+  );
+  assert(
+    unsafe.filter((d) => d.code === 'TL203' && d.severity === 'error')
+      .length === 5,
+    'TL203 flags unsafe splatUrl, http audio URL, __proto__ anchor.id, and invalid sim IDs',
+  );
+
+  const confusedAudio = validateXRTraits(
+    {
+      audio: {onTap: 'confirm'},
+    },
+    'ButtonNode',
+  );
+  assert(
+    confusedAudio.some(
+      (d) => d.code === 'TL201' && d.message.includes('audioCues'),
+    ),
+    'TL201 suggests audioCues when audio has event keys without src',
+  );
+}
+
 function run() {
   console.log('🎮 Running xr-live-sim trait schema tests...');
   testSafeSimId();
@@ -542,6 +654,7 @@ function run() {
   testAudioCues();
   testNormalizeAndExtensions();
   testExportPipelines();
+  testValidateXRTraits();
   console.log(
     `\n🏆 xr-live-sim schema Test Results: ${passed} Passed, ${failed} Failed.`,
   );

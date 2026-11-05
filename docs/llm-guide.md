@@ -290,3 +290,108 @@ Three.js assumptions never crash or abort a 3D/XR scene:
   </script>
 </xr-live>
 ```
+
+--------------------------------------------------------------------------------
+
+## 5. Closed-Loop AI Agent Verification (`three-live-cli`)
+
+AI coding agents can validate, visually inspect, and simulate
+`<script type="text/three">` scenes, `.html` host documents, and `.glb` files in
+under `50 ms` without launching a headless browser:
+
+```bash
+# 1. Structured JSON Diagnostics (TL100-TL402) + Spatial Frustum/Grounding/Lighting Linter
+three-live-cli validate scene.js --json
+
+# 2. 4-Up Quad Contact Sheet (Perspective + Front + Right + Top with 1m Grid & AABB Labels)
+three-live-cli render scene.js -o preview.png --view=quad --grid --annotations
+
+# 3. Multi-Frame Temporal Filmstrip or Animated GIF89a (`animate(t)` + KHR_interactivity Tweens)
+three-live-cli render scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=crystal
+
+# 4. Deterministic 60Hz Scenario & KHR_interactivity Simulation
+three-live-cli sim scene.js --duration=5.0 \
+  --actions='[{"at":0.2,"type":"select","target":"crystal"},{"at":0.5,"type":"moveCharacter","direction":[0,0,-1],"duration":1.5,"jump":true}]' \
+  --json
+```
+
+### Diagnostic Code Summary (`TL100–TL402`)
+
+| Code    | Category | Meaning & Fix                        |
+| :------ | :------- | :----------------------------------- |
+| `TL100` | Compiler | JavaScript syntax error, uncaught    |
+:         :          : runtime exception, or sandbox quota  :
+:         :          : violation (includes 1-based          :
+:         :          : `line`/`column`).                    :
+| `TL101` | Compiler | Unsupported material                 |
+:         :          : (`ShaderMaterial`,                   :
+:         :          : `RawShaderMaterial`) downgraded to   :
+:         :          : `MeshStandardMaterial`.              :
+| `TL102` | Compiler | Unsupported geometry                 |
+:         :          : (`IcosahedronGeometry`,              :
+:         :          : `OctahedronGeometry`,                :
+:         :          : `DodecahedronGeometry`,              :
+:         :          : `TetrahedronGeometry`,               :
+:         :          : `TubeGeometry`,                      :
+:         :          : `PolyhedronGeometry`) approximated   :
+:         :          : as sphere/cylinder.                  :
+| `TL103` | Compiler | Blocked network/loader API           |
+:         :          : (`THREE.GLTFLoader`,                 :
+:         :          : `TextureLoader`, `fetch`) inside     :
+:         :          : sandbox; use `<three-live            :
+:         :          : src="...">`.                         :
+| `TL104` | Compiler | `requestAnimationFrame` used in      |
+:         :          : static `.glb`/`.usdz` export; prefer :
+:         :          : `userData.xr.orbit` or               :
+:         :          : `userData.interactivity`.            :
+| `TL105` | Compiler | Unknown `THREE.*` property           |
+:         :          : intercepted by chaining proxy.       :
+| `TL201` | Schema   | Unrecognized `userData.xr` or        |
+:         :          : `userData.interactivity` key with    :
+:         :          : Levenshtein typo suggestion (e.g.,   :
+:         :          : `grabbable` -> `grab`, `onClick` ->  :
+:         :          : `onSelect`).                         :
+| `TL202` | Schema   | Out-of-range numeric trait clamped   |
+:         :          : to valid domain (`dwellMs`,          :
+:         :          : `bloom.strength`,                    :
+:         :          : `outline.thickness`,                 :
+:         :          : `splat.shDegree`).                   :
+| `TL203` | Schema   | Unsafe URL or anchor ID rejected     |
+:         :          : (`safeMediaUrl`, `isAllowedLiveUrl`, :
+:         :          : `safeAnchorId`).                     :
+| `TL204` | Schema   | Broken node reference                |
+:         :          : (`orbit.target`,                     :
+:         :          : `ik.root`/`mid`/`effector`/`target`, :
+:         :          : `spawner.template`,                  :
+:         :          : `interactivity.*.target`).           :
+| `TL205` | Schema   | Unnamed interactive or spatial mesh  |
+:         :          : (`mesh.name === ""`); assign a       :
+:         :          : unique `mesh.name`.                  :
+| `TL301` | Spatial  | Empty scene (`meshCount == 0` or     |
+:         :          : `vertexCount == 0`).                 :
+| `TL302` | Spatial  | Camera position is enclosed inside a |
+:         :          : mesh's world AABB.                   :
+| `TL303` | Spatial  | Mesh is outside the camera frustum   |
+:         :          : (or scenes fill `< 1%` / `> 95%` of  :
+:         :          : the viewport).                       :
+| `TL304` | Spatial  | Scene diagonal is microscopic (`<    |
+:         :          : 0.01 m`) or gigantic (`> 200 m`,     :
+:         :          : e.g. millimeter units).              :
+| `TL305` | Spatial  | Metallic PBR materials (`metalness > |
+:         :          : 0.5`) with no scene lights and no    :
+:         :          : `environment`.                       :
+| `TL306` | Spatial  | Two non-floor sibling meshes share   |
+:         :          : `> 80%` AABB intersection volume     :
+:         :          : (accidental duplicate placement).    :
+| `TL307` | Spatial  | Scene or `character`/`physics:       |
+:         :          : "dynamic"` mesh is floating          :
+:         :          : (`min.y > 0.25 m`) or buried (`min.y :
+:         :          : < -0.5 m`).                          :
+| `TL401` | HTML     | `<three-live>` / `<xr-live>`         |
+:         :          : contains `<script                    :
+:         :          : type="text/three">` without          :
+:         :          : `allow-client-scripts`.              :
+| `TL402` | HTML     | `<xr-live>` spatial attributes/slots |
+:         :          : (`xr-hands`, `gemini-live`,          :
+:         :          : `plugins`, `slot="spatial"`) placed  :
+:         :          : on `<three-live>`.                   :

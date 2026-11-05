@@ -1830,3 +1830,732 @@ fn test_phase2_cad_extrude_csg_and_text_parity() {
         .expect("CAD + CSG + Text should compile to USDZ");
     assert!(usdz.len() > 1000, "USDZ should contain extruded and CSG geometry");
 }
+
+#[test]
+fn test_phase1_structured_compiler_and_schema_diagnostics() {
+    let script = r#"
+        const mat = new THREE.ShaderMaterial({
+            uniforms: { color: { value: new THREE.Color(0x00ff88) } }
+        });
+        const icosa = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), mat);
+        icosa.userData.xr = {
+            grabbable: true,
+            health: 100,
+            gaze: { dwellMs: 50 },
+            splatUrl: 'javascript:alert(1)',
+            orbit: { target: 'NonExistentHub', radius: 1.5 }
+        };
+        icosa.userData.interactivity = {
+            onSelect: { action: 'interpolate', target: 'MissingTarget', to: [0, 1, 0] }
+        };
+        scene.add(icosa);
+
+        const loader = new THREE.GLTFLoader();
+        requestAnimationFrame(() => {});
+    "#;
+
+    let (scene_opt, diags) = three_live_compiler::validate_scene_source(script, "test_diag.js");
+    let scene = scene_opt.expect("scene should extract with diagnostics");
+    let codes: Vec<&str> = diags.iter().map(|d| d.code.as_str()).collect();
+    assert!(codes.contains(&"TL101"), "expected TL101 for ShaderMaterial, got {:?}", codes);
+    assert!(codes.contains(&"TL102"), "expected TL102 for IcosahedronGeometry, got {:?}", codes);
+    assert!(codes.contains(&"TL103"), "expected TL103 for THREE.GLTFLoader, got {:?}", codes);
+    assert!(codes.contains(&"TL104"), "expected TL104 for requestAnimationFrame, got {:?}", codes);
+    assert!(codes.contains(&"TL201"), "expected TL201 for grabbable/health, got {:?}", codes);
+    assert!(codes.contains(&"TL202"), "expected TL202 for gaze.dwellMs=50, got {:?}", codes);
+    assert!(codes.contains(&"TL203"), "expected TL203 for unsafe splatUrl, got {:?}", codes);
+    assert!(
+        codes.contains(&"TL204"),
+        "expected TL204 for broken target node names, got {:?}",
+        codes
+    );
+    assert!(
+        codes.contains(&"TL205"),
+        "expected TL205 for unnamed interactive mesh, got {:?}",
+        codes
+    );
+    assert_eq!(scene.nodes[0].interactivity_events, vec!["onSelect".to_string()]);
+}
+
+#[test]
+fn test_phase1_syntax_and_quota_error_diagnostics_and_html_lint() {
+    let broken_js = "const m = new THREE.Mesh(\nconst bad = ;";
+    let (scene_opt, diags) = three_live_compiler::validate_scene_source(broken_js, "broken.js");
+    assert!(scene_opt.is_none());
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].code, "TL100");
+    assert_eq!(diags[0].severity, "error");
+    assert!(
+        diags[0].line.is_some(),
+        "TL100 should extract line number from Boa syntax error: {:?}",
+        diags[0]
+    );
+
+    let html_doc = r#"
+        <!DOCTYPE html>
+        <html>
+        <body>
+            <three-live xr-hands plugins="spatial-measure">
+                <div slot="spatial">HUD</div>
+                <script type="text/three">
+                    const box = new THREE.Mesh(
+                        new THREE.BoxGeometry(1, 1, 1),
+                        new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+                    );
+                    box.name = 'Crate';
+                    scene.add(box);
+                </script>
+            </three-live>
+        </body>
+        </html>
+    "#;
+    let (html_scene, html_diags) =
+        three_live_compiler::validate_scene_source(html_doc, "index.html");
+    assert!(html_scene.is_some(), "HTML inline script should be extracted and compiled");
+    let html_codes: Vec<&str> = html_diags.iter().map(|d| d.code.as_str()).collect();
+    assert!(
+        html_codes.contains(&"TL401"),
+        "expected TL401 for missing allow-client-scripts, got {:?}",
+        html_codes
+    );
+    assert!(
+        html_codes.contains(&"TL402"),
+        "expected TL402 for <xr-live> features on <three-live>, got {:?}",
+        html_codes
+    );
+
+    // Phase 1 audit edge cases:
+    // 1. Self-closing <three-live src="a.glb" title="voice demo" /> should NOT trigger TL401 or
+    //    TL402 for "voice" inside quoted title
+    // 2. HTML comments <!-- <three-live xr-hands> --> should be ignored
+    // 3. Unrecognized interactivity trigger (`onClick`) and action (`move`) should emit TL201
+    let edge_html = r#"
+        <!DOCTYPE html>
+        <!-- <three-live xr-hands><script type="text/three">bad()</script></three-live> -->
+        <three-live src="static.glb" title="voice and xr-hands demo" />
+        <three-live allow-client-scripts>
+            <script type="text/three">
+                const btn = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.5, 0.5, 0.5),
+                    new THREE.MeshStandardMaterial({ color: 0x22c55e })
+                );
+                btn.name = 'Button';
+                btn.userData.interactivity = {
+                    onClick: { action: 'move', to: [0, 1, 0] },
+                    onSelect: { action: 'unknownOp', to: [0, 1, 0] }
+                };
+                scene.add(btn);
+            </script>
+        </three-live>
+    "#;
+    let (edge_scene, edge_diags) =
+        three_live_compiler::validate_scene_source(edge_html, "edge.html");
+    assert!(edge_scene.is_some());
+    assert!(
+        !edge_diags.iter().any(|d| d.code == "TL401" || d.code == "TL402"),
+        "self-closing and commented-out tags or quoted attribute values must not trigger TL401/TL402: {:?}",
+        edge_diags
+    );
+    assert!(
+        edge_diags.iter().any(|d| d.code == "TL201"
+            && d.message.contains("onClick")
+            && d.message.contains("onSelect")),
+        "unrecognized interactivity trigger onClick should suggest onSelect: {:?}",
+        edge_diags
+    );
+    assert!(
+        edge_diags.iter().any(|d| d.code == "TL201" && d.message.contains("unknownOp")),
+        "unrecognized interactivity action should emit TL201: {:?}",
+        edge_diags
+    );
+}
+
+#[test]
+fn test_phase2_spatial_frustum_grounding_and_lighting_linter() {
+    use three_live_compiler::validate_and_lint_scene;
+
+    // 1. TL301: Empty scene
+    let empty_report = validate_and_lint_scene("// no meshes", "empty.js", 1.0);
+    assert!(!empty_report.valid, "Empty scene should have valid=false due to TL301 error");
+    assert!(
+        empty_report.diagnostics.iter().any(|d| d.code == "TL301" && d.severity == "error"),
+        "expected TL301 error: {:?}",
+        empty_report.diagnostics
+    );
+
+    // 2. TL302 (camera inside mesh), TL303 (behind/offscreen mesh), TL305 (unlit metallic PBR),
+    //    TL306 (interpenetrating sibling meshes), TL307 (floating scene)
+    let spatial_script = r#"
+        const cam = new THREE.PerspectiveCamera(45, 1.0, 0.1, 1000);
+        cam.position.set(0, 2, 5);
+        cam.lookAt(0, 0, 0);
+        scene.add(cam);
+
+        // Encloses camera [0, 2, 5] -> TL302
+        const tower = new THREE.Mesh(
+            new THREE.BoxGeometry(4, 4, 4),
+            new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.9, roughness: 0.2 })
+        );
+        tower.name = 'Tower';
+        tower.position.set(0, 2, 5);
+        scene.add(tower);
+
+        // Sibling overlapping >80% with Tower -> TL306
+        const towerDuplicate = new THREE.Mesh(
+            new THREE.BoxGeometry(3.9, 3.9, 3.9),
+            new THREE.MeshStandardMaterial({ color: 0x3b82f6 })
+        );
+        towerDuplicate.name = 'TowerDuplicate';
+        towerDuplicate.position.set(0, 2, 5);
+        scene.add(towerDuplicate);
+
+        // Behind camera (z = +15 while looking from z=5 toward z=0) -> TL303
+        const behindBox = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e })
+        );
+        behindBox.name = 'BehindProp';
+        behindBox.position.set(0, 2, 15);
+        scene.add(behindBox);
+    "#;
+    let report = validate_and_lint_scene(spatial_script, "spatial.js", 2.5);
+    let codes: Vec<&str> = report.diagnostics.iter().map(|d| d.code.as_str()).collect();
+    assert!(
+        codes.contains(&"TL302"),
+        "expected TL302 camera inside mesh: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        codes.contains(&"TL303"),
+        "expected TL303 offscreen behind camera: {:?}",
+        report.diagnostics
+    );
+    assert!(
+        codes.contains(&"TL305"),
+        "expected TL305 unlit metallic PBR: {:?}",
+        report.diagnostics
+    );
+    assert!(codes.contains(&"TL306"), "expected TL306 sibling overlap: {:?}", report.diagnostics);
+
+    let summary = report.summary.expect("summary present");
+    assert_eq!(summary.mesh_count, 3);
+    assert!(
+        summary.camera.occluded_or_offscreen_meshes.contains(&"BehindProp".to_string()),
+        "BehindProp should be listed in occludedOrOffscreenMeshes: {:?}",
+        summary.camera
+    );
+
+    // 3. TL304: Giant millimeter scale (> 200m diagonal) and TL307 (floating/buried)
+    let giant_script = r#"
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(500, 500, 500),
+            new THREE.MeshStandardMaterial({ color: 0xffffff })
+        );
+        box.name = 'MillimeterBox';
+        box.position.set(0, 300, 0);
+        scene.add(box);
+        const light = new THREE.DirectionalLight(0xffffff, 1.0);
+        light.position.set(10, 20, 10);
+        scene.add(light);
+    "#;
+    let giant_report = validate_and_lint_scene(giant_script, "giant.js", 1.2);
+    let giant_codes: Vec<&str> = giant_report.diagnostics.iter().map(|d| d.code.as_str()).collect();
+    assert!(
+        giant_codes.contains(&"TL304"),
+        "expected TL304 for 500m millimeter box: {:?}",
+        giant_report.diagnostics
+    );
+    assert!(
+        giant_codes.contains(&"TL307"),
+        "expected TL307 for min.y = 50m floating: {:?}",
+        giant_report.diagnostics
+    );
+
+    // 4. Well-formed grounded scene at y=0 with lights should produce 0 diagnostics
+    let clean_script = r#"
+        const prop = new THREE.Mesh(
+            new THREE.BoxGeometry(1.0, 1.0, 1.0),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.2, roughness: 0.5 })
+        );
+        prop.name = 'GroundedCrate';
+        prop.position.set(0, 0.5, 0);
+        scene.add(prop);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(2, 4, 3);
+        scene.add(dirLight);
+    "#;
+    let clean_report = validate_and_lint_scene(clean_script, "clean.js", 1.5);
+    assert!(clean_report.valid);
+    assert!(
+        clean_report.diagnostics.is_empty(),
+        "Grounded, lit, in-frustum scene should have 0 diagnostics, got: {:?}",
+        clean_report.diagnostics
+    );
+    let clean_summary = clean_report.summary.unwrap();
+    assert_eq!(clean_summary.camera.visible_mesh_count, 1);
+    assert_eq!(clean_report.nodes[0].in_frustum, true);
+    assert!(clean_report.nodes[0].screen_coverage_pct > 1.0);
+    let wb = clean_summary.world_bounds.unwrap();
+    assert_eq!(wb.min, [-0.5, 0.0, -0.5]);
+    assert_eq!(wb.max, [0.5, 1.0, 0.5]);
+
+    // 5. Phase 2 Audit edge cases:
+    //    - Per-node TL307 for a floating character even when a floor rests at y=0
+    //    - Two adjacent pillars sharing min.y=0 with tiny corner overlap must NOT trigger
+    //      false-positive TL306
+    //    - read_glb round-trip preserves SceneGraph for spatial linting
+    let audit_script = r#"
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(6, 0.1, 6),
+            new THREE.MeshStandardMaterial({ color: 0x334155 })
+        );
+        floor.name = 'MainFloor';
+        floor.position.set(0, 0.05, 0);
+        scene.add(floor);
+
+        // Two pillars standing on y=0 with a small corner overlap (0.05m x 0.05m out of 1.0m x 1.0m)
+        const pillarA = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 2, 1),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        pillarA.name = 'PillarA';
+        pillarA.position.set(-0.48, 1.0, 0);
+        scene.add(pillarA);
+
+        const pillarB = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 2, 1),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b })
+        );
+        pillarB.name = 'PillarB';
+        pillarB.position.set(0.48, 1.0, 0);
+        scene.add(pillarB);
+
+        // Floating character (min.y = 1.2m) while MainFloor is at y=0 -> per-node TL307!
+        const hero = new THREE.Mesh(
+            new THREE.CapsuleGeometry(0.3, 1.0),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e })
+        );
+        hero.name = 'FloatingHero';
+        hero.position.set(0, 2.0, -1);
+        hero.userData.xr = { character: { speed: 4.0 } };
+        scene.add(hero);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1.0);
+        light.position.set(2, 5, 3);
+        scene.add(light);
+    "#;
+    let audit_report = validate_and_lint_scene(audit_script, "audit_phase2.js", 2.0);
+    assert!(
+        !audit_report.diagnostics.iter().any(|d| d.code == "TL306"),
+        "Adjacent pillars with minor corner overlap on floor must not trigger TL306: {:?}",
+        audit_report.diagnostics
+    );
+    assert!(
+        audit_report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "TL307" && d.node.as_deref() == Some("FloatingHero")),
+        "Floating character node should trigger per-node TL307 even when floor touches y=0: {:?}",
+        audit_report.diagnostics
+    );
+
+    // Verify read_glb round-trip (GroundedCrate mesh node + DirectionalLight node = 2 nodes)
+    let glb_bytes = transcode_three_to_glb(clean_script).expect("clean_script compiles to GLB");
+    let parsed_glb = three_live_compiler::read_glb(&glb_bytes).expect("read_glb parses GLB");
+    assert_eq!(parsed_glb.meshes.len(), 1);
+    assert_eq!(parsed_glb.nodes.len(), 2);
+    assert_eq!(parsed_glb.nodes[0].name, "GroundedCrate");
+}
+
+#[test]
+fn test_phase3_headless_pbr_rasterizer_quad_png_and_gif() {
+    use three_live_compiler::{
+        encode_gif_frames, encode_png_rgba, render_scene_rgba, render_viewport_rgba,
+        stitch_filmstrip_horizontal, validate_three_script, RenderOptions, RenderViewMode,
+    };
+
+    let script = r#"
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(4, 0.1, 4),
+            new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 })
+        );
+        floor.name = 'StudioFloor';
+        floor.position.set(0, -0.05, 0);
+        scene.add(floor);
+
+        const cube = new THREE.Mesh(
+            new THREE.BoxGeometry(1.0, 1.0, 1.0),
+            new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.3, roughness: 0.4 })
+        );
+        cube.name = 'RedHeroCube';
+        cube.position.set(0, 0.5, 0);
+        scene.add(cube);
+
+        const inst = new THREE.InstancedMesh(
+            new THREE.SphereGeometry(0.25, 12, 8),
+            new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.7, roughness: 0.2 }),
+            2
+        );
+        inst.name = 'GoldOrbs';
+        inst.setMatrixAt(0, new THREE.Matrix4().makeTranslation(-1.0, 0.25, 0.5));
+        inst.setMatrixAt(1, new THREE.Matrix4().makeTranslation(1.0, 0.25, 0.5));
+        inst.setColorAt(0, new THREE.Color(0xf59e0b));
+        inst.setColorAt(1, new THREE.Color(0x38bdf8));
+        scene.add(inst);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1.4);
+        light.position.set(3, 6, 4);
+        scene.add(light);
+    "#;
+    let scene = validate_three_script(script).expect("script compiles");
+
+    // 1. 4-Up Quad Contact Sheet with grid and annotations
+    let quad_opts = RenderOptions {
+        width: 256,
+        height: 256,
+        view: RenderViewMode::Quad,
+        show_grid: true,
+        show_annotations: true,
+        label_override: None,
+    };
+    let (qw, qh, quad_rgba) = render_scene_rgba(&scene, &quad_opts);
+    assert_eq!(qw, 256);
+    assert_eq!(qh, 256);
+    assert_eq!(quad_rgba.len(), 256 * 256 * 4);
+
+    // Ensure non-background pixels were rasterized (red hero cube & cyan annotations)
+    let red_dominant_pixels = quad_rgba
+        .chunks_exact(4)
+        .filter(|px| px[0] > 140 && px[0] > px[2].saturating_add(40))
+        .count();
+    assert!(
+        red_dominant_pixels > 100,
+        "Expected red hero cube pixels in quad contact sheet, got {}",
+        red_dominant_pixels
+    );
+
+    // 2. Pure-Rust PNG Encoder validation (8-byte magic + IHDR + IDAT + IEND)
+    let png = encode_png_rgba(qw, qh, &quad_rgba).expect("PNG encoding succeeds");
+    assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&png[12..16], b"IHDR");
+    assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
+
+    // 3. Horizontal Filmstrip & Pure-Rust Animated GIF89a Encoder
+    let f0 = render_viewport_rgba(
+        &scene,
+        128,
+        128,
+        RenderViewMode::Camera,
+        true,
+        false,
+        Some("FRAME 0"),
+    );
+    let f1 =
+        render_viewport_rgba(&scene, 128, 128, RenderViewMode::Iso, true, true, Some("FRAME 1"));
+    let (sw, sh, strip_rgba) = stitch_filmstrip_horizontal(128, 128, &[f0.clone(), f1.clone()]);
+    assert_eq!(sw, 256);
+    assert_eq!(sh, 128);
+    assert_eq!(strip_rgba.len(), 256 * 128 * 4);
+
+    let gif = encode_gif_frames(128, 128, &[f0, f1], 10).expect("GIF89a encoding succeeds");
+    assert_eq!(&gif[0..6], b"GIF89a");
+    assert_eq!(gif[gif.len() - 1], 0x3B, "GIF must end with 0x3B trailer");
+
+    // 4. Phase 3 Audit: non-uniform scale + negative-determinant mirrored scale + empty scene +
+    //    zero-dim errors
+    assert!(encode_png_rgba(0, 128, &[]).is_err());
+    assert!(encode_gif_frames(0, 128, &[vec![0; 4]], 10).is_err());
+    assert!(encode_gif_frames(16, 16, &[], 10).is_err());
+
+    let empty_scene = validate_three_script("// empty").expect("empty script");
+    let (ew, eh, empty_rgba) = render_scene_rgba(&empty_scene, &quad_opts);
+    assert_eq!((ew, eh), (256, 256));
+    assert_eq!(empty_rgba.len(), 256 * 256 * 4);
+
+    let mirrored_script = r#"
+        const mat = new THREE.MeshStandardMaterial({ color: 0x22c55e, side: THREE.FrontSide });
+        const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+        box.name = 'MirroredNonUniformBox';
+        box.scale.set(-2.0, 0.4, 1.5);
+        box.position.set(0, 0.2, 0);
+        scene.add(box);
+    "#;
+    let mirrored_scene = validate_three_script(mirrored_script).expect("mirrored script");
+    let mirrored_rgba = render_viewport_rgba(
+        &mirrored_scene,
+        128,
+        128,
+        RenderViewMode::Camera,
+        false,
+        true,
+        Some("MIRRORED [100%]!"),
+    );
+    let green_pixels = mirrored_rgba
+        .chunks_exact(4)
+        .filter(|px| px[1] > 100 && px[1] > px[0].saturating_add(30))
+        .count();
+    assert!(
+        green_pixels > 50,
+        "Mirrored single-sided box should still render front faces when det < 0, got {} green pixels",
+        green_pixels
+    );
+}
+
+#[test]
+fn test_phase4_temporal_animation_interactivity_and_sim_runner() {
+    use three_live_compiler::{
+        evaluate_temporal_keyframes, simulate_scenario_from_source, SimAction,
+    };
+
+    let scenario_script = r#"
+        const player = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 1.0, 0.6),
+            new THREE.MeshStandardMaterial({ color: 0x3b82f6 })
+        );
+        player.name = 'hero';
+        player.position.set(0, 0.5, 2.0);
+        player.userData.xr = {
+            character: { moveSpeed: 4.0, jumpImpulse: 5.0 },
+            integrity: { hp: 100, maxHp: 100, group: 'player' },
+            audioCues: { onSpawn: 'spawn.wav', onMove: 'step.wav', onJump: 'jump.wav' },
+            objective: { id: 'reach_crystal', kind: 'reach', target: 'crystal', winOnComplete: true }
+        };
+        scene.add(player);
+
+        const crystal = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.5, 0.5),
+            new THREE.MeshStandardMaterial({ color: 0x10b981 })
+        );
+        crystal.name = 'crystal';
+        crystal.position.set(0, 0.25, 0.0);
+        crystal.userData.xr = {
+            explode: { direction: [0, 1, 0], distance: 1.0, layer: 2.0 }
+        };
+        crystal.userData.interactivity = {
+            onSelect: [
+                { action: 'interpolate', property: 'position', to: [0, 1.25, 0], duration: 0.5 },
+                { action: 'sendEvent', eventId: 'crystal_activated' }
+            ]
+        };
+        scene.add(crystal);
+
+        const beacon = new THREE.Mesh(
+            new THREE.SphereGeometry(0.3, 12, 8),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b })
+        );
+        beacon.name = 'beacon';
+        beacon.position.set(1.5, 0.5, 0.0);
+        beacon.userData.xr = {
+            orbit: { radius: 1.5, speed: 2.0, height: 0.5, target: [0, 0.5, 0], faceCenter: true }
+        };
+        beacon.userData.interactivity = {
+            onReceive: { eventId: 'crystal_activated', action: 'toggleVisibility' }
+        };
+        scene.add(beacon);
+
+        function animate(t) {
+            crystal.rotation.y = t * 1.5;
+        }
+    "#;
+
+    let actions = vec![
+        SimAction {
+            at: 0.1,
+            action_type: "select".to_string(),
+            target: Some("crystal".to_string()),
+            factor: 1.0,
+            direction: None,
+            dx: 0.0,
+            dz: 0.0,
+            duration: None,
+            jump: false,
+            event_id: None,
+            amount: None,
+        },
+        SimAction {
+            at: 0.2,
+            action_type: "explode".to_string(),
+            target: None,
+            factor: 0.5,
+            direction: None,
+            dx: 0.0,
+            dz: 0.0,
+            duration: None,
+            jump: false,
+            event_id: None,
+            amount: None,
+        },
+        SimAction {
+            at: 0.3,
+            action_type: "moveCharacter".to_string(),
+            target: Some("hero".to_string()),
+            factor: 1.0,
+            direction: Some([0.0, 0.0, -1.0]),
+            dx: 0.0,
+            dz: -1.0,
+            duration: Some(0.6),
+            jump: true,
+            event_id: None,
+            amount: None,
+        },
+    ];
+
+    let (report, snapshots) = simulate_scenario_from_source(
+        scenario_script.as_bytes(),
+        false,
+        1.2,
+        &actions,
+        &[0, 30, 72],
+    )
+    .expect("Simulation should succeed");
+
+    assert_eq!(report.ticks_simulated, 72);
+    assert_eq!(snapshots.len(), 3);
+    assert_eq!(
+        report.scenario_state, "victory",
+        "Expected hero to reach crystal and complete reach_crystal objective, got {:?}",
+        report
+    );
+    assert!(report.completed_objectives.contains(&"reach_crystal".to_string()));
+    assert!(
+        report.triggered_events.iter().any(|e| e.contains("onReceive:toggleVisibility:beacon")),
+        "Expected sendEvent -> onReceive chain to toggle beacon visibility: {:?}",
+        report.triggered_events
+    );
+    assert!(report.audio_cues_fired.iter().any(|c| c.contains("hero:onJump")));
+
+    let crystal_body = report.bodies.iter().find(|b| b.name == "crystal").unwrap();
+    // Initial y=0.25 -> interpolated to 1.25 + explode(0.5 * 1.0 * 2.0 = +1.0) = 2.25
+    assert!(
+        crystal_body.final_translation[1] > 2.0,
+        "Expected crystal y > 2.0 after interpolate + explode, got {:?}",
+        crystal_body.final_translation
+    );
+    let beacon_body = report.bodies.iter().find(|b| b.name == "beacon").unwrap();
+    assert!(!beacon_body.visible, "Beacon should be toggled hidden via onReceive");
+
+    let keyframes =
+        evaluate_temporal_keyframes(scenario_script.as_bytes(), false, 4, 1.0, Some("crystal"))
+            .expect("Temporal keyframes should evaluate");
+    assert_eq!(keyframes.len(), 4);
+
+    // Phase 4 Audit:
+    // 1. Canonical xr-sim-schema.ts `pickup` objective on target mesh awards `amount` score & hides
+    //    coin
+    // 2. Multi-objective `winOnComplete` waits for both `pickup` and `destroyAll` before `victory`
+    // 3. Circular `sendEvent -> onReceive -> sendEvent` loop terminates via `MAX_EVENT_CHAIN_DEPTH`
+    // 4. `.glb` round-trip simulation via `simulate_scenario_from_source(..., is_glb: true, ...)`
+    let audit_sim_script = r#"
+        const player = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 1.0, 0.6),
+            new THREE.MeshStandardMaterial({ color: 0x3b82f6 })
+        );
+        player.name = 'hero';
+        player.position.set(0, 0.5, 0.0);
+        player.userData.xr = {
+            character: { speed: 4.0 },
+            objective: { id: 'defeat_turret', kind: 'destroyAll', target: 'enemies', winOnComplete: true }
+        };
+        scene.add(player);
+
+        const coin = new THREE.Mesh(
+            new THREE.SphereGeometry(0.25, 8, 8),
+            new THREE.MeshStandardMaterial({ color: 0xfacc15 })
+        );
+        coin.name = 'gold_coin';
+        coin.position.set(0.5, 0.5, 0.0);
+        coin.userData.xr = {
+            objective: { type: 'pickup', tag: 'collect_coin', amount: 50, radius: 1.0, required: true },
+            audioCues: { onCollect: 'coin.wav' }
+        };
+        scene.add(coin);
+
+        const turret = new THREE.Mesh(
+            new THREE.BoxGeometry(0.8, 0.8, 0.8),
+            new THREE.MeshStandardMaterial({ color: 0xef4444 })
+        );
+        turret.name = 'turret';
+        turret.position.set(4.0, 0.4, 0.0);
+        turret.userData.xr = {
+            agent: { mode: 'patrol' },
+            integrity: { hp: 40, maxHp: 40, group: 'enemies', scoreValue: 100 }
+        };
+        turret.userData.interactivity = {
+            onReceive: { eventId: 'loop_ping', action: 'sendEvent', eventId: 'loop_pong' }
+        };
+        scene.add(turret);
+
+        const relay = new THREE.Mesh(
+            new THREE.BoxGeometry(0.2, 0.2, 0.2),
+            new THREE.MeshStandardMaterial({ color: 0xffffff })
+        );
+        relay.name = 'relay';
+        relay.userData.interactivity = {
+            onReceive: { eventId: 'loop_pong', action: 'sendEvent', eventId: 'loop_ping' }
+        };
+        scene.add(relay);
+    "#;
+
+    let audit_actions = vec![
+        SimAction {
+            at: 0.05,
+            action_type: "sendEvent".to_string(),
+            target: None,
+            factor: 1.0,
+            direction: None,
+            dx: 0.0,
+            dz: 0.0,
+            duration: None,
+            jump: false,
+            event_id: Some("loop_ping".to_string()),
+            amount: None,
+        },
+        SimAction {
+            at: 0.1,
+            action_type: "damage".to_string(),
+            target: Some("turret".to_string()),
+            factor: 1.0,
+            direction: None,
+            dx: 0.0,
+            dz: 0.0,
+            duration: None,
+            jump: false,
+            event_id: None,
+            amount: Some(25.0),
+        },
+        SimAction {
+            at: 0.2,
+            action_type: "damage".to_string(),
+            target: Some("turret".to_string()),
+            factor: 1.0,
+            direction: None,
+            dx: 0.0,
+            dz: 0.0,
+            duration: None,
+            jump: false,
+            event_id: None,
+            amount: Some(25.0),
+        },
+    ];
+
+    let (audit_report, _) =
+        simulate_scenario_from_source(audit_sim_script.as_bytes(), false, 0.5, &audit_actions, &[])
+            .expect("Audit simulation should succeed without infinite recursion");
+    assert_eq!(audit_report.scenario_state, "victory");
+    assert_eq!(audit_report.score, 150, "50 from coin pickup + 100 from turret scoreValue");
+    assert!(audit_report.completed_objectives.contains(&"collect_coin".to_string()));
+    assert!(audit_report.completed_objectives.contains(&"defeat_turret".to_string()));
+    let coin_body = audit_report.bodies.iter().find(|b| b.name == "gold_coin").unwrap();
+    assert!(!coin_body.visible, "Collected pickup coin should be hidden");
+    let turret_body = audit_report.bodies.iter().find(|b| b.name == "turret").unwrap();
+    assert!(turret_body.destroyed, "Turret should be destroyed after two 25-HP hits");
+
+    // Verify .glb simulation via `is_glb: true`
+    let glb_bytes = transcode_three_to_glb(scenario_script).expect("scenario_script to GLB");
+    let (glb_sim_report, _) =
+        simulate_scenario_from_source(&glb_bytes, true, 0.5, &actions[0..2], &[0, 30])
+            .expect("GLB simulation should succeed");
+    assert_eq!(glb_sim_report.ticks_simulated, 30);
+    assert_eq!(glb_sim_report.explode_factor, 0.5);
+}

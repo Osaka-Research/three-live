@@ -988,3 +988,338 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
 
     Ok(glb)
 }
+
+/// Parses a binary glTF 2.0 (`.glb`) container into a [`SceneGraph`] for spatial linting
+/// and headless rasterization.
+pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
+    use crate::scene::{Material3D, Mesh3D, SceneNode};
+
+    if glb.len() < 20 {
+        return Err("GLB buffer too short (< 20 bytes)".to_string());
+    }
+    let magic = u32::from_le_bytes([glb[0], glb[1], glb[2], glb[3]]);
+    if magic != GLB_MAGIC {
+        return Err("Invalid GLB magic header (expected 'glTF')".to_string());
+    }
+    let version = u32::from_le_bytes([glb[4], glb[5], glb[6], glb[7]]);
+    if version != GLB_VERSION {
+        return Err(format!("Unsupported GLB version {} (expected 2)", version));
+    }
+
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let json_type = u32::from_le_bytes([glb[16], glb[17], glb[18], glb[19]]);
+    if json_type != CHUNK_TYPE_JSON {
+        return Err("GLB chunk 0 is not a JSON chunk".to_string());
+    }
+    let json_end = 20usize
+        .checked_add(json_len)
+        .filter(|&end| end <= glb.len())
+        .ok_or_else(|| "GLB JSON chunk length out of bounds".to_string())?;
+
+    let gltf: serde_json::Value = serde_json::from_slice(&glb[20..json_end])
+        .map_err(|e| format!("Invalid GLB JSON chunk: {}", e))?;
+
+    let mut bin_slice: &[u8] = &[];
+    if json_end + 8 <= glb.len() {
+        let bin_len = u32::from_le_bytes([
+            glb[json_end],
+            glb[json_end + 1],
+            glb[json_end + 2],
+            glb[json_end + 3],
+        ]) as usize;
+        let bin_type = u32::from_le_bytes([
+            glb[json_end + 4],
+            glb[json_end + 5],
+            glb[json_end + 6],
+            glb[json_end + 7],
+        ]);
+        if bin_type == CHUNK_TYPE_BIN {
+            let bin_start = json_end + 8;
+            let bin_end = bin_start.saturating_add(bin_len).min(glb.len());
+            bin_slice = &glb[bin_start..bin_end];
+        }
+    }
+
+    let buffer_views = gltf["bufferViews"].as_array().cloned().unwrap_or_default();
+    let accessors = gltf["accessors"].as_array().cloned().unwrap_or_default();
+
+    let read_acc_f32 = |acc_idx: usize, comps: usize| -> Vec<f32> {
+        let Some(acc) = accessors.get(acc_idx) else {
+            return Vec::new();
+        };
+        let Some(bv_idx) = acc["bufferView"].as_u64().map(|v| v as usize) else {
+            return Vec::new();
+        };
+        let Some(bv) = buffer_views.get(bv_idx) else {
+            return Vec::new();
+        };
+        let count = acc["count"].as_u64().unwrap_or(0) as usize;
+        let bv_offset = bv["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let acc_offset = acc["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let stride = bv["byteStride"].as_u64().map(|v| v as usize).unwrap_or(comps * 4);
+        let start = bv_offset.saturating_add(acc_offset);
+        let mut out = Vec::with_capacity(count * comps);
+        for i in 0..count {
+            let elem_off = start.saturating_add(i.saturating_mul(stride));
+            if elem_off.saturating_add(comps * 4) > bin_slice.len() {
+                break;
+            }
+            for c in 0..comps {
+                let o = elem_off + c * 4;
+                let v = f32::from_le_bytes([
+                    bin_slice[o],
+                    bin_slice[o + 1],
+                    bin_slice[o + 2],
+                    bin_slice[o + 3],
+                ]);
+                out.push(sanitize_finite(v, 0.0));
+            }
+        }
+        out
+    };
+
+    let read_acc_u32 = |acc_idx: usize| -> Vec<u32> {
+        let Some(acc) = accessors.get(acc_idx) else {
+            return Vec::new();
+        };
+        let Some(bv_idx) = acc["bufferView"].as_u64().map(|v| v as usize) else {
+            return Vec::new();
+        };
+        let Some(bv) = buffer_views.get(bv_idx) else {
+            return Vec::new();
+        };
+        let count = acc["count"].as_u64().unwrap_or(0) as usize;
+        let comp_type = acc["componentType"].as_u64().unwrap_or(5125) as u32;
+        let bv_offset = bv["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let acc_offset = acc["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let start = bv_offset.saturating_add(acc_offset);
+        let mut out = Vec::with_capacity(count);
+        match comp_type {
+            5121 => {
+                for i in 0..count {
+                    if let Some(&b) = bin_slice.get(start + i) {
+                        out.push(b as u32);
+                    }
+                }
+            }
+            5123 => {
+                for i in 0..count {
+                    let o = start + i * 2;
+                    if o + 2 <= bin_slice.len() {
+                        out.push(u16::from_le_bytes([bin_slice[o], bin_slice[o + 1]]) as u32);
+                    }
+                }
+            }
+            _ => {
+                for i in 0..count {
+                    let o = start + i * 4;
+                    if o + 4 <= bin_slice.len() {
+                        out.push(u32::from_le_bytes([
+                            bin_slice[o],
+                            bin_slice[o + 1],
+                            bin_slice[o + 2],
+                            bin_slice[o + 3],
+                        ]));
+                    }
+                }
+            }
+        }
+        out
+    };
+
+    // 1. Materials
+    let mut materials = Vec::new();
+    if let Some(mats) = gltf["materials"].as_array() {
+        for (i, m) in mats.iter().enumerate() {
+            let name = m["name"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Material_{}", i));
+            let pbr = &m["pbrMetallicRoughness"];
+            let bc = pbr["baseColorFactor"]
+                .as_array()
+                .map(|a| {
+                    [
+                        a.first().and_then(|v| v.as_f64()).unwrap_or(0.8) as f32,
+                        a.get(1).and_then(|v| v.as_f64()).unwrap_or(0.8) as f32,
+                        a.get(2).and_then(|v| v.as_f64()).unwrap_or(0.8) as f32,
+                        a.get(3).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                    ]
+                })
+                .unwrap_or([0.8, 0.8, 0.8, 1.0]);
+            let metallic = pbr["metallicFactor"].as_f64().unwrap_or(0.1) as f32;
+            let roughness = pbr["roughnessFactor"].as_f64().unwrap_or(0.5) as f32;
+            let double_sided = m["doubleSided"].as_bool().unwrap_or(true);
+            materials.push(Material3D {
+                name,
+                base_color: bc,
+                metallic,
+                roughness,
+                double_sided,
+                ..Default::default()
+            });
+        }
+    }
+
+    // 2. Meshes
+    let mut meshes = Vec::new();
+    if let Some(gltf_meshes) = gltf["meshes"].as_array() {
+        for (i, gm) in gltf_meshes.iter().enumerate() {
+            let name =
+                gm["name"].as_str().map(|s| s.to_string()).unwrap_or_else(|| format!("Mesh_{}", i));
+            let Some(prim) = gm["primitives"].as_array().and_then(|p| p.first()) else {
+                meshes.push(Mesh3D {
+                    name,
+                    positions: Vec::new(),
+                    normals: Vec::new(),
+                    uvs: Vec::new(),
+                    indices: Vec::new(),
+                    material_index: None,
+                    variant_mappings: None,
+                    xr_traits: None,
+                    xr_normalized: None,
+                    xr_scenecore: None,
+                    xr_hubs: None,
+                    translation: [0.0; 3],
+                    scale: [1.0; 3],
+                });
+                continue;
+            };
+            let pos_flat = prim["attributes"]["POSITION"]
+                .as_u64()
+                .map(|idx| read_acc_f32(idx as usize, 3))
+                .unwrap_or_default();
+            let mut positions = Vec::with_capacity(pos_flat.len() / 3);
+            for chunk in pos_flat.as_chunks::<3>().0 {
+                positions.push([chunk[0], chunk[1], chunk[2]]);
+            }
+
+            let norm_flat = prim["attributes"]["NORMAL"]
+                .as_u64()
+                .map(|idx| read_acc_f32(idx as usize, 3))
+                .unwrap_or_default();
+            let mut normals = Vec::with_capacity(norm_flat.len() / 3);
+            for chunk in norm_flat.as_chunks::<3>().0 {
+                normals.push([chunk[0], chunk[1], chunk[2]]);
+            }
+
+            let uv_flat = prim["attributes"]["TEXCOORD_0"]
+                .as_u64()
+                .map(|idx| read_acc_f32(idx as usize, 2))
+                .unwrap_or_default();
+            let mut uvs = Vec::with_capacity(uv_flat.len() / 2);
+            for chunk in uv_flat.as_chunks::<2>().0 {
+                uvs.push([chunk[0], chunk[1]]);
+            }
+
+            let indices =
+                prim["indices"].as_u64().map(|idx| read_acc_u32(idx as usize)).unwrap_or_default();
+            let material_index = prim["material"].as_u64().map(|idx| idx as usize);
+
+            meshes.push(Mesh3D {
+                name,
+                positions,
+                normals,
+                uvs,
+                indices,
+                material_index,
+                variant_mappings: None,
+                xr_traits: None,
+                xr_normalized: None,
+                xr_scenecore: None,
+                xr_hubs: None,
+                translation: [0.0; 3],
+                scale: [1.0; 3],
+            });
+        }
+    }
+
+    // 3. Nodes (reconstruct parent indices in pre-order)
+    let mut nodes = Vec::new();
+    if let Some(gltf_nodes) = gltf["nodes"].as_array() {
+        let mut parents: Vec<Option<usize>> = vec![None; gltf_nodes.len()];
+        for (p_idx, gn) in gltf_nodes.iter().enumerate() {
+            if let Some(children) = gn["children"].as_array() {
+                for c in children {
+                    if let Some(c_idx) = c.as_u64().map(|v| v as usize) {
+                        if c_idx < gltf_nodes.len() && c_idx > p_idx {
+                            parents[c_idx] = Some(p_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (i, gn) in gltf_nodes.iter().enumerate() {
+            let name = gn["name"].as_str().unwrap_or("").to_string();
+            let (translation, rotation, scale) = if let Some(mat_arr) = gn["matrix"].as_array() {
+                let mut m = [0.0f32; 16];
+                for (k, v) in mat_arr.iter().take(16).enumerate() {
+                    m[k] = v.as_f64().unwrap_or(0.0) as f32;
+                }
+                decompose_mat4(&m)
+            } else {
+                let t = gn["translation"]
+                    .as_array()
+                    .map(|a| {
+                        [
+                            a.first().and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                        ]
+                    })
+                    .unwrap_or([0.0, 0.0, 0.0]);
+                let r = gn["rotation"]
+                    .as_array()
+                    .map(|a| {
+                        [
+                            a.first().and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                            a.get(3).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                        ]
+                    })
+                    .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                let s = gn["scale"]
+                    .as_array()
+                    .map(|a| {
+                        [
+                            a.first().and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                            a.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                            a.get(2).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
+                        ]
+                    })
+                    .unwrap_or([1.0, 1.0, 1.0]);
+                (t, r, s)
+            };
+
+            let mesh = gn["mesh"].as_u64().map(|m| m as usize).filter(|&m| m < meshes.len());
+            let xr_normalized = gn["extras"]["xr"].as_object().map(|_| gn["extras"]["xr"].clone());
+            nodes.push(SceneNode {
+                name,
+                parent: parents[i],
+                translation,
+                rotation,
+                scale,
+                mesh,
+                xr_normalized,
+                ..Default::default()
+            });
+        }
+    }
+
+    Ok(SceneGraph {
+        meshes,
+        materials,
+        lights: Vec::new(),
+        camera: None,
+        interactivity: gltf["extensions"]["KHR_interactivity"]
+            .as_object()
+            .map(|_| gltf["extensions"]["KHR_interactivity"].clone()),
+        variants: gltf["extensions"]["KHR_materials_variants"]
+            .as_object()
+            .map(|_| gltf["extensions"]["KHR_materials_variants"].clone()),
+        nodes,
+        diagnostics: Vec::new(),
+    })
+}
