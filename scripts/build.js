@@ -539,6 +539,14 @@ function buildThreeLive() {
   fs.copyFileSync(sandboxHtmlSrc, path.join(tlDist, 'three-live-sandbox.html'));
   fs.copyFileSync(
       sandboxHtmlSrc, path.join(DIST_DIR, 'three-live-sandbox.html'));
+  const cliLauncherSrc = path.join(ROOT_DIR, 'bin/three-live-cli.js');
+  if (fs.existsSync(cliLauncherSrc)) {
+    const cliLauncherDst = path.join(tlDist, 'three-live-cli.js');
+    fs.copyFileSync(cliLauncherSrc, cliLauncherDst);
+    try {
+      fs.chmodSync(cliLauncherDst, 0o755);
+    } catch (_) {}
+  }
   fs.copyFileSync(
       path.join(tlDist, 'three-live.min.js'),
       path.join(DIST_DIR, 'three-live.min.js'));

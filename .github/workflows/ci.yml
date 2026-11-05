@@ -55,6 +55,11 @@ jobs:
       - name: Run test suites
         run: npm test
 
+      - name: Verify npx three-live-cli (GitHub Release download without Rust)
+        run: |
+          npx --no-install three-live-cli --help
+          npx --no-install three-live-cli --locate-only
+
       - name: Verify bundle size limits
         if: runner.os == 'Linux'
         run: |
@@ -141,6 +146,11 @@ jobs:
 
       - name: Build release CLI binary
         run: cargo build --manifest-path compiler/Cargo.toml --release --bin three-live-cli
+
+      - name: Verify npx three-live-cli (local release binary discovery)
+        run: |
+          npx --no-install three-live-cli --locate-only
+          npx --no-install three-live-cli --help
 
   test-android:
     name: Android Library Suite (Ubuntu, Java 17)
