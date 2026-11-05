@@ -23,6 +23,7 @@
 //   outline pass around `selected-mesh` (when `outline-selected` is set) or
 //   any node declaring `userData.xr.outline`.
 
+import {createProgram} from '../gl-program';
 import {
   HOST_BLOOM_DEFAULT_RADIUS,
   HOST_BLOOM_DEFAULT_THRESHOLD,
@@ -247,43 +248,6 @@ export function computeOutlineClipOffset(
   return [(nx / len) * (scale / vw), (ny / len) * (scale / vh)];
 }
 
-function compileProgram(
-  gl: WebGL2RenderingContext,
-  vsSrc: string,
-  fsSrc: string,
-): WebGLProgram | null {
-  const prog = gl.createProgram();
-  if (!prog) return null;
-  const shaders: WebGLShader[] = [];
-  for (const [type, src] of [
-    [gl.VERTEX_SHADER, vsSrc],
-    [gl.FRAGMENT_SHADER, fsSrc],
-  ] as const) {
-    const sh = gl.createShader(type);
-    if (!sh) continue;
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    gl.attachShader(prog, sh);
-    shaders.push(sh);
-  }
-  gl.linkProgram(prog);
-  // Shaders are no longer needed once linked; free them so `deleteProgram`
-  // in `onDestroy` releases everything.
-  for (const sh of shaders) {
-    gl.detachShader?.(prog, sh);
-    gl.deleteShader?.(sh);
-  }
-  if (
-    shaders.length < 2 ||
-    (typeof gl.getProgramParameter === 'function' &&
-      !gl.getProgramParameter(prog, gl.LINK_STATUS))
-  ) {
-    gl.deleteProgram?.(prog);
-    return null;
-  }
-  return prog;
-}
-
 /** Contexts whose postprocessing shaders failed to link (pass disabled). */
 const failedPostprocContexts = new WeakSet<WebGL2RenderingContext>();
 
@@ -300,9 +264,9 @@ function getPostprocContext(
   }
   if (failedPostprocContexts.has(gl) || gl.isContextLost?.()) return null;
 
-  const outlineProg = compileProgram(gl, VS_OUTLINE, FS_OUTLINE);
-  const downProg = compileProgram(gl, VS_FULLSCREEN, FS_KAWASE_DOWN);
-  const upProg = compileProgram(gl, VS_FULLSCREEN, FS_KAWASE_UP);
+  const outlineProg = createProgram(gl, VS_OUTLINE, FS_OUTLINE, false);
+  const downProg = createProgram(gl, VS_FULLSCREEN, FS_KAWASE_DOWN, false);
+  const upProg = createProgram(gl, VS_FULLSCREEN, FS_KAWASE_UP, false);
   if (!outlineProg || !downProg || !upProg) {
     for (const p of [outlineProg, downProg, upProg]) {
       if (p) gl.deleteProgram(p);

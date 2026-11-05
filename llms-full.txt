@@ -2007,7 +2007,10 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     projecting EWA 2D elliptical splat axes (`projectSplatCovariance2D`),
     evaluating view-dependent Spherical Harmonics degrees 1–3
     (`evaluateSplatSH`), and sorting splats back-to-front with a 16-bit counting
-    sort on each frame.
+    sort with cached unchanged depth orders. Moving views refresh every fourth
+    draw cycle; parallel stereo eyes with identical depth rows share one GPU
+    order, while divergent eyes retain independent orders (at most two).
+    Spherical-harmonic color refresh remains independent of index uploads.
 *   **`spatial-measure` (`xr-live-spatial-measure`):** Renders live `W × H × D`
     bounding-box dimension callout bars and procedural 3D vector-glyph labels
     (`userData.xr.dimensions` or `spatial-measure="bounds"`), plus an

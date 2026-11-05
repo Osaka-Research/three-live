@@ -145,6 +145,7 @@ export interface ViewOptions {
 // 1. Minimal Self-Contained Matrix Math
 // =========================================================================
 
+import {createProgram} from './gl-program';
 import {
   applyTextureTransform,
   readAccessorAsFloat32,
@@ -693,41 +694,6 @@ precision highp float;
 uniform vec4 uColorId;
 out vec4 fragColor;
 void main(){fragColor=uColorId;}`;
-
-function createShader(
-  gl: WebGL2RenderingContext,
-  type: number,
-  source: string,
-): WebGLShader {
-  const shader = gl.createShader(type)!;
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    const err = gl.getShaderInfoLog(shader);
-    gl.deleteShader(shader);
-    throw new Error(`Shader compile error: ${err}`);
-  }
-  return shader;
-}
-
-function createProgram(
-  gl: WebGL2RenderingContext,
-  vsSrc: string,
-  fsSrc: string,
-): WebGLProgram {
-  const vs = createShader(gl, gl.VERTEX_SHADER, vsSrc);
-  const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSrc);
-  const prog = gl.createProgram()!;
-  gl.attachShader(prog, vs);
-  gl.attachShader(prog, fs);
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-    const err = gl.getProgramInfoLog(prog);
-    gl.deleteProgram(prog);
-    throw new Error(`Program link error: ${err}`);
-  }
-  return prog;
-}
 
 function getUniforms<T extends string>(
   gl: WebGL2RenderingContext,
@@ -2089,8 +2055,8 @@ export class ThreeView {
   private initGlState(): void {
     const gl = this.gl;
     const spec = renderShaderSpec();
-    this.renderProg = createProgram(gl, VS_RENDER, spec.fs);
-    this.pickProg = createProgram(gl, VS_PICK, FS_PICK);
+    this.renderProg = createProgram(gl, VS_RENDER, spec.fs)!;
+    this.pickProg = createProgram(gl, VS_PICK, FS_PICK)!;
     this.uRender = getUniforms(gl, this.renderProg, spec.uniforms);
     this.uPick = getUniforms(gl, this.pickProg, ['uMVP', 'uColorId']);
     this.setupPickingFbo();
@@ -4235,7 +4201,10 @@ export class ThreeView {
     }
 
     for (const plugin of registeredPlugins) {
-      plugin.onAfterRender?.(gl, this, vp);
+      plugin.onAfterRender?.(
+        gl, this, vp, xrOverride?.eye ?? 'none',
+        [vpX, vpY, vpW, vpH], xrOverride?.projMatrix ?? this.projMatrix,
+      );
     }
   }
 

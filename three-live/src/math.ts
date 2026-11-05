@@ -222,11 +222,14 @@ export function mat4FromRotationTranslationScale(
 
 /**
  * Computes a 3x3 normal matrix (inverse transpose of upper-left 3x3) from a 4x4 matrix.
+ * A positive minDeterminant also rejects nonfinite and near-singular matrices,
+ * leaving the caller-provided fallback in out. Zero preserves exact-singular behavior.
  */
-export function mat3NormalFromMat4(
-  out: Float32Array,
-  a: Float32Array,
-): Float32Array {
+export function mat3NormalFromMat4<T extends Float32Array | Float64Array>(
+  out: T,
+  a: ArrayLike<number>,
+  minDeterminant = 0,
+): T {
   const a00 = a[0];
   const a01 = a[1];
   const a02 = a[2];
@@ -242,7 +245,8 @@ export function mat3NormalFromMat4(
   const b21 = a21 * a10 - a11 * a20;
 
   let det = a00 * b01 + a01 * b11 + a02 * b21;
-  if (!det) return out;
+  if (!det || (minDeterminant > 0 &&
+      (!Number.isFinite(det) || Math.abs(det) <= minDeterminant))) return out;
   det = 1.0 / det;
 
   out[0] = b01 * det;

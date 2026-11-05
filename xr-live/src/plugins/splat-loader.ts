@@ -24,7 +24,8 @@
  * axis of each Gaussian).
  */
 
-import {mat4Multiply} from '../../../three-live/src/math';
+import {createProgram} from '../../../three-live/src/gl-program';
+import {mat3NormalFromMat4, mat4Multiply} from '../../../three-live/src/math';
 import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
 import {getMeshXRTraits} from '../xr-traits';
 import {cacheXRFrame, type PluginViewer, resolveProjection} from './common';
@@ -137,8 +138,10 @@ export function parseSplat(buffer: ArrayBuffer | Uint8Array): SplatData {
       out.scales[i * 3 + k] = Number.isFinite(s) ? Math.abs(s) : 0;
     }
     out.colors.set(bytes.subarray(b + 24, b + 28), i * 4);
-    const q = (j: number): number => (bytes[b + 28 + j] - 128) / 128;
-    out.rotations.set([q(1), q(2), q(3), q(0)], i * 4);
+    // The packed quaternion is wxyz; store xyzw without per-splat arrays.
+    for (let k = 0; k < 4; k++) {
+      out.rotations[i * 4 + k] = (bytes[b + 28 + ((k + 1) & 3)] - 128) / 128;
+    }
     normalizeQuat(out.rotations, i * 4);
   }
   return out;
@@ -155,26 +158,10 @@ export async function gunzip(
     throw new Error('splat-loader: DecompressionStream unavailable');
   }
   const stream = new Blob([bytes]).stream().pipeThrough(new DS('gzip'));
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const {done, value} = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new Error('splat-loader: decompressed .spz exceeds size limit');
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const c of chunks) {
-    out.set(c, o);
-    o += c.byteLength;
-  }
-  return out;
+  return readStreamCapped(
+    stream.getReader(), maxBytes,
+    'splat-loader: decompressed .spz exceeds size limit',
+  );
 }
 
 /**
@@ -228,6 +215,8 @@ export function parseSpzPayload(bytes: Uint8Array): SplatData {
   const scaleStart = colorStart + count * 3;
   const rotStart = scaleStart + count * 3;
   const shStart = rotStart + count * rotBytes;
+  // Reuse the v3 decode scratch; all four components are overwritten per splat.
+  const q = [0, 0, 0, 0];
   for (let i = 0; i < count; i++) {
     for (let k = 0; k < 3; k++) {
       const dc = (bytes[colorStart + i * 3 + k] / 255 - 0.5) / 0.15;
@@ -255,7 +244,6 @@ export function parseSpzPayload(bytes: Uint8Array): SplatData {
           (bytes[r + 3] << 24)) >>>
         0;
       const largest = comp >>> 30;
-      const q = [0, 0, 0, 0];
       let sum = 0;
       for (let k = 3; k >= 0; k--) {
         if (k === largest) continue;
@@ -292,15 +280,11 @@ export function evaluateSplatSH(
   dirY: number,
   dirZ: number,
 ): [number, number, number] {
-  const baseR = data.colors[index * 4] / 255;
-  const baseG = data.colors[index * 4 + 1] / 255;
-  const baseB = data.colors[index * 4 + 2] / 255;
   const deg = data.shDegree ?? 0;
   const basisCount = shBasisCountForDegree(deg);
   const sh = data.sh;
   if (
-    deg <= 0 ||
-    basisCount <= 0 ||
+    basisCount === 0 ||
     !sh ||
     index < 0 ||
     index >= data.count ||
@@ -317,9 +301,9 @@ export function evaluateSplatSH(
   const y = dirY / len;
   const z = dirZ / len;
   const offset = index * basisCount * 3;
-  let r = baseR;
-  let g = baseG;
-  let b = baseB;
+  let r = data.colors[index * 4] / 255;
+  let g = data.colors[index * 4 + 1] / 255;
+  let b = data.colors[index * 4 + 2] / 255;
 
   const addBasis = (basisIdx: number, weight: number) => {
     const o = offset + basisIdx * 3;
@@ -328,11 +312,10 @@ export function evaluateSplatSH(
     b += weight * sh[o + 2];
   };
 
-  if (deg >= 1) {
-    addBasis(0, -SH_C1 * y);
-    addBasis(1, SH_C1 * z);
-    addBasis(2, -SH_C1 * x);
-  }
+  // A nonzero basis count guarantees a validated degree of 1, 2 or 3.
+  addBasis(0, -SH_C1 * y);
+  addBasis(1, SH_C1 * z);
+  addBasis(2, -SH_C1 * x);
   if (deg >= 2) {
     const xx = x * x;
     const yy = y * y;
@@ -573,6 +556,15 @@ async function readCapped(
     }
     return buf;
   }
+  return readStreamCapped(reader, maxBytes, 'splat-loader: file too large');
+}
+
+/** Collects byte streams without retaining data beyond the size limit. */
+async function readStreamCapped(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxBytes: number,
+  limitMessage: string,
+): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
@@ -581,7 +573,7 @@ async function readCapped(
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      throw new Error('splat-loader: file too large');
+      throw new Error(limitMessage);
     }
     chunks.push(value);
   }
@@ -637,7 +629,8 @@ export function createSplatSortScratch(count: number): SplatSortScratch {
  * Returns splat indices sorted back-to-front for a column-major
  * model-view-projection matrix, keyed on clip-space `w` (view distance along
  * the camera axis, valid for any perspective projection including per-eye XR
- * views) with a single-pass 16-bit counting sort.
+ * views), or clip-space z for orthographic views, with a single-pass
+ * 16-bit counting sort.
  */
 export function sortSplatsByDepth(
   data: Pick<SplatData, 'count' | 'positions'>,
@@ -647,15 +640,16 @@ export function sortSplatsByDepth(
 ): Uint32Array {
   const n = data.count;
   const p = data.positions;
+  const row = mvp[3] === 0 && mvp[7] === 0 && mvp[11] === 0 ? 2 : 3;
   const {depths, keys, counts} = scratch;
   let min = Infinity;
   let max = -Infinity;
   for (let i = 0; i < n; i++) {
     const w =
-      mvp[3] * p[i * 3] +
-      mvp[7] * p[i * 3 + 1] +
-      mvp[11] * p[i * 3 + 2] +
-      mvp[15];
+      mvp[row] * p[i * 3] +
+      mvp[4 + row] * p[i * 3 + 1] +
+      mvp[8 + row] * p[i * 3 + 2] +
+      mvp[12 + row];
     depths[i] = w;
     // Use the stored float32 value: a finite double can overflow to ±Infinity.
     const d = depths[i];
@@ -755,51 +749,15 @@ export function computeSplatViewColors(
   cameraWorldPos: ArrayLike<number>,
   out: Uint8Array,
 ): Uint8Array {
-  const [m0, m1, m2, m4, m5, m6, m8, m9, m10] = [
-    model[0],
-    model[1],
-    model[2],
-    model[4],
-    model[5],
-    model[6],
-    model[8],
-    model[9],
-    model[10],
-  ];
-  // Rows of inverse(M3) (= adjugate / det), mapping world -> local.
-  let i00 = m5 * m10 - m6 * m9;
-  let i01 = m8 * m6 - m4 * m10;
-  let i02 = m4 * m9 - m8 * m5;
-  let i10 = m9 * m2 - m1 * m10;
-  let i11 = m0 * m10 - m8 * m2;
-  let i12 = m8 * m1 - m0 * m9;
-  let i20 = m1 * m6 - m5 * m2;
-  let i21 = m4 * m2 - m0 * m6;
-  let i22 = m0 * m5 - m4 * m1;
-  const det = m0 * i00 + m1 * i01 + m2 * i02;
-  if (Math.abs(det) > 1e-12 && Number.isFinite(det)) {
-    i00 /= det;
-    i01 /= det;
-    i02 /= det;
-    i10 /= det;
-    i11 /= det;
-    i12 /= det;
-    i20 /= det;
-    i21 /= det;
-    i22 /= det;
-  } else {
-    [i00, i01, i02, i10, i11, i12, i20, i21, i22] = [
-      m0,
-      m1,
-      m2,
-      m4,
-      m5,
-      m6,
-      m8,
-      m9,
-      m10,
-    ];
-  }
+  // Normal-matrix storage is column-major inverse-transpose, which is also
+  // row-major inverse. Initialize the transpose fallback for singular models.
+  const inverse = new Float64Array([
+    model[0], model[1], model[2],
+    model[4], model[5], model[6],
+    model[8], model[9], model[10],
+  ]);
+  const [i00, i01, i02, i10, i11, i12, i20, i21, i22] =
+    mat3NormalFromMat4(inverse, model, 1e-12);
   const cx = cameraWorldPos[0];
   const cy = cameraWorldPos[1];
   const cz = cameraWorldPos[2];
@@ -826,20 +784,88 @@ export function computeSplatViewColors(
   return out;
 }
 
-function compile(
+interface SortedSplatView {
+  readonly buffer: WebGLBuffer;
+  readonly depth: Float32Array;
+  age: number;
+}
+
+/** Two eye slots reference up to two physical GPU orders. */
+interface SplatEye {
+  eye: string;
+  key: Float32Array;
+  order?: SortedSplatView;
+  /** Set only after a successful update; absent slots have not drawn. */
+  seen?: boolean;
+}
+
+function sameSplatDepth(a: Float32Array, b: Float32Array): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+
+/** Exact depth rows share an order, including during the moving-view cooldown. */
+function createSplatSortCache(
   gl: WebGL2RenderingContext,
-  type: number,
-  src: string,
-): WebGLShader | null {
-  const s = gl.createShader(type);
-  if (!s) return null;
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-    gl.deleteShader(s);
-    return null;
-  }
-  return s;
+  data: SplatData,
+) {
+  const target = gl.ELEMENT_ARRAY_BUFFER;
+  let current: SplatEye | undefined;
+  let previous: SplatEye | undefined;
+  const orders: SortedSplatView[] = [];
+  const order = new Uint32Array(data.count);
+  const scratch = createSplatSortScratch(data.count);
+  return {
+    update(matrix: Float32Array, eye: string): SortedSplatView | undefined {
+      const row = matrix[3] === 0 && matrix[7] === 0 && matrix[11] === 0 ? 2 : 3;
+      if (current?.eye !== eye) {
+        const next = previous?.eye === eye ? previous :
+          {eye, key: new Float32Array(4)};
+        previous = current;
+        current = next;
+      }
+      const view = current;
+      for (let i = 0; i < 4; i++) view.key[i] = matrix[i * 4 + row];
+      // Repeating an eye starts the next draw cycle. The second eye shares
+      // the first eye's cooldown instead of advancing it a second time.
+      if (view.seen && previous) previous.seen = false;
+      if (previous?.seen && previous.order && sameSplatDepth(previous.key, view.key)) {
+        view.order = previous.order;
+      } else {
+        // A first eye may update a shared buffer. A divergent second eye
+        // must split before writing, so it cannot replace the first eye's order.
+        if (!view.order || (previous?.seen && view.order === previous.order)) {
+          let storage = orders.find(o => o !== previous?.order);
+          if (!storage) {
+            const buffer = gl.createBuffer();
+            if (!buffer) return;
+            storage = {buffer, depth: new Float32Array(4).fill(NaN), age: 4};
+            orders.push(storage);
+            gl.bindBuffer(target, buffer);
+            gl.bufferData(target, order.byteLength, gl.DYNAMIC_DRAW);
+          }
+          view.order = storage;
+          storage.age = 4;
+        }
+        if (view.order.age < 4) view.order.age++;
+      }
+      const storage = view.order;
+      gl.bindBuffer(target, storage.buffer);
+      if (storage.age >= 4 && !sameSplatDepth(storage.depth, view.key)) {
+        sortSplatsByDepth(data, matrix, order, scratch);
+        gl.bufferSubData(target, 0, order);
+        storage.depth.set(view.key);
+        storage.age = 0;
+      }
+      view.seen = true;
+      return storage;
+    },
+    dispose(): void {
+      for (const view of orders.splice(0)) {
+        gl.deleteBuffer(view.buffer);
+      }
+      current = previous = undefined;
+    }
+  };
 }
 
 /** Uploads a splat cloud and draws it as sorted Gaussian point sprites. */
@@ -848,38 +874,23 @@ export class SplatRenderer {
   private vao: WebGLVertexArrayObject | null = null;
   private readonly buffers: WebGLBuffer[] = [];
   private colorBuffer: WebGLBuffer | null = null;
-  private indexBuffer: WebGLBuffer | null = null;
+  private readonly sorter: ReturnType<typeof createSplatSortCache>;
   private uMVP: WebGLUniformLocation | null = null;
   private uMV: WebGLUniformLocation | null = null;
   private uFocal: WebGLUniformLocation | null = null;
   private uUseAniso: WebGLUniformLocation | null = null;
   private uAntialias: WebGLUniformLocation | null = null;
-  private order: Uint32Array;
-  private readonly scratch: SplatSortScratch;
   private readonly mvp = new Float32Array(16);
   private shColors: Uint8Array | null = null;
-  private framesSinceSort = Infinity;
+  private framesSinceColor = Infinity;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
     readonly data: SplatData,
   ) {
-    this.order = new Uint32Array(data.count);
-    this.scratch = createSplatSortScratch(data.count);
-    const vs = compile(gl, gl.VERTEX_SHADER, VS);
-    const fs = compile(gl, gl.FRAGMENT_SHADER, FS);
-    if (!vs || !fs) return;
-    const prog = gl.createProgram();
+    this.sorter = createSplatSortCache(gl, data);
+    const prog = createProgram(gl, VS, FS, false);
     if (!prog) return;
-    gl.attachShader(prog, vs);
-    gl.attachShader(prog, fs);
-    gl.linkProgram(prog);
-    gl.deleteShader(vs);
-    gl.deleteShader(fs);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      gl.deleteProgram(prog);
-      return;
-    }
     this.program = prog;
     this.uMVP = gl.getUniformLocation(prog, 'uMVP');
     this.uMV = gl.getUniformLocation(prog, 'uMV');
@@ -935,13 +946,6 @@ export class SplatRenderer {
     attrib(2, radii, 1, gl.FLOAT, false);
     attrib(3, covA, 3, gl.FLOAT, false);
     attrib(4, covB, 3, gl.FLOAT, false);
-    this.indexBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-    gl.bufferData(
-      gl.ELEMENT_ARRAY_BUFFER,
-      this.order.byteLength,
-      gl.DYNAMIC_DRAW,
-    );
     gl.bindVertexArray(null);
   }
 
@@ -971,7 +975,8 @@ export class SplatRenderer {
   }
 
   /**
-   * Draws the cloud with world matrix `model` (re-sorting every 4th frame).
+   * Draws the cloud with cached depth orders; moving views refresh every fourth
+   * draw cycle. Parallel eyes share an order; divergent eyes use separate buffers.
    * Leaves the program, VAO, blend, and depth-mask state as the main renderer
    * expects: no VAO bound, blending disabled, depth writes enabled.
    */
@@ -982,12 +987,12 @@ export class SplatRenderer {
     modelView?: Float32Array | null,
     cameraPos?: ArrayLike<number> | null,
     highQualitySH = false,
+    eye: 'left' | 'right' | 'none' = 'none',
   ): void {
     const gl = this.gl;
     if (
       !this.program ||
       !this.vao ||
-      !this.indexBuffer ||
       this.data.count === 0
     ) {
       return;
@@ -997,10 +1002,12 @@ export class SplatRenderer {
     // Bind our VAO *before* touching ELEMENT_ARRAY_BUFFER: that binding is VAO
     // state, and the renderer leaves its last mesh VAO bound.
     gl.bindVertexArray(this.vao);
-    if (++this.framesSinceSort >= 4) {
-      sortSplatsByDepth(this.data, mvp, this.order, this.scratch);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-      gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, this.order);
+    if (!this.sorter.update(mvp, eye)) {
+      gl.bindVertexArray(null);
+      return;
+    }
+    // SH changes on lateral camera moves even when the depth order is cached.
+    if (++this.framesSinceColor >= 4) {
       if (highQualitySH && cameraPos) {
         this.updateViewColors(cameraPos, model);
       } else if (this.shColors && this.colorBuffer) {
@@ -1009,7 +1016,7 @@ export class SplatRenderer {
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.data.colors);
         this.shColors = null;
       }
-      this.framesSinceSort = 0;
+      this.framesSinceColor = 0;
     }
     gl.useProgram(this.program);
     gl.uniformMatrix4fv(this.uMVP, false, mvp);
@@ -1033,8 +1040,8 @@ export class SplatRenderer {
   /** Frees GPU resources. */
   dispose(): void {
     const gl = this.gl;
-    for (const b of this.buffers) gl.deleteBuffer(b);
-    if (this.indexBuffer) gl.deleteBuffer(this.indexBuffer);
+    for (const b of this.buffers.splice(0)) gl.deleteBuffer(b);
+    this.sorter.dispose();
     if (this.vao) gl.deleteVertexArray(this.vao);
     if (this.program) gl.deleteProgram(this.program);
     this.program = null;
@@ -1093,19 +1100,25 @@ export class XRSplatLoader {
   }
 
   /** Draws every loaded splat cloud. */
-  draw(viewer: PluginViewer, vp: Float32Array): void {
+  draw(
+    viewer: PluginViewer,
+    vp: Float32Array,
+    eye: 'left' | 'right' | 'none' = 'none',
+    viewport?: readonly number[],
+    projection?: Float32Array,
+  ): void {
     const gl = viewer.gl;
     if (!gl || this.entries.size === 0) return;
     // Per-eye viewport and projection while presenting; desktop otherwise.
-    const viewport = gl.getParameter(gl.VIEWPORT) as Int32Array | null;
-    const heightPx = viewport?.[3] || gl.drawingBufferHeight;
-    const focalPx = ((resolveProjection(viewer)?.[5] ?? 1.7) * heightPx) / 2;
+    const heightPx = viewport?.[3] ?? gl.drawingBufferHeight;
+    const focalPx =
+      (((projection ?? resolveProjection(viewer))?.[5] ?? 1.7) * heightPx) / 2;
     const model = new Float32Array(16);
     // Covariance must be projected with the view actually being drawn (per-eye
     // in WebXR / stereo), not the desktop orbit camera.
     const view = viewer.activeViewMatrix ?? viewer.viewMatrix;
     const modelView = view ? new Float32Array(16) : null;
-    const eye = frameEye.get(viewer) ?? null;
+    const cameraPos = frameEye.get(viewer) ?? null;
     for (const [mesh, entry] of this.entries) {
       if (!entry.renderer || (mesh as {visible?: boolean}).visible === false) {
         continue;
@@ -1123,7 +1136,7 @@ export class XRSplatLoader {
       const highQualitySH =
         traits?.splatQuality === 'high' ||
         viewer.container?.getAttribute?.('splat-quality') === 'high';
-      entry.renderer.draw(vp, model, focalPx, modelView, eye, highQualitySH);
+      entry.renderer.draw(vp, model, focalPx, modelView, cameraPos, highQualitySH, eye);
     }
   }
 
@@ -1180,8 +1193,11 @@ export const splatLoaderPlugin: ThreeLivePlugin = {
     _gl: WebGL2RenderingContext,
     viewer: PluginViewer,
     vpMatrix: Float32Array,
+    eye?: 'left' | 'right' | 'none',
+    viewport?: readonly number[],
+    projection?: Float32Array,
   ): void {
-    loaders.get(viewer)?.draw(viewer, vpMatrix);
+    loaders.get(viewer)?.draw(viewer, vpMatrix, eye, viewport, projection);
   },
   onDestroy(_gl: WebGL2RenderingContext, viewer: PluginViewer): void {
     loaders.get(viewer)?.dispose();
