@@ -2000,6 +2000,11 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     `sparks`, and `confetti` emitters (`userData.xr.particles`, up to
     `MAX_EMITTERS = 8` and `2,000` particles per emitter) with a deterministic
     PRNG and real-world WebXR depth collision (`isOccludedByDepth`).
+    Browser depth particles use shared static cross-quads when the viewer supports
+    instance offsets. Position uploads are 12 bytes per particle update instead of
+    96. Older viewers retain the expanded geometry fallback. Existing mesh-instance
+    matrices and colors keep their current rendering path.
+
 *   **`splat-loader` (`xr-live-splat-loader`):** Streams `.splat` (32-byte
     records) and Niantic `.spz` (v2 and v3, raw or gzipped) 3D Gaussian Splat
     files for any node with `userData.xr.splatUrl` or `userData.xr.splat`,

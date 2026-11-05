@@ -173,7 +173,8 @@ export class ParticleEmitter {
     this.center = [center[0], center[1], center[2]];
     const preset = this.options.preset;
     const gravity = preset === 'sparks' || preset === 'confetti' ? -9.8 * 0.4 : 0;
-    const drag = preset === 'confetti' ? 0.9 : 1;
+    // Every particle uses the same frame-scaled drag coefficient.
+    const drag = preset === 'confetti' ? Math.pow(0.9, step * 60) : 1;
     const [w, h, d] = this.options.area;
     const bottom = Math.max(this.center[1] - h * 0.5, floorY ?? -Infinity);
     const p = this.positions;
@@ -184,9 +185,8 @@ export class ParticleEmitter {
       const o = i * 3;
       v[o + 1] += gravity * step;
       if (drag !== 1) {
-        const k = Math.pow(drag, step * 60);
-        v[o] *= k;
-        v[o + 2] *= k;
+        v[o] *= drag;
+        v[o + 2] *= drag;
       }
       if (preset === 'snow') v[o] += Math.sin((p[o + 1] + i) * 3) * 0.02 * step;
       p[o] += v[o] * step;
@@ -212,10 +212,16 @@ export class ParticleEmitter {
 
   /** Writes particle cross-quads (8 verts each) into `out` (model space). */
   writeVertices(out: Float32Array): void {
-    const [sx, sy, sz] = PRESETS[this.options.preset].size;
+    writeParticleVertices(out, this.positions, this.options.count, PRESETS[this.options.preset].size);
+  }
+}
+
+/** Shared cross-quad writer for simulated centers and the static origin template. */
+function writeParticleVertices(out: Float32Array, p: ArrayLike<number>, count: number, size: Vec3): void {
+    const [sx, sy, sz] = size;
     const dz = sz + sx;
-    const p = this.positions;
-    for (let i = 0; i < this.options.count; i++) {
+
+    for (let i = 0; i < count; i++) {
       const o = i * 3;
       let b = i * VERTS_PER_PARTICLE * 3;
       const x = p[o];
@@ -231,7 +237,6 @@ export class ParticleEmitter {
       out[b++] = x; out[b++] = y + sy; out[b++] = z + dz;
       out[b++] = x; out[b++] = y + sy; out[b++] = z - dz;
     }
-  }
 }
 
 /** Builds the static index/normal buffers for `count` particle cross-quads. */
@@ -240,8 +245,11 @@ export function buildParticleTopology(count: number): {normals: Float32Array; in
   const indices = new Uint16Array(count * 12);
   for (let i = 0; i < count; i++) {
     const v = i * VERTS_PER_PARTICLE;
-    for (let k = 0; k < 4; k++) normals.set([0, 0, 1], (v + k) * 3);
-    for (let k = 4; k < 8; k++) normals.set([1, 0, 0], (v + k) * 3);
+    // Typed arrays start at zero; write only each plane's unit normal axis.
+    for (let k = 0; k < 4; k++) {
+      normals[(v + k) * 3 + 2] = 1;
+      normals[(v + k + 4) * 3] = 1;
+    }
     indices.set([v, v + 1, v + 2, v, v + 2, v + 3, v + 4, v + 5, v + 6, v + 4, v + 6, v + 7], i * 12);
   }
   return {normals, indices};
@@ -288,19 +296,31 @@ export class XRDepthParticlesController {
       if (!entry) {
         const emitter = new ParticleEmitter(options, this.entries.size + 1);
         emitter.reset(center);
-        const positions = new Float32Array(options.count * VERTS_PER_PARTICLE * 3);
-        emitter.writeVertices(positions);
-        const topo = buildParticleTopology(options.count);
+        const gl = viewer.gl;
+        const instanced = viewer.supportsInstanceOffsets === true &&
+          typeof gl?.drawElementsInstanced === 'function' &&
+          typeof gl?.vertexAttribDivisor === 'function';
+        const count = instanced ? 1 : options.count;
+        const positions = new Float32Array(count * VERTS_PER_PARTICLE * 3);
+        // A zero-centered emitter writes the same cross-quads as the fallback,
+        // including the asymmetric Z extent. Simulation remains on the CPU.
+        writeParticleVertices(positions, instanced ? [0, 0, 0] : emitter.positions, count, PRESETS[options.preset].size);
+        const topo = buildParticleTopology(count);
         const pm = createDynamicMesh(
           viewer,
-          {positions, normals: topo.normals, indices: topo.indices},
+          {
+            positions, normals: topo.normals, indices: topo.indices,
+            translations: instanced ? emitter.positions : undefined,
+          },
           {name: `__xr_particles_${mesh.name ?? 'emitter'}`, color: PRESETS[options.preset].color, pickable: false},
         );
         entry = {emitter, mesh: pm, key};
         this.entries.set(mesh, entry);
       }
       entry.emitter.step(dt, center, floorY, depth);
-      entry.emitter.writeVertices(entry.mesh.primitives[0].positions);
+      if (!entry.mesh.primitives[0].translations) {
+        entry.emitter.writeVertices(entry.mesh.primitives[0].positions);
+      }
       refreshDynamicPositions(viewer, entry.mesh);
     }
     for (const [mesh, entry] of [...this.entries]) {

@@ -115,6 +115,8 @@ export function quatMultiply(a: readonly number[], b: readonly number[]): Quat {
 
 /** Minimal duck-typed view of the `<three-live>` GPU viewer used by plugins. */
 export interface PluginViewer {
+  /** Shared renderer accepts per-instance translations at attribute 3. */
+  readonly supportsInstanceOffsets?: boolean;
   gl?: WebGL2RenderingContext;
   // tslint:disable-next-line:no-any Mesh records are heterogeneous GPU structs.
   meshes?: any[];
@@ -432,6 +434,8 @@ export function transformPoint(
 
 /** CPU geometry for a dynamic plugin mesh. */
 export interface DynamicGeometry {
+  /** Per-instance translations. Requires `supportsInstanceOffsets`. */
+  readonly translations?: Float32Array;
   readonly positions: Float32Array;
   readonly normals: Float32Array;
   readonly indices: Uint16Array | Uint32Array;
@@ -466,30 +470,32 @@ function uploadBuffers(
   gl: WebGL2RenderingContext,
   geometry: DynamicGeometry,
   usage: number,
+  existing?: {vao: WebGLVertexArrayObject; buffers: WebGLBuffer[]},
 ): {vao: WebGLVertexArrayObject | null; buffers: WebGLBuffer[]} {
-  const vao = gl.createVertexArray();
+  const vao = existing?.vao ?? gl.createVertexArray();
+  if (!vao) throw new Error('Dynamic mesh allocation failed');
+  const buffers: WebGLBuffer[] = existing?.buffers ?? [];
+  const data = [geometry.positions, geometry.normals,
+    new Float32Array(geometry.positions.length / 3 * 2), geometry.indices];
+  if (geometry.translations) data.push(geometry.translations);
   gl.bindVertexArray(vao);
-  const buffers: WebGLBuffer[] = [];
-  const vertexCount = geometry.positions.length / 3;
-  const attribs: Array<[Float32Array, number]> = [
-    [geometry.positions, 3],
-    [geometry.normals, 3],
-    [new Float32Array(vertexCount * 2), 2],
-  ];
-  attribs.forEach(([data, size], location) => {
-    const buf = gl.createBuffer();
-    if (!buf) return;
-    buffers.push(buf);
-    gl.bindBuffer(ARRAY_BUFFER, buf);
-    gl.bufferData(ARRAY_BUFFER, data, usage);
-    gl.enableVertexAttribArray(location);
-    gl.vertexAttribPointer(location, size, FLOAT, false, 0, 0);
-  });
-  const idx = gl.createBuffer();
-  if (idx) {
-    buffers.push(idx);
-    gl.bindBuffer(ELEMENT_ARRAY_BUFFER, idx);
-    gl.bufferData(ELEMENT_ARRAY_BUFFER, geometry.indices, usage);
+  for (let i = 0; i < data.length; i++) {
+    const buffer = buffers[i] ?? gl.createBuffer();
+    if (!buffer) {
+      releaseBuffers(gl, {buffers, vao});
+      gl.bindVertexArray(null);
+      throw new Error('Dynamic mesh allocation failed');
+    }
+    buffers[i] = buffer;
+    const target = i === 3 ? ELEMENT_ARRAY_BUFFER : ARRAY_BUFFER;
+    gl.bindBuffer(target, buffer);
+    gl.bufferData(target, data[i], existing || i === 4 ? DYNAMIC_DRAW : geometry.translations ? STATIC_DRAW : usage);
+    if (i !== 3) {
+      const location = i === 4 ? 3 : i;
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, i === 2 ? 2 : 3, FLOAT, false, 0, 0);
+      if (i === 4) gl.vertexAttribDivisor(location, 1);
+    }
   }
   gl.bindVertexArray(null);
   return {vao, buffers};
@@ -544,17 +550,10 @@ export function createDynamicMesh(
     primitives: [
       {
         vao: uploaded.vao,
-        indexCount: geometry.indices.length,
-        indexType:
-          geometry.indices instanceof Uint32Array
-            ? UNSIGNED_INT
-            : UNSIGNED_SHORT,
+        ...dynamicGeometryProperties(geometry),
         baseColor: [...(options.color ?? [1, 1, 1, 1])],
         metallic: options.metallic ?? 0,
         roughness: options.roughness ?? 0.6,
-        positions: geometry.positions,
-        normals: geometry.normals,
-        indices: geometry.indices,
         texture: null,
         metallicRoughnessTexture: null,
         normalTexture: null,
@@ -583,38 +582,27 @@ export function updateDynamicMesh(
   const prim = mesh?.primitives?.[0];
   if (!prim) return;
   const gl = viewer.gl;
-  if (gl && prim.vao && prim.buffers?.length === 4) {
-    // Reuse the VAO and buffers; only re-specify their contents.
-    const vertexCount = geometry.positions.length / 3;
-    const data = [
-      geometry.positions,
-      geometry.normals,
-      new Float32Array(vertexCount * 2),
-    ];
-    gl.bindVertexArray(prim.vao);
-    data.forEach((d, i) => {
-      gl.bindBuffer(ARRAY_BUFFER, prim.buffers[i]);
-      gl.bufferData(ARRAY_BUFFER, d, DYNAMIC_DRAW);
-    });
-    gl.bindBuffer(ELEMENT_ARRAY_BUFFER, prim.buffers[3]);
-    gl.bufferData(ELEMENT_ARRAY_BUFFER, geometry.indices, DYNAMIC_DRAW);
-    gl.bindVertexArray(null);
-  } else {
-    releaseBuffers(gl, prim);
-    if (gl && typeof gl.createVertexArray === 'function') {
-      const uploaded = uploadBuffers(gl, geometry, DYNAMIC_DRAW);
-      prim.vao = uploaded.vao;
-      prim.buffers = uploaded.buffers;
-    }
+  const reusable = prim.vao && prim.buffers?.length === (geometry.translations ? 5 : 4);
+  if (!gl || !reusable) releaseBuffers(gl, prim);
+  if (gl && (reusable || typeof gl.createVertexArray === 'function')) {
+    Object.assign(prim, uploadBuffers(gl, geometry, DYNAMIC_DRAW, reusable ? prim : undefined));
   }
-  prim.positions = geometry.positions;
-  prim.normals = geometry.normals;
-  prim.indices = geometry.indices;
+  Object.assign(prim, dynamicGeometryProperties(geometry));
   // Invalidate the ray-cast bounding sphere cached by `raycastGpuMeshes`.
   delete prim._boundingSphere;
-  prim.indexCount = geometry.indices.length;
-  prim.indexType =
-    geometry.indices instanceof Uint32Array ? UNSIGNED_INT : UNSIGNED_SHORT;
+}
+
+/** CPU geometry and draw metadata shared by initial uploads and replacements. */
+function dynamicGeometryProperties(geometry: DynamicGeometry) {
+  return {
+    positions: geometry.positions,
+    normals: geometry.normals,
+    indices: geometry.indices,
+    translations: geometry.translations,
+    instanceCount: geometry.translations ? geometry.translations.length / 3 : undefined,
+    indexCount: geometry.indices.length,
+    indexType: geometry.indices instanceof Uint32Array ? UNSIGNED_INT : UNSIGNED_SHORT,
+  };
 }
 
 /** Removes a dynamic mesh from `viewer.meshes` and frees its GPU buffers. */
@@ -721,8 +709,8 @@ export function emitPluginEvent(
 }
 
 /**
- * Re-uploads only the position buffer of a dynamic mesh in place (same vertex
- * count), avoiding VAO churn for per-frame animated geometry like particles.
+ * Re-uploads only positions (or instance centers) in place, keeping the same
+ * count and avoiding VAO churn for per-frame animated geometry like particles.
  */
 export function refreshDynamicPositions(
   viewer: PluginViewer,
@@ -733,10 +721,10 @@ export function refreshDynamicPositions(
   const gl = viewer.gl;
   if (!prim) return;
   delete prim._boundingSphere;
-  const buf = prim.buffers?.[0];
+  const buf = prim.buffers?.[prim.translations ? 4 : 0];
   if (!gl || !buf || typeof gl.bufferSubData !== 'function') return;
   gl.bindBuffer(ARRAY_BUFFER, buf);
-  gl.bufferSubData(ARRAY_BUFFER, 0, prim.positions);
+  gl.bufferSubData(ARRAY_BUFFER, 0, prim.translations ?? prim.positions);
 }
 
 /**
@@ -754,6 +742,7 @@ export function reattachDynamicMesh(
   prim.vao = null;
   prim.buffers = [];
   updateDynamicMesh(viewer, mesh, {
+    translations: prim.translations,
     positions: prim.positions,
     normals: prim.normals,
     indices: prim.indices,

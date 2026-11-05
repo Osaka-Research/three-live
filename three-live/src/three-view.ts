@@ -369,7 +369,8 @@ export function toGLBData(
 // =========================================================================
 
 const VS_RENDER = `#version 300 es
-layout(location=0) in vec3 aPosition;
+layout(location=0) in vec3 aPos;
+layout(location=3) in vec3 aOff;
 layout(location=1) in vec3 aNormal;
 layout(location=2) in vec2 aUV;
 uniform mat4 uMVP,uModel;
@@ -392,6 +393,7 @@ mat3 xrNormalMatrix(){return uInstanced==1?transpose(inverse(mat3(xrModel()))):u
 out vec3 vNormal,vWorldPos;
 out vec2 vUV;
 void main(){
+vec3 aPosition=aPos+aOff;
 vInstTint=uInstanced==1?aInstColor:vec4(1.0);
 vec3 rawN=uNormalMatrix*aNormal;
 vNormal=length(rawN)>1e-5?normalize(rawN):vec3(0.0);
@@ -768,6 +770,8 @@ interface PrimitiveGpu {
   vao: WebGLVertexArrayObject;
   /** True when the VAO carries per-instance attributes (EXT_mesh_gpu_instancing). */
   instanced?: boolean;
+  /** Dynamic particle translations at attribute 3, independent of mesh TRS. */
+  instanceCount?: number;
   indexCount: number;
   indexType: number;
   baseColor: [number, number, number, number];
@@ -1757,6 +1761,7 @@ function getOrbitEye(v: {
 }
 
 export class ThreeView {
+  readonly supportsInstanceOffsets = true;
   public gl: WebGL2RenderingContext;
   public canvas: HTMLCanvasElement;
   public container: HTMLElement;
@@ -4024,6 +4029,8 @@ export class ThreeView {
           const prog = prim.customProgram || this.renderProg;
           const u = prim.customUniforms || this.uRender;
           gl.useProgram(prog);
+          gl.vertexAttrib3f(3, 0, 0, 0);
+          if (u.uInstanced) gl.uniform1i(u.uInstanced, 0);
 
           gl.uniform1i(u.uToneMapping, toneMode);
           gl.uniform1f(u.uEnvIntensity, this.envIntensity);
@@ -4126,7 +4133,9 @@ export class ThreeView {
 
           gl.bindVertexArray(prim.vao);
           const instMats = mesh.instanceMatrices;
-          if (
+          if (prim.instanceCount !== undefined) {
+            gl.drawElementsInstanced(gl.TRIANGLES, prim.indexCount, prim.indexType, 0, prim.instanceCount);
+          } else if (
             instMats &&
             instMats.length >= 16 &&
             prim.instanced &&
