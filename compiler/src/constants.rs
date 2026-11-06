@@ -28,7 +28,7 @@
 #[cfg(debug_assertions)]
 pub const SECURITY_3D_EXECUTION_CEILING_MS: u64 = 2_000;
 #[cfg(not(debug_assertions))]
-pub const SECURITY_3D_EXECUTION_CEILING_MS: u64 = 250;
+pub const SECURITY_3D_EXECUTION_CEILING_MS: u64 = 500;
 
 /// Maximum wall-clock time permitted for *binary asset packaging and transcoding*, in
 /// milliseconds — `scene.toUSDZ()` and `THREE.glbToUSDZ()`.

@@ -1072,7 +1072,16 @@ pub fn build_validation_report(
             continue;
         }
         let mat_a = scene.meshes.get(mesh_a_idx).and_then(|m| m.material_index);
+        let is_opaque_a = mat_a
+            .and_then(|m_idx| scene.materials.get(m_idx))
+            .map(|mat| mat.base_color[3] >= 0.95 && mat.transmission < 0.1)
+            .unwrap_or(true);
+        if !is_opaque_a {
+            continue;
+        }
         let vol_a = aabb_a.volume();
+        let sa = aabb_a.size();
+        let ca = aabb_a.center();
 
         for j in (i + 1)..node_len {
             if !effective_vis.get(j).copied().unwrap_or(true) {
@@ -1091,6 +1100,14 @@ pub fn build_validation_report(
             if parent_a != parent_b {
                 continue;
             }
+            let mat_b = scene.meshes.get(mesh_b_idx).and_then(|m| m.material_index);
+            let is_opaque_b = mat_b
+                .and_then(|m_idx| scene.materials.get(m_idx))
+                .map(|mat| mat.base_color[3] >= 0.95 && mat.transmission < 0.1)
+                .unwrap_or(true);
+            if !is_opaque_b {
+                continue;
+            }
 
             let ix = (aabb_a.max[0].min(aabb_b.max[0]) - aabb_a.min[0].max(aabb_b.min[0])).max(0.0);
             let iy = (aabb_a.max[1].min(aabb_b.max[1]) - aabb_a.min[1].max(aabb_b.min[1])).max(0.0);
@@ -1102,7 +1119,24 @@ pub fn build_validation_report(
             let inter_vol = ix * iy * iz;
             let vol_b = aabb_b.volume();
             let min_vol = vol_a.min(vol_b);
-            if min_vol > 1e-6 && (inter_vol / min_vol) > 0.80 {
+            let max_vol = vol_a.max(vol_b);
+            let sb = aabb_b.size();
+            let cb = aabb_b.center();
+            let same_proportion = (0..3).all(|k| {
+                let mx = sa[k].max(sb[k]);
+                mx > 1e-5 && (sa[k].min(sb[k]) / mx) >= 0.70
+            });
+            let center_dist =
+                ((ca[0] - cb[0]).powi(2) + (ca[1] - cb[1]).powi(2) + (ca[2] - cb[2]).powi(2))
+                    .sqrt();
+            let min_diag = aabb_a.diagonal().min(aabb_b.diagonal());
+            if min_vol > 1e-6
+                && max_vol > 1e-6
+                && (min_vol / max_vol) >= 0.50
+                && same_proportion
+                && center_dist <= min_diag * 0.15
+                && (inter_vol / min_vol) > 0.80
+            {
                 let pct = ((inter_vol / min_vol) * 100.0).min(100.0);
                 diagnostics.push(Diagnostic {
                     code: "TL306".to_string(),
@@ -1122,26 +1156,23 @@ pub fn build_validation_report(
                 continue;
             }
 
-            let mat_b = scene.meshes.get(mesh_b_idx).and_then(|m| m.material_index);
-            if mat_a != mat_b {
-                let sa = aabb_a.size();
-                let sb = aabb_b.size();
-                let min_yz = (sa[1] * sa[2]).min(sb[1] * sb[2]).max(1e-6);
-                let min_xz = (sa[0] * sa[2]).min(sb[0] * sb[2]).max(1e-6);
-                let min_xy = (sa[0] * sa[1]).min(sb[0] * sb[1]).max(1e-6);
+            if mat_a != mat_b && same_proportion && center_dist <= min_diag * 0.15 {
+                let max_yz = (sa[1] * sa[2]).max(sb[1] * sb[2]).max(1e-6);
+                let max_xz = (sa[0] * sa[2]).max(sb[0] * sb[2]).max(1e-6);
+                let max_xy = (sa[0] * sa[1]).max(sb[0] * sb[1]).max(1e-6);
 
-                let coplanar_x = ((aabb_a.min[0] - aabb_b.min[0]).abs() < 1e-4
-                    || (aabb_a.max[0] - aabb_b.max[0]).abs() < 1e-4)
-                    && (sa[0].min(sb[0]) <= 0.025 || (sa[0] - sb[0]).abs() <= 0.025)
-                    && (iy * iz) / min_yz > 0.50;
-                let coplanar_y = ((aabb_a.min[1] - aabb_b.min[1]).abs() < 1e-4
-                    || (aabb_a.max[1] - aabb_b.max[1]).abs() < 1e-4)
-                    && (sa[1].min(sb[1]) <= 0.025 || (sa[1] - sb[1]).abs() <= 0.025)
-                    && (ix * iz) / min_xz > 0.50;
-                let coplanar_z = ((aabb_a.min[2] - aabb_b.min[2]).abs() < 1e-4
-                    || (aabb_a.max[2] - aabb_b.max[2]).abs() < 1e-4)
-                    && (sa[2].min(sb[2]) <= 0.025 || (sa[2] - sb[2]).abs() <= 0.025)
-                    && (ix * iy) / min_xy > 0.50;
+                let coplanar_x = (aabb_a.min[0] - aabb_b.min[0]).abs() < 1e-4
+                    && (aabb_a.max[0] - aabb_b.max[0]).abs() < 1e-4
+                    && sa[0].max(sb[0]) <= 0.02
+                    && (iy * iz) / max_yz > 0.80;
+                let coplanar_y = (aabb_a.min[1] - aabb_b.min[1]).abs() < 1e-4
+                    && (aabb_a.max[1] - aabb_b.max[1]).abs() < 1e-4
+                    && sa[1].max(sb[1]) <= 0.02
+                    && (ix * iz) / max_xz > 0.80;
+                let coplanar_z = (aabb_a.min[2] - aabb_b.min[2]).abs() < 1e-4
+                    && (aabb_a.max[2] - aabb_b.max[2]).abs() < 1e-4
+                    && sa[2].max(sb[2]) <= 0.02
+                    && (ix * iy) / max_xy > 0.80;
                 if (coplanar_x && iy > 0.01 && iz > 0.01)
                     || (coplanar_y && ix > 0.01 && iz > 0.01)
                     || (coplanar_z && ix > 0.01 && iy > 0.01)

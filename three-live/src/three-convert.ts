@@ -606,11 +606,40 @@ function serializeScene(
       (node as any).isLight ||
       ((node as any).color && (node as any).intensity !== undefined)
     ) {
+      const me = (node as any).matrixWorld?.elements;
+      const px = finUsd(me ? me[12] : node.position?.x, 0),
+        py = finUsd(me ? me[13] : node.position?.y, 0),
+        pz = finUsd(me ? me[14] : node.position?.z, 0);
+      const tgt = (node as any).target;
+      const te = tgt?.parent ? tgt?.matrixWorld?.elements : undefined;
+      const tx = finUsd(te ? te[12] : tgt?.position?.x, 0),
+        ty = finUsd(te ? te[13] : tgt?.position?.y, 0),
+        tz = finUsd(te ? te[14] : tgt?.position?.z, 0);
+      const dx = tx - px,
+        dy = ty - py,
+        dz = tz - pz,
+        dLen = Math.hypot(dx, dy, dz);
+      const outerAngle = Math.max(
+        0.01,
+        Math.min(Math.PI / 2, finUsd((node as any).angle, Math.PI / 3)),
+      );
+      const pen = Math.max(0, Math.min(1, finUsd((node as any).penumbra, 0)));
       lights.push({
         type: node.type,
         color: [node.color.r, node.color.g, node.color.b],
         intensity: node.intensity,
-        position: [node.position.x, node.position.y, node.position.z],
+        position: [px, py, pz],
+        ...(node.type === 'spot'
+          ? {
+              direction:
+                dLen > 1e-6 ? [dx / dLen, dy / dLen, dz / dLen] : [0, -1, 0],
+              outerConeAngle: outerAngle,
+              innerConeAngle: Math.max(0, outerAngle * (1 - pen)),
+              range: Math.max(0, finUsd((node as any).distance, 0)),
+            }
+          : node.type === 'point'
+            ? {range: Math.max(0, finUsd((node as any).distance, 0))}
+            : {}),
       });
     }
   });
@@ -628,9 +657,22 @@ function serializeScene(
     const {obj, parentKids} = nodeStack.pop()!;
     if (!obj || typeof obj !== 'object' || seenObjs.has(obj)) continue;
     seenObjs.add(obj);
+    (obj as any)._bakeAuthorGeometry?.();
     getSharedRegistry().materializeDeclarativeGeometry?.(obj);
 
-    const node: any = {name: obj.name || ''};
+    const hasInteractiveTraits = Boolean(
+      obj.userData &&
+        ((obj.userData.xr &&
+          typeof obj.userData.xr === 'object' &&
+          Object.keys(obj.userData.xr).length > 0) ||
+          (obj.userData.interactivity &&
+            typeof obj.userData.interactivity === 'object' &&
+            Object.keys(obj.userData.interactivity).length > 0)),
+    );
+    const node: any = {
+      name:
+        obj.name || (hasInteractiveTraits ? `Node_${nodes.length}` : ''),
+    };
     const px = finUsd(obj.position?.x, 0),
       py = finUsd(obj.position?.y, 0),
       pz = finUsd(obj.position?.z, 0);

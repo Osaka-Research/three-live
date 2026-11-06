@@ -434,6 +434,16 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     getSpacedPoints(divisions = 12): Vec2Like[] {
       return this.getPoints(divisions);
     }
+
+    clone(): this {
+      const c: any = new (this.constructor as any)();
+      c.currentPoint.copy(this.currentPoint);
+      c.segments = this.segments.map((s) => ({type: s.type, pts: [...s.pts]}));
+      if (Array.isArray((this as any).holes)) {
+        c.holes = (this as any).holes.map((h: Path) => h.clone());
+      }
+      return c;
+    }
   }
 
   class Shape extends Path {
@@ -2482,7 +2492,12 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   function materializeDeclarativeGeometry(node: any): void {
     if (!node) return;
     const meshLike = node;
-    const rawText = node.userData?.xr?.text;
+    const rawText =
+      node.userData?.xr?.text ??
+      node.userData?.xr?.label ??
+      node.userData?.xr?.title ??
+      node.userData?.xr?.caption ??
+      node.userData?.xr?.spatialLabel;
     if (rawText !== undefined && rawText !== null && rawText !== false) {
       const existingPos = meshLike.geometry?.attributes?.position;
       // `_textApplied` stops a rebuild on every updateMatrixWorld when the

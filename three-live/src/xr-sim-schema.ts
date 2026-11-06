@@ -521,28 +521,101 @@ export const parseRigidBody = parsePhysicsBody;
 /** Normalizes, and serializes to SceneCore and USD, every sim trait. */
 const SIM_TRAIT_EXTENSION: XRTraitExtension = {
   normalize(r, out) {
-    const character = parseCharacter(r['character']);
+    const rawChar =
+      r['character'] ?? r['player'] ?? r['avatar'] ?? r['controller'];
+    const charSource =
+      rawChar !== undefined &&
+      rawChar !== null &&
+      rawChar !== false &&
+      (typeof r['speed'] === 'number' ||
+        typeof r['height'] === 'number' ||
+        typeof r['radius'] === 'number')
+        ? {
+            speed: r['speed'],
+            height: r['height'],
+            radius: r['radius'],
+            ...(typeof rawChar === 'string'
+              ? {cameraMode: rawChar}
+              : typeof rawChar === 'object'
+                ? rawChar
+                : {}),
+          }
+        : rawChar;
+    const character = parseCharacter(charSource);
     if (character) out.character = character;
-    const agent = parseAgent(r['agent']);
+    const agent = parseAgent(
+      r['agent'] ??
+        r['ai'] ??
+        r['npc'] ??
+        r['enemy'] ??
+        r['bot'] ??
+        r['steering'],
+    );
     if (agent) out.agent = agent;
-    const integrity = parseIntegrity(r['integrity']);
+    const integrity = parseIntegrity(
+      r['integrity'] ?? r['health'] ?? r['hp'] ?? r['hitpoints'],
+    );
     if (integrity) out.integrity = integrity;
-    const zone = parseZone(r['zone']);
+    const rawZone =
+      r['zone'] ?? r['trigger'] ?? r['hitbox'] ?? r['sensor'] ?? r['hazard'];
+    const zoneSource =
+      rawZone !== undefined &&
+      rawZone !== null &&
+      rawZone !== false &&
+      typeof r['radius'] === 'number'
+        ? {
+            radius: r['radius'],
+            ...(typeof rawZone === 'string'
+              ? {shape: rawZone}
+              : typeof rawZone === 'object'
+                ? rawZone
+                : {}),
+          }
+        : rawZone;
+    const zone = parseZone(zoneSource);
     if (zone) out.zone = zone;
-    const spawner = parseSpawner(r['spawner']);
+    const spawner = parseSpawner(r['spawner'] ?? r['spawn']);
     if (spawner) out.spawner = spawner;
-    const objective = parseObjective(r['objective']);
+    const objective = parseObjective(
+      r['objective'] ?? r['goal'] ?? r['quest'] ?? r['collectible'] ?? r['pickup'],
+    );
     if (objective) out.objective = objective;
-    const audioCues = parseAudioCues(r['audioCues']);
+    const audioCues = parseAudioCues(r['audioCues'] ?? r['sfx']);
     if (audioCues) out.audioCues = audioCues;
     const rawPhys = r['physics'];
-    const rbSource =
+    const hasTopPhysProps =
+      typeof r['mass'] === 'number' ||
+      typeof r['restitution'] === 'number' ||
+      typeof r['bounciness'] === 'number' ||
+      typeof r['friction'] === 'number';
+    const rawRb =
       r['rigidBody'] ??
+      r['rigidbody'] ??
       (rawPhys === 'kinematic' ||
       rawPhys === true ||
       (typeof rawPhys === 'object' && rawPhys !== null)
         ? rawPhys
-        : undefined);
+        : typeof rawPhys === 'string' && hasTopPhysProps
+          ? rawPhys
+          : rawPhys === undefined && typeof r['mass'] === 'number'
+            ? true
+            : undefined);
+    const rbSource =
+      hasTopPhysProps &&
+      rawRb !== undefined &&
+      rawRb !== null &&
+      rawRb !== false
+        ? {
+            mass: r['mass'],
+            restitution: r['restitution'] ?? r['bounciness'],
+            friction: r['friction'],
+            ...(typeof rawRb === 'string'
+              ? {body: rawRb}
+              : typeof rawRb === 'object'
+                ? rawRb
+                : {}),
+          }
+        : rawRb;
     const rigidBody = parsePhysicsBody(rbSource);
     if (rigidBody) {
       out.rigidBody = rigidBody;
@@ -553,7 +626,15 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
         out.physics = rigidBody.body;
       }
     }
-    if (r['collidable'] === true) out.collidable = true;
+    if (
+      r['collidable'] === true ||
+      r['collides'] === true ||
+      r['collider'] === true ||
+      r['solid'] === true ||
+      r['obstacle'] === true
+    ) {
+      out.collidable = true;
+    }
   },
   sceneCore(n, comp) {
     if (n.character) {

@@ -120,6 +120,14 @@ export class Vector2 {
     this.y *= s;
     return this;
   }
+
+  public divideScalar(s: number): this {
+    return this.multiplyScalar(s ? 1 / s : 0);
+  }
+
+  public setScalar(s: number): this {
+    return this.set(s, s);
+  }
 }
 
 export class Vector3 {
@@ -183,6 +191,21 @@ export class Vector3 {
     this.x *= s;
     this.y *= s;
     this.z *= s;
+    return this;
+  }
+
+  public divideScalar(s: number): this {
+    return this.multiplyScalar(s ? 1 / s : 0);
+  }
+
+  public setScalar(s: number): this {
+    return this.set(s, s, s);
+  }
+
+  public addScaledVector(v: Vector3, s: number): this {
+    this.x += v.x * s;
+    this.y += v.y * s;
+    this.z += v.z * s;
     return this;
   }
 
@@ -670,6 +693,15 @@ export class Color {
       if (h.length === 6 && !Number.isNaN(hex)) this.setHex(hex);
     } else if (s in CSS_COLORS) {
       this.setHex(CSS_COLORS[s]);
+    } else if (s.startsWith('hsl')) {
+      const p = /^hsla?\(([^)]+)\)$/.exec(s)?.[1].trim().split(/[\s,/]+/);
+      if (p && p.length >= 3) {
+        this.setHSL(
+          (parseFloat(p[0]) || 0) / 360,
+          (parseFloat(p[1]) || 0) / 100,
+          (parseFloat(p[2]) || 0) / 100,
+        );
+      }
     } else {
       const p = /^rgba?\(([^)]+)\)$/.exec(s)?.[1].trim().split(/[\s,/]+/);
       if (p && p.length >= 3) {
@@ -684,6 +716,60 @@ export class Color {
       }
     }
     return this;
+  }
+
+  public setHSL(h: number, s: number, l: number): this {
+    h = (((Number(h) || 0) % 1) + 1) % 1;
+    s = Math.max(0, Math.min(1, Number(s) || 0));
+    l = Math.max(0, Math.min(1, Number(l) || 0));
+    if (s === 0) {
+      const lin = srgbToLinear(l);
+      return this.setRGB(lin, lin, lin);
+    }
+    const p = l <= 0.5 ? l * (1 + s) : l + s - l * s;
+    const q = 2 * l - p;
+    const hue2rgb = (t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return q + (p - q) * 6 * t;
+      if (t < 1 / 2) return p;
+      if (t < 2 / 3) return q + (p - q) * 6 * (2 / 3 - t);
+      return q;
+    };
+    return this.setRGB(
+      srgbToLinear(hue2rgb(h + 1 / 3)),
+      srgbToLinear(hue2rgb(h)),
+      srgbToLinear(hue2rgb(h - 1 / 3)),
+    );
+  }
+
+  public lerp(c: Color, alpha: number): this {
+    const t = Number(alpha) || 0;
+    this.r += (c.r - this.r) * t;
+    this.g += (c.g - this.g) * t;
+    this.b += (c.b - this.b) * t;
+    return this;
+  }
+
+  public lerpColors(c1: Color, c2: Color, alpha: number): this {
+    const t = Number(alpha) || 0;
+    this.r = c1.r + (c2.r - c1.r) * t;
+    this.g = c1.g + (c2.g - c1.g) * t;
+    this.b = c1.b + (c2.b - c1.b) * t;
+    return this;
+  }
+
+  public multiplyScalar(s: number): this {
+    const f = Number(s) || 0;
+    this.r *= f;
+    this.g *= f;
+    this.b *= f;
+    return this;
+  }
+
+  public setScalar(s: number): this {
+    const f = Number(s) || 0;
+    return this.setRGB(f, f, f);
   }
 
   public setHex(hex: number): this {
@@ -829,6 +915,15 @@ export class BufferAttribute {
     this.needsUpdate = true;
     return this;
   }
+
+  public setUsage(_usage: number): this {
+    return this;
+  }
+
+  public clone(): BufferAttribute {
+    const Ctor = (this.array as any)?.constructor || Float32Array;
+    return new BufferAttribute(new Ctor(this.array), this.itemSize);
+  }
 }
 
 export class Float32BufferAttribute extends BufferAttribute {
@@ -949,6 +1044,16 @@ export class BufferGeometry {
     this.setIndex(indices);
   }
 
+  public setFromPoints(pts: Array<{x: number; y: number; z?: number}>): this {
+    const a: number[] = [];
+    if (Array.isArray(pts)) {
+      for (const p of pts) {
+        a.push(Number(p?.x) || 0, Number(p?.y) || 0, Number(p?.z) || 0);
+      }
+    }
+    return this.setAttribute('position', new BufferAttribute(a, 3));
+  }
+
   computeBoundingBox(): {min: Vector3; max: Vector3} {
     const pos = this.attributes.position;
     const min = new Vector3(Infinity, Infinity, Infinity);
@@ -975,17 +1080,91 @@ export class BufferGeometry {
 
   center(): this {
     const box = this.computeBoundingBox();
-    const cx = (box.min.x + box.max.x) * 0.5;
-    const cy = (box.min.y + box.max.y) * 0.5;
-    const cz = (box.min.z + box.max.z) * 0.5;
+    return this.translate(
+      -(box.min.x + box.max.x) * 0.5,
+      -(box.min.y + box.max.y) * 0.5,
+      -(box.min.z + box.max.z) * 0.5,
+    );
+  }
+
+  private _xform(fn: (a: any, i: number) => void, norm?: boolean): this {
     const pos = this.attributes.position;
-    if (pos && pos.count > 0) {
-      for (let i = 0; i < pos.count; i++) {
-        pos.setXYZ(i, pos.getX(i) - cx, pos.getY(i) - cy, pos.getZ(i) - cz);
-      }
+    if (pos) {
+      const a = pos.array;
+      for (let i = 0; i < a.length; i += 3) fn(a, i);
+      pos.needsUpdate = true;
+      if (norm) this.computeVertexNormals();
       this.computeBoundingBox();
     }
     return this;
+  }
+
+  public translate(x: number = 0, y: number = 0, z: number = 0): this {
+    return this._xform((a, i) => {
+      a[i] += x;
+      a[i + 1] += y;
+      a[i + 2] += z;
+    });
+  }
+
+  public scale(x: number = 1, y: number = 1, z: number = 1): this {
+    return this._xform((a, i) => {
+      a[i] *= x;
+      a[i + 1] *= y;
+      a[i + 2] *= z;
+    }, true);
+  }
+
+  private _rot(i0: number, i1: number, angle: number): this {
+    const c = Math.cos(angle),
+      s = Math.sin(angle);
+    for (const attr of [this.attributes.position, this.attributes.normal]) {
+      if (!attr) continue;
+      const a = attr.array;
+      for (let i = 0; i < a.length; i += 3) {
+        const u = a[i + i0],
+          v = a[i + i1];
+        a[i + i0] = u * c - v * s;
+        a[i + i1] = u * s + v * c;
+      }
+      attr.needsUpdate = true;
+    }
+    return this;
+  }
+
+  public rotateX(angle: number): this {
+    return this._rot(1, 2, angle);
+  }
+
+  public rotateY(angle: number): this {
+    return this._rot(2, 0, angle);
+  }
+
+  public rotateZ(angle: number): this {
+    return this._rot(0, 1, angle);
+  }
+
+  public applyMatrix4(matrix: Matrix4): this {
+    const pos = this.attributes.position;
+    if (pos && matrix?.elements) {
+      const v = new Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(matrix);
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+      this.computeVertexNormals();
+    }
+    return this;
+  }
+
+  public clone(): BufferGeometry {
+    const c = new BufferGeometry();
+    c.name = this.name;
+    for (const k of Object.keys(this.attributes)) {
+      c.attributes[k] = this.attributes[k].clone();
+    }
+    if (this.index) c.index = this.index.clone();
+    return c;
   }
 
   public dispose(): void {}
@@ -1295,6 +1474,61 @@ export class TorusGeometry extends BufferGeometry {
   }
 }
 
+function buildSweptTube(
+  geo: BufferGeometry,
+  tubularSegments: number,
+  radialSegments: number,
+  tube: number,
+  samplePt: (u: number, out: Vector3) => void,
+): void {
+  const tSegs = Math.max(2, Math.min(256, Math.floor(Number(tubularSegments) || 64)));
+  const rSegs = Math.max(3, Math.min(64, Math.floor(Number(radialSegments) || 8)));
+  const rad = Number(tube) || 0.1;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const p1 = new Vector3(),
+    p2 = new Vector3(),
+    T = new Vector3(),
+    N = new Vector3(),
+    B = new Vector3();
+
+  for (let i = 0; i <= tSegs; i++) {
+    const u = i / tSegs;
+    samplePt(Math.max(0, u - 0.001), p1);
+    samplePt(Math.min(1, u + 0.001), p2);
+    T.subVectors(p2, p1).normalize();
+    if (i === 0) N.set(Math.abs(T.y) > 0.9 ? 1 : 0, Math.abs(T.y) > 0.9 ? 0 : 1, 0);
+    B.crossVectors(T, N).normalize();
+    N.crossVectors(B, T).normalize();
+    samplePt(u, p1);
+    for (let j = 0; j <= rSegs; j++) {
+      const v = (j / rSegs) * Math.PI * 2;
+      const cx = -rad * Math.cos(v),
+        cy = rad * Math.sin(v);
+      const dx = cx * N.x + cy * B.x,
+        dy = cx * N.y + cy * B.y,
+        dz = cx * N.z + cy * B.z;
+      positions.push(p1.x + dx, p1.y + dy, p1.z + dz);
+      const l = Math.hypot(dx, dy, dz) || 1;
+      normals.push(dx / l, dy / l, dz / l);
+      uvs.push(u, j / rSegs);
+    }
+  }
+  const stride = rSegs + 1;
+  for (let i = 1; i <= tSegs; i++) {
+    const r1 = stride * (i - 1),
+      r2 = r1 + stride;
+    for (let j = 1; j <= rSegs; j++) {
+      const a = r1 + j - 1,
+        b = r2 + j - 1;
+      indices.push(a, b, r1 + j, b, r2 + j, r1 + j);
+    }
+  }
+  geo.setFromBuffers(positions, normals, uvs, indices);
+}
+
 export class TorusKnotGeometry extends BufferGeometry {
   constructor(
     radius: number = 1,
@@ -1327,70 +1561,195 @@ export class TorusKnotGeometry extends BufferGeometry {
         return;
       }
     }
+    buildSweptTube(this, tubularSegments, radialSegments, tube, (uRatio, target) => {
+      const u = uRatio * p * Math.PI * 2,
+        quOverP = (q / p) * u,
+        r0 = radius * (2 + Math.cos(quOverP)) * 0.5;
+      target.set(r0 * Math.cos(u), r0 * Math.sin(u), radius * Math.sin(quOverP) * 0.5);
+    });
+  }
+}
+
+export class Curve3 {
+  public getPoint(_t: number, out: Vector3 = new Vector3()): Vector3 {
+    return out;
+  }
+  public getPointAt(u: number, out: Vector3 = new Vector3()): Vector3 {
+    return this.getPoint(u, out);
+  }
+  public getTangent(t: number, out: Vector3 = new Vector3()): Vector3 {
+    return out
+      .subVectors(this.getPoint(Math.min(1, t + 0.001)), this.getPoint(Math.max(0, t - 0.001)))
+      .normalize();
+  }
+  public getPoints(divisions: number = 5): Vector3[] {
+    const d = Math.max(1, Math.min(512, Math.floor(Number(divisions) || 5)));
+    const pts: Vector3[] = [];
+    for (let i = 0; i <= d; i++) pts.push(this.getPoint(i / d));
+    return pts;
+  }
+  public getSpacedPoints(divisions: number = 5): Vector3[] {
+    return this.getPoints(divisions);
+  }
+}
+
+export class LineCurve3 extends Curve3 {
+  constructor(
+    public v1: Vector3 = new Vector3(),
+    public v2: Vector3 = new Vector3(),
+  ) {
+    super();
+  }
+  public override getPoint(t: number, out: Vector3 = new Vector3()): Vector3 {
+    return out.lerpVectors(this.v1, this.v2, t);
+  }
+}
+
+export class QuadraticBezierCurve3 extends Curve3 {
+  constructor(
+    public v0: Vector3 = new Vector3(),
+    public v1: Vector3 = new Vector3(),
+    public v2: Vector3 = new Vector3(),
+  ) {
+    super();
+  }
+  public override getPoint(t: number, out: Vector3 = new Vector3()): Vector3 {
+    return out
+      .lerpVectors(this.v0, this.v1, t)
+      .lerp(new Vector3().lerpVectors(this.v1, this.v2, t), t);
+  }
+}
+
+export class CubicBezierCurve3 extends Curve3 {
+  constructor(
+    public v0: Vector3 = new Vector3(),
+    public v1: Vector3 = new Vector3(),
+    public v2: Vector3 = new Vector3(),
+    public v3: Vector3 = new Vector3(),
+  ) {
+    super();
+  }
+  public override getPoint(t: number, out: Vector3 = new Vector3()): Vector3 {
+    const a = new Vector3().lerpVectors(this.v0, this.v1, t),
+      b = new Vector3().lerpVectors(this.v1, this.v2, t),
+      c = new Vector3().lerpVectors(this.v2, this.v3, t);
+    return out.lerpVectors(a.lerp(b, t), b.lerp(c, t), t);
+  }
+}
+
+export class CatmullRomCurve3 extends Curve3 {
+  public points: Vector3[];
+  public closed: boolean;
+  constructor(points: Vector3[] = [], closed: boolean = false) {
+    super();
+    this.points = Array.isArray(points) ? points : [];
+    this.closed = Boolean(closed);
+  }
+  public override getPoint(t: number, out: Vector3 = new Vector3()): Vector3 {
+    const pts = this.points,
+      n = pts.length;
+    if (!n) return out.set(0, 0, 0);
+    if (n === 1) return out.copy(pts[0]);
+    const p = (this.closed ? n : n - 1) * Math.max(0, Math.min(1, Number(t) || 0));
+    let k = Math.floor(p),
+      w = p - k;
+    if (!this.closed && k >= n - 1) {
+      k = n - 2;
+      w = 1;
+    }
+    const at = (i: number) =>
+      pts[this.closed ? ((i % n) + n) % n : Math.max(0, Math.min(n - 1, i))];
+    const p0 = at(k - 1),
+      p1 = at(k),
+      p2 = at(k + 1),
+      p3 = at(k + 2),
+      w2 = w * w,
+      w3 = w2 * w;
+    const cr = (v0: number, v1: number, v2: number, v3: number) =>
+      0.5 *
+      (2 * v1 +
+        (v2 - v0) * w +
+        (2 * v0 - 5 * v1 + 4 * v2 - v3) * w2 +
+        (3 * v1 - v0 - 3 * v2 + v3) * w3);
+    return out.set(
+      cr(p0.x, p1.x, p2.x, p3.x),
+      cr(p0.y, p1.y, p2.y, p3.y),
+      cr(p0.z, p1.z, p2.z, p3.z),
+    );
+  }
+}
+
+export class LatheGeometry extends BufferGeometry {
+  constructor(
+    points: Array<{x: number; y: number}> = [
+      new Vector2(0, -0.5),
+      new Vector2(0.5, 0),
+      new Vector2(0, 0.5),
+    ],
+    segments: number = 12,
+    phiStart: number = 0,
+    phiLength: number = Math.PI * 2,
+  ) {
+    super();
+    const pts =
+      Array.isArray(points) && points.length >= 2
+        ? points
+        : [new Vector2(0.2, 0), new Vector2(0.2, 0.5)];
+    const segs = Math.max(3, Math.min(128, Math.floor(Number(segments) || 12)));
     const positions: number[] = [];
     const normals: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-
-    const p1 = new Vector3(),
-      p2 = new Vector3();
-    const T = new Vector3(),
-      N = new Vector3(),
-      B = new Vector3();
-
-    function setCurvePos(target: Vector3, u: number): void {
-      const cu = Math.cos(u),
-        su = Math.sin(u);
-      const quOverP = (q / p) * u;
-      const r0 = radius * (2 + Math.cos(quOverP)) * 0.5;
-      target.set(r0 * cu, r0 * su, radius * Math.sin(quOverP) * 0.5);
-    }
-
-    const cosSin: number[] = [];
-    for (let j = 0; j <= radialSegments; ++j) {
-      const v = (j / radialSegments) * Math.PI * 2;
-      cosSin.push(-tube * Math.cos(v), tube * Math.sin(v), j / radialSegments);
-    }
-
-    for (let i = 0; i <= tubularSegments; ++i) {
-      const uRatio = i / tubularSegments;
-      const u = uRatio * p * Math.PI * 2;
-      setCurvePos(p1, u);
-      setCurvePos(p2, u + 0.01);
-      T.subVectors(p2, p1).normalize();
-      N.addVectors(p1, p2).normalize();
-      B.crossVectors(T, N).normalize();
-      N.crossVectors(B, T).normalize();
-
-      for (let j = 0; j <= radialSegments; ++j) {
-        const idx = j * 3;
-        const cx = cosSin[idx],
-          cy = cosSin[idx + 1],
-          vRatio = cosSin[idx + 2];
-        const dx = cx * N.x + cy * B.x;
-        const dy = cx * N.y + cy * B.y;
-        const dz = cx * N.z + cy * B.z;
-        positions.push(p1.x + dx, p1.y + dy, p1.z + dz);
-        const len = Math.hypot(dx, dy, dz) || 1.0;
-        normals.push(dx / len, dy / len, dz / len);
-        uvs.push(uRatio, vRatio);
+    const nPts = pts.length;
+    for (let i = 0; i <= segs; i++) {
+      const u = i / segs,
+        phi = phiStart + u * phiLength,
+        sin = Math.sin(phi),
+        cos = Math.cos(phi);
+      for (let j = 0; j < nPts; j++) {
+        const pt = pts[j],
+          rx = Number(pt?.x) || 0,
+          ry = Number(pt?.y) || 0;
+        positions.push(rx * sin, ry, rx * cos);
+        const prev = pts[Math.max(0, j - 1)],
+          next = pts[Math.min(nPts - 1, j + 1)];
+        const dx = (Number(next?.x) || 0) - (Number(prev?.x) || 0),
+          dy = (Number(next?.y) || 0) - (Number(prev?.y) || 0),
+          nl = Math.hypot(dy, dx) || 1;
+        normals.push((dy / nl) * sin, -dx / nl, (dy / nl) * cos);
+        uvs.push(u, j / (nPts - 1));
       }
     }
-
-    const stride = radialSegments + 1;
-    for (let j = 1; j <= tubularSegments; j++) {
-      const row1 = stride * (j - 1);
-      const row2 = row1 + stride;
-      for (let i = 1; i <= radialSegments; i++) {
-        const a = row1 + (i - 1);
-        const b = row2 + (i - 1);
-        const c = row2 + i;
-        const d = row1 + i;
-        indices.push(a, b, d, b, c, d);
+    for (let i = 0; i < segs; i++) {
+      const base = i * nPts;
+      for (let j = 0; j < nPts - 1; j++) {
+        const a = base + j,
+          b = base + nPts + j;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
       }
     }
-
     this.setFromBuffers(positions, normals, uvs, indices);
+  }
+}
+
+export class TubeGeometry extends BufferGeometry {
+  constructor(
+    path?: Curve3,
+    tubularSegments: number = 64,
+    radius: number = 1,
+    radialSegments: number = 8,
+    _closed: boolean = false,
+  ) {
+    super();
+    buildSweptTube(this, tubularSegments, radialSegments, radius, (u, out) => {
+      const fn = path?.getPointAt ?? path?.getPoint;
+      if (typeof fn === 'function') {
+        const pt = fn.call(path, u, out);
+        if (pt && pt !== out) out.copy(pt);
+      } else {
+        out.set(0, u, 0);
+      }
+    });
   }
 }
 
@@ -1624,6 +1983,11 @@ export class Object3D {
 
   public lookAt(x: any, y?: number, z?: number): void {
     const target = typeof x === 'object' ? x : new Vector3(x, y, z);
+    if ((this as any).target instanceof Vector3) {
+      (this as any).target.copy(target);
+    } else if ((this as any).target?.position instanceof Vector3) {
+      (this as any).target.position.copy(target);
+    }
     this.updateMatrixWorld(true);
     const m = new Matrix4();
     m.lookAt(this.position, target, new Vector3(0, 1, 0));
@@ -1647,6 +2011,70 @@ export class Object3D {
         0.25 / s,
       );
     }
+  }
+
+  public translateOnAxis(axis: Vector3, d: number): this {
+    const v = axis
+      .clone()
+      .applyMatrix4(new Matrix4().makeRotationFromQuaternion(this.quaternion))
+      .multiplyScalar(d);
+    this.position.add(v);
+    return this;
+  }
+
+  public translateX(d: number): this {
+    return this.translateOnAxis(new Vector3(1, 0, 0), d);
+  }
+
+  public translateY(d: number): this {
+    return this.translateOnAxis(new Vector3(0, 1, 0), d);
+  }
+
+  public translateZ(d: number): this {
+    return this.translateOnAxis(new Vector3(0, 0, 1), d);
+  }
+
+  public rotateX(a: number): this {
+    this.rotation.x += a;
+    return this;
+  }
+
+  public rotateY(a: number): this {
+    this.rotation.y += a;
+    return this;
+  }
+
+  public rotateZ(a: number): this {
+    this.rotation.z += a;
+    return this;
+  }
+
+  public clone(recursive: boolean = true): this {
+    const c: any =
+      this instanceof Line
+        ? new (this.constructor as any)(
+            (this as any)._sourceGeo || (this as any).geometry,
+            (this as any).material,
+          )
+        : this instanceof Mesh
+          ? new Mesh((this as any).geometry, (this as any).material)
+          : new (this.constructor as any)();
+    c.name = this.name;
+    c.position.copy(this.position);
+    c.quaternion.copy(this.quaternion);
+    c.scale.copy(this.scale);
+    c.visible = this.visible;
+    c.castShadow = this.castShadow;
+    c.receiveShadow = this.receiveShadow;
+    try {
+      c.userData = JSON.parse(JSON.stringify(this.userData || {}));
+    } catch (_) {
+      c.userData = {...(this.userData || {})};
+    }
+    if (recursive) {
+      for (const ch of this.children) c.add(ch.clone(true));
+    }
+    return c;
   }
 }
 
@@ -1678,6 +2106,9 @@ export class Mesh extends Object3D {
 }
 
 function materializeDeclarativeGeometry(node: Object3D): void {
+  if (typeof (node as any)?._bakeAuthorGeometry === 'function') {
+    (node as any)._bakeAuthorGeometry();
+  }
   const hook = getSharedRegistry().materializeDeclarativeGeometry;
   if (typeof hook === 'function') {
     hook(node);
@@ -1793,7 +2224,7 @@ export class InstancedMesh extends Mesh {
 export class Light extends Object3D {
   public color: Color;
   public intensity: number;
-  public type: 'ambient' | 'directional' | 'point';
+  public type: 'ambient' | 'directional' | 'point' | 'spot';
 
   constructor(color: any = 0xffffff, intensity: number = 1) {
     super();
@@ -2900,7 +3331,7 @@ function sandboxWorkerMain(
                 '(function (THREE, scene, camera, renderer) {\n' +
                   'return (function () {\n' +
                   data.script +
-                  '\n})();\n})',
+                  '\n;\nreturn typeof scene === "object" && scene ? scene : undefined;\n})();\n})',
               ),
             )
           : new Function(
@@ -2908,7 +3339,9 @@ function sandboxWorkerMain(
               'scene',
               'camera',
               'renderer',
-              'return (function () {\n' + data.script + '\n})();',
+              'return (function () {\n' +
+                data.script +
+                '\n;\nreturn typeof scene === "object" && scene ? scene : undefined;\n})();',
             );
         createClientScript = null;
         const ret = runClientFn(THREE, scene, camera, renderer);
@@ -3613,56 +4046,550 @@ export class ShaderMaterial extends MeshStandardMaterial {
 
 export const RawShaderMaterial = ShaderMaterial;
 
-export class PolyhedronFallbackGeometry extends SphereGeometry {
-  constructor(radius = 1, detail = 0, name = 'PolyhedronGeometry') {
-    warnUnsupported(name, 'SphereGeometry');
-    const seg = Math.max(4, Math.min(32, 4 << Math.min(detail, 3)));
-    super(radius, seg, seg);
+export class PolyhedronGeometry extends BufferGeometry {
+  constructor(
+    vertices: number[] = [],
+    indices: number[] = [],
+    radius: number = 1,
+    detail: number = 0,
+  ) {
+    super();
+    const r = Number(radius) || 1;
+    const d = Math.max(0, Math.min(7, Math.floor(Number(detail) || 0)));
+    const cols = d + 1;
+    const pos: number[] = [];
+    const norm: number[] = [];
+    const uvs: number[] = [];
+    const idx: number[] = [];
+    const vA = new Vector3(),
+      vB = new Vector3(),
+      vC = new Vector3();
+    const getV = (i: number, out: Vector3) =>
+      out.set(vertices[i * 3] || 0, vertices[i * 3 + 1] || 0, vertices[i * 3 + 2] || 0);
+    const pushV = (v: Vector3, n: Vector3) => {
+      const p = v.clone().normalize();
+      pos.push(p.x * r, p.y * r, p.z * r);
+      norm.push(n.x, n.y, n.z);
+      uvs.push(
+        Math.atan2(p.z, -p.x) / (2 * Math.PI) + 0.5,
+        1 - Math.acos(Math.max(-1, Math.min(1, p.y))) / Math.PI,
+      );
+    };
+    const addTri = (a: Vector3, b: Vector3, c: Vector3) => {
+      const base = pos.length / 3;
+      const fn =
+        d === 0
+          ? new Vector3().subVectors(c, b).cross(new Vector3().subVectors(a, b)).normalize()
+          : null;
+      pushV(a, fn || a.clone().normalize());
+      pushV(b, fn || b.clone().normalize());
+      pushV(c, fn || c.clone().normalize());
+      idx.push(base, base + 1, base + 2);
+    };
+    for (let f = 0; f < indices.length; f += 3) {
+      getV(indices[f], vA);
+      getV(indices[f + 1], vB);
+      getV(indices[f + 2], vC);
+      const grid: Vector3[][] = [];
+      for (let i = 0; i <= cols; i++) {
+        grid[i] = [];
+        const aj = vA.clone().lerp(vC, i / cols),
+          bj = vB.clone().lerp(vC, i / cols);
+        const rows = cols - i;
+        for (let j = 0; j <= rows; j++) {
+          grid[i][j] = rows === 0 ? aj.clone() : aj.clone().lerp(bj, j / rows);
+        }
+      }
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < 2 * (cols - i) - 1; j++) {
+          const k = j >> 1;
+          if ((j & 1) === 0) addTri(grid[i][k + 1], grid[i + 1][k], grid[i][k]);
+          else addTri(grid[i][k + 1], grid[i + 1][k + 1], grid[i + 1][k]);
+        }
+      }
+    }
+    this.setFromBuffers(pos, norm, uvs, idx);
   }
 }
 
-export class IcosahedronGeometry extends PolyhedronFallbackGeometry {
+export const PolyhedronFallbackGeometry = PolyhedronGeometry;
+
+export class TetrahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
-    super(radius, detail, 'IcosahedronGeometry');
+    super(
+      [1, 1, 1, -1, -1, 1, -1, 1, -1, 1, -1, -1],
+      [2, 1, 0, 0, 3, 2, 1, 3, 0, 2, 3, 1],
+      radius,
+      detail,
+    );
   }
 }
 
-export class OctahedronGeometry extends PolyhedronFallbackGeometry {
+const OCTA_V = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1];
+const OCTA_I = [
+  0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 3, 1, 3, 4, 1, 4, 2,
+];
+
+export class OctahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
-    super(radius, detail, 'OctahedronGeometry');
+    super(OCTA_V, OCTA_I, radius, detail);
   }
 }
 
-export class DodecahedronGeometry extends PolyhedronFallbackGeometry {
+const ICO_T = (1 + Math.sqrt(5)) / 2;
+export class IcosahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
-    super(radius, detail, 'DodecahedronGeometry');
+    super(
+      [
+        -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T, 0,
+        0, -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T,
+        ICO_T, 0, -1, ICO_T, 0, 1, -ICO_T, 0, -1, -ICO_T, 0, 1,
+      ],
+      [
+        0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
+        1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
+        3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
+        4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
+      ],
+      radius,
+      detail,
+    );
   }
 }
 
-export class TetrahedronGeometry extends PolyhedronFallbackGeometry {
+const DOD_R = 1 / ICO_T;
+export class DodecahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
-    super(radius, detail, 'TetrahedronGeometry');
+    super(
+      [
+        -1, -1, -1, -1, -1, 1, -1, 1, -1, -1, 1, 1,
+        1, -1, -1, 1, -1, 1, 1, 1, -1, 1, 1, 1,
+        0, -DOD_R, -ICO_T, 0, -DOD_R, ICO_T, 0, DOD_R, -ICO_T, 0, DOD_R, ICO_T,
+        -DOD_R, -ICO_T, 0, -DOD_R, ICO_T, 0, DOD_R, -ICO_T, 0, DOD_R, ICO_T, 0,
+        -ICO_T, 0, -DOD_R, ICO_T, 0, -DOD_R, -ICO_T, 0, DOD_R, ICO_T, 0, DOD_R,
+      ],
+      [
+        3, 11, 7, 3, 7, 15, 3, 15, 13, 7, 19, 17, 7, 17, 6, 7, 6, 15,
+        17, 4, 8, 17, 8, 10, 17, 10, 6, 8, 0, 16, 8, 16, 2, 8, 2, 10,
+        0, 12, 1, 0, 1, 18, 0, 18, 16, 6, 10, 2, 6, 2, 13, 6, 13, 15,
+        2, 16, 18, 2, 18, 3, 2, 3, 13, 18, 1, 9, 18, 9, 11, 18, 11, 3,
+        4, 14, 12, 4, 12, 0, 4, 0, 8, 11, 9, 5, 11, 5, 19, 11, 19, 7,
+        19, 5, 14, 19, 14, 4, 19, 4, 17, 1, 12, 14, 1, 14, 5, 1, 5, 9,
+      ],
+      radius,
+      detail,
+    );
   }
 }
 
-export class CapsuleGeometry extends CylinderGeometry {
-  constructor(radius = 1, length = 1, _capSegments = 4, radialSegments = 8) {
-    warnUnsupported('CapsuleGeometry', 'CylinderGeometry');
-    super(radius, radius, length + radius * 2, radialSegments);
+export class CapsuleGeometry extends LatheGeometry {
+  constructor(radius = 1, length = 1, capSegments = 4, radialSegments = 8) {
+    const r = Math.max(1e-4, Number(radius) || 1),
+      hl = Math.max(0, Number.isFinite(Number(length)) ? Number(length) : 1) * 0.5,
+      cs = Math.max(2, Math.min(64, Math.floor(Number(capSegments) || 4))),
+      pts: Vector2[] = [];
+    for (let s = -1; s <= 1; s += 2) {
+      for (let i = 0; i <= cs; i++) {
+        if (s > 0 && i === 0 && hl === 0) continue;
+        const a = (s < 0 ? i / cs - 1 : i / cs) * (Math.PI / 2);
+        pts.push(new Vector2(Math.max(0, Math.cos(a) * r), s * hl + Math.sin(a) * r));
+      }
+    }
+    super(pts, Math.max(4, Math.min(128, Math.floor(Number(radialSegments) || 8))));
   }
 }
 
-export class RingGeometry extends CylinderGeometry {
-  constructor(_innerRadius = 0.5, outerRadius = 1, thetaSegments = 16) {
-    warnUnsupported('RingGeometry', 'CylinderGeometry');
-    super(outerRadius, outerRadius, 0.01, Math.max(8, thetaSegments));
+export class RingGeometry extends BufferGeometry {
+  constructor(
+    innerRadius = 0.5,
+    outerRadius = 1,
+    thetaSegments = 32,
+    phiSegments = 1,
+    thetaStart = 0,
+    thetaLength = Math.PI * 2,
+  ) {
+    super();
+    const rA = Math.max(1e-4, Number(outerRadius) || 1),
+      rawIn = Number(innerRadius),
+      rB = Number.isFinite(rawIn) ? Math.max(0, rawIn) : rA * 0.5,
+      outerR = Math.max(rA, rB),
+      innerR = Math.min(outerR * 0.999, Math.min(rA, rB)),
+      tSegs = Math.max(3, Math.min(256, Math.floor(Number(thetaSegments) || 32))),
+      pSegs = Math.max(1, Math.min(64, Math.floor(Number(phiSegments) || 1))),
+      t0 = Number.isFinite(Number(thetaStart)) ? Number(thetaStart) : 0,
+      tL = Number.isFinite(Number(thetaLength)) ? Number(thetaLength) : Math.PI * 2,
+      pos: number[] = [],
+      norm: number[] = [],
+      uvs: number[] = [],
+      idx: number[] = [];
+    for (let j = 0; j <= pSegs; j++) {
+      const r = innerR + (j / pSegs) * (outerR - innerR);
+      for (let i = 0; i <= tSegs; i++) {
+        const th = t0 + (i / tSegs) * tL,
+          c = Math.cos(th),
+          s = Math.sin(th);
+        pos.push(r * c, r * s, 0);
+        norm.push(0, 0, 1);
+        uvs.push((r / outerR) * c * 0.5 + 0.5, (r / outerR) * s * 0.5 + 0.5);
+        if (j < pSegs && i < tSegs) {
+          const a = j * (tSegs + 1) + i,
+            b = a + tSegs + 1;
+          if (r > 1e-6) idx.push(a, b, a + 1);
+          idx.push(b, b + 1, a + 1);
+        }
+      }
+    }
+    this.setFromBuffers(pos, norm, uvs, idx);
   }
 }
 
-export class CircleGeometry extends CylinderGeometry {
-  constructor(radius = 1, segments = 16) {
-    warnUnsupported('CircleGeometry', 'CylinderGeometry');
-    super(radius, radius, 0.01, Math.max(8, segments));
+export class CircleGeometry extends RingGeometry {
+  constructor(radius = 1, segments = 32, thetaStart = 0, thetaLength = Math.PI * 2) {
+    super(0, radius, segments, 1, thetaStart, thetaLength);
+  }
+}
+
+export class PointsMaterial extends Material {
+  public size: number;
+  public sizeAttenuation: boolean;
+  constructor(params: Record<string, any> = {}) {
+    super({roughness: 0.35, metalness: 0.1, side: 2, ...params});
+    const s = Number(params.size);
+    this.size = Number.isFinite(s) ? Math.max(0.002, Math.min(2, s)) : 0.05;
+    this.sizeAttenuation = params.sizeAttenuation !== false;
+    if (params.emissive === undefined) {
+      this.emissive = this.color.clone();
+      this.emissiveIntensity = 0.35;
+    }
+  }
+}
+
+export class LineBasicMaterial extends Material {
+  public linewidth: number;
+  constructor(params: Record<string, any> = {}) {
+    super({roughness: 0.4, metalness: 0.1, side: 2, ...params});
+    const lw = Number(params.linewidth);
+    this.linewidth = Number.isFinite(lw) ? Math.max(0.5, Math.min(20, lw)) : 1;
+    if (params.emissive === undefined) {
+      this.emissive = this.color.clone();
+      this.emissiveIntensity = 0.3;
+    }
+  }
+}
+
+export class LineDashedMaterial extends LineBasicMaterial {
+  public dashSize: number;
+  public gapSize: number;
+  public scale: number;
+  constructor(params: Record<string, any> = {}) {
+    super(params);
+    this.dashSize = Number(params.dashSize) || 3;
+    this.gapSize = Number(params.gapSize) || 1;
+    this.scale = Number(params.scale) || 1;
+  }
+}
+
+function extractGeometryEdges(
+  geometry?: BufferGeometry,
+  thresholdAngleDeg?: number,
+): Float32Array {
+  const posAttr = geometry?.attributes?.position;
+  if (!posAttr?.array || posAttr.count < 3) return new Float32Array(0);
+  const pos = posAttr.array as Float32Array,
+    idx = geometry?.index?.array,
+    triCount = Math.min(8192, Math.floor((idx ? idx.length : posAttr.count) / 3)),
+    vKey = (vi: number) =>
+      `${Math.round((pos[vi * 3] || 0) * 1e4)},${Math.round((pos[vi * 3 + 1] || 0) * 1e4)},${Math.round((pos[vi * 3 + 2] || 0) * 1e4)}`,
+    isWire = thresholdAngleDeg === undefined,
+    threshCos = isWire ? 1 : Math.cos((thresholdAngleDeg * Math.PI) / 180),
+    edgeMap: Record<string, {va: number; vb: number; nx: number; ny: number; nz: number; m: number}> = {},
+    out: number[] = [],
+    pushEdge = (a: number, b: number) =>
+      out.push(
+        pos[a * 3] || 0,
+        pos[a * 3 + 1] || 0,
+        pos[a * 3 + 2] || 0,
+        pos[b * 3] || 0,
+        pos[b * 3 + 1] || 0,
+        pos[b * 3 + 2] || 0,
+      );
+  for (let t = 0; t < triCount; t++) {
+    const i0 = idx ? idx[t * 3]! : t * 3,
+      i1 = idx ? idx[t * 3 + 1]! : t * 3 + 1,
+      i2 = idx ? idx[t * 3 + 2]! : t * 3 + 2,
+      ax = pos[i0 * 3] || 0,
+      ay = pos[i0 * 3 + 1] || 0,
+      az = pos[i0 * 3 + 2] || 0,
+      abx = (pos[i1 * 3] || 0) - ax,
+      aby = (pos[i1 * 3 + 1] || 0) - ay,
+      abz = (pos[i1 * 3 + 2] || 0) - az,
+      acx = (pos[i2 * 3] || 0) - ax,
+      acy = (pos[i2 * 3 + 1] || 0) - ay,
+      acz = (pos[i2 * 3 + 2] || 0) - az;
+    let nx = aby * acz - abz * acy,
+      ny = abz * acx - abx * acz,
+      nz = abx * acy - aby * acx;
+    const nLen = Math.hypot(nx, ny, nz);
+    if (!isWire && nLen < 1e-8) continue;
+    if (nLen > 0) {
+      nx /= nLen;
+      ny /= nLen;
+      nz /= nLen;
+    }
+    const verts = [i0, i1, i2];
+    for (let e = 0; e < 3; e++) {
+      const va = verts[e]!,
+        vb = verts[(e + 1) % 3]!,
+        ka = vKey(va),
+        kb = vKey(vb);
+      if (ka === kb) continue;
+      const ek = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`,
+        ex = edgeMap[ek];
+      if (!ex) {
+        edgeMap[ek] = {va, vb, nx, ny, nz, m: isWire ? 1 : 0};
+        if (isWire) pushEdge(va, vb);
+      } else if (!ex.m) {
+        ex.m = 1;
+        if (ex.nx * nx + ex.ny * ny + ex.nz * nz <= threshCos) pushEdge(va, vb);
+      }
+    }
+  }
+  if (!isWire) {
+    const keys = Object.keys(edgeMap);
+    for (let k = 0; k < keys.length; k++) {
+      const rec = edgeMap[keys[k]!];
+      if (rec && !rec.m) pushEdge(rec.va, rec.vb);
+    }
+  }
+  return new Float32Array(out);
+}
+
+export class WireframeGeometry extends BufferGeometry {
+  constructor(geometry?: BufferGeometry) {
+    super();
+    this.setAttribute('position', new BufferAttribute(extractGeometryEdges(geometry), 3));
+    (this as any).__isSegmentPairs = true;
+  }
+}
+
+export class EdgesGeometry extends BufferGeometry {
+  constructor(geometry?: BufferGeometry, thresholdAngle = 1) {
+    super();
+    const deg = Number.isFinite(Number(thresholdAngle)) ? Number(thresholdAngle) : 1;
+    this.setAttribute('position', new BufferAttribute(extractGeometryEdges(geometry, deg), 3));
+    (this as any).__isSegmentPairs = true;
+  }
+}
+
+function buildLinePrismGeometry(
+  sourceGeo: BufferGeometry,
+  mode: 'strip' | 'loop' | 'segments',
+  linewidth = 1,
+): BufferGeometry {
+  const outGeo = new BufferGeometry();
+  (outGeo as any).__baked = true;
+  const posAttr = sourceGeo?.attributes?.position;
+  if (!posAttr?.array || posAttr.count < 2) return outGeo;
+  const pos = posAttr.array as Float32Array,
+    idx = sourceGeo.index?.array,
+    effMode = (sourceGeo as any).__isSegmentPairs ? 'segments' : mode,
+    count = idx ? idx.length : posAttr.count,
+    segCount = Math.min(
+      4096,
+      Math.max(
+        0,
+        effMode === 'segments'
+          ? Math.floor(count / 2)
+          : effMode === 'loop' && count >= 3
+            ? count
+            : count - 1,
+      ),
+    );
+  if (segCount === 0) return outGeo;
+  sourceGeo.computeBoundingBox();
+  const bb = sourceGeo.boundingBox,
+    diag = bb ? bb.max.distanceTo(bb.min) || 1 : 1,
+    r =
+      Math.max(0.0015, Math.min(0.025, diag * 0.003)) *
+      (0.5 + 0.5 * Math.max(0.5, Math.min(6, Number(linewidth) || 1))),
+    positions: number[] = [],
+    normals: number[] = [],
+    uvs: number[] = [],
+    indices: number[] = [];
+
+  for (let s = 0; s < segCount; s++) {
+    const iA = effMode === 'segments' ? s * 2 : s,
+      iB = effMode === 'segments' ? s * 2 + 1 : (s + 1) % count,
+      v0 = idx ? idx[iA]! : iA,
+      v1 = idx ? idx[iB]! : iB,
+      x0 = pos[v0 * 3] || 0,
+      y0 = pos[v0 * 3 + 1] || 0,
+      z0 = pos[v0 * 3 + 2] || 0,
+      dx = (pos[v1 * 3] || 0) - x0,
+      dy = (pos[v1 * 3 + 1] || 0) - y0,
+      dz = (pos[v1 * 3 + 2] || 0) - z0,
+      len = Math.hypot(dx, dy, dz);
+    if (len < 1e-6) continue;
+    const tx = dx / len,
+      ty = dy / len,
+      tz = dz / len,
+      uLen = (Math.abs(ty) < 0.9 ? Math.hypot(tz, tx) : Math.hypot(tz, ty)) || 1,
+      ux = Math.abs(ty) < 0.9 ? tz / uLen : 0,
+      uy = Math.abs(ty) < 0.9 ? 0 : -tz / uLen,
+      uz = Math.abs(ty) < 0.9 ? -tx / uLen : ty / uLen,
+      vx = ty * uz - tz * uy,
+      vy = tz * ux - tx * uz,
+      vz = tx * uy - ty * ux,
+      base = positions.length / 3,
+      dirs = [
+        [ux, uy, uz],
+        [vx, vy, vz],
+        [-ux, -uy, -uz],
+        [-vx, -vy, -vz],
+      ];
+    for (let end = 0; end < 2; end++) {
+      const px = x0 + end * dx,
+        py = y0 + end * dy,
+        pz = z0 + end * dz;
+      for (let d = 0; d < 4; d++) {
+        const dir = dirs[d]!;
+        positions.push(px + dir[0]! * r, py + dir[1]! * r, pz + dir[2]! * r);
+        normals.push(dir[0]!, dir[1]!, dir[2]!);
+        uvs.push(d / 4, end);
+      }
+    }
+    for (let d = 0; d < 4; d++) {
+      const d1 = (d + 1) % 4;
+      indices.push(base + d, base + d1, base + 4 + d1, base + d, base + 4 + d1, base + 4 + d);
+    }
+  }
+  if (positions.length > 0) outGeo.setFromBuffers(positions, normals, uvs, indices);
+  return outGeo;
+}
+
+function buildPointsOctahedraGeometry(
+  sourceGeo: BufferGeometry,
+  pointSize = 0.05,
+): BufferGeometry {
+  const outGeo = new BufferGeometry();
+  (outGeo as any).__baked = true;
+  const posAttr = sourceGeo?.attributes?.position;
+  if (!posAttr?.array || posAttr.count < 1) return outGeo;
+  const pos = posAttr.array as Float32Array,
+    totalPts = posAttr.count,
+    emitPts = Math.min(totalPts, 5000),
+    r = Math.max(0.003, Math.min(0.25, (Number(pointSize) || 0.05) * 0.6)),
+    positions: number[] = [],
+    normals: number[] = [],
+    uvs: number[] = [],
+    indices: number[] = [];
+  for (let p = 0; p < emitPts; p++) {
+    const srcIdx = totalPts <= 5000 ? p : Math.floor((p * totalPts) / emitPts),
+      cx = pos[srcIdx * 3] || 0,
+      cy = pos[srcIdx * 3 + 1] || 0,
+      cz = pos[srcIdx * 3 + 2] || 0,
+      vBase = p * 6;
+    for (let k = 0; k < 6; k++) {
+      const ox = OCTA_V[k * 3]!,
+        oy = OCTA_V[k * 3 + 1]!,
+        oz = OCTA_V[k * 3 + 2]!;
+      positions.push(cx + ox * r, cy + oy * r, cz + oz * r);
+      normals.push(ox, oy, oz);
+      uvs.push(0.5, 0.5);
+    }
+    for (let t = 0; t < 24; t++) indices.push(vBase + OCTA_I[t]!);
+  }
+  outGeo.setFromBuffers(positions, normals, uvs, indices);
+  return outGeo;
+}
+
+export class Line extends Mesh {
+  public isLine = true;
+  protected _lineMode: 'strip' | 'loop' | 'segments' | 'points';
+  protected _sourceGeo: BufferGeometry;
+
+  constructor(
+    geometry?: BufferGeometry,
+    material?: Material,
+    mode: 'strip' | 'loop' | 'segments' | 'points' = 'strip',
+  ) {
+    const rawOpts = material && typeof material === 'object' ? material : {};
+    const mat =
+      material instanceof Material
+        ? material
+        : mode === 'points'
+          ? new PointsMaterial(rawOpts)
+          : new LineBasicMaterial(rawOpts);
+    const srcGeo = geometry instanceof BufferGeometry ? geometry : new BufferGeometry();
+    super(srcGeo, mat);
+    this._lineMode = mode;
+    this._sourceGeo = srcGeo;
+  }
+
+  public computeLineDistances(): this {
+    return this;
+  }
+
+  public _bakeAuthorGeometry(): void {
+    if (this.geometry && !(this.geometry as any).__baked) {
+      this._sourceGeo = this.geometry;
+    }
+    const isPts = this._lineMode === 'points';
+    if (isPts) {
+      const colAttr = this._sourceGeo?.attributes?.color;
+      if (
+        colAttr?.array &&
+        colAttr.count > 0 &&
+        this.material?.color.r === 1 &&
+        this.material.color.g === 1 &&
+        this.material.color.b === 1
+      ) {
+        const cArr = colAttr.array as Float32Array,
+          n = Math.min(colAttr.count, 64);
+        let rS = 0,
+          gS = 0,
+          bS = 0;
+        for (let i = 0; i < n; i++) {
+          rS += cArr[i * 3] || 0;
+          gS += cArr[i * 3 + 1] || 0;
+          bS += cArr[i * 3 + 2] || 0;
+        }
+        this.material.color.setRGB(rS / n, gS / n, bS / n);
+      }
+    }
+    if (
+      !(this.geometry as any)?.__baked &&
+      this._sourceGeo?.attributes?.position?.count >= (isPts ? 1 : 2)
+    ) {
+      this.geometry = isPts
+        ? buildPointsOctahedraGeometry(this._sourceGeo, (this.material as any)?.size ?? 0.05)
+        : buildLinePrismGeometry(
+            this._sourceGeo,
+            this._lineMode as 'strip' | 'loop' | 'segments',
+            (this.material as any)?.linewidth ?? 1,
+          );
+    }
+  }
+}
+
+export class LineLoop extends Line {
+  public isLineLoop = true;
+  constructor(geometry?: BufferGeometry, material?: Material) {
+    super(geometry, material, 'loop');
+  }
+}
+
+export class LineSegments extends Line {
+  public isLineSegments = true;
+  constructor(geometry?: BufferGeometry, material?: Material) {
+    super(geometry, material, 'segments');
+  }
+}
+
+export class Points extends Line {
+  public isPoints = true;
+  constructor(geometry?: BufferGeometry, material?: Material) {
+    super(geometry, material, 'points');
   }
 }
 
@@ -3678,10 +4605,16 @@ export class SpotLight extends PointLight {
     penumbra = 0,
     decay = 2,
   ) {
-    warnUnsupported('SpotLight', 'PointLight');
     super(color, intensity, distance, decay);
-    this.angle = angle;
-    this.penumbra = penumbra;
+    this.type = 'spot';
+    const rawAngle = Number(angle);
+    this.angle = Number.isFinite(rawAngle)
+      ? Math.max(0.01, Math.min(Math.PI / 2, rawAngle))
+      : Math.PI / 3;
+    const rawPen = Number(penumbra);
+    this.penumbra = Number.isFinite(rawPen)
+      ? Math.max(0, Math.min(1, rawPen))
+      : 0;
   }
 }
 
@@ -3718,6 +4651,15 @@ const threeExports: Record<string, any> = {
   ConeGeometry,
   TorusGeometry,
   TorusKnotGeometry,
+  Curve: Curve3,
+  Curve3,
+  LineCurve3,
+  QuadraticBezierCurve3,
+  CubicBezierCurve3,
+  CatmullRomCurve3,
+  LatheGeometry,
+  TubeGeometry,
+  PolyhedronGeometry,
   IcosahedronGeometry,
   OctahedronGeometry,
   DodecahedronGeometry,
@@ -3725,6 +4667,28 @@ const threeExports: Record<string, any> = {
   CapsuleGeometry,
   RingGeometry,
   CircleGeometry,
+  WireframeGeometry,
+  EdgesGeometry,
+  FrontSide: 0,
+  BackSide: 1,
+  DoubleSide: 2,
+  NoBlending: 0,
+  NormalBlending: 1,
+  AdditiveBlending: 2,
+  MultiplyBlending: 4,
+  RepeatWrapping: 1000,
+  ClampToEdgeWrapping: 1001,
+  MirroredRepeatWrapping: 1002,
+  NearestFilter: 1003,
+  LinearFilter: 1006,
+  SRGBColorSpace: 'srgb',
+  LinearSRGBColorSpace: 'srgb-linear',
+  RGBAFormat: 1023,
+  RGBFormat: 1022,
+  StaticDrawUsage: 35044,
+  DynamicDrawUsage: 35048,
+  ACESFilmicToneMapping: 4,
+  PCFSoftShadowMap: 2,
   Texture,
   TextureLoader,
   Material,
@@ -3733,12 +4697,19 @@ const threeExports: Record<string, any> = {
   MeshLambertMaterial,
   MeshPhongMaterial,
   MeshPhysicalMaterial,
+  PointsMaterial,
+  LineBasicMaterial,
+  LineDashedMaterial,
   ShaderMaterial,
   RawShaderMaterial,
   Object3D,
   Group,
   Mesh,
   InstancedMesh,
+  Line,
+  LineLoop,
+  LineSegments,
+  Points,
   Light,
   AmbientLight,
   DirectionalLight,
@@ -3944,12 +4915,27 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     // Fast path: most nodes carry no `userData.xr` / `interactivity`.
     if (value === undefined || value === null) return null;
     let budget = 20000;
+    let autoNodeId = 0;
     const seen = new Set<object>();
     const copy = (v: unknown, depth: number): unknown => {
       if (--budget < 0 || depth > 32) return undefined;
       if (v === null || typeof v === 'string' || typeof v === 'boolean')
         return v;
       if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+      if (v instanceof Object3D) {
+        if (!v.name) v.name = `Node_ref_${++autoNodeId}`;
+        return v.name;
+      }
+      if (v instanceof Vector3) {
+        return [
+          Number.isFinite(v.x) ? v.x : 0,
+          Number.isFinite(v.y) ? v.y : 0,
+          Number.isFinite(v.z) ? v.z : 0,
+        ];
+      }
+      if (v instanceof Color) {
+        return `#${v.getHex().toString(16).padStart(6, '0')}`;
+      }
       if (typeof v !== 'object' || seen.has(v as object)) return undefined;
       seen.add(v as object);
       let out: any;
@@ -4306,12 +5292,69 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
 
       if (node instanceof Light) {
         const e = worldOf(nodeIdx).elements;
-        lights.push({
+        const px = fin(e[12], 0);
+        const py = fin(e[13], 0);
+        const pz = fin(e[14], 0);
+        const lightEntry: Record<string, any> = {
           light_type: node.type,
           color: [node.color.r, node.color.g, node.color.b],
           intensity: node.intensity,
-          position: [fin(e[12], 0), fin(e[13], 0), fin(e[14], 0)],
-        });
+          position: [px, py, pz],
+        };
+        if (node instanceof SpotLight || node instanceof DirectionalLight) {
+          const tgt = node.target;
+          let tx = fin(tgt?.position?.x, 0);
+          let ty = fin(tgt?.position?.y, 0);
+          let tz = fin(tgt?.position?.z, 0);
+          if (tgt?.parent) {
+            const chain: Object3D[] = [];
+            for (
+              let cur: Object3D | null = tgt;
+              cur && cur !== activeScene && chain.length < 64;
+              cur = cur.parent
+            ) {
+              chain.push(cur);
+            }
+            const m = new Matrix4();
+            for (let ci = chain.length - 1; ci >= 0; ci--) {
+              const cObj = chain[ci]!;
+              cObj.updateMatrix();
+              m.multiply(cObj.matrix);
+            }
+            tx = fin(m.elements[12], tx);
+            ty = fin(m.elements[13], ty);
+            tz = fin(m.elements[14], tz);
+          }
+          if (node instanceof SpotLight) {
+            let dx = tx - px;
+            let dy = ty - py;
+            let dz = tz - pz;
+            const dLen = Math.hypot(dx, dy, dz);
+            if (dLen > 1e-6) {
+              dx /= dLen;
+              dy /= dLen;
+              dz /= dLen;
+            } else {
+              dx = 0;
+              dy = -1;
+              dz = 0;
+            }
+            lightEntry.direction = [dx, dy, dz];
+            const outerAngle = Math.max(
+              0.01,
+              Math.min(Math.PI / 2, fin(node.angle, Math.PI / 3)),
+            );
+            const pen = Math.max(0, Math.min(1, fin(node.penumbra, 0)));
+            lightEntry.outer_cone_angle = outerAngle;
+            lightEntry.inner_cone_angle = Math.max(0, outerAngle * (1 - pen));
+            lightEntry.range = Math.max(0, fin(node.distance, 0));
+          } else {
+            lightEntry.position = [px - tx, py - ty, pz - tz];
+          }
+        } else if (node instanceof PointLight) {
+          lightEntry.range = Math.max(0, fin(node.distance, 0));
+        }
+        lights.push(lightEntry);
       }
 
       pushChildren(node, nodeIdx);
@@ -4323,11 +5366,12 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       message: string,
       hint: string,
       node?: string,
+      severity: 'warning' | 'info' = 'warning',
     ) => {
       diagnostics.push(
         node
-          ? {code, severity: 'warning', node, message, hint}
-          : {code, severity: 'warning', message, hint},
+          ? {code, severity, node, message, hint}
+          : {code, severity, message, hint},
       );
     };
     for (const message of getAuthorWarnings()) {
@@ -4354,20 +5398,30 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                     'TL107',
                     'Use <three-live bloom="0.5" outline-selected> or mesh.userData.xr = { bloom, outline } instead of EffectComposer passes.',
                   ]
-                : message.includes('THREE.')
+                : /THREE\.[A-Za-z0-9_]*Loader\b/.test(message)
                   ? [
                       'TL103',
                       "Load external models via <three-live src='...'> or <xr-anchor src='...'>; camera controls and post-processing are managed by the host viewer.",
                     ]
-                  : message.includes('larger than')
+                  : /THREE\.(?:Points|Line|Sprite)/.test(message)
                     ? [
-                        'TL105',
-                        'Keep per-node userData.xr metadata under 15 KB.',
-                      ]
-                    : [
                         'TL102',
-                        'Use core primitives (BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, TorusKnotGeometry, PlaneGeometry) and DirectionalLight / PointLight / AmbientLight.',
-                      ];
+                        'glTF mesh export requires triangle surface meshes (THREE.Mesh or THREE.InstancedMesh). Replace Points/Sprite with InstancedMesh + SphereGeometry, and replace Line/LineSegments with TubeGeometry or CylinderGeometry.',
+                      ]
+                    : /THREE\.(?:Canvas|Data|Video|Framebuffer)Texture/.test(message)
+                      ? [
+                          'TL102',
+                          'Procedural DOM/pixel textures cannot run in the headless sandbox; use MeshPhysicalMaterial PBR properties, vertex colors, or THREE.TextGeometry / userData.text.',
+                        ]
+                      : message.includes('larger than')
+                        ? [
+                            'TL105',
+                            'Keep per-node userData.xr metadata under 15 KB.',
+                          ]
+                        : [
+                            'TL102',
+                            'Use supported geometries (Box, Sphere, Cylinder, Cone, Torus, TorusKnot, Plane, Lathe, Tube, Extrude, Shape, TextGeometry, CSG, or BufferGeometry) and DirectionalLight / PointLight / AmbientLight.',
+                          ];
       pushDiag(code, message, hint);
     }
 
@@ -4382,10 +5436,13 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       const rn = rawNodes[i];
       const explicitName =
         typeof rn.name === 'string' && rn.name.trim().length > 0 ? rn.name : '';
-      const nodeLabel =
+      let nodeLabel =
         explicitName ||
         (rn.mesh >= 0 && rawMeshes[rn.mesh]?.name) ||
         `Node_${i}`;
+      if (!explicitName && nodeNameSet.has(nodeLabel)) {
+        nodeLabel = `Node_${i}`;
+      }
       const inter = nodeInteractivity[i];
       let parsedXR: Record<string, any> | null = null;
       if (rn.xr_traits_json) {
@@ -4397,11 +5454,14 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       }
 
       if ((parsedXR || inter) && !explicitName) {
+        rn.name = nodeLabel;
+        nodeNameSet.add(nodeLabel);
         pushDiag(
           'TL205',
-          `Interactive node '${nodeLabel}' is missing an explicit mesh.name.`,
+          `Interactive node '${nodeLabel}' is missing an explicit mesh.name (auto-named '${nodeLabel}').`,
           "Assign a unique mesh.name = '...' so raycasting, meshclick, and WebMCP tools can target it.",
           nodeLabel,
+          'info',
         );
       }
 

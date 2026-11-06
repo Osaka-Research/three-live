@@ -1873,6 +1873,8 @@ fn test_phase1_structured_compiler_and_schema_diagnostics() {
         const controls = new THREE.OrbitControls();
         const composer = new THREE.EffectComposer();
         const bloomPass = new THREE.UnrealBloomPass();
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
+        scene.add(hemi);
         requestAnimationFrame(() => {});
 
         const vA = new THREE.Vector3(0, 0, 0).lerp(new THREE.Vector3(2, 4, 6), 0.5);

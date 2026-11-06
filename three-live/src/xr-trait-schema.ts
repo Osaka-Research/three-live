@@ -153,9 +153,9 @@ export interface HandlesOptions {
 export function parseHandles(raw: unknown): HandlesOptions | null {
   if (!raw) return null;
   const r = asRecord(raw) ?? {};
-  const minScale = clampNum(r['minScale'], 0.001, 1000, 0.1);
+  const minScale = clampNum(r['minScale'] ?? r['min'], 0.001, 1000, 0.1);
   const maxScale = clampNum(
-    r['maxScale'],
+    r['maxScale'] ?? r['max'],
     minScale,
     1000,
     Math.max(minScale, 10),
@@ -717,18 +717,34 @@ export function parseExplode(raw: unknown): ExplodeOptions | null {
   if (!raw) return null;
   const r = asRecord(raw);
   if (r && r['enabled'] === false) return null;
-  const rawDir = r?.['direction'];
+  const rawDir = r?.['direction'] ?? r?.['offset'];
   let direction: TraitVec3 | null = null;
+  let offsetLen: number | undefined;
   if (isFiniteVec3(rawDir)) {
     const len = Math.hypot(rawDir[0], rawDir[1], rawDir[2]);
     if (len > 1e-8) {
       direction = [rawDir[0] / len, rawDir[1] / len, rawDir[2] / len];
+      if (r?.['direction'] === undefined && r?.['offset'] !== undefined) {
+        offsetLen = len;
+      }
     }
+  }
+  const rawDist =
+    typeof r?.['distance'] === 'number' && Number.isFinite(r['distance'])
+      ? r['distance']
+      : offsetLen;
+  if (typeof rawDist === 'number' && rawDist < 0 && direction) {
+    direction = [-direction[0], -direction[1], -direction[2]];
   }
   return {
     enabled: true,
     direction,
-    distance: clampNum(r?.['distance'], 0, 10, 0.35),
+    distance: clampNum(
+      typeof rawDist === 'number' ? Math.abs(rawDist) : undefined,
+      0,
+      10,
+      0.35,
+    ),
     layer: Math.round(clampNum(r?.['layer'], 1, 10, 1)),
     leaderLine: r?.['leaderLine'] !== false,
   };
@@ -1255,9 +1271,16 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   const has = (name: string): boolean => traitList.includes(name);
   const out: NormalizedXRTraits = {};
 
-  const grab = r['grab'];
+  const grab = r['grab'] ?? r['grabbable'];
   if (grab === '1-hand' || grab === '2-hand') out.grab = grab;
-  else if (grab === true || r['grabbable'] === true || has('grab'))
+  else if (
+    grab === true ||
+    r['draggable'] === true ||
+    r['movable'] === true ||
+    r['interactable'] === true ||
+    r['interactive'] === true ||
+    has('grab')
+  )
     out.grab = '2-hand';
   if (out.grab) out.grabbable = true;
 
@@ -1294,7 +1317,9 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
     if (lazy) out.follow = lazy;
   }
 
-  const anchor = r['anchor'];
+  const anchor =
+    r['anchor'] ??
+    (r['floor'] === true || r['ground'] === true ? 'floor' : undefined);
   if (typeof anchor === 'string' && ANCHORS.has(anchor)) {
     out.anchor = anchor as NormalizedXRTraits['anchor'];
   } else {
@@ -1308,17 +1333,38 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
     if (persist) out.anchorPersist = persist;
   }
   if (!out.anchorPersist) {
-    const persistExplicit = parseAnchorPersist(r['anchorPersist']);
+    const persistExplicit =
+      parseAnchorPersist(r['anchorPersist']) ??
+      (out.anchor && r['persist'] === true
+        ? {
+            persist: true,
+            ...(safeAnchorId(r['id']) ? {id: safeAnchorId(r['id'])} : {}),
+          }
+        : null);
     if (persistExplicit) out.anchorPersist = persistExplicit;
   }
   if (r['physics'] === 'dynamic' || r['physics'] === 'static')
     out.physics = r['physics'];
 
-  const orbit = parseOrbit(r['orbit']);
+  const orbit = parseOrbit(
+    r['orbit'] ??
+      (typeof r['radius'] === 'number' &&
+      (typeof r['speed'] === 'number' || r['target'] !== undefined) &&
+      r['character'] === undefined &&
+      r['agent'] === undefined &&
+      r['zone'] === undefined &&
+      r['objective'] === undefined &&
+      r['snapTo'] === undefined &&
+      r['snapSocket'] === undefined
+        ? r
+        : undefined),
+  );
   if (orbit) out.orbit = orbit;
-  const handles = parseHandles(r['handles']);
+  const handles = parseHandles(
+    r['handles'] ?? r['resizable'] ?? r['scaleLimits'],
+  );
   if (handles) out.handles = handles;
-  const particles = parseParticles(r['particles']);
+  const particles = parseParticles(r['particles'] ?? r['emitter']);
   if (particles) out.particles = particles;
   const hold = parseHoldToAsk(r['holdToAsk']);
   if (hold) out.holdToAsk = hold;
@@ -1335,7 +1381,12 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
     typeof r['audio'] === 'string' && isAudioPresetName(r['audio'].trim());
   const audio = isStringPreset ? null : parseSpatialAudio(r['audio']);
   if (audio) out.audio = audio;
-  const rawEmitter = r['audioEmitter'] ?? r['spatialAudio'];
+  const rawEmitter =
+    r['audioEmitter'] ??
+    r['spatialAudio'] ??
+    r['positionalAudio'] ??
+    r['sound'] ??
+    r['panner'];
   if (rawEmitter !== undefined) {
     const emitter = parseAudioEmitter(rawEmitter);
     if (emitter) out.audioEmitter = emitter;
@@ -1366,27 +1417,48 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
       if (emitter) out.audioEmitter = emitter;
     }
   }
-  const dims = parseDimensions(r['dimensions']);
+  const dims = parseDimensions(
+    r['dimensions'] ?? r['measure'] ?? r['measurement'] ?? r['ruler'],
+  );
   if (dims) out.dimensions = dims;
-  const snapTo = parseSnapTo(r['snapTo']);
+  const snapTo = parseSnapTo(r['snapTo'] ?? r['snap'] ?? r['magnetic']);
   if (snapTo) out.snapTo = snapTo;
   const snapSocket = parseSnapSocket(r['snapSocket']);
   if (snapSocket) out.snapSocket = snapSocket;
-  const gaze = parseGaze(r['gaze']);
+  const gaze = parseGaze(r['gaze'] ?? r['dwell']);
   if (gaze) out.gaze = gaze;
-  const explode = parseExplode(r['explode']);
+  const explode = parseExplode(
+    r['explode'] ?? r['exploded'] ?? r['disassemble'],
+  );
   if (explode) out.explode = explode;
-  const navigable = parseNavigable(r['navigable']);
+  const navigable = parseNavigable(
+    r['navigable'] ??
+      (r['walkable'] !== undefined
+        ? r['walkable']
+          ? 'walkable'
+          : 'blocked'
+        : r['teleport'] === true
+          ? 'walkable'
+          : undefined),
+  );
   if (navigable) out.navigable = navigable;
-  const textTrait = parseTextTrait(r['text']);
+  const textTrait = parseTextTrait(
+    r['text'] ?? r['label'] ?? r['title'] ?? r['caption'] ?? r['spatialLabel'],
+  );
   if (textTrait) out.text = textTrait;
-  const bloomTrait = parseBloomTrait(r['bloom']);
+  const bloomTrait = parseBloomTrait(r['bloom'] ?? r['glow']);
   if (bloomTrait) out.bloom = bloomTrait;
   const outlineTrait = parseOutlineTrait(r['outline']);
   if (outlineTrait) out.outline = outlineTrait;
   const ikTrait = parseIKTrait(r['ik']);
   if (ikTrait) out.ik = ikTrait;
-  const lodTrait = parseLod(r['lod']);
+  const lodTrait = parseLod(
+    r['lod'] ??
+      r['levelOfDetail'] ??
+      r['detail'] ??
+      r['decimate'] ??
+      r['simplify'],
+  );
   if (lodTrait) out.lod = lodTrait;
   if (typeof r['sync'] === 'boolean') out.sync = r['sync'];
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
@@ -1869,6 +1941,26 @@ const XR_KEY_SYNONYMS: Readonly<
     target: 'dimensions',
     hint: "Use 'dimensions: true' instead of 'measure'.",
   },
+  interactive: {
+    target: 'grab',
+    hint: "Use 'grab: true' instead of 'interactive'.",
+  },
+  scaleLimits: {
+    target: 'handles',
+    hint: "Use 'handles: { minScale, maxScale }' instead of 'scaleLimits'.",
+  },
+  scalelimits: {
+    target: 'handles',
+    hint: "Use 'handles: { minScale, maxScale }' instead of 'scaleLimits'.",
+  },
+  spatialLabel: {
+    target: 'text',
+    hint: "Use 'text: \"...\"' instead of 'spatialLabel'.",
+  },
+  spatiallabel: {
+    target: 'text',
+    hint: "Use 'text: \"...\"' instead of 'spatialLabel'.",
+  },
   measurement: {
     target: 'dimensions',
     hint: "Use 'dimensions: true' instead of 'measurement'.",
@@ -1901,9 +1993,29 @@ const XR_KEY_SYNONYMS: Readonly<
     target: 'text',
     hint: "Use 'text: { text: \"...\", size: 0.12 }' instead of 'label'.",
   },
+  title: {
+    target: 'text',
+    hint: "Use 'text: { text: \"...\", size: 0.12 }' instead of 'title'.",
+  },
   caption: {
     target: 'text',
     hint: "Use 'text: { text: \"...\", size: 0.12 }' instead of 'caption'.",
+  },
+  mass: {
+    target: 'rigidBody',
+    hint: "Use 'rigidBody: { body: \"dynamic\", mass: 1 }' instead of top-level 'mass'.",
+  },
+  restitution: {
+    target: 'rigidBody',
+    hint: "Use 'rigidBody: { body: \"dynamic\", restitution: 0.35 }' instead of top-level 'restitution'.",
+  },
+  bounciness: {
+    target: 'rigidBody',
+    hint: "Use 'rigidBody: { body: \"dynamic\", restitution: 0.35 }' instead of 'bounciness'.",
+  },
+  friction: {
+    target: 'rigidBody',
+    hint: "Use 'rigidBody: { body: \"dynamic\", friction: 0.5 }' instead of top-level 'friction'.",
   },
   glow: {
     target: 'bloom',
@@ -1957,6 +2069,14 @@ const XR_KEY_SYNONYMS: Readonly<
     target: 'zone',
     hint: "Use 'zone' instead of 'sensor'.",
   },
+  hazard: {
+    target: 'zone',
+    hint: "Use 'zone: { shape: \"box\", watchGroups: [\"player\"] }' instead of 'hazard'.",
+  },
+  persist: {
+    target: 'anchorPersist',
+    hint: "Use 'anchor: { target: \"wall\", persist: true }' or 'anchorPersist: { persist: true }' instead of top-level 'persist'.",
+  },
   spawn: {
     target: 'spawner',
     hint: "Use 'spawner: { template: \"...\" }' instead of 'spawn'.",
@@ -2000,11 +2120,15 @@ function editDistance(a: string, b: string): number {
   return dp[n];
 }
 
+let canonicalKeyListCache: string[] | null = null;
+
 function closestCanonicalTrait(key: string): string | null {
   const lower = key.toLowerCase();
   let best: string | null = null;
   let bestDist = 4;
-  for (const cand of CANONICAL_XR_KEYS) {
+  const list = (canonicalKeyListCache ??= Array.from(CANONICAL_XR_KEYS));
+  for (let i = 0; i < list.length; i++) {
+    const cand = list[i];
     if (cand === 'traits') continue;
     const d = editDistance(lower, cand.toLowerCase());
     if (d < bestDist) {
@@ -2030,7 +2154,7 @@ export function validateXRTraits(
     code: string,
     message: string,
     hint: string,
-    severity: 'warning' | 'error' = 'warning',
+    severity: 'warning' | 'error' | 'info' = 'warning',
   ) => diags.push({code, severity, node: nodeName, message, hint});
   const r = asRecord(raw);
   if (!r) {
@@ -2048,8 +2172,51 @@ export function validateXRTraits(
     if (syn) {
       pushDiag(
         'TL201',
-        `Unrecognized key '${key}' in userData.xr on node '${nodeName}'; did you mean '${syn.target}'?`,
+        `Unrecognized key '${key}' in userData.xr on node '${nodeName}' (auto-normalized to '${syn.target}'); did you mean '${syn.target}'?`,
         syn.hint,
+        'info',
+      );
+    } else if (
+      (key === 'radius' || key === 'speed' || key === 'target') &&
+      typeof r['radius'] === 'number' &&
+      (typeof r['speed'] === 'number' || r['target'] !== undefined) &&
+      r['character'] === undefined &&
+      r['player'] === undefined &&
+      r['avatar'] === undefined &&
+      r['controller'] === undefined
+    ) {
+      pushDiag(
+        'TL201',
+        `Top-level '${key}' in userData.xr on node '${nodeName}' auto-normalized to 'orbit.${key}'.`,
+        "Use 'orbit: { target, radius, speed }' instead of top-level orbit properties.",
+        'info',
+      );
+    } else if (
+      (key === 'speed' || key === 'height' || key === 'radius') &&
+      (r['character'] !== undefined ||
+        r['player'] !== undefined ||
+        r['avatar'] !== undefined ||
+        r['controller'] !== undefined)
+    ) {
+      pushDiag(
+        'TL201',
+        `Top-level '${key}' in userData.xr on node '${nodeName}' auto-normalized to 'character.${key}'.`,
+        "Use 'character: { speed, height, radius }' instead of top-level character properties.",
+        'info',
+      );
+    } else if (
+      key === 'radius' &&
+      (r['zone'] !== undefined ||
+        r['trigger'] !== undefined ||
+        r['hitbox'] !== undefined ||
+        r['sensor'] !== undefined ||
+        r['hazard'] !== undefined)
+    ) {
+      pushDiag(
+        'TL201',
+        `Top-level 'radius' in userData.xr on node '${nodeName}' auto-normalized to 'zone.radius'.`,
+        "Use 'zone: { shape: \"sphere\", radius }' instead of top-level 'radius'.",
+        'info',
       );
     } else {
       const closest = closestCanonicalTrait(key);
@@ -2235,7 +2402,7 @@ export function validateXRTraits(
   }
   const explodeObj = asRecord(r['explode']);
   if (explodeObj && explodeObj['enabled'] !== false) {
-    checkRange('explode.distance', explodeObj['distance'], 0, 10);
+    checkRange('explode.distance', explodeObj['distance'], -10, 10);
     checkRange('explode.layer', explodeObj['layer'], 1, 10);
   }
   const textObj = asRecord(r['text']);
