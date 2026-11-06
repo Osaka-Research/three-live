@@ -146,7 +146,7 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 
 To load all 14 spatial plugins without a bundler, import
 `/dist/xr-live-spatial.min.js` (`< 57 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 184 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
+(`< 188 KB gz`, which also includes `xr-live-sensors` and the 6 `xr-live-sim`
 simulation plugins).
 
 --------------------------------------------------------------------------------
@@ -218,7 +218,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`billboard`** | `'capsule' \| 'cylindrical' \| 'spherical' \| true` | Orients the node toward the viewer (`'capsule'` and `'cylindrical'` rotate around the Y axis; `'spherical'` faces the camera in 3D). |
 | **`follow`** | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values apply an eager spring follow; object values activate lazy head or hand follow with an angular deadzone (`deadzoneDeg`, default `15°`) and a critically damped spring (`stiffness`, default `6`). |
 | **`anchor`** | `'floor' \| 'wall' \| 'ceiling' \| 'table' \| 'horizontal' \| 'vertical'` **or** `{ target?, id?, persist? }` | Pins the node to a detected real-world plane or simulator surface; setting `persist: true` (or `id`) persists user-moved transforms across reloads and `#xr-state` links. |
-| **`physics`** | `'dynamic' \| 'static'` | Steps rigid-body gravity, restitution bounce (`userData.xr.restitution`), sphere-to-sphere collisions, and depth heightfield collisions. |
+| **`physics`** / **`rigidBody`** | `'dynamic' \| 'static' \| 'kinematic'` **or** `{ body?, shape?: 'auto' \| 'box' \| 'sphere' \| 'cylinder', mass?, restitution?, friction?, linearDamping?, angularDamping?, gravityScale?, velocity?, angularVelocity?, lockRotation? }` | Steps 60 Hz deterministic Sequential Impulse rigid-body physics (gravity, restitution bounce, friction, stacking, sleeping, character push, projectile knockback, and depth heightfield collisions) and exports USDZ `PhysicsRigidBodyAPI` / `PhysicsMassAPI`. |
 | **`orbit`** | `{ target: [x,y,z] \| string, radius?: number, speed?: number, height?: number, phase?: number, faceCenter?: boolean }` | Orbits around a 3D world point or another mesh's `name` at `speed` rad/s. |
 | **`handles`** | `{ rotateAxis?: 'y' \| 'none', minScale?: number, maxScale?: number } \| true` | Adds four top-corner uniform scale handles and a bottom pedestal yaw-rotation bar; emits `xr-handles-change`. |
 | **`dimensions`** | `{ enabled?: boolean, unit?: 'auto' \| 'm' \| 'cm' \| 'mm' \| 'in' \| 'ft-in', axes?: Array<'x' \| 'y' \| 'z'>, color?: string, showOnSelect?: boolean } \| true` | Renders live `W × H × D` bounding-box dimension guide bars and camera-facing vector-glyph metric or imperial labels (`spatial-measure`). |
@@ -358,7 +358,7 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
 
 ## Simulation plugins (`xr-live-sim`)
 
-The optional `xr-live-sim` bundle adds five plugins for interactive simulations:
+The optional `xr-live-sim` bundle adds six plugins for interactive simulations:
 games, training drills, safety walkthroughs, and robot-cell or factory-floor
 rehearsals. Each plugin reads `userData.xr` traits from your scene and
 `<xr-live>` attributes from the host element, so a scene needs no per-frame
@@ -368,10 +368,10 @@ Load the bundle after the core, or use `xr-live-full.min.js`, which includes it:
 
 ```html
 <script src="/dist/xr-live.min.js"></script>
-<script src="/dist/xr-live-sim.min.js"></script> <!-- < 22 KB gz, global XRSim -->
+<script src="/dist/xr-live-sim.min.js"></script> <!-- < 26 KB gz, global XRSim -->
 ```
 
-With a bundler, import `xr-live/sim`. Importing the module registers all five
+With a bundler, import `xr-live/sim`. Importing the module registers all six
 plugins.
 
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
@@ -379,6 +379,7 @@ plugins.
 | :--------------------- | :-------------------------------------------------- |
 | `character-controller` | Moves the first `character` node with WASD or arrow keys, a gamepad, or a touch joystick. Jump with Space, sprint with Shift. Slides along `collidable` nodes, follows with the camera, and switches `idle`, `walk`, `run`, and `jump` clips. |
 | `steering-agents` | Moves `agent` nodes with `patrol`, `chase`, `flee`, `follow`, or `wander` steering, with separation and wall push-out. |
+| `rigid-body` | Steps `rigidBody` / `physics` nodes (`dynamic`, `static`, `kinematic`) at 60 Hz with a deterministic Sequential Impulse solver (box, sphere, and cylinder colliders, restitution, friction, stacking, sleeping, character push, and projectile knockback). |
 | `hit-zones` | Tracks `integrity`, fires projectiles or hitscan rays, applies contact amounts, emits zone enter and exit events, and runs `spawner` nodes. |
 | `objectives` | Tracks pickups, checkpoints, keys, time bonuses, and restores, plus score, attempts, a countdown, and the pass, fail, or timeout outcome. |
 | `synth-audio` | Plays procedural cues (no audio files) mapped per node by the `audioCues` trait. |
@@ -393,6 +394,7 @@ Add these keys to `userData.xr` on any mesh or group:
 | :---------- | :------------------------------------------------- |
 | `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, clips: { idle, walk, run, jump } }`. Camera modes: `third-person`, `first-person`, `top-down`, `fixed`. |
 | `agent` | A mode string or `{ mode, target, speed, turnSpeed, sightRadius, stopDistance, separationRadius, waypoints, loopWaypoints }`. `target` is a node name or `'user'` (the character, else the viewer). |
+| `rigidBody` / `physics` | `'dynamic' \| 'static' \| 'kinematic' \| true` or `{ body, shape: 'auto' \| 'box' \| 'sphere' \| 'cylinder', mass, restitution, friction, linearDamping, angularDamping, gravityScale, velocity, angularVelocity, lockRotation }`. |
 | `integrity` | A max number or `{ max, current, group, showBar, cooldownMs, hideOnDepleted, scoreValue, contactAmount }`. Hits skip nodes in the shooter's own `group`. |
 | `zone` | `'box'`, `'sphere'`, or `{ shape, size, radius, watchGroups, color }`. |
 | `spawner` | A template node name or `{ template, intervalSec, maxActive, totalCount, spawnRadius }`. The template node is hidden. |
@@ -439,6 +441,8 @@ All events bubble from the host element:
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Event | `detail` |
 | :----------------- | :----------------------------------------------------- |
+| `xrcollision` | `{ nodeId, otherId, normal, impactSpeed }` |
+| `xrsleep` | `{ nodeId }` |
 | `characterjump` | `{ nodeId, position }` |
 | `characterland` | `{ nodeId, fallSpeed }` |
 | `agentstatechange` | `{ nodeId, state, targetId }` |

@@ -269,7 +269,14 @@ export function stepAgent(world: SimWorld, b: SimBody, dt: number): void {
     const r = Math.max(0.05, Math.max(b.half[0], b.half[2]));
     const feet = b.pos[1] + b.center[1] - b.half[1];
     for (const o of world.bodies) {
-      if (o === b || o.hidden || o.isTemplate || !o.traits.collidable) continue;
+      if (
+        o === b ||
+        o.hidden ||
+        o.isTemplate ||
+        (!o.traits.collidable && o.traits.rigidBody?.body !== 'static')
+      ) {
+        continue;
+      }
       const [min, max] = bodyAABB(o);
       if (max[1] <= feet + 0.05 || min[1] >= feet + b.half[1] * 2) continue;
       const pushed = pushCircleOutOfAABB(next, r, min, max);

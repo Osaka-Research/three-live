@@ -114,7 +114,7 @@ export class XRHeightfieldPhysics {
     for (const mesh of meshes) {
       if (!mesh || mesh.visible === false) continue;
       const traits = getMeshXRTraits(mesh);
-      if (traits?.physics !== 'dynamic') continue;
+      if (traits?.physics !== 'dynamic' || traits?.rigidBody) continue;
 
       const body = this.getOrCreateBody(mesh);
       dynamicMeshes.push({mesh, body});

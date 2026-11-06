@@ -57,6 +57,7 @@ import {
   type SimWorld,
 } from './core';
 import {disposeSimInput, ensureSimInput, updateSimInput} from './input';
+import {applyRigidBodyImpulse} from './rigid-body';
 
 /** Pooled projectile count per world. */
 export const MAX_PROJECTILES = 32;
@@ -149,7 +150,13 @@ function stateOf(world: SimWorld): HitState {
 export function groupOf(world: SimWorld, b: SimBody): string {
   return (
     b.traits.integrity?.group ??
-    (b === world.character ? 'character' : b.traits.agent ? 'agent' : 'neutral')
+    (b === world.character
+      ? 'character'
+      : b.traits.agent
+        ? 'agent'
+        : b.traits.rigidBody?.body === 'dynamic'
+          ? 'physics'
+          : 'neutral')
   );
 }
 
@@ -161,6 +168,20 @@ function canTarget(b: SimBody, group: string, source: SimBody | null): boolean {
       b !== source &&
       b.integrity > 0 &&
       b.traits.integrity.group !== group,
+  );
+}
+
+function canShootTarget(
+  b: SimBody,
+  group: string,
+  source: SimBody | null,
+): boolean {
+  if (canTarget(b, group, source)) return true;
+  return Boolean(
+    b.traits.rigidBody?.body === 'dynamic' &&
+      !b.hidden &&
+      !b.isTemplate &&
+      b !== source,
   );
 }
 
@@ -298,7 +319,7 @@ export function raycastTargets(
   let blockT = Infinity;
   for (const b of world.bodies) {
     if (b.hidden || b.isTemplate || b === source) continue;
-    if (canTarget(b, group, source)) {
+    if (canShootTarget(b, group, source)) {
       const t = intersectSegmentSphere(
         origin,
         end,
@@ -309,7 +330,7 @@ export function raycastTargets(
         bestT = t;
         best = b;
       }
-    } else if (b.traits.collidable) {
+    } else if (b.traits.collidable || b.traits.rigidBody?.body === 'static') {
       const [min, max] = bodyAABB(b);
       const t = intersectSegmentAABB(origin, end, min, max);
       if (t !== null && t < blockT) blockT = t;
@@ -346,7 +367,15 @@ function fire(world: SimWorld, mode: HitMode, toward: Vec3 | null): void {
   const amount = clampNum(world.numAttr('hit-amount'), 0, 1e6, 25);
   if (mode === 'hitscan') {
     const hit = raycastTargets(world, o.pos, dir, group, o.source);
-    if (hit) applyHit(world, hit.body, amount, o.source, hit.point);
+    if (hit) {
+      applyHit(world, hit.body, amount, o.source, hit.point);
+      const imp = Math.max(1.5, amount * 0.12);
+      applyRigidBodyImpulse(world, hit.body, [
+        dir[0] * imp,
+        dir[1] * imp,
+        dir[2] * imp,
+      ]);
+    }
     return;
   }
   const shot = st.shots.find((s) => !s.active);
@@ -378,7 +407,7 @@ function stepShots(world: SimWorld, st: HitState, dt: number): void {
     let blocked = Infinity;
     for (const b of world.bodies) {
       if (b.hidden || b.isTemplate || b === s.source) continue;
-      if (canTarget(b, s.group, s.source)) {
+      if (canShootTarget(b, s.group, s.source)) {
         const t = intersectSegmentSphere(
           prev,
           s.pos,
@@ -389,7 +418,7 @@ function stepShots(world: SimWorld, st: HitState, dt: number): void {
           bestT = t;
           best = b;
         }
-      } else if (b.traits.collidable) {
+      } else if (b.traits.collidable || b.traits.rigidBody?.body === 'static') {
         const [min, max] = bodyAABB(b);
         const t = intersectSegmentAABB(prev, s.pos, min, max);
         if (t !== null && t < blocked) blocked = t;
@@ -402,6 +431,15 @@ function stepShots(world: SimWorld, st: HitState, dt: number): void {
         prev[2] + (s.pos[2] - prev[2]) * bestT,
       ];
       applyHit(world, best, amount, s.source, p);
+      const vLen = Math.hypot(s.vel[0], s.vel[1], s.vel[2]);
+      if (vLen > 1e-6) {
+        const imp = Math.max(1.5, amount * 0.12);
+        applyRigidBodyImpulse(world, best, [
+          (s.vel[0] / vLen) * imp,
+          (s.vel[1] / vLen) * imp,
+          (s.vel[2] / vLen) * imp,
+        ]);
+      }
       s.active = false;
     } else if (blocked <= 1 || s.life <= 0 || s.pos[1] < world.floorY - 50) {
       s.active = false;
@@ -466,7 +504,12 @@ function stepZones(world: SimWorld, st: HitState): void {
   }> = [];
   for (const b of world.bodies) {
     if (b.hidden || b.isTemplate) continue;
-    if (b === world.character || b.traits.agent || b.traits.integrity) {
+    if (
+      b === world.character ||
+      b.traits.agent ||
+      b.traits.integrity ||
+      b.traits.rigidBody?.body === 'dynamic'
+    ) {
       tracked.push({
         key: b.key,
         id: b.name,

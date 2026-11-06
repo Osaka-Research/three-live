@@ -192,7 +192,13 @@ object SteeringAgents {
       val r = Math.max(0.05, Math.max(b.half[0], b.half[2]))
       val feet = b.pos[1] + b.center[1] - b.half[1]
       for (o in world.bodies) {
-        if (o === b || o.hidden || o.isTemplate || !o.traits.collidable) continue
+        if (
+          o === b ||
+            o.hidden ||
+            o.isTemplate ||
+            (!o.traits.collidable && o.traits.rigidBody?.body != "static")
+        )
+          continue
         val box = o.aabb()
         if (box[4] <= feet + 0.05 || box[1] >= feet + b.half[1] * 2) continue
         val pushed = XRSimWorld.pushCircleOutOfAABB(next, r, box)

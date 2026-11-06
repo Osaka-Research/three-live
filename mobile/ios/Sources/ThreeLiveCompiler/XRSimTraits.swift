@@ -109,6 +109,22 @@ public struct XRAudioCuesTrait: Equatable, Sendable {
   public init(cues: [String: String]) { self.cues = cues }
 }
 
+/// Normalized `rigidBody` / object `physics` trait (`rigid-body`).
+public struct XRPhysicsBodyTrait: Equatable, Sendable {
+  public var body = "dynamic"
+  public var shape = "auto"
+  public var mass = 1.0
+  public var restitution = 0.35
+  public var friction = 0.5
+  public var linearDamping = 0.05
+  public var angularDamping = 0.1
+  public var gravityScale = 1.0
+  public var velocity = SIMD3<Double>(repeating: 0)
+  public var angularVelocity = SIMD3<Double>(repeating: 0)
+  public var lockRotation = false
+  public init() {}
+}
+
 /// The `xr-live-sim` traits of one node, parsed from glTF `extras.xr`.
 public struct XRSimTraits: Equatable, Sendable {
   public var character: XRCharacterTrait?
@@ -118,13 +134,14 @@ public struct XRSimTraits: Equatable, Sendable {
   public var spawner: XRSpawnerTrait?
   public var objective: XRObjectiveTrait?
   public var audioCues: XRAudioCuesTrait?
+  public var rigidBody: XRPhysicsBodyTrait?
   public var collidable = false
 
   public init() {}
 
   public var isEmpty: Bool {
     character == nil && agent == nil && integrity == nil && zone == nil && spawner == nil
-      && objective == nil && audioCues == nil && !collidable
+      && objective == nil && audioCues == nil && rigidBody == nil && !collidable
   }
 
   public static let agentTargetUser = "user"
@@ -135,6 +152,8 @@ public struct XRSimTraits: Equatable, Sendable {
   public static let clipStates = ["idle", "walk", "run", "jump"]
   public static let agentModes = ["patrol", "chase", "flee", "wander", "follow"]
   public static let objectiveTypes = ["pickup", "checkpoint", "time-bonus", "restore", "key"]
+  public static let physicsBodyModes = ["dynamic", "static", "kinematic"]
+  public static let physicsBodyShapes = ["auto", "box", "sphere", "cylinder"]
   public static let audioCueNames = [
     "confirm", "error", "alarm", "warning", "pickup", "jump", "beam", "impact", "burst",
     "powerup", "step", "pass", "fail",
@@ -309,9 +328,57 @@ public struct XRSimTraits: Equatable, Sendable {
     return t
   }
 
+  public static func parsePhysicsBody(_ raw: Any?) -> XRPhysicsBodyTrait? {
+    if falsy(raw) { return nil }
+    if let s = XRJSON.string(raw) {
+      guard physicsBodyModes.contains(s) else { return nil }
+      var t = XRPhysicsBodyTrait()
+      t.body = s
+      t.mass = s == "dynamic" ? 1 : 0
+      return t
+    }
+    let r: [String: Any]
+    if XRJSON.bool(raw) == true {
+      r = [:]
+    } else if let obj = XRJSON.object(raw) {
+      r = obj
+    } else {
+      return nil
+    }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+    var t = XRPhysicsBodyTrait()
+    t.body = oneOf(r["body"] ?? r["type"] ?? r["mode"], physicsBodyModes, "dynamic")
+    t.shape = oneOf(r["shape"] ?? r["collider"], physicsBodyShapes, "auto")
+    t.mass = t.body == "dynamic" ? num(r["mass"], 0.01, 1000, 1) : 0
+    t.restitution = num(r["restitution"] ?? r["bounciness"], 0, 1, 0.35)
+    t.friction = num(r["friction"], 0, 1, 0.5)
+    t.linearDamping = num(r["linearDamping"] ?? r["damping"], 0, 20, 0.05)
+    t.angularDamping = num(r["angularDamping"], 0, 20, 0.1)
+    t.gravityScale = num(r["gravityScale"], -5, 5, 1)
+    if let v = XRJSON.finiteVec3(r["velocity"]) {
+      t.velocity = SIMD3(
+        num(v.x, -200, 200, 0), num(v.y, -200, 200, 0), num(v.z, -200, 200, 0))
+    }
+    if let av = XRJSON.finiteVec3(r["angularVelocity"]) {
+      t.angularVelocity = SIMD3(
+        num(av.x, -100, 100, 0), num(av.y, -100, 100, 0), num(av.z, -100, 100, 0))
+    }
+    t.lockRotation = XRJSON.bool(r["lockRotation"]) == true
+    return t
+  }
+
+  public static func parseRigidBody(_ raw: Any?) -> XRPhysicsBodyTrait? {
+    parsePhysicsBody(raw)
+  }
+
   /// Parses the sim traits of a `userData.xr` / `extras.xr` bag, or `nil` when none.
   public static func parse(_ raw: Any?) -> XRSimTraits? {
     guard let r = XRJSON.object(raw) else { return nil }
+    let rawPhys = r["physics"]
+    let rbSource: Any? =
+      r["rigidBody"]
+      ?? ((XRJSON.string(rawPhys) == "kinematic" || XRJSON.bool(rawPhys) == true
+        || XRJSON.object(rawPhys) != nil) ? rawPhys : nil)
     var t = XRSimTraits()
     t.character = parseCharacter(r["character"])
     t.agent = parseAgent(r["agent"])
@@ -320,6 +387,7 @@ public struct XRSimTraits: Equatable, Sendable {
     t.spawner = parseSpawner(r["spawner"])
     t.objective = parseObjective(r["objective"])
     t.audioCues = parseAudioCues(r["audioCues"])
+    t.rigidBody = parsePhysicsBody(rbSource)
     t.collidable = XRJSON.bool(r["collidable"]) == true
     return t.isEmpty ? nil : t
   }

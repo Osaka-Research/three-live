@@ -151,6 +151,12 @@ struct NodeSimState {
     character_speed: f32,
     jump_impulse: f32,
     physics_mode: Option<String>,
+    mass: f32,
+    restitution: f32,
+    friction: f32,
+    linear_damping: f32,
+    gravity_scale: f32,
+    has_rigid_body_config: bool,
     half_extents: [f32; 3],
     // Integrity
     hp: Option<f32>,
@@ -593,7 +599,7 @@ fn run_simulation_loop(
             }
         }
 
-        // 5. Step character & dynamic physics (gravity + floor clamping).
+        // 5. Step character & dynamic physics (gravity + restitution bounce + pairwise stacking).
         let dt_f32 = SIM_DT_SEC as f32;
         for st in &mut states {
             if st.destroyed {
@@ -602,9 +608,23 @@ fn run_simulation_loop(
             if st.invuln_remaining_sec > 0.0 {
                 st.invuln_remaining_sec = (st.invuln_remaining_sec - SIM_DT_SEC).max(0.0);
             }
+            let is_kinematic = st.physics_mode.as_deref() == Some("kinematic");
+            if is_kinematic && !st.is_character {
+                st.translation[0] += st.velocity[0] * dt_f32;
+                st.translation[1] += st.velocity[1] * dt_f32;
+                st.translation[2] += st.velocity[2] * dt_f32;
+                continue;
+            }
             let is_dynamic = st.is_character || st.physics_mode.as_deref() == Some("dynamic");
             if is_dynamic {
-                st.velocity[1] -= 9.81 * dt_f32;
+                let g_scale = if st.is_character { 1.0 } else { st.gravity_scale };
+                st.velocity[1] -= 9.81 * g_scale * dt_f32;
+                if st.has_rigid_body_config && !st.is_character {
+                    let lin_damp = (1.0 - st.linear_damping * dt_f32).max(0.0);
+                    st.velocity[0] *= lin_damp;
+                    st.velocity[1] *= lin_damp;
+                    st.velocity[2] *= lin_damp;
+                }
                 st.translation[0] += st.velocity[0] * dt_f32;
                 st.translation[1] += st.velocity[1] * dt_f32;
                 st.translation[2] += st.velocity[2] * dt_f32;
@@ -613,17 +633,124 @@ fn run_simulation_loop(
                 if st.translation[1] <= floor_y {
                     let was_airborne = !st.grounded && st.velocity[1] < -0.5;
                     st.translation[1] = floor_y;
-                    st.velocity[1] = 0.0;
-                    st.grounded = true;
+                    if st.has_rigid_body_config && !st.is_character && -st.velocity[1] > 0.25 {
+                        st.velocity[1] = -st.velocity[1] * st.restitution;
+                        let fric = (1.0 - st.friction * 0.25).max(0.0);
+                        st.velocity[0] *= fric;
+                        st.velocity[2] *= fric;
+                        st.grounded = st.velocity[1].abs() <= 0.05;
+                    } else {
+                        st.velocity[1] = 0.0;
+                        st.grounded = true;
+                    }
                     if was_airborne {
                         fire_audio_cue(st, "onLand", &mut audio_cues_fired);
                     }
                 } else {
                     st.grounded = false;
                 }
-                // Dampen horizontal velocity when not actively driven.
-                st.velocity[0] *= 0.85;
-                st.velocity[2] *= 0.85;
+                if !st.has_rigid_body_config || st.is_character {
+                    // Dampen horizontal velocity when not actively driven.
+                    st.velocity[0] *= 0.85;
+                    st.velocity[2] *= 0.85;
+                }
+            }
+        }
+
+        // 5b. Pairwise AABB collision & vertical stacking for rigid bodies.
+        let n_states = states.len();
+        for _iter in 0..4 {
+            for i in 0..n_states {
+                if states[i].destroyed || !states[i].visible {
+                    continue;
+                }
+                for j in (i + 1)..n_states {
+                    if states[j].destroyed || !states[j].visible {
+                        continue;
+                    }
+                    let dyn_i = states[i].physics_mode.as_deref() == Some("dynamic")
+                        && !states[i].is_character;
+                    let dyn_j = states[j].physics_mode.as_deref() == Some("dynamic")
+                        && !states[j].is_character;
+                    let col_i = dyn_i
+                        || states[i].is_character
+                        || states[i].physics_mode.as_deref() == Some("static")
+                        || states[i].physics_mode.as_deref() == Some("kinematic")
+                        || states[i]
+                            .xr
+                            .get("collidable")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                    let col_j = dyn_j
+                        || states[j].is_character
+                        || states[j].physics_mode.as_deref() == Some("static")
+                        || states[j].physics_mode.as_deref() == Some("kinematic")
+                        || states[j]
+                            .xr
+                            .get("collidable")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                    if !(dyn_i && col_j) && !(dyn_j && col_i) {
+                        continue;
+                    }
+                    let dx = states[j].translation[0] - states[i].translation[0];
+                    let dy = states[j].translation[1] - states[i].translation[1];
+                    let dz = states[j].translation[2] - states[i].translation[2];
+                    let ox = (states[i].half_extents[0] + states[j].half_extents[0]) - dx.abs();
+                    let oy = (states[i].half_extents[1] + states[j].half_extents[1]) - dy.abs();
+                    let oz = (states[i].half_extents[2] + states[j].half_extents[2]) - dz.abs();
+                    if ox <= 0.0 || oy <= 0.0 || oz <= 0.0 {
+                        continue;
+                    }
+                    let (nx, ny, nz, depth) = if oy <= ox && oy <= oz {
+                        (0.0f32, if dy >= 0.0 { 1.0 } else { -1.0 }, 0.0f32, oy)
+                    } else if ox <= oz {
+                        (if dx >= 0.0 { 1.0 } else { -1.0 }, 0.0f32, 0.0f32, ox)
+                    } else {
+                        (0.0f32, 0.0f32, if dz >= 0.0 { 1.0 } else { -1.0 }, oz)
+                    };
+                    let inv_i = if dyn_i { 1.0 / states[i].mass.max(0.01) } else { 0.0 };
+                    let inv_j = if dyn_j { 1.0 / states[j].mass.max(0.01) } else { 0.0 };
+                    let inv_sum = inv_i + inv_j;
+                    if inv_sum <= 0.0 {
+                        continue;
+                    }
+                    let corr = ((depth - 0.002).max(0.0) / inv_sum) * 0.6;
+                    if inv_i > 0.0 {
+                        states[i].translation[0] -= nx * corr * inv_i;
+                        states[i].translation[1] -= ny * corr * inv_i;
+                        states[i].translation[2] -= nz * corr * inv_i;
+                    }
+                    if inv_j > 0.0 {
+                        states[j].translation[0] += nx * corr * inv_j;
+                        states[j].translation[1] += ny * corr * inv_j;
+                        states[j].translation[2] += nz * corr * inv_j;
+                    }
+                    let rvx = states[j].velocity[0] - states[i].velocity[0];
+                    let rvy = states[j].velocity[1] - states[i].velocity[1];
+                    let rvz = states[j].velocity[2] - states[i].velocity[2];
+                    let vn = rvx * nx + rvy * ny + rvz * nz;
+                    if vn < 0.0 {
+                        let e_raw = (states[i].restitution * states[j].restitution).sqrt();
+                        let e = if -vn > 0.25 { e_raw } else { 0.0 };
+                        let j_n = -(1.0 + e) * vn / inv_sum;
+                        if inv_i > 0.0 {
+                            states[i].velocity[0] -= nx * j_n * inv_i;
+                            states[i].velocity[1] -= ny * j_n * inv_i;
+                            states[i].velocity[2] -= nz * j_n * inv_i;
+                        }
+                        if inv_j > 0.0 {
+                            states[j].velocity[0] += nx * j_n * inv_j;
+                            states[j].velocity[1] += ny * j_n * inv_j;
+                            states[j].velocity[2] += nz * j_n * inv_j;
+                        }
+                    }
+                    if ny > 0.5 && dyn_j {
+                        states[j].grounded = true;
+                    } else if ny < -0.5 && dyn_i {
+                        states[i].grounded = true;
+                    }
+                }
             }
         }
 
@@ -1082,11 +1209,91 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
         _ => (4.0, 5.0),
     };
 
-    let physics_mode = xr.get("physics").and_then(|v| match v {
-        Value::String(s) => Some(s.clone()),
-        Value::Object(o) => o.get("mode").and_then(|m| m.as_str()).map(|s| s.to_string()),
-        _ => None,
-    });
+    let rb_val = xr.get("rigidBody").or_else(|| xr.get("physics"));
+    let (
+        physics_mode,
+        mass,
+        restitution,
+        friction,
+        linear_damping,
+        gravity_scale,
+        initial_velocity,
+        has_rigid_body_config,
+    ) = match rb_val {
+        Some(Value::Bool(true)) => (
+            Some("dynamic".to_string()),
+            1.0f32,
+            0.35f32,
+            0.5f32,
+            0.05f32,
+            1.0f32,
+            [0.0f32; 3],
+            xr.get("rigidBody").is_some(),
+        ),
+        Some(Value::String(s)) => {
+            let m = s.to_lowercase();
+            let is_dyn = m == "dynamic";
+            (
+                Some(m),
+                if is_dyn { 1.0 } else { 0.0 },
+                0.35,
+                0.5,
+                0.05,
+                1.0,
+                [0.0; 3],
+                xr.get("rigidBody").is_some(),
+            )
+        }
+        Some(Value::Object(o)) => {
+            let mode = o
+                .get("body")
+                .or_else(|| o.get("type"))
+                .or_else(|| o.get("mode"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("dynamic")
+                .to_lowercase();
+            let is_dyn = mode == "dynamic";
+            let m = o
+                .get("mass")
+                .and_then(|v| v.as_f64())
+                .map(|v| (v as f32).clamp(0.01, 1000.0))
+                .unwrap_or(if is_dyn { 1.0 } else { 0.0 });
+            let rest = o
+                .get("restitution")
+                .and_then(|v| v.as_f64())
+                .map(|v| (v as f32).clamp(0.0, 1.0))
+                .unwrap_or(0.35);
+            let fric = o
+                .get("friction")
+                .and_then(|v| v.as_f64())
+                .map(|v| (v as f32).clamp(0.0, 1.0))
+                .unwrap_or(0.5);
+            let ld = o
+                .get("linearDamping")
+                .and_then(|v| v.as_f64())
+                .map(|v| (v as f32).clamp(0.0, 20.0))
+                .unwrap_or(0.05);
+            let gs = o
+                .get("gravityScale")
+                .and_then(|v| v.as_f64())
+                .map(|v| (v as f32).clamp(-5.0, 5.0))
+                .unwrap_or(1.0);
+            let vel = o
+                .get("velocity")
+                .and_then(|v| v.as_array())
+                .filter(|a| a.len() >= 3)
+                .map(|a| {
+                    [
+                        (a[0].as_f64().unwrap_or(0.0) as f32).clamp(-200.0, 200.0),
+                        (a[1].as_f64().unwrap_or(0.0) as f32).clamp(-200.0, 200.0),
+                        (a[2].as_f64().unwrap_or(0.0) as f32).clamp(-200.0, 200.0),
+                    ]
+                })
+                .unwrap_or([0.0; 3]);
+            (Some(mode), m, rest, fric, ld, gs, vel, true)
+        }
+        _ => (None, 1.0, 0.35, 0.5, 0.05, 1.0, [0.0; 3], false),
+    };
 
     let (hp, max_hp, armor, invuln_duration_sec, on_zero, score_value, mut group) =
         match xr.get("integrity") {
@@ -1222,7 +1429,7 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
         translation: node.translation,
         rotation: node.rotation,
         scale: node.scale,
-        velocity: [0.0; 3],
+        velocity: initial_velocity,
         visible: true,
         destroyed: false,
         grounded,
@@ -1235,6 +1442,12 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
         character_speed,
         jump_impulse,
         physics_mode,
+        mass,
+        restitution,
+        friction,
+        linear_damping,
+        gravity_scale,
+        has_rigid_body_config,
         half_extents,
         hp,
         max_hp,

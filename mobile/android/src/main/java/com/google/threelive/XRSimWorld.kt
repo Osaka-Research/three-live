@@ -124,6 +124,7 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
   var characterSpeed: Double? = null
   var characterJump: Double? = null
   var steeringEnabled: Boolean = true
+  var rigidBodyEnabled: Boolean = true
 
   /** `hit-zones`: `off`, `projectile`, `hitscan`, or `contact`. */
   var hitMode: String = "off"
@@ -414,6 +415,7 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
     jumpQueued = false
     fireQueued = false
     CharacterController.reset(this)
+    RigidBodyPhysics.reset(this)
     HitZones.reset(this)
     Objectives.reset(this)
     SynthAudio.reset(this)
@@ -527,6 +529,7 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
       listOf(
         CharacterController::step,
         SteeringAgents::step,
+        RigidBodyPhysics::step,
         HitZones::step,
         Objectives::step,
         SynthAudio::step,

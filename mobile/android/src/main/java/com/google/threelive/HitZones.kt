@@ -82,12 +82,18 @@ object HitZones {
       ?: when {
         b === world.character -> "character"
         b.traits.agent != null -> "agent"
+        b.traits.rigidBody?.body == "dynamic" -> "physics"
         else -> "neutral"
       }
 
   private fun canTarget(b: XRSimWorld.Body, group: String, source: XRSimWorld.Body?): Boolean {
     val i = b.traits.integrity ?: return false
     return !b.hidden && !b.isTemplate && b !== source && b.integrity > 0 && i.group != group
+  }
+
+  private fun canShootTarget(b: XRSimWorld.Body, group: String, source: XRSimWorld.Body?): Boolean {
+    if (canTarget(b, group, source)) return true
+    return b.traits.rigidBody?.body == "dynamic" && !b.hidden && !b.isTemplate && b !== source
   }
 
   /** Applies [amount] to [target]; `false` when blocked by the cooldown or already depleted. */
@@ -189,13 +195,13 @@ object HitZones {
     var blockT = Double.POSITIVE_INFINITY
     for (b in world.bodies) {
       if (b.hidden || b.isTemplate || b === source) continue
-      if (canTarget(b, group, source)) {
+      if (canShootTarget(b, group, source)) {
         val t = XRSimWorld.intersectSegmentSphere(origin, end, b.center(), Math.max(0.05, b.radius))
         if (t != null && t < bestT) {
           bestT = t
           best = b
         }
-      } else if (b.traits.collidable) {
+      } else if (b.traits.collidable || b.traits.rigidBody?.body == "static") {
         val t = XRSimWorld.intersectSegmentAABB(origin, end, b.aabb())
         if (t != null && t < blockT) blockT = t
       }
@@ -221,6 +227,12 @@ object HitZones {
     if (mode == "hitscan") {
       raycastTargets(world, o.pos, dir, group, o.source)?.let { (b, p) ->
         applyHit(world, b, amount, o.source, p)
+        val imp = Math.max(1.5, amount * 0.12)
+        RigidBodyPhysics.applyImpulse(
+          world,
+          b,
+          doubleArrayOf(dir[0] * imp, dir[1] * imp, dir[2] * imp),
+        )
       }
       return
     }
@@ -248,14 +260,14 @@ object HitZones {
       var blocked = Double.POSITIVE_INFINITY
       for (b in world.bodies) {
         if (b.hidden || b.isTemplate || b === s.source) continue
-        if (canTarget(b, s.group, s.source)) {
+        if (canShootTarget(b, s.group, s.source)) {
           val t =
             XRSimWorld.intersectSegmentSphere(prev, s.pos, b.center(), Math.max(0.05, b.radius))
           if (t != null && t < bestT) {
             bestT = t
             best = b
           }
-        } else if (b.traits.collidable) {
+        } else if (b.traits.collidable || b.traits.rigidBody?.body == "static") {
           val t = XRSimWorld.intersectSegmentAABB(prev, s.pos, b.aabb())
           if (t != null && t < blocked) blocked = t
         }
@@ -268,6 +280,15 @@ object HitZones {
           s.source,
           DoubleArray(3) { prev[it] + (s.pos[it] - prev[it]) * bestT },
         )
+        val vLen = Math.sqrt(s.vel[0] * s.vel[0] + s.vel[1] * s.vel[1] + s.vel[2] * s.vel[2])
+        if (vLen > 1e-6) {
+          val imp = Math.max(1.5, amount * 0.12)
+          RigidBodyPhysics.applyImpulse(
+            world,
+            best,
+            doubleArrayOf(s.vel[0] / vLen * imp, s.vel[1] / vLen * imp, s.vel[2] / vLen * imp),
+          )
+        }
         s.active = false
       } else if (blocked <= 1 || s.life <= 0 || s.pos[1] < world.floorY - 50) {
         s.active = false
@@ -333,7 +354,12 @@ object HitZones {
     val tracked = ArrayList<Tracked>()
     for (b in world.bodies) {
       if (b.hidden || b.isTemplate) continue
-      if (b === world.character || b.traits.agent != null || b.traits.integrity != null) {
+      if (
+        b === world.character ||
+          b.traits.agent != null ||
+          b.traits.integrity != null ||
+          b.traits.rigidBody?.body == "dynamic"
+      ) {
         tracked.add(Tracked(b.key, b.name, groupOf(world, b), b.center(), b))
       }
     }

@@ -38,7 +38,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 
 ### 1. Choose the Right Component & Bundle
 - Use `<three-live>` (`three-live.min.js` or `three-live-full.min.js`) for 3D product viewers, procedural Three.js scenes, `KHR_interactivity` behavior graphs, PBR Next materials, and 1-tap mobile AR handoff (Quick Look / Scene Viewer / WebXR).
-- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), any of the 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`), or any of the 5 `xr-live-sim` simulation plugins (`character-controller`, `steering-agents`, `hit-zones`, `objectives`, `synth-audio`; available in `xr-live-sim.min.js` and `xr-live-full.min.js`).
+- Use `<xr-live>` (`xr-live.min.js` or `xr-live-full.min.js`) when the scene requires interactive 6DoF WebXR, declarative spatial traits (`userData.xr`), spatial HTML cards (`<div slot="spatial">`), depth occlusion & physics (`xr-depth`), 25-joint hand tracking (`xr-hands`), any of the 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`), or any of the 6 `xr-live-sim` simulation plugins (`character-controller`, `steering-agents`, `rigid-body`, `hit-zones`, `objectives`, `synth-audio`; available in `xr-live-sim.min.js` and `xr-live-full.min.js`).
 
 ### 2. Procedural `<script type="text/three">` Rules
 - Inside `<script type="text/three">`, the globals `THREE` and `scene` (a `THREE.Scene` instance) are pre-defined.
@@ -50,7 +50,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `billboard`: `'capsule' | 'cylindrical' | 'spherical' | true`
   - `follow`: `'head' | 'hand-left' | 'hand-right'` or `{ mode: 'head', lazy: true, distance: 1.2, deadzoneDeg: 15, stiffness: 6, height: -0.1, faceUser: true }`
   - `anchor`: `'floor' | 'wall' | 'ceiling' | 'table' | 'horizontal' | 'vertical'` or `{ target: 'table', id: 'part-1', persist: true }`
-  - `physics`: `'dynamic' | 'static'` (optional `restitution: 0.7`)
+  - `physics` / `rigidBody`: `'dynamic' | 'static' | 'kinematic' | true` or `{ body: 'dynamic' | 'static' | 'kinematic', shape: 'auto' | 'box' | 'sphere' | 'cylinder', mass: 1, restitution: 0.35, friction: 0.5, linearDamping: 0.05, angularDamping: 0.1, gravityScale: 1, velocity: [0, 0, 0], angularVelocity: [0, 0, 0], lockRotation: false }`
   - `orbit`: `{ target: [x, y, z] | 'nodeName', radius: 0.5, speed: 0.8, height: 0, faceCenter: true }`
   - `handles`: `{ rotateAxis: 'y' | 'none', minScale: 0.2, maxScale: 3.0 } | true`
   - `dimensions`: `{ unit: 'auto' | 'm' | 'cm' | 'mm' | 'in' | 'ft-in', axes: ['x', 'y', 'z'], color: '#38bdf8', showOnSelect: false } | true`

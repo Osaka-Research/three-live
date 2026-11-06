@@ -1891,11 +1891,17 @@ def Scope "Meshes"
 
     const xr = mesh.xrTraits;
     let meshHeaderMeta = '';
+    const hasPhysics = Boolean(
+      (xr?.physics && xr.physics !== 'none') ||
+        (xr?.rigidBody &&
+          xr.rigidBody !== 'none' &&
+          (typeof xr.rigidBody !== 'object' || xr.rigidBody.enabled !== false)),
+    );
     if (xr) {
       const metaLines: string[] = [];
-      if (xr.physics && xr.physics !== 'none') {
+      if (hasPhysics) {
         metaLines.push(
-          `prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsCollisionAPI"]`,
+          `prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]`,
         );
       }
       const xrDictLines: string[] =
@@ -1932,9 +1938,14 @@ def Scope "Meshes"
     usda += `def Mesh "${safeMeshName}"${meshHeaderMeta}
 {
 `;
-    if (xr?.physics && xr.physics !== 'none') {
-      const isKinematic = xr.physics === 'static' ? 'true' : 'false';
-      usda += `bool physics:rigidBodyEnabled = true\nbool physics:kinematicEnabled = ${isKinematic}\nbool physics:collisionEnabled = true\n`;
+    if (hasPhysics) {
+      // tslint:disable-next-line:no-any Compact physics trait inspection.
+      const rb: any = xr?.rigidBody ?? xr?.physics;
+      const mode = rb?.body ?? rb?.mode ?? rb;
+      usda += `bool physics:rigidBodyEnabled = true\nbool physics:kinematicEnabled = ${mode === 'static' || mode === 'kinematic'}\nbool physics:collisionEnabled = true\n`;
+      if (rb?.mass > 0 && Number.isFinite(rb.mass)) {
+        usda += `float physics:mass = ${formatNum(rb.mass)}\n`;
+      }
     }
 
     if (mesh.timeSamples && mesh.timeSamples.times.length > 0) {

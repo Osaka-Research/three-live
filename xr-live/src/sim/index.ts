@@ -16,12 +16,13 @@
  *
  * @fileoverview Optional simulation plugin bundle for `<xr-live>` and
  * `<three-live>` (`xr-live-sim.min.js`). Importing this module registers all
- * five plugins; each stays inert until a scene opts in:
+ * six plugins; each stays inert until a scene opts in:
  *
  * | Plugin                 | Opt-in                                          |
  * | ---------------------- | ----------------------------------------------- |
  * | `character-controller` | `userData.xr.character`                         |
  * | `steering-agents`      | `userData.xr.agent`                             |
+ * | `rigid-body`           | `userData.xr.rigidBody` / `userData.xr.physics` |
  * | `hit-zones`            | `integrity` / `zone` / `spawner` traits, `hit-zones` attr |
  * | `objectives`           | `userData.xr.objective`, `objectives` attr      |
  * | `synth-audio`          | `synth-audio` attr + `userData.xr.audioCues`    |
@@ -34,6 +35,7 @@ import {registerSimTraitSchema} from '../../../three-live/src/xr-sim-schema';
 import {characterControllerSystem} from './character-controller';
 import {hitZonesSystem} from './hit-zones';
 import {objectivesSystem} from './objectives';
+import {rigidBodySystem} from './rigid-body';
 import {steeringAgentsSystem} from './steering-agents';
 import {synthAudioSystem} from './synth-audio';
 
@@ -41,6 +43,7 @@ import {synthAudioSystem} from './synth-audio';
 export const xrSimSystems = [
   characterControllerSystem,
   steeringAgentsSystem,
+  rigidBodySystem,
   hitZonesSystem,
   objectivesSystem,
   synthAudioSystem,
@@ -56,8 +59,12 @@ export {
   parseCharacter,
   parseIntegrity,
   parseObjective,
+  parsePhysicsBody,
+  parseRigidBody,
   parseSpawner,
   parseZone,
+  PHYSICS_BODY_MODES,
+  PHYSICS_BODY_SHAPES,
   registerSimTraitSchema,
   type AgentOptions,
   type AudioCue,
@@ -65,6 +72,10 @@ export {
   type CharacterOptions,
   type IntegrityOptions,
   type ObjectiveOptions,
+  type PhysicsBodyMode,
+  type PhysicsBodyOptions,
+  type PhysicsBodyShape,
+  type RigidBodyOptions,
   type SpawnerOptions,
   type ZoneOptions,
 } from '../../../three-live/src/xr-sim-schema';
@@ -82,5 +93,6 @@ export {
 } from './core';
 export * from './hit-zones';
 export * from './objectives';
+export * from './rigid-body';
 export * from './steering-agents';
 export * from './synth-audio';

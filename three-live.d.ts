@@ -130,6 +130,8 @@ export {
 } from './xr-live/src/xr-live-element';
 /** Optional spatial plugins (`xr-live/spatial`, `xr-live-spatial.min.js`). */
 export * from './xr-live/src/plugins/index';
+/** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
+export * from './xr-live/src/sim/index';
 
 /**
  * Declarative JSX / HTML attributes supported by the <three-live> custom element.
@@ -450,6 +452,15 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
     }>,
   ) => void;
   /** xr-live-sim events. */
+  onxrcollision?: (
+    e: CustomEvent<{
+      nodeId: string;
+      otherId: string;
+      normal: [number, number, number];
+      impactSpeed: number;
+    }>,
+  ) => void;
+  onxrsleep?: (e: CustomEvent<{nodeId: string}>) => void;
   oncharacterjump?: (
     e: CustomEvent<{nodeId: string; position: [number, number, number]}>,
   ) => void;

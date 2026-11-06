@@ -35,6 +35,7 @@
     public var physics: String?
     public var restitution: Float?
     public var mass: Float?
+    public var friction: Float?
 
     /// Canonical grab mode (`"1-hand"` or `"2-hand"`).
     public var grabMode: String?
@@ -74,6 +75,7 @@
       physics: String? = nil,
       restitution: Float? = nil,
       mass: Float? = nil,
+      friction: Float? = nil,
       grabMode: String? = nil,
       minScale: Float? = nil,
       maxScale: Float? = nil,
@@ -97,6 +99,7 @@
       self.physics = physics
       self.restitution = restitution
       self.mass = mass
+      self.friction = friction
       self.grabMode = grabMode
       self.minScale = minScale
       self.maxScale = maxScale
@@ -128,15 +131,20 @@
         XRJSON.string(xr["follow"]) ?? canonical?.follow ?? canonical?.lazyFollow?.mode
       let followDistance =
         XRJSON.number(xr["followDistance"]).map { Float($0) } ?? canonical?.lazyFollow?.distance
+      let rb = XRSimTraits.parsePhysicsBody(xr["rigidBody"] ?? xr["physics"])
       return XRLiveEntityTraits(
         grabbable: legacyGrab || canonical?.grab != nil,
         billboard: billboard,
         anchor: XRJSON.string(xr["anchor"]),
         follow: follow,
         followDistance: followDistance,
-        physics: XRJSON.string(xr["physics"]),
-        restitution: XRJSON.number(xr["restitution"]).map { Float($0) },
-        mass: XRJSON.number(xr["mass"]).map { Float($0) },
+        physics: XRJSON.string(xr["physics"]) ?? rb?.body,
+        restitution: XRJSON.number(xr["restitution"]).map { Float($0) }
+          ?? rb.map { Float($0.restitution) },
+        mass: XRJSON.number(xr["mass"]).map { Float($0) }
+          ?? rb.flatMap { $0.mass > 0 ? Float($0.mass) : nil },
+        friction: XRJSON.number(xr["friction"]).map { Float($0) }
+          ?? rb.map { Float($0.friction) },
         grabMode: canonical?.grab,
         minScale: canonical?.scale?.min,
         maxScale: canonical?.scale?.max,
@@ -336,9 +344,11 @@
           rawRestitution.isFinite ? min(max(rawRestitution, 0.0), 1.0) : Float(0.6)
         let rawMass = traits.mass ?? 1.0
         let safeMass = rawMass.isFinite ? min(max(rawMass, 0.001), 10_000.0) : Float(1.0)
+        let rawFriction = traits.friction ?? 0.5
+        let safeFriction = rawFriction.isFinite ? min(max(rawFriction, 0.0), 1.0) : Float(0.5)
         let material = PhysicsMaterialResource.generate(
-          staticFriction: 0.5,
-          dynamicFriction: 0.4,
+          staticFriction: safeFriction,
+          dynamicFriction: max(0.0, safeFriction * 0.8),
           restitution: safeRestitution
         )
         let massProps = PhysicsMassProperties(mass: safeMass)

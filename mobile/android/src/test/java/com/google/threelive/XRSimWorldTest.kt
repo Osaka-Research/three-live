@@ -143,6 +143,17 @@ class XRSimWorldTest {
     assertNull(XRSimTraits.safeSimId("__proto__"))
     assertNull(XRSimTraits.parseSpawner(true))
     assertNull(XRSimTraits.parseIntegrity(0.0))
+    val rb =
+      XRSimTraits.parsePhysicsBody(
+        MiniJson.parseObjectOrNull(
+          """{"body":"dynamic","shape":"sphere","mass":9999,"restitution":2,"friction":-1}"""
+        )
+      )!!
+    assertEquals("dynamic", rb.body)
+    assertEquals("sphere", rb.shape)
+    assertEquals(1000.0, rb.mass, 0.0)
+    assertEquals(1.0, rb.restitution, 0.0)
+    assertEquals(0.0, rb.friction, 0.0)
   }
 
   @Test
@@ -628,6 +639,7 @@ class XRSimWorldTest {
       listOf(
         "sim_scene.json" to "sim_expected.json",
         "sim_visuals_scene.json" to "sim_visuals_expected.json",
+        "sim_physics_scene.json" to "sim_physics_expected.json",
       )) {
       val scene = MiniJson.parseObjectOrNull(java.io.File(dir, sceneFile).readText())!!
       val expected = MiniJson.parseObjectOrNull(java.io.File(dir, expectedFile).readText())!!

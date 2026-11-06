@@ -117,6 +117,15 @@ final class XRSimWorldTests: XCTestCase {
     XCTAssertNil(XRSimTraits.parseIntegrity(0))
     XCTAssertNil(XRSimTraits.parse(["collidable": 1]), "numbers are not booleans")
     XCTAssertEqual(XRSimWorld.hashString(""), 0x811c_9dc5)
+    let rb = try XCTUnwrap(
+      XRSimTraits.parsePhysicsBody([
+        "body": "dynamic", "shape": "sphere", "mass": 9999, "restitution": 2, "friction": -1,
+      ]))
+    XCTAssertEqual(rb.body, "dynamic")
+    XCTAssertEqual(rb.shape, "sphere")
+    XCTAssertEqual(rb.mass, 1000)
+    XCTAssertEqual(rb.restitution, 1)
+    XCTAssertEqual(rb.friction, 0)
   }
 
   func testCharacterMovesCollidesJumpsAndHidesInFirstPerson() throws {
@@ -374,6 +383,7 @@ final class XRSimWorldTests: XCTestCase {
     for (sceneFile, expectedFile) in [
       ("sim_scene.json", "sim_expected.json"),
       ("sim_visuals_scene.json", "sim_visuals_expected.json"),
+      ("sim_physics_scene.json", "sim_physics_expected.json"),
     ] {
       let scene = try XCTUnwrap(
         JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent(sceneFile)))

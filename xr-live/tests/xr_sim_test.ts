@@ -1084,10 +1084,104 @@ function testBundleExports() {
     typeof sim.resetSimScenario === 'function',
     'resetSimScenario exported',
   );
-  assert(sim.xrSimSystems.length === 5, 'five systems exported');
   assert(
-    sim.xrSimSystems.map((s) => s.priority).join() === '10,20,30,40,50',
+    typeof sim.applyRigidBodyImpulse === 'function' &&
+      typeof sim.isRigidBodySleeping === 'function',
+    'rigid-body helpers exported',
+  );
+  assert(sim.xrSimSystems.length === 6, 'six systems exported');
+  assert(
+    sim.xrSimSystems.map((s) => s.priority).join() === '10,20,25,30,40,50',
     'systems run in plan order',
+  );
+}
+
+function testRigidBodyPhysics() {
+  console.log('\n🧱 rigid-body');
+  const h = makeHarness([
+    {
+      name: 'Ball',
+      translation: [2, 2.0, 0],
+      cube: 0.2,
+      xr: {
+        rigidBody: {
+          body: 'dynamic',
+          shape: 'sphere',
+          mass: 1,
+          restitution: 0.7,
+        },
+      },
+    },
+    {
+      name: 'BottomCrate',
+      translation: [-2, 0.25, 0],
+      cube: 0.25,
+      xr: {
+        rigidBody: {
+          body: 'dynamic',
+          shape: 'box',
+          mass: 2,
+          restitution: 0.05,
+          linearDamping: 0.8,
+        },
+      },
+    },
+    {
+      name: 'TopCrate',
+      translation: [-2, 1.0, 0],
+      cube: 0.25,
+      xr: {
+        rigidBody: {
+          body: 'dynamic',
+          shape: 'box',
+          mass: 1,
+          restitution: 0.05,
+          linearDamping: 0.8,
+        },
+      },
+    },
+  ]);
+  const ball = h.body('Ball');
+  const bottom = h.body('BottomCrate');
+  const top = h.body('TopCrate');
+  h.run(0.7);
+  // Ball falls from y=2.0, hits floor at y=0.2, and bounces back up above 0.35.
+  assert(
+    ball.pos[1] > 0.35 && ball.pos[1] < 1.8,
+    `ball bounced after floor impact (y=${ball.pos[1]})`,
+  );
+  assert(h.count('xrcollision') >= 1, 'xrcollision dispatched');
+  h.run(2.5);
+  assert(
+    near(bottom.pos[1], 0.25, 0.03) && near(top.pos[1], 0.75, 0.05),
+    `crates stacked at y=${bottom.pos[1]}, ${top.pos[1]}`,
+  );
+  assert(
+    sim.isRigidBodySleeping(h.world, bottom) &&
+      sim.isRigidBodySleeping(h.world, top),
+    'stacked crates settle to sleep',
+  );
+  assert(h.count('xrsleep') >= 2, 'xrsleep dispatched for settled crates');
+  assert(
+    !sim.applyRigidBodyImpulse(h.world, top, [NaN, 1, 0]) &&
+      !sim.applyRigidBodyImpulse(h.world, top, [1, 2]),
+    'non-finite or short impulse is rejected without waking',
+  );
+  assert(
+    sim.isRigidBodySleeping(h.world, top),
+    'rejected impulse preserves sleep state',
+  );
+  sim.applyRigidBodyImpulse(h.world, top, [3, 2, 0]);
+  assert(!sim.isRigidBodySleeping(h.world, top), 'impulse wakes sleeping body');
+  h.run(0.2);
+  assert(top.pos[0] > -1.8, 'impulse moves top crate');
+  const prevY = ball.pos[1];
+  h.element.setAttribute('rigid-body', 'false');
+  sim.applyRigidBodyImpulse(h.world, ball, [0, 10, 0]);
+  h.run(0.2);
+  assert(
+    ball.pos[1] === prevY,
+    'rigid-body="false" host attribute disables stepping',
   );
 }
 
@@ -1314,6 +1408,7 @@ export function runSimParityScene(scene: any): Record<string, unknown> {
 const SIM_GOLDENS = [
   ['sim_scene.json', 'sim_expected.json'],
   ['sim_visuals_scene.json', 'sim_visuals_expected.json'],
+  ['sim_physics_scene.json', 'sim_physics_expected.json'],
 ] as const;
 
 function testGoldenParity() {
@@ -1425,6 +1520,7 @@ function run() {
   testObjectives();
   testAudio();
   testBundleExports();
+  testRigidBodyPhysics();
   testGoldenParity();
   console.log(
     `\n🏆 xr-live-sim Test Results: ${passed} Passed, ${failed} Failed.`,

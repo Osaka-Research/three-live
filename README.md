@@ -37,8 +37,8 @@ LLMs excel at generating Three.js code. Three-Live compiles it on-device in a sa
 >     export (`< 61 KB gz`).
 > *   **[`<xr-live>` spatial computing studio](https://google.github.io/three-live/xr/)**
 >     — 6DoF WebXR, spatial HTML `<div slot="spatial">` cards, depth physics,
->     hand tracking, 14 spatial plugins, and 5 simulation plugins (`< 72 KB gz`
->     core, `< 184 KB gz` full).
+>     hand tracking, 14 spatial plugins, and 6 simulation plugins (`< 72 KB gz`
+>     core, `< 188 KB gz` full).
 
 ---
 
@@ -107,11 +107,12 @@ without shipping unused code. Every bundle and plugin works on both prebuilt
     `xr-live-spatial.min.js` is a standalone, zero-dependency plugin
     (`~2 to 5 KB gz` each) with a matching native implementation in the Android
     and iOS SDKs.
-*   **Simulation and scenario plugins (`xr-live-sim.min.js`, 5 plugins,
-    `< 22 KB gz`):** Five plugins for games, training drills, and safety
+*   **Simulation and scenario plugins (`xr-live-sim.min.js`, 6 plugins,
+    `< 26 KB gz`):** Six plugins for games, training drills, and safety
     walkthroughs add a controllable character, autonomous steering agents,
-    integrity and trigger zones, checklist objectives with scoring and timers,
-    and procedural audio cues across Web, Android, and iOS.
+    deterministic 60 Hz rigid-body physics (`rigid-body`), integrity and trigger
+    zones, checklist objectives with scoring and timers, and procedural audio
+    cues across Web, Android, and iOS.
 
 #### Core 3D, CAD, and animation plugins (`<three-live>`)
 
@@ -174,7 +175,7 @@ plugins in `xr-live-spatial.min.js`:
 
 #### Interactive simulation, agent, and scenario plugins (`xr-live-sim`)
 
-The following table lists the five simulation plugins in `xr-live-sim.min.js`
+The following table lists the six simulation plugins in `xr-live-sim.min.js`
 (see [Simulation plugins](docs/xr-live.md#simulation-plugins-xr-live-sim) for
 full details):
 
@@ -183,6 +184,7 @@ full details):
 | :--- | :--- | :--- |
 | **`character-controller`** | `character-controller`, `xr.character` | Capsule kinematics with floor and slope stepping, jump with coyote time, keyboard, gamepad, and touch-joystick input, and `third-person`, `first-person`, `top-down`, or `fixed-camera` rig follow. |
 | **`steering-agents`** | `steering-agents`, `xr.agent` | Autonomous kinematic agents (`patrol`, `chase`, `flee`, `follow`, and `wander`) with vision-cone target acquisition, obstacle avoidance, and `agentstatechange` and `agentreach` events. |
+| **`rigid-body`** | `xr.physics`, `xr.rigidBody` | Deterministic 60 Hz Sequential Impulse rigid-body solver (`dynamic`, `static`, `kinematic`; `box`, `sphere`, `cylinder`, `auto`; `mass`, `restitution`, `friction`, damping, sleeping, and `xrcollision` / `xrsleep` events) plus USDZ `PhysicsRigidBodyAPI` / `PhysicsMassAPI`. |
 | **`hit-zones`** | `hit-zones`, `xr.integrity`, `xr.zone`, `xr.spawner` | Part and target `integrity` with world-space bars, hit flashes, `projectile`, `hitscan`, and `contact` interactions, burst fragments, colored trigger `zone` volumes, and timed template `spawner` pooling. |
 | **`objectives`** | `objectives`, `scenario-timer`, `target-score`, `attempts`, `xr.objective` | Ordered or unordered checklist objectives (`reach`, `clear`, `collect`, `activate`, and `hold`), score, attempt counter, countdown timer, HUD overlay (`sim-hud`), and `scenario-reset-key` resets. |
 | **`synth-audio`** | `synth-audio`, `synth-volume`, `xr.audioCues` | Zero-asset procedural audio synthesis (`beep`, `chime`, `buzz`, `thud`, `sweep`, `click`, `alarm`, and `whoosh`) bound to simulation events via Web Audio, Android `AudioTrack`, and iOS `AVAudioEngine`. |
@@ -406,8 +408,8 @@ following table lists each bundle and its enforced gzipped budget:
 |  | **`xr-live.min.js`** | **`< 72 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ and GLB compiler. |
 |  | **`xr-live-sensors.min.js`** | **`< 10 KB gz`** | Add-on plugin: Hardware XR sensors (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
 |  | **`xr-live-spatial.min.js`** | **`< 57 KB gz`** | Add-on plugin bundle registering all 14 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`). |
-|  | **`xr-live-sim.min.js`** | **`< 22 KB gz`** | Add-on simulation plugin bundle registering all five simulation plugins (`character-controller`, `steering-agents`, `hit-zones`, `objectives`, `synth-audio`). |
-|  | **`xr-live-full.min.js`** | **`< 184 KB gz`** | All-in-one 3D, XR, and simulation bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 14 spatial plugins + all 5 simulation plugins). |
+|  | **`xr-live-sim.min.js`** | **`< 26 KB gz`** | Add-on simulation plugin bundle registering all six simulation plugins (`character-controller`, `steering-agents`, `rigid-body`, `hit-zones`, `objectives`, `synth-audio`). |
+|  | **`xr-live-full.min.js`** | **`< 188 KB gz`** | All-in-one 3D, XR, and simulation bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 14 spatial plugins + all 6 simulation plugins). |
 <!-- mdformat on -->
 
 --------------------------------------------------------------------------------

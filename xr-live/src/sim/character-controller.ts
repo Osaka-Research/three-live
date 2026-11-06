@@ -209,7 +209,10 @@ function updateCamera(
  */
 export function characterFloor(world: SimWorld, b: SimBody): number {
   const platforms = world.bodies.some(
-    (o) => o !== b && o.traits.collidable && !o.isTemplate,
+    (o) =>
+      o !== b &&
+      (o.traits.collidable || o.traits.rigidBody?.body === 'static') &&
+      !o.isTemplate,
   );
   const spawnFeet = b.initPos[1] + feetOffset(b);
   return platforms ? Math.min(world.floorY, spawnFeet) : spawnFeet;
@@ -262,7 +265,14 @@ export function stepCharacter(
   let feet = next[1] + foot;
   let ground = characterFloor(world, b);
   for (const o of world.bodies) {
-    if (o === b || o.hidden || o.isTemplate || !o.traits.collidable) continue;
+    if (
+      o === b ||
+      o.hidden ||
+      o.isTemplate ||
+      (!o.traits.collidable && o.traits.rigidBody?.body !== 'static')
+    ) {
+      continue;
+    }
     const [min, max] = bodyAABB(o);
     const top = max[1];
     // Tops at or below the feet (plus a small step) are floors, not walls.

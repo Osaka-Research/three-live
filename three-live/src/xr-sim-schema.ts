@@ -414,6 +414,110 @@ export function parseAudioCues(raw: unknown): AudioCueOptions | null {
   };
 }
 
+/** Rigid-body simulation modes supported by `rigid-body` (`xr.physics` / `xr.rigidBody`). */
+export const PHYSICS_BODY_MODES = ['dynamic', 'static', 'kinematic'] as const;
+/** One rigid-body simulation mode. */
+export type PhysicsBodyMode = (typeof PHYSICS_BODY_MODES)[number];
+
+/** Collision shapes supported by `rigid-body`. */
+export const PHYSICS_BODY_SHAPES = [
+  'auto',
+  'box',
+  'sphere',
+  'cylinder',
+] as const;
+/** One rigid-body collision shape. */
+export type PhysicsBodyShape = (typeof PHYSICS_BODY_SHAPES)[number];
+
+/** Normalized `rigidBody` / object `physics` trait options (`rigid-body`). */
+export interface PhysicsBodyOptions {
+  readonly body: PhysicsBodyMode;
+  readonly shape: PhysicsBodyShape;
+  readonly mass: number;
+  readonly restitution: number;
+  readonly friction: number;
+  readonly linearDamping: number;
+  readonly angularDamping: number;
+  readonly gravityScale: number;
+  readonly velocity: TraitVec3;
+  readonly angularVelocity: TraitVec3;
+  readonly lockRotation: boolean;
+}
+
+/** Alias for {@link PhysicsBodyOptions}. */
+export type RigidBodyOptions = PhysicsBodyOptions;
+
+function parseBoundedVec3(
+  raw: unknown,
+  lo: number,
+  hi: number,
+  fallback: TraitVec3 = [0, 0, 0],
+): TraitVec3 {
+  if (!isFiniteVec3(raw)) return fallback;
+  return [
+    clampNum(raw[0], lo, hi, fallback[0]),
+    clampNum(raw[1], lo, hi, fallback[1]),
+    clampNum(raw[2], lo, hi, fallback[2]),
+  ];
+}
+
+/**
+ * Parses a `rigidBody` or rich `physics` trait (`true`, `'dynamic' | 'static' |
+ * 'kinematic'`, or `{ body, shape, mass, restitution, friction, linearDamping,
+ * angularDamping, gravityScale, velocity, angularVelocity, lockRotation }`).
+ */
+export function parsePhysicsBody(raw: unknown): PhysicsBodyOptions | null {
+  if (raw === undefined || raw === null || raw === false) return null;
+  if (typeof raw === 'string') {
+    if (!(PHYSICS_BODY_MODES as readonly string[]).includes(raw)) return null;
+    const body = raw as PhysicsBodyMode;
+    return {
+      body,
+      shape: 'auto',
+      mass: body === 'dynamic' ? 1 : 0,
+      restitution: 0.35,
+      friction: 0.5,
+      linearDamping: 0.05,
+      angularDamping: 0.1,
+      gravityScale: 1,
+      velocity: [0, 0, 0],
+      angularVelocity: [0, 0, 0],
+      lockRotation: false,
+    };
+  }
+  const r = raw === true ? {} : asRecord(raw);
+  if (!r || r['enabled'] === false) return null;
+  const rawBody = r['body'] ?? r['type'] ?? r['mode'];
+  const body: PhysicsBodyMode =
+    typeof rawBody === 'string' &&
+    (PHYSICS_BODY_MODES as readonly string[]).includes(rawBody)
+      ? (rawBody as PhysicsBodyMode)
+      : 'dynamic';
+  const rawShape = r['shape'] ?? r['collider'];
+  const shape: PhysicsBodyShape =
+    typeof rawShape === 'string' &&
+    (PHYSICS_BODY_SHAPES as readonly string[]).includes(rawShape)
+      ? (rawShape as PhysicsBodyShape)
+      : 'auto';
+  const mass = body === 'dynamic' ? clampNum(r['mass'], 0.01, 1000, 1) : 0;
+  return {
+    body,
+    shape,
+    mass,
+    restitution: clampNum(r['restitution'] ?? r['bounciness'], 0, 1, 0.35),
+    friction: clampNum(r['friction'], 0, 1, 0.5),
+    linearDamping: clampNum(r['linearDamping'] ?? r['damping'], 0, 20, 0.05),
+    angularDamping: clampNum(r['angularDamping'], 0, 20, 0.1),
+    gravityScale: clampNum(r['gravityScale'], -5, 5, 1),
+    velocity: parseBoundedVec3(r['velocity'], -200, 200),
+    angularVelocity: parseBoundedVec3(r['angularVelocity'], -100, 100),
+    lockRotation: r['lockRotation'] === true,
+  };
+}
+
+/** Alias for {@link parsePhysicsBody}. */
+export const parseRigidBody = parsePhysicsBody;
+
 /** Normalizes, and serializes to SceneCore and USD, every sim trait. */
 const SIM_TRAIT_EXTENSION: XRTraitExtension = {
   normalize(r, out) {
@@ -431,6 +535,24 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
     if (objective) out.objective = objective;
     const audioCues = parseAudioCues(r['audioCues']);
     if (audioCues) out.audioCues = audioCues;
+    const rawPhys = r['physics'];
+    const rbSource =
+      r['rigidBody'] ??
+      (rawPhys === 'kinematic' ||
+      rawPhys === true ||
+      (typeof rawPhys === 'object' && rawPhys !== null)
+        ? rawPhys
+        : undefined);
+    const rigidBody = parsePhysicsBody(rbSource);
+    if (rigidBody) {
+      out.rigidBody = rigidBody;
+      if (
+        !out.physics &&
+        (rigidBody.body === 'dynamic' || rigidBody.body === 'static')
+      ) {
+        out.physics = rigidBody.body;
+      }
+    }
     if (r['collidable'] === true) out.collidable = true;
   },
   sceneCore(n, comp) {
@@ -455,6 +577,14 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
     if (n.objective) comp['objective'] = {...n.objective};
     if (n.audioCues) {
       comp['audioCues'] = {...n.audioCues, cues: {...n.audioCues.cues}};
+    }
+    if (n.rigidBody) {
+      comp['rigidbody'] = {
+        type: n.rigidBody.body,
+        ...n.rigidBody,
+        velocity: [...n.rigidBody.velocity],
+        angularVelocity: [...n.rigidBody.angularVelocity],
+      };
     }
     if (n.collidable) comp['collidable'] = {enabled: true};
   },
@@ -486,6 +616,11 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
     if (n.audioCues) {
       put('audioCues', {...n.audioCues, cues: undefined});
       put('audioCues', n.audioCues.cues);
+    }
+    if (n.rigidBody) {
+      out['rigidBody'] = true;
+      out['physics'] = n.rigidBody.body;
+      put('rigidBody', n.rigidBody);
     }
     if (n.collidable) out['collidable'] = true;
   },

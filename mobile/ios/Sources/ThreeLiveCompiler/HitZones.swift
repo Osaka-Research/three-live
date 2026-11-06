@@ -79,7 +79,8 @@ public enum HitZones {
   public static func group(of b: XRSimWorld.Body, in world: XRSimWorld) -> String {
     if let g = b.traits.integrity?.group { return g }
     if b === world.character { return "character" }
-    return b.traits.agent != nil ? "agent" : "neutral"
+    if b.traits.agent != nil { return "agent" }
+    return b.traits.rigidBody?.body == "dynamic" ? "physics" : "neutral"
   }
 
   private static func canTarget(_ b: XRSimWorld.Body, _ group: String, _ source: XRSimWorld.Body?)
@@ -87,6 +88,13 @@ public enum HitZones {
   {
     guard let i = b.traits.integrity else { return false }
     return !b.hidden && !b.isTemplate && b !== source && b.integrity > 0 && i.group != group
+  }
+
+  private static func canShootTarget(
+    _ b: XRSimWorld.Body, _ group: String, _ source: XRSimWorld.Body?
+  ) -> Bool {
+    if canTarget(b, group, source) { return true }
+    return b.traits.rigidBody?.body == "dynamic" && !b.hidden && !b.isTemplate && b !== source
   }
 
   private static func list(_ v: SIMD3<Double>) -> [Double] { [v.x, v.y, v.z] }
@@ -183,7 +191,7 @@ public enum HitZones {
     var blockT = Double.infinity
     for b in world.bodies {
       if b.hidden || b.isTemplate || b === source { continue }
-      if canTarget(b, group, source) {
+      if canShootTarget(b, group, source) {
         if let t = XRSimWorld.intersectSegmentSphere(
           origin, end, b.worldCenter(), Swift.max(0.05, b.radius)),
           t < bestT
@@ -191,7 +199,7 @@ public enum HitZones {
           bestT = t
           best = b
         }
-      } else if b.traits.collidable {
+      } else if b.traits.collidable || b.traits.rigidBody?.body == "static" {
         let box = b.aabb()
         if let t = XRSimWorld.intersectSegmentAABB(origin, end, box.min, box.max), t < blockT {
           blockT = t
@@ -219,6 +227,8 @@ public enum HitZones {
     if mode == "hitscan" {
       if let hit = raycastTargets(world, origin: o.pos, dir: dir, group: group, source: o.source) {
         applyHit(world, hit.body, amount, source: o.source, point: hit.point)
+        let imp = Swift.max(1.5, amount * 0.12)
+        RigidBodyPhysics.applyImpulse(world, hit.body, dir * imp)
       }
       return
     }
@@ -245,7 +255,7 @@ public enum HitZones {
       var blocked = Double.infinity
       for b in world.bodies {
         if b.hidden || b.isTemplate || b === s.source { continue }
-        if canTarget(b, s.group, s.source) {
+        if canShootTarget(b, s.group, s.source) {
           if let t = XRSimWorld.intersectSegmentSphere(
             prev, s.pos, b.worldCenter(), Swift.max(0.05, b.radius)),
             t < bestT
@@ -253,7 +263,7 @@ public enum HitZones {
             bestT = t
             best = b
           }
-        } else if b.traits.collidable {
+        } else if b.traits.collidable || b.traits.rigidBody?.body == "static" {
           let box = b.aabb()
           if let t = XRSimWorld.intersectSegmentAABB(prev, s.pos, box.min, box.max), t < blocked {
             blocked = t
@@ -262,6 +272,11 @@ public enum HitZones {
       }
       if let hit = best, bestT <= blocked {
         applyHit(world, hit, amount, source: s.source, point: prev + (s.pos - prev) * bestT)
+        let vLen = simd_length(s.vel)
+        if vLen > 1e-6 {
+          let imp = Swift.max(1.5, amount * 0.12)
+          RigidBodyPhysics.applyImpulse(world, hit, (s.vel / vLen) * imp)
+        }
         s.active = false
       } else if blocked <= 1 || s.life <= 0 || s.pos.y < world.floorY - 50 {
         s.active = false
@@ -296,7 +311,9 @@ public enum HitZones {
     var tracked:
       [(key: String, id: String, group: String, pos: SIMD3<Double>, body: XRSimWorld.Body?)] = []
     for b in world.bodies where !b.hidden && !b.isTemplate {
-      if b === world.character || b.traits.agent != nil || b.traits.integrity != nil {
+      if b === world.character || b.traits.agent != nil || b.traits.integrity != nil
+        || b.traits.rigidBody?.body == "dynamic"
+      {
         tracked.append((b.key, b.name, group(of: b, in: world), b.worldCenter(), b))
       }
     }

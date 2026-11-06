@@ -78,8 +78,8 @@ jobs:
               { file: "xr-live/dist/xr-live.min.js", limit: 73728 },
               { file: "xr-live/dist/xr-live-sensors.min.js", limit: 10240 },
               { file: "xr-live/dist/xr-live-spatial.min.js", limit: 58368 },
-              { file: "xr-live/dist/xr-live-sim.min.js", limit: 22528 },
-              { file: "xr-live/dist/xr-live-full.min.js", limit: 188416 }
+              { file: "xr-live/dist/xr-live-sim.min.js", limit: 26624 },
+              { file: "xr-live/dist/xr-live-full.min.js", limit: 192512 }
             ];
             for (const { file, limit } of budgets) {
               if (fs.existsSync(file)) {

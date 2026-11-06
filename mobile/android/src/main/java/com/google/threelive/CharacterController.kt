@@ -74,7 +74,12 @@ object CharacterController {
   /** Fallback floor: the scene's lowest point when platforms exist, else the spawn height. */
   @JvmStatic
   fun floor(world: XRSimWorld, b: XRSimWorld.Body): Double {
-    val platforms = world.bodies.any { it !== b && it.traits.collidable && !it.isTemplate }
+    val platforms =
+      world.bodies.any {
+        it !== b &&
+          (it.traits.collidable || it.traits.rigidBody?.body == "static") &&
+          !it.isTemplate
+      }
     val spawnFeet = b.initPos[1] + feetOffset(b)
     return if (platforms) Math.min(world.floorY, spawnFeet) else spawnFeet
   }
@@ -157,7 +162,13 @@ object CharacterController {
     var feet = next[1] + foot
     var ground = floor(world, b)
     for (o in world.bodies) {
-      if (o === b || o.hidden || o.isTemplate || !o.traits.collidable) continue
+      if (
+        o === b ||
+          o.hidden ||
+          o.isTemplate ||
+          (!o.traits.collidable && o.traits.rigidBody?.body != "static")
+      )
+        continue
       val box = o.aabb()
       val top = box[4]
       if (top <= feet + STEP_HEIGHT + Math.max(0.0, -st.vy * dt)) {

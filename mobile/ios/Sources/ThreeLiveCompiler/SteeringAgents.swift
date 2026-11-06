@@ -193,7 +193,11 @@ public enum SteeringAgents {
       let r = Swift.max(0.05, Swift.max(b.half.x, b.half.z))
       let feet = b.pos.y + b.center.y - b.half.y
       for o in world.bodies {
-        if o === b || o.hidden || o.isTemplate || !o.traits.collidable { continue }
+        if o === b || o.hidden || o.isTemplate
+          || (!o.traits.collidable && o.traits.rigidBody?.body != "static")
+        {
+          continue
+        }
         let box = o.aabb()
         if box.max.y <= feet + 0.05 || box.min.y >= feet + b.half.y * 2 { continue }
         if let pushed = XRSimWorld.pushCircleOutOfAABB(next, r, box.min, box.max) {

@@ -110,6 +110,51 @@ data class XRAudioCuesTrait(
   val spatial: Boolean = true,
 )
 
+/** Normalized `rigidBody` / object `physics` trait (`rigid-body`). */
+data class XRPhysicsBodyTrait(
+  val body: String = "dynamic",
+  val shape: String = "auto",
+  val mass: Double = 1.0,
+  val restitution: Double = 0.35,
+  val friction: Double = 0.5,
+  val linearDamping: Double = 0.05,
+  val angularDamping: Double = 0.1,
+  val gravityScale: Double = 1.0,
+  val velocity: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0),
+  val angularVelocity: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0),
+  val lockRotation: Boolean = false,
+) {
+  override fun equals(other: Any?): Boolean =
+    other is XRPhysicsBodyTrait &&
+      body == other.body &&
+      shape == other.shape &&
+      mass == other.mass &&
+      restitution == other.restitution &&
+      friction == other.friction &&
+      linearDamping == other.linearDamping &&
+      angularDamping == other.angularDamping &&
+      gravityScale == other.gravityScale &&
+      velocity.contentEquals(other.velocity) &&
+      angularVelocity.contentEquals(other.angularVelocity) &&
+      lockRotation == other.lockRotation
+
+  override fun hashCode(): Int =
+    listOf(
+        body,
+        shape,
+        mass,
+        restitution,
+        friction,
+        linearDamping,
+        angularDamping,
+        gravityScale,
+        velocity.contentHashCode(),
+        angularVelocity.contentHashCode(),
+        lockRotation,
+      )
+      .hashCode()
+}
+
 /**
  * The `xr-live-sim` traits of one node, parsed from glTF `extras.xr` with the same clamps as
  * `three-live/src/xr-sim-schema.ts` and `XRSimTraits.swift`.
@@ -122,6 +167,7 @@ data class XRSimTraits(
   val spawner: XRSpawnerTrait? = null,
   val objective: XRObjectiveTrait? = null,
   val audioCues: XRAudioCuesTrait? = null,
+  val rigidBody: XRPhysicsBodyTrait? = null,
   val collidable: Boolean = false,
 ) {
   val isEmpty: Boolean
@@ -133,6 +179,7 @@ data class XRSimTraits(
         spawner == null &&
         objective == null &&
         audioCues == null &&
+        rigidBody == null &&
         !collidable
 
   companion object {
@@ -145,6 +192,8 @@ data class XRSimTraits(
     val CLIP_STATES = listOf("idle", "walk", "run", "jump")
     val AGENT_MODES = listOf("patrol", "chase", "flee", "wander", "follow")
     val OBJECTIVE_TYPES = listOf("pickup", "checkpoint", "time-bonus", "restore", "key")
+    val PHYSICS_BODY_MODES = listOf("dynamic", "static", "kinematic")
+    val PHYSICS_BODY_SHAPES = listOf("auto", "box", "sphere", "cylinder")
     val AUDIO_CUES =
       listOf(
         "confirm",
@@ -354,10 +403,52 @@ data class XRSimTraits(
       )
     }
 
+    @JvmStatic
+    fun parsePhysicsBody(raw: Any?): XRPhysicsBodyTrait? {
+      if (raw == null || raw == false) return null
+      if (raw is String) {
+        if (raw !in PHYSICS_BODY_MODES) return null
+        return XRPhysicsBodyTrait(body = raw, mass = if (raw == "dynamic") 1.0 else 0.0)
+      }
+      val r = if (raw == true) emptyMap() else record(raw) ?: return null
+      if (r["enabled"] == false) return null
+      val body = oneOf(r["body"] ?: r["type"] ?: r["mode"], PHYSICS_BODY_MODES, "dynamic")
+      val shape = oneOf(r["shape"] ?: r["collider"], PHYSICS_BODY_SHAPES, "auto")
+      val mass = if (body == "dynamic") num(r["mass"], 0.01, 1000.0, 1.0) else 0.0
+      val vRaw = vec3(r["velocity"])
+      val vel =
+        if (vRaw != null) DoubleArray(3) { num(vRaw[it], -200.0, 200.0, 0.0) }
+        else doubleArrayOf(0.0, 0.0, 0.0)
+      val avRaw = vec3(r["angularVelocity"])
+      val angVel =
+        if (avRaw != null) DoubleArray(3) { num(avRaw[it], -100.0, 100.0, 0.0) }
+        else doubleArrayOf(0.0, 0.0, 0.0)
+      return XRPhysicsBodyTrait(
+        body = body,
+        shape = shape,
+        mass = mass,
+        restitution = num(r["restitution"] ?: r["bounciness"], 0.0, 1.0, 0.35),
+        friction = num(r["friction"], 0.0, 1.0, 0.5),
+        linearDamping = num(r["linearDamping"] ?: r["damping"], 0.0, 20.0, 0.05),
+        angularDamping = num(r["angularDamping"], 0.0, 20.0, 0.1),
+        gravityScale = num(r["gravityScale"], -5.0, 5.0, 1.0),
+        velocity = vel,
+        angularVelocity = angVel,
+        lockRotation = r["lockRotation"] == true,
+      )
+    }
+
+    @JvmStatic fun parseRigidBody(raw: Any?): XRPhysicsBodyTrait? = parsePhysicsBody(raw)
+
     /** Parses the sim traits of a `userData.xr` / `extras.xr` bag, or `null` when none. */
     @JvmStatic
     fun parse(raw: Any?): XRSimTraits? {
       val r = record(raw) ?: return null
+      val rawPhys = r["physics"]
+      val rbSource =
+        r["rigidBody"]
+          ?: if (rawPhys == "kinematic" || rawPhys == true || record(rawPhys) != null) rawPhys
+          else null
       val t =
         XRSimTraits(
           character = parseCharacter(r["character"]),
@@ -367,6 +458,7 @@ data class XRSimTraits(
           spawner = parseSpawner(r["spawner"]),
           objective = parseObjective(r["objective"]),
           audioCues = parseAudioCues(r["audioCues"]),
+          rigidBody = parsePhysicsBody(rbSource),
           collidable = r["collidable"] == true,
         )
       return if (t.isEmpty) null else t

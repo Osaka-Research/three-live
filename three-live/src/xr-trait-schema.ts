@@ -34,6 +34,7 @@ import type {
   CharacterOptions,
   IntegrityOptions,
   ObjectiveOptions,
+  PhysicsBodyOptions,
   SpawnerOptions,
   ZoneOptions,
 } from './xr-sim-schema';
@@ -718,6 +719,7 @@ export interface NormalizedXRTraits {
   spawner?: SpawnerOptions;
   objective?: ObjectiveOptions;
   audioCues?: AudioCueOptions;
+  rigidBody?: PhysicsBodyOptions;
   /** Static obstacle for `character-controller` and `steering-agents`. */
   collidable?: true;
 }
@@ -1071,6 +1073,12 @@ export function upgradeGltfNodeXR(
   ) {
     delete mergedXR['anchor'];
   }
+  if (
+    normalized.physics === undefined &&
+    typeof mergedXR['physics'] === 'object'
+  ) {
+    delete mergedXR['physics'];
+  }
   node.extras = {...node.extras, xr: mergedXR};
   node.extensions = {
     ...node.extensions,
@@ -1192,6 +1200,7 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'spawner',
   'objective',
   'audioCues',
+  'rigidBody',
   'collidable',
   'traits',
   'schemaVersion',
@@ -1200,6 +1209,10 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
 const XR_KEY_SYNONYMS: Readonly<
   Record<string, {target: string; hint: string}>
 > = {
+  rigidbody: {
+    target: 'rigidBody',
+    hint: "Use 'rigidBody: { body: \"dynamic\", mass: 1, restitution: 0.35 }' or 'physics' instead of 'rigidbody'.",
+  },
   grabbable: {
     target: 'grab',
     hint: "Use 'grab: true' or 'grab: \"1-hand\" | \"2-hand\"' instead of 'grabbable'.",
@@ -1712,6 +1725,15 @@ export function validateXRTraits(
   if (audioCuesObj) {
     checkRange('audioCues.pitchJitter', audioCuesObj['pitchJitter'], 0, 0.5);
     checkRange('audioCues.volume', audioCuesObj['volume'], 0, 1);
+  }
+  const physObj = asRecord(r['rigidBody']) ?? asRecord(r['physics']);
+  if (physObj && physObj['enabled'] !== false) {
+    checkRange('rigidBody.mass', physObj['mass'], 0.01, 1000);
+    checkRange('rigidBody.restitution', physObj['restitution'], 0, 1);
+    checkRange('rigidBody.friction', physObj['friction'], 0, 1);
+    checkRange('rigidBody.linearDamping', physObj['linearDamping'], 0, 20);
+    checkRange('rigidBody.angularDamping', physObj['angularDamping'], 0, 20);
+    checkRange('rigidBody.gravityScale', physObj['gravityScale'], -5, 5);
   }
 
   // Security checks (TL203)

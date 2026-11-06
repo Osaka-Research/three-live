@@ -126,6 +126,7 @@ public final class XRSimWorld {
   public var characterSpeed: Double?
   public var characterJump: Double?
   public var steeringEnabled = true
+  public var rigidBodyEnabled = true
   /// `hit-zones`: `off`, `projectile`, `hitscan`, or `contact`.
   public var hitMode = "off"
   public var fireRate = 4.0
@@ -327,6 +328,7 @@ public final class XRSimWorld {
       timeMs += Self.step * 1000
       CharacterController.step(self, Self.step)
       SteeringAgents.step(self, Self.step)
+      RigidBodyPhysics.step(self, Self.step)
       HitZones.step(self, Self.step)
       Objectives.step(self, Self.step)
       SynthAudio.step(self, Self.step)
@@ -386,6 +388,7 @@ public final class XRSimWorld {
     jumpQueued = false
     fireQueued = false
     CharacterController.reset(self)
+    RigidBodyPhysics.reset(self)
     HitZones.reset(self)
     Objectives.reset(self)
     SynthAudio.reset(self)

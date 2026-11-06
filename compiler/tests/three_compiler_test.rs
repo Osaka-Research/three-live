@@ -2701,3 +2701,91 @@ fn test_cad_flange_scene_compilation() {
     let glb = transcode_three_to_glb(script).expect("CAD flange transcoding to GLB should succeed");
     assert!(!glb.is_empty());
 }
+
+#[test]
+fn test_phase1_rigid_body_physics_simulation_and_usdz() {
+    let script = r#"
+        const ball = new THREE.Mesh(
+            new THREE.SphereGeometry(0.25, 16, 12),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        ball.name = "BounceBall";
+        ball.position.set(2.0, 2.0, 0.0);
+        ball.userData.xr = {
+            rigidBody: {
+                body: "dynamic",
+                shape: "sphere",
+                mass: 2.5,
+                restitution: 0.75,
+                friction: 0.3,
+                linearDamping: 0.05
+            }
+        };
+        scene.add(ball);
+
+        const bottom = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.5, 0.5),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b })
+        );
+        bottom.name = "BottomCrate";
+        bottom.position.set(-2.0, 0.25, 0.0);
+        bottom.userData.xr = {
+            rigidBody: {
+                body: "dynamic",
+                shape: "box",
+                mass: 2.0,
+                restitution: 0.05,
+                linearDamping: 0.5
+            }
+        };
+        scene.add(bottom);
+
+        const top = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.5, 0.5),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e })
+        );
+        top.name = "TopCrate";
+        top.position.set(-2.0, 1.0, 0.0);
+        top.userData.xr = {
+            rigidBody: {
+                body: "dynamic",
+                shape: "box",
+                mass: 1.0,
+                restitution: 0.05,
+                linearDamping: 0.5
+            }
+        };
+        scene.add(top);
+    "#;
+
+    let (report, snapshots) = three_live_compiler::simulate_scenario_from_source(
+        script.as_bytes(),
+        false,
+        1.5,
+        &[],
+        &[42, 90],
+    )
+    .expect("Rigid-body simulation should succeed");
+    assert_eq!(report.ticks_simulated, 90);
+    // At tick 42 (0.7 s), BounceBall has hit the floor at y=0.25 and bounced back up above 0.45.
+    let (_, snap_42) = &snapshots[0];
+    let ball_42 = snap_42.nodes.iter().find(|n| n.name == "BounceBall").unwrap();
+    assert!(
+        ball_42.translation[1] > 0.40 && ball_42.translation[1] < 1.8,
+        "Expected BounceBall to bounce above 0.40 at t=0.7s, got y={}",
+        ball_42.translation[1]
+    );
+    // At tick 90 (1.5 s), TopCrate should be stacked on BottomCrate (y ~= 0.75).
+    let bottom_body = report.bodies.iter().find(|b| b.name == "BottomCrate").unwrap();
+    let top_body = report.bodies.iter().find(|b| b.name == "TopCrate").unwrap();
+    assert!(
+        (bottom_body.final_translation[1] - 0.25).abs() < 0.05,
+        "Expected BottomCrate at y~0.25, got {}",
+        bottom_body.final_translation[1]
+    );
+    assert!(
+        (top_body.final_translation[1] - 0.75).abs() < 0.08,
+        "Expected TopCrate stacked at y~0.75, got {}",
+        top_body.final_translation[1]
+    );
+}

@@ -1,0 +1,87 @@
+{
+  "description": "xr-live-sim rigid-body physics cross-platform parity scene. Tests sphere restitution bounce, vertical crate stacking and sleeping, and character-to-rigid-body push into a trigger zone across Web, Android, and iOS.",
+  "gltf": {
+    "asset": {"version": "2.0"},
+    "scene": 0,
+    "scenes": [{"nodes": [0, 2, 3, 4, 5, 6, 7]}],
+    "nodes": [
+      {
+        "name": "Hero",
+        "translation": [0, 0, 0],
+        "children": [1],
+        "extras": {"xr": {
+          "character": {"speed": 3, "radius": 0.3}
+        }}
+      },
+      {"name": "HeroMesh", "mesh": 0, "translation": [0, 0.25, 0]},
+      {
+        "name": "Bouncer",
+        "mesh": 1,
+        "translation": [2, 2.0, 0],
+        "extras": {"xr": {
+          "rigidBody": {"body": "dynamic", "shape": "sphere", "mass": 1, "restitution": 0.7, "friction": 0.3}
+        }}
+      },
+      {
+        "name": "CrateBottom",
+        "mesh": 0,
+        "translation": [-2, 0.25, 0],
+        "extras": {"xr": {
+          "rigidBody": {"body": "dynamic", "shape": "box", "mass": 2, "restitution": 0.05, "friction": 0.8, "linearDamping": 0.8}
+        }}
+      },
+      {
+        "name": "CrateTop",
+        "mesh": 0,
+        "translation": [-2, 1.0, 0],
+        "extras": {"xr": {
+          "rigidBody": {"body": "dynamic", "shape": "box", "mass": 1, "restitution": 0.05, "friction": 0.8, "linearDamping": 0.8}
+        }}
+      },
+      {
+        "name": "PushCrate",
+        "mesh": 0,
+        "translation": [0, 0.25, -1.2],
+        "extras": {"xr": {
+          "rigidBody": {"body": "dynamic", "shape": "box", "mass": 1, "restitution": 0.2, "friction": 0.4}
+        }}
+      },
+      {
+        "name": "Pedestal",
+        "mesh": 0,
+        "translation": [2, 0.25, -2],
+        "extras": {"xr": {
+          "rigidBody": {"body": "static", "shape": "box"}
+        }}
+      },
+      {
+        "name": "GoalZone",
+        "translation": [0, 0.5, -2.4],
+        "extras": {"xr": {
+          "zone": {"size": [1.5, 1.5, 1.5], "watchGroups": ["physics"]}
+        }}
+      }
+    ],
+    "meshes": [
+      {"name": "CrateMesh", "primitives": [{"attributes": {"POSITION": 0}}]},
+      {"name": "SphereMesh", "primitives": [{"attributes": {"POSITION": 1}}]}
+    ],
+    "accessors": [
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.25, -0.25, -0.25], "max": [0.25, 0.25, 0.25]},
+      {"componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.2, -0.2, -0.2], "max": [0.2, 0.2, 0.2]}
+    ]
+  },
+  "headPose": {"position": [0, 1.6, 4], "quaternion": [0, 0, 0, 1]},
+  "config": {"hitMode": "off", "objectives": false},
+  "frames": 180,
+  "inputs": [
+    {"frame": 0, "moveX": 0, "moveZ": 1},
+    {"frame": 50, "moveX": 0, "moveZ": 0}
+  ],
+  "checkpoints": [30, 60, 120, 180],
+  "events": [
+    "xrcollision",
+    "xrsleep",
+    "xrzoneenter"
+  ]
+}

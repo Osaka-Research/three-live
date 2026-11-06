@@ -31,6 +31,8 @@ import {
   parseCharacter,
   parseIntegrity,
   parseObjective,
+  parsePhysicsBody,
+  parseRigidBody,
   parseSpawner,
   parseZone,
   registerSimTraitSchema,
@@ -367,6 +369,56 @@ function testAudioCues() {
   assert(near(d.pitchJitter, 0.08) && d.volume === 1 && d.spatial, 'defaults');
 }
 
+function testRigidBody() {
+  console.log('\n🧱 rigidBody / physics');
+  assert(parsePhysicsBody(undefined) === null, 'absent → null');
+  assert(parsePhysicsBody(false) === null, 'false → null');
+  assert(parsePhysicsBody({enabled: false}) === null, 'enabled:false → null');
+  const d = parsePhysicsBody(true)!;
+  assert(
+    d.body === 'dynamic' &&
+      d.shape === 'auto' &&
+      d.mass === 1 &&
+      near(d.restitution, 0.35) &&
+      near(d.friction, 0.5) &&
+      near(d.linearDamping, 0.05) &&
+      near(d.angularDamping, 0.1) &&
+      d.gravityScale === 1 &&
+      d.velocity.join() === '0,0,0' &&
+      d.angularVelocity.join() === '0,0,0' &&
+      d.lockRotation === false,
+    'true → dynamic defaults',
+  );
+  const st = parseRigidBody('static')!;
+  assert(st.body === 'static' && st.mass === 0, 'static string shorthand');
+  const c = parsePhysicsBody({
+    body: 'dynamic',
+    shape: 'sphere',
+    mass: 99999,
+    restitution: 2,
+    friction: -1,
+    linearDamping: 50,
+    angularDamping: -5,
+    gravityScale: 20,
+    velocity: [500, -500, 10],
+    angularVelocity: [200, -200, 5],
+    lockRotation: true,
+  })!;
+  assert(c.shape === 'sphere', 'shape kept');
+  assert(c.mass === 1000, 'mass clamped to 1000');
+  assert(c.restitution === 1, 'restitution clamped to 1');
+  assert(c.friction === 0, 'friction clamped to 0');
+  assert(c.linearDamping === 20, 'linearDamping clamped to 20');
+  assert(c.angularDamping === 0, 'angularDamping clamped to 0');
+  assert(c.gravityScale === 5, 'gravityScale clamped to 5');
+  assert(c.velocity.join() === '200,-200,10', 'velocity clamped to [-200,200]');
+  assert(
+    c.angularVelocity.join() === '100,-100,5',
+    'angularVelocity clamped to [-100,100]',
+  );
+  assert(c.lockRotation === true, 'lockRotation true kept');
+}
+
 function testNormalizeAndExtensions() {
   console.log('\n🧩 normalizeXRTraits + SceneCore + USD');
   assert(
@@ -390,6 +442,7 @@ function testNormalizeAndExtensions() {
     objective: {type: 'checkpoint', order: 1},
     audioCues: {onTap: 'confirm'},
     collidable: true,
+    rigidBody: {body: 'dynamic', shape: 'sphere', mass: 2.5, restitution: 0.8},
   })!;
   assert(
     !!n.character &&
@@ -399,8 +452,16 @@ function testNormalizeAndExtensions() {
       !!n.spawner &&
       !!n.objective &&
       !!n.audioCues &&
-      n.collidable === true,
+      n.collidable === true &&
+      n.rigidBody?.mass === 2.5,
     'all sim traits normalized',
+  );
+  const physObj = normalizeXRTraits({
+    physics: {body: 'dynamic', mass: 4, restitution: 0.6},
+  })!;
+  assert(
+    physObj.physics === 'dynamic' && physObj.rigidBody?.mass === 4,
+    'object physics populates both physics mode and rigidBody options',
   );
   assert(
     normalizeXRTraits({spawner: 'Pallet'})!.spawner!.template === 'Pallet',
@@ -462,6 +523,12 @@ function testNormalizeAndExtensions() {
   assert(flat['audioCuesOnTap'] === 'confirm', 'USD cue key');
   assert(flat['audioCuesVolume'] === 1, 'USD cue volume');
   assert(flat['collidable'] === true, 'USD collidable');
+  assert(
+    flat['rigidBody'] === true &&
+      flat['rigidBodyShape'] === 'sphere' &&
+      flat['rigidBodyMass'] === 2.5,
+    'USD rigidBody fields',
+  );
 
   const lines = buildUsdXRLines(
     {agent: {mode: 'patrol', target: 'A"B', waypoints: [[1, 2, 3]]}},
@@ -498,6 +565,7 @@ function testExportPipelines() {
   drone.userData.xr = {
     agent: {mode: 'chase', target: 'Hero'},
     audioCues: {onHit: 'impact'},
+    rigidBody: {body: 'dynamic', mass: 3.5, restitution: 0.75},
   };
   scene.add(drone);
 
@@ -542,6 +610,16 @@ function testExportPipelines() {
   assert(usda.includes('string characterClipWalk = "Walk"'), 'USDA clip name');
   assert(usda.includes('string agentTarget = "Hero"'), 'USDA agent target');
   assert(usda.includes('string audioCuesOnHit = "impact"'), 'USDA cue');
+  assert(
+    usda.includes(
+      'prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]',
+    ),
+    'USDA PhysicsRigidBodyAPI + PhysicsMassAPI schemas',
+  );
+  assert(
+    usda.includes('float physics:mass = 3.5'),
+    'USDA physics:mass attribute',
+  );
 }
 
 function testValidateXRTraits() {
@@ -666,6 +744,7 @@ function run() {
   testSpawner();
   testObjective();
   testAudioCues();
+  testRigidBody();
   testNormalizeAndExtensions();
   testExportPipelines();
   testValidateXRTraits();

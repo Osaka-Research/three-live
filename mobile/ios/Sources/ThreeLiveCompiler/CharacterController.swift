@@ -64,7 +64,9 @@ public enum CharacterController {
 
   /// Fallback floor: the scene's lowest point when platforms exist, else the spawn height.
   public static func floor(_ world: XRSimWorld, _ b: XRSimWorld.Body) -> Double {
-    let platforms = world.bodies.contains { $0 !== b && $0.traits.collidable && !$0.isTemplate }
+    let platforms = world.bodies.contains {
+      $0 !== b && ($0.traits.collidable || $0.traits.rigidBody?.body == "static") && !$0.isTemplate
+    }
     let spawnFeet = b.initPos.y + feetOffset(b)
     return platforms ? Swift.min(world.floorY, spawnFeet) : spawnFeet
   }
@@ -139,7 +141,11 @@ public enum CharacterController {
     var feet = next.y + foot
     var ground = floor(world, b)
     for o in world.bodies {
-      if o === b || o.hidden || o.isTemplate || !o.traits.collidable { continue }
+      if o === b || o.hidden || o.isTemplate
+        || (!o.traits.collidable && o.traits.rigidBody?.body != "static")
+      {
+        continue
+      }
       let box = o.aabb()
       let top = box.max.y
       if top <= feet + stepHeight + Swift.max(0, -st.vy * dt) {
