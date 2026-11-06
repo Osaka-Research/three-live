@@ -340,11 +340,16 @@ are feature-complete and ready for integration and evaluation.
     (`three-live-compiler-release.aar`), and native `three-live-cli` binaries
     for macOS, Linux, and Windows are published on
     **[GitHub Releases](https://github.com/google/three-live/releases)**.
-*   **Package registries:** Direct consumption through **Swift Package
-    Manager**, **GitHub Releases**, and the **GitHub Pages CDN** works today
-    (see [Install packages and bundles](#install-packages-and-bundles)).
-    Publishing to public package registries (`npm`, `Crates.io`, and Maven) is
-    planned for a future release.
+*   **Package registries:** Published on
+    **[npm (`three-live`)](https://www.npmjs.com/package/three-live)**,
+    **[npm (`xr-live`)](https://www.npmjs.com/package/xr-live)**,
+    **[Crates.io (`three-live-compiler`)](https://crates.io/crates/three-live-compiler)**,
+    **Swift Package Manager**, **GitHub Releases**, and the **jsDelivr / GitHub
+    Pages CDNs** (see [Install packages and bundles](#install-packages-and-bundles)).
+    Android Gradle modules (`com.google.threelive:*`) include `maven-publish`
+    and GPG signing for Maven Local and Maven Central (pending Maven Central
+    namespace credentials; prebuilt release AARs are published on GitHub
+    Releases today).
 *   **Release notes:** See [`CHANGELOG.md`](CHANGELOG.md) for release history
     and architectural notes.
 
@@ -354,11 +359,18 @@ are feature-complete and ready for integration and evaluation.
 
 ### Package installation
 
-*   **Web (CDN, prebuilt release, or source):**
+*   **Web (npm, CDN, prebuilt release, or source):**
 
-    *   **Hosted ES module (`<script>`):**
+    *   **npm:**
+
+        ```bash
+        npm install three-live xr-live
+        ```
+    *   **Hosted ES module (`jsDelivr` or GitHub Pages CDN):**
 
         ```html
+        <script type="module" src="https://cdn.jsdelivr.net/npm/three-live/dist/three-live.min.js"></script>
+        <!-- Or from GitHub Pages: -->
         <script type="module" src="https://google.github.io/three-live/dist/three-live.min.js"></script>
         ```
     *   **Prebuilt bundle archive:** Download `three-live-web-dist.zip` from
@@ -374,17 +386,28 @@ are feature-complete and ready for integration and evaluation.
     Swift Package Manager automatically resolves the prebuilt, checksum-pinned
     `ThreeLiveCompiler.xcframework.zip` archive from GitHub Releases—no local
     Rust or Node.js toolchain is required.
-*   **Android (prebuilt release AAR or source):**
+*   **Android (prebuilt release AAR, Maven Local, or source):**
 
     *   **Prebuilt AAR:** Download `three-live-compiler-release.aar` (includes
-        `arm64-v8a`, `armeabi-v7a`, and `x86_64` JNI `.so` libraries) from
+        `arm64-v8a`, `armeabi-v7a`, and `x86_64` JNI `.so` libraries) and
+        optional adapter AARs (`three-live-filament-release.aar`, etc.) from
         **[GitHub Releases](https://github.com/google/three-live/releases)**
         into `app/libs/` and add
         `implementation(files("libs/three-live-compiler-release.aar"))`.
+    *   **Maven Local (`com.google.threelive:compiler:1.3.0`):** Run
+        `./gradlew :mobile:android:publishReleasePublicationToMavenLocal` and
+        add `implementation("com.google.threelive:compiler:1.3.0")`.
     *   **From source:** Run `make android` (or
         `bash scripts/build_android_aar.sh`).
-*   **Rust CLI (`three-live-cli`) and crate:**
+*   **Rust CLI (`three-live-cli`) and library crate (`Crates.io`, prebuilt binaries, or source):**
 
+    *   **Crates.io (library & CLI):**
+
+        ```bash
+        cargo add three-live-compiler
+        # Or install the standalone CLI binary from Crates.io:
+        cargo install three-live-compiler --bin three-live-cli
+        ```
     *   **Prebuilt binaries:** Download standalone binaries for macOS (`arm64`
         and `x86_64`), Linux (`x86_64` and `aarch64`), and Windows
         (`x86_64.exe`) from
