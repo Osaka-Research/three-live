@@ -928,6 +928,122 @@ export function sceneToCanvas3D(
     scene.userData,
   );
 
+  const audioClips: Array<{uri: string}> = [];
+  const audioSources: Array<Record<string, unknown>> = [];
+  const audioEmitters: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const xr = node.extras?.xr;
+    const rawAe =
+      xr?.audioEmitter ??
+      xr?.spatialAudio ??
+      (typeof xr?.audio === 'object' &&
+      xr.audio &&
+      ('preset' in xr.audio ||
+        'distanceModel' in xr.audio ||
+        'coneInnerAngle' in xr.audio ||
+        'maxDistance' in xr.audio ||
+        'volume' in xr.audio)
+        ? xr.audio
+        : undefined);
+    if (!rawAe || (typeof rawAe === 'object' && rawAe.enabled === false)) {
+      continue;
+    }
+    const ae = typeof rawAe === 'string' ? {preset: rawAe} : rawAe;
+    const src =
+      typeof ae.src === 'string' &&
+      !/[\x00-\x20\\%]|^\s*(javascript|data|file|http):/i.test(ae.src)
+        ? ae.src
+        : undefined;
+    const preset = typeof ae.preset === 'string' ? ae.preset : undefined;
+    if (!src && !preset) continue;
+    const nodeName = node.name || `Node_${i}`;
+    const volume =
+      typeof ae.volume === 'number' && Number.isFinite(ae.volume)
+        ? Math.max(0, Math.min(2, ae.volume))
+        : 0.6;
+    const loop = typeof ae.loop === 'boolean' ? ae.loop : true;
+    const autoPlay = typeof ae.autoplay === 'boolean' ? ae.autoplay : true;
+    const sourceIdx = audioSources.length;
+    const sourceObj: Record<string, unknown> = {
+      name: `${nodeName}_source`,
+      gain: volume,
+      loop,
+      autoPlay,
+    };
+    if (src) {
+      const clipIdx = audioClips.length;
+      audioClips.push({uri: src});
+      sourceObj.audio = clipIdx;
+    }
+    if (preset) {
+      const pitch =
+        typeof ae.pitch === 'number' && Number.isFinite(ae.pitch)
+          ? Math.max(0.25, Math.min(4, ae.pitch))
+          : 1;
+      sourceObj.extras = {preset, pitch};
+    }
+    audioSources.push(sourceObj);
+
+    const emitterIdx = audioEmitters.length;
+    const emitterType =
+      ae.type === 'global' || ae.positional === false ? 'global' : 'positional';
+    const emitterObj: Record<string, unknown> = {
+      name: `${nodeName}_emitter`,
+      type: emitterType,
+      gain: volume,
+      sources: [sourceIdx],
+    };
+    if (emitterType === 'positional') {
+      const refDistance =
+        typeof ae.refDistance === 'number' && Number.isFinite(ae.refDistance)
+          ? Math.max(0.05, Math.min(100, ae.refDistance))
+          : 1;
+      const maxDistance =
+        typeof ae.maxDistance === 'number' && Number.isFinite(ae.maxDistance)
+          ? Math.max(refDistance, Math.min(500, ae.maxDistance))
+          : Math.max(refDistance, 25);
+      const rolloffFactor =
+        typeof ae.rolloffFactor === 'number' &&
+        Number.isFinite(ae.rolloffFactor)
+          ? Math.max(0, Math.min(10, ae.rolloffFactor))
+          : 1;
+      const coneInnerDeg =
+        typeof ae.coneInnerAngle === 'number' &&
+        Number.isFinite(ae.coneInnerAngle)
+          ? Math.max(0, Math.min(360, ae.coneInnerAngle))
+          : 360;
+      const coneOuterDeg =
+        typeof ae.coneOuterAngle === 'number' &&
+        Number.isFinite(ae.coneOuterAngle)
+          ? Math.max(coneInnerDeg, Math.min(360, ae.coneOuterAngle))
+          : 360;
+      const coneOuterGain =
+        typeof ae.coneOuterGain === 'number' &&
+        Number.isFinite(ae.coneOuterGain)
+          ? Math.max(0, Math.min(1, ae.coneOuterGain))
+          : 0;
+      emitterObj.positional = {
+        distanceModel:
+          ae.distanceModel === 'linear' || ae.distanceModel === 'exponential'
+            ? ae.distanceModel
+            : 'inverse',
+        refDistance,
+        maxDistance,
+        rolloffFactor,
+        coneInnerAngle: +((coneInnerDeg * Math.PI) / 180).toFixed(6),
+        coneOuterAngle: +((coneOuterDeg * Math.PI) / 180).toFixed(6),
+        coneOuterGain,
+      };
+    }
+    audioEmitters.push(emitterObj);
+    node.extensions = {
+      ...(node.extensions || {}),
+      KHR_audio_emitter: {emitter: emitterIdx},
+    };
+    nodeExtensionsUsed.add('KHR_audio_emitter');
+  }
+
   const gltf: any = {
     asset: {
       version: '2.0',
@@ -953,7 +1069,7 @@ export function sceneToCanvas3D(
           ],
         }
       : {}),
-    ...(interactivityExt || variantNames.length > 0
+    ...(interactivityExt || variantNames.length > 0 || audioEmitters.length > 0
       ? {
           extensions: {
             ...(interactivityExt ? {KHR_interactivity: interactivityExt} : {}),
@@ -961,6 +1077,15 @@ export function sceneToCanvas3D(
               ? {
                   KHR_materials_variants: {
                     variants: variantNames.map((name) => ({name})),
+                  },
+                }
+              : {}),
+            ...(audioEmitters.length > 0
+              ? {
+                  KHR_audio_emitter: {
+                    ...(audioClips.length > 0 ? {audio: audioClips} : {}),
+                    sources: audioSources,
+                    emitters: audioEmitters,
                   },
                 }
               : {}),
@@ -1992,7 +2117,44 @@ interpolation = "vertex"
     }
 
     usda += `rel material:binding = </Root/Materials/${matBinding}>
-}
+`;
+    const rawAe =
+      xr?.audioEmitter ??
+      xr?.spatialAudio ??
+      (typeof xr?.audio === 'object' &&
+      xr.audio &&
+      ('preset' in xr.audio ||
+        'distanceModel' in xr.audio ||
+        'coneInnerAngle' in xr.audio ||
+        'maxDistance' in xr.audio ||
+        'volume' in xr.audio)
+        ? xr.audio
+        : typeof xr?.audio === 'string' &&
+            /^(hum|reactor|wind|beacon|geiger|chimeLoop|machinery|water)$/.test(
+              xr.audio,
+            )
+          ? {preset: xr.audio}
+          : undefined);
+    if (rawAe && (typeof rawAe !== 'object' || rawAe.enabled !== false)) {
+      const aeObj = typeof rawAe === 'string' ? {preset: rawAe} : rawAe;
+      const auralMode =
+        aeObj.type === 'global' || aeObj.positional === false
+          ? 'nonSpatial'
+          : 'spatial';
+      const loop = typeof aeObj.loop === 'boolean' ? aeObj.loop : true;
+      const playbackMode = loop ? 'loopFromStart' : 'onceFromStart';
+      const gain =
+        typeof aeObj.volume === 'number' && Number.isFinite(aeObj.volume)
+          ? Math.max(0, Math.min(2, aeObj.volume))
+          : 0.6;
+      const rawSrc =
+        typeof aeObj.src === 'string' &&
+        !/[\x00-\x20\\%]|^\s*(javascript|data|file|http):/i.test(aeObj.src)
+          ? sanitizeUsdStringLiteral(aeObj.src)
+          : '';
+      usda += `def SpatialAudio "AudioEmitter"\n{\n${rawSrc ? `asset inputs:file = @${rawSrc}@\n` : ''}uniform token inputs:auralMode = "${auralMode}"\nuniform token inputs:playbackMode = "${playbackMode}"\ndouble gain = ${formatNum(gain)}\n}\n`;
+    }
+    usda += `}
 `;
   }
 

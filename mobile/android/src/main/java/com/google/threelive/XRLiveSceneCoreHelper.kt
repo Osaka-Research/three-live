@@ -70,6 +70,25 @@ data class XRSpatialAudioTrait(
   val loop: Boolean = false,
 )
 
+/** Normalized 3D positional/directional `audioEmitter` trait (`spatial-audio`). */
+data class XRAudioEmitterTrait(
+  val preset: String? = null,
+  val src: String? = null,
+  val type: String = "positional",
+  val volume: Double = 0.6,
+  val pitch: Double = 1.0,
+  val loop: Boolean = true,
+  val autoplay: Boolean = true,
+  val distanceModel: String = "inverse",
+  val refDistance: Double = 1.0,
+  val maxDistance: Double = 25.0,
+  val rolloffFactor: Double = 1.0,
+  val coneInnerAngle: Double = 360.0,
+  val coneOuterAngle: Double = 360.0,
+  val coneOuterGain: Double = 0.0,
+  val playOnSelect: Boolean = false,
+)
+
 /** Normalized `dimensions` trait (`spatial-measure`). */
 data class XRDimensionsTrait(
   val enabled: Boolean = true,
@@ -211,6 +230,7 @@ data class XRLiveNodeTraits(
   val splatUrl: String? = null,
   val spatialSlot: String? = null,
   val audio: XRSpatialAudioTrait? = null,
+  val audioEmitter: XRAudioEmitterTrait? = null,
   val dimensions: XRDimensionsTrait? = null,
   val snapTo: XRSnapToTrait? = null,
   val snapSocket: XRSnapSocketTrait? = null,
@@ -303,6 +323,8 @@ interface SceneCoreComponentApplier<EntityT> {
   fun onAttachSpatialPanel(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachSpatialAudio(entity: EntityT, node: XRLiveNodeTraits) {}
+
+  fun onAttachAudioEmitter(entity: EntityT, node: XRLiveNodeTraits) {}
 
   fun onAttachDimensions(entity: EntityT, node: XRLiveNodeTraits) {}
 
@@ -410,16 +432,72 @@ object XRLiveSceneCoreHelper {
   @JvmStatic
   fun parseNodeTraits(root: Map<String, Any?>): List<XRLiveNodeTraits> {
     val nodes = MiniJson.asList(root["nodes"]) ?: return emptyList()
+    val khrAudioRoot = MiniJson.asMap(MiniJson.asMap(root["extensions"])?.get("KHR_audio_emitter"))
     val results = ArrayList<XRLiveNodeTraits>()
     for ((idx, raw) in nodes.withIndex()) {
       val node = MiniJson.asMap(raw) ?: continue
-      val xr = MiniJson.asMap(MiniJson.asMap(node["extras"])?.get("xr"))
+      val rawXr = MiniJson.asMap(MiniJson.asMap(node["extras"])?.get("xr"))
       val sc = MiniJson.asMap(MiniJson.asMap(node["extensions"])?.get("ANDROID_xr_scenecore"))
-      if (xr == null && sc == null) continue
+      val khrAudioMap = extractKhrAudioEmitterMap(khrAudioRoot, node)
+      if (rawXr == null && sc == null && khrAudioMap == null) continue
+      val xr =
+        if (khrAudioMap != null && rawXr?.get("audioEmitter") == null) {
+          val merged = LinkedHashMap<String, Any?>()
+          if (rawXr != null) merged.putAll(rawXr)
+          merged["audioEmitter"] = khrAudioMap
+          merged
+        } else {
+          rawXr ?: emptyMap()
+        }
       val name = MiniJson.asString(node["name"]) ?: "Node_$idx"
-      results.add(buildTraits(idx, name, xr ?: emptyMap(), sc ?: emptyMap()))
+      results.add(buildTraits(idx, name, xr, sc ?: emptyMap()))
     }
     return results
+  }
+
+  private fun extractKhrAudioEmitterMap(
+    khrAudioRoot: Map<String, Any?>?,
+    node: Map<String, Any?>,
+  ): Map<String, Any?>? {
+    if (khrAudioRoot == null) return null
+    val nodeExt =
+      MiniJson.asMap(MiniJson.asMap(node["extensions"])?.get("KHR_audio_emitter")) ?: return null
+    val emitterIdx = (nodeExt["emitter"] as? Number)?.toInt() ?: return null
+    val emitters = MiniJson.asList(khrAudioRoot["emitters"]) ?: return null
+    val emitterDef = MiniJson.asMap(emitters.getOrNull(emitterIdx)) ?: return null
+    val sources = MiniJson.asList(khrAudioRoot["sources"]) ?: emptyList()
+    val clips = MiniJson.asList(khrAudioRoot["audio"]) ?: emptyList()
+    val srcIndices = MiniJson.asList(emitterDef["sources"]) ?: emptyList()
+    val firstSourceIdx = (srcIndices.firstOrNull() as? Number)?.toInt()
+    val firstSource =
+      if (firstSourceIdx != null) MiniJson.asMap(sources.getOrNull(firstSourceIdx)) else null
+    val clipIdx = (firstSource?.get("audio") as? Number)?.toInt()
+    val clipDef = if (clipIdx != null) MiniJson.asMap(clips.getOrNull(clipIdx)) else null
+    val extras = MiniJson.asMap(firstSource?.get("extras"))
+    val pos = MiniJson.asMap(emitterDef["positional"])
+    val out = LinkedHashMap<String, Any?>()
+    if (extras?.get("preset") != null) out["preset"] = extras["preset"]
+    if (extras?.get("pitch") != null) out["pitch"] = extras["pitch"]
+    if (clipDef?.get("uri") != null) out["src"] = clipDef["uri"]
+    if (emitterDef["type"] != null) out["type"] = emitterDef["type"]
+    val vol = emitterDef["gain"] ?: firstSource?.get("gain")
+    if (vol != null) out["volume"] = vol
+    if (firstSource?.get("loop") != null) out["loop"] = firstSource["loop"]
+    if (firstSource?.get("autoPlay") != null) out["autoplay"] = firstSource["autoPlay"]
+    if (pos != null) {
+      if (pos["distanceModel"] != null) out["distanceModel"] = pos["distanceModel"]
+      if (pos["refDistance"] != null) out["refDistance"] = pos["refDistance"]
+      if (pos["maxDistance"] != null) out["maxDistance"] = pos["maxDistance"]
+      if (pos["rolloffFactor"] != null) out["rolloffFactor"] = pos["rolloffFactor"]
+      val innerRad = (pos["coneInnerAngle"] as? Number)?.toDouble()
+      if (innerRad != null && innerRad.isFinite())
+        out["coneInnerAngle"] = innerRad * 180.0 / Math.PI
+      val outerRad = (pos["coneOuterAngle"] as? Number)?.toDouble()
+      if (outerRad != null && outerRad.isFinite())
+        out["coneOuterAngle"] = outerRad * 180.0 / Math.PI
+      if (pos["coneOuterGain"] != null) out["coneOuterGain"] = pos["coneOuterGain"]
+    }
+    return if (out.isEmpty()) null else out
   }
 
   /** Extracts spatial traits from [glb] and invokes [applier] hooks for [rootEntity]. */
@@ -464,6 +542,7 @@ object XRLiveSceneCoreHelper {
     if (trait.splatUrl != null) applier.onAttachSplat(entity, trait)
     if (trait.spatialSlot != null) applier.onAttachSpatialPanel(entity, trait)
     if (trait.audio != null) applier.onAttachSpatialAudio(entity, trait)
+    if (trait.audioEmitter != null) applier.onAttachAudioEmitter(entity, trait)
     if (trait.dimensions != null) applier.onAttachDimensions(entity, trait)
     if (trait.snapTo != null) applier.onAttachSnapTo(entity, trait)
     if (trait.snapSocket != null) applier.onAttachSnapSocket(entity, trait)
@@ -674,6 +753,86 @@ object XRLiveSceneCoreHelper {
       src = src,
       refDistance = clampNum(r["refDistance"], 0.01, 1000.0, 1.0),
       loop = r["loop"] == true,
+    )
+  }
+
+  private val AMBIENT_SOUND_PRESET_SET =
+    setOf("hum", "reactor", "wind", "beacon", "geiger", "chimeLoop", "machinery", "water")
+  private val ONE_SHOT_AUDIO_PRESET_SET =
+    setOf(
+      "confirm",
+      "error",
+      "alarm",
+      "warning",
+      "pickup",
+      "jump",
+      "beam",
+      "impact",
+      "burst",
+      "powerup",
+      "step",
+      "pass",
+      "fail",
+    )
+
+  private fun isAudioPresetName(s: String?): Boolean =
+    s != null && (s in AMBIENT_SOUND_PRESET_SET || s in ONE_SHOT_AUDIO_PRESET_SET)
+
+  /** Port of `parseAudioEmitter()`. */
+  @JvmStatic
+  fun parseAudioEmitter(raw: Any?): XRAudioEmitterTrait? {
+    if (raw == null || raw == false) return null
+    val r: Map<String, Any?> =
+      when (raw) {
+        is String -> {
+          val trimmed = raw.trim()
+          if (trimmed.isEmpty()) return null
+          if (isAudioPresetName(trimmed)) mapOf("preset" to trimmed) else mapOf("src" to trimmed)
+        }
+        else -> MiniJson.asMap(raw) ?: return null
+      }
+    if (r["enabled"] == false) return null
+    val rawPreset = shortString(r["preset"], 32)?.trim()
+    val preset = if (isAudioPresetName(rawPreset)) rawPreset else null
+    val src = safeMediaUrl(r["src"] ?: r["url"] ?: r["uri"])
+    if (preset == null && src == null) return null
+    val isAmbient = preset == null || preset in AMBIENT_SOUND_PRESET_SET
+    val type = if (r["type"] == "global" || r["positional"] == false) "global" else "positional"
+    val volume = clampNum(r["volume"] ?: r["gain"], 0.0, 2.0, 0.6)
+    val pitch = clampNum(r["pitch"] ?: r["playbackRate"], 0.25, 4.0, 1.0)
+    val loop = (r["loop"] as? Boolean) ?: isAmbient
+    val autoplay = (r["autoplay"] as? Boolean) ?: (r["autoPlay"] as? Boolean) ?: true
+    val distanceModel =
+      when (r["distanceModel"] as? String) {
+        "linear",
+        "exponential" -> r["distanceModel"] as String
+        else -> "inverse"
+      }
+    val refDistance = clampNum(r["refDistance"], 0.05, 100.0, 1.0)
+    val maxDistance =
+      clampNum(r["maxDistance"], refDistance, 500.0, kotlin.math.max(refDistance, 25.0))
+    val rolloffFactor = clampNum(r["rolloffFactor"], 0.0, 10.0, 1.0)
+    val coneInnerAngle = clampNum(r["coneInnerAngle"], 0.0, 360.0, 360.0)
+    val coneOuterAngle =
+      clampNum(r["coneOuterAngle"], coneInnerAngle, 360.0, kotlin.math.max(coneInnerAngle, 360.0))
+    val coneOuterGain = clampNum(r["coneOuterGain"], 0.0, 1.0, 0.0)
+    val playOnSelect = r["playOnSelect"] == true || r["playOnTap"] == true
+    return XRAudioEmitterTrait(
+      preset = preset,
+      src = src,
+      type = type,
+      volume = volume,
+      pitch = pitch,
+      loop = loop,
+      autoplay = autoplay,
+      distanceModel = distanceModel,
+      refDistance = refDistance,
+      maxDistance = maxDistance,
+      rolloffFactor = rolloffFactor,
+      coneInnerAngle = coneInnerAngle,
+      coneOuterAngle = coneOuterAngle,
+      coneOuterGain = coneOuterGain,
+      playOnSelect = playOnSelect,
     )
   }
 
@@ -1128,7 +1287,26 @@ object XRLiveSceneCoreHelper {
         parseWorldUnderstanding(xr["worldUnderstanding"] ?: sc["worldUnderstanding"]),
       splatUrl = splat,
       spatialSlot = slot,
-      audio = parseSpatialAudio(xr["audio"] ?: sc["spatialAudio"]),
+      audio =
+        (xr["audio"] ?: sc["spatialAudio"])?.let { raw ->
+          if (raw is String && isAudioPresetName(raw.trim())) null else parseSpatialAudio(raw)
+        },
+      audioEmitter =
+        parseAudioEmitter(
+          xr["audioEmitter"]
+            ?: xr["spatialAudio"]
+            ?: sc["audioEmitter"]
+            ?: xr["audio"]?.takeIf { raw ->
+              val m = MiniJson.asMap(raw)
+              (raw is String && isAudioPresetName(raw.trim())) ||
+                (m != null &&
+                  ("preset" in m ||
+                    "distanceModel" in m ||
+                    "coneInnerAngle" in m ||
+                    "maxDistance" in m ||
+                    "volume" in m))
+            }
+        ),
       dimensions = parseDimensions(xr["dimensions"] ?: sc["dimensions"]),
       snapTo = parseSnapTo(xr["snapTo"] ?: sc["snapTo"]),
       snapSocket = parseSnapSocket(xr["snapSocket"] ?: sc["snapSocket"]),

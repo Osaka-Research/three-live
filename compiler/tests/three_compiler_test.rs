@@ -2789,3 +2789,50 @@ fn test_phase1_rigid_body_physics_simulation_and_usdz() {
         top_body.final_translation[1]
     );
 }
+
+#[test]
+fn test_spatial_audio_khr_audio_emitter_and_usdz_export() {
+    let script = r#"
+        const beacon = new THREE.Mesh(
+            new THREE.BoxGeometry(0.4, 0.4, 0.4),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        beacon.name = "BeaconEmitter";
+        beacon.position.set(0, 1.5, -2.0);
+        beacon.userData.xr = {
+            audioEmitter: {
+                preset: "beacon",
+                src: "https://cdn.example.com/beacon.ogg",
+                volume: 0.75,
+                refDistance: 1.5,
+                maxDistance: 20.0,
+                coneInnerAngle: 90,
+                coneOuterAngle: 180,
+                coneOuterGain: 0.25,
+                playOnSelect: true
+            }
+        };
+        scene.add(beacon);
+    "#;
+
+    let glb = three_live_compiler::transcode_three_to_glb(script)
+        .expect("GLB compilation with audioEmitter should succeed");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON chunk");
+    let exts_used = gltf["extensionsUsed"].as_array().expect("extensionsUsed present");
+    assert!(exts_used.iter().any(|e| e.as_str() == Some("KHR_audio_emitter")));
+    let khr_audio = &gltf["extensions"]["KHR_audio_emitter"];
+    assert_eq!(khr_audio["audio"][0]["uri"].as_str(), Some("https://cdn.example.com/beacon.ogg"));
+    assert_eq!(khr_audio["sources"][0]["extras"]["preset"].as_str(), Some("beacon"));
+    assert_eq!(khr_audio["emitters"][0]["positional"]["refDistance"].as_f64(), Some(1.5));
+    assert_eq!(gltf["nodes"][0]["extensions"]["KHR_audio_emitter"]["emitter"].as_u64(), Some(0));
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("USDZ compilation with audioEmitter should succeed");
+    let usdz_str = String::from_utf8_lossy(&usdz);
+    assert!(usdz_str.contains("def SpatialAudio \"AudioEmitter\""));
+    assert!(usdz_str.contains("uniform token inputs:auralMode = \"spatial\""));
+    assert!(usdz_str.contains("asset inputs:file = @https://cdn.example.com/beacon.ogg@"));
+    assert!(usdz_str.contains("string audioEmitterPreset = \"beacon\""));
+}

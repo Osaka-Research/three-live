@@ -2513,6 +2513,92 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
         positions: [o, up, SIMD3<Float>(1, 1, 0)], targetPos: SIMD3<Float>(1, 1, 0)
       ).iterations, 0)
   }
+
+  func testSpatialAudioParityAndAmbientSynthesis() throws {
+    for preset in SpatialAudio.ambientPresets {
+      let pcm = SpatialAudio.renderAmbientLoopPCM16(
+        preset: preset, sampleRate: 11025, durationSec: 1.0)
+      XCTAssertEqual(pcm.count, 11025)
+      var sumSq = 0.0
+      for s in pcm { sumSq += Double(s) * Double(s) }
+      let rms = sqrt(sumSq / Double(pcm.count))
+      let seam = abs(Int(pcm[0]) - Int(pcm[pcm.count - 1]))
+      XCTAssertGreaterThan(rms, 200.0, "Preset \(preset) RMS too low")
+      XCTAssertLessThan(seam, 2500, "Preset \(preset) loop seam step too large")
+    }
+
+    let usdTraits = XRLiveTraitParser.normalize(usdCustomData: [
+      "audioEmitterPreset": "reactor",
+      "audioEmitterVolume": 0.9,
+      "audioEmitterRefDistance": 1.5,
+      "audioEmitterConeInnerAngle": 60.0,
+      "audioEmitterConeOuterAngle": 120.0,
+      "audioEmitterConeOuterGain": 0.25,
+    ])
+    XCTAssertEqual(usdTraits?.audioEmitter?.preset, "reactor")
+    XCTAssertEqual(Double(usdTraits?.audioEmitter?.refDistance ?? 0), 1.5, accuracy: 1e-5)
+
+    let gltfJSON = """
+      {
+        "asset": {"version": "2.0"},
+        "scenes": [{"nodes": [0, 1]}],
+        "nodes": [
+          {
+            "name": "ReactorCore",
+            "translation": [0, 1.6, -2],
+            "extras": {
+              "xr": {
+                "audioEmitter": {
+                  "preset": "reactor",
+                  "volume": 1.0,
+                  "refDistance": 1.0,
+                  "maxDistance": 11.0,
+                  "coneInnerAngle": 60,
+                  "coneOuterAngle": 120,
+                  "coneOuterGain": 0.25
+                }
+              }
+            }
+          },
+          {
+            "name": "ChimeBtn",
+            "translation": [1.5, 1.6, 0],
+            "extras": {
+              "xr": {
+                "audioEmitter": {
+                  "preset": "confirm",
+                  "autoplay": false,
+                  "playOnSelect": true,
+                  "volume": 0.8
+                }
+              }
+            }
+          }
+        ]
+      }
+      """
+    let session = try XCTUnwrap(XRLiveRuntimeSession(gltfJSONData: Data(gltfJSON.utf8)))
+    var events: [SpatialAudio.PlayEvent] = []
+    let ctrl = SpatialAudio.EmitterController(session: session) { ev in
+      events.append(ev)
+    }
+    ctrl.step(
+      listenerPos: SIMD3<Float>(0, 1.6, 0),
+      listenerForward: SIMD3<Float>(0, 0, -1),
+      listenerRight: SIMD3<Float>(1, 0, 0)
+    )
+    let mixFront = try XCTUnwrap(ctrl.mix(named: "ReactorCore"))
+    XCTAssertEqual(Double(mixFront.distance), 2.0, accuracy: 1e-5)
+    XCTAssertEqual(Double(mixFront.coneAttenuation), 1.0, accuracy: 1e-5)
+    XCTAssertEqual(Double(mixFront.gain), 0.5, accuracy: 1e-5)
+    XCTAssertEqual(Double(mixFront.pan), 0.0, accuracy: 1e-5)
+    XCTAssertEqual(Double(ctrl.mix(named: "ChimeBtn")?.gain ?? -1), 0.0, accuracy: 1e-5)
+
+    ctrl.select(nodeIndex: 1)
+    XCTAssertEqual(events.count, 1)
+    XCTAssertEqual(events.first?.nodeName, "ChimeBtn")
+    XCTAssertEqual(events.first?.preset, "confirm")
+  }
 }
 
 /// `URLProtocol` stub serving canned responses (keyed by path) for `SplatParser.loadURL` tests.

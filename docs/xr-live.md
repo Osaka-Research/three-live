@@ -21,15 +21,15 @@ limitations under the License.
 **native Android (`Google Filament` and Jetpack XR `SceneCore`) and iOS or
 visionOS (`Apple ARKit` and `RealityKit`)**.
 
-It brings declarative spatial traits (`userData.xr`), 14 optional **spatial
+It brings declarative spatial traits (`userData.xr`), 15 optional **spatial
 plugins** for advanced features (`head-follow`, `manipulation-handles`,
 `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`,
 `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`,
-`exploded-view`, `persistent-anchors`, `spatial-locomotion`, and `shared-room`),
-interactive HTML and CSS spatial cards (`<div slot="spatial">`), real-world
-depth occlusion and heightfield physics, 25-joint hand gesture recognition, a
-desktop 6DoF simulator, WebMCP browser AI tools, and zero-webview native mobile
-AR and XR runtimes.
+`exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`, and
+`spatial-audio`), interactive HTML and CSS spatial cards
+(`<div slot="spatial">`), real-world depth occlusion and heightfield physics,
+25-joint hand gesture recognition, a desktop 6DoF simulator, WebMCP browser AI
+tools, and zero-webview native mobile AR and XR runtimes.
 
 For standard 3D viewing, `<model-viewer>` drop-in compatibility,
 `KHR_interactivity`, and PBR materials, see
@@ -61,10 +61,10 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 
 `<xr-live>` addresses both web and native apps from a single scene definition:
 
-*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 51 KB gz`
-    for `xr-live-viewer.min.js`, or `< 72 KB gz` for `xr-live.min.js` with live
+*   **On the web (`<xr-live>`):** Starts with small core bundles (`< 52 KB gz`
+    for `xr-live-viewer.min.js`, or `< 73 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
-    each, or `< 57 KB gz` for all 14 combined).
+    each, or `< 61 KB gz` for all 15 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
     `XRLiveRealityKitSession`):** The in-process Rust compiler
     (`ThreeLiveCompiler`) compiles `<script type="text/three">` on-device,
@@ -72,7 +72,7 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
     `ANDROID_xr_scenecore`) and `.usdz` (`customData.xr`), and drives **Google
     Filament and Jetpack XR SceneCore** on Android and **Apple ARKit and
     RealityKit** on iOS and visionOS at 60 to 120 Hz—so interactive AR,
-    `animate()` loops, `KHR_interactivity`, and all 14 spatial plugins work
+    `animate()` loops, `KHR_interactivity`, and all 15 spatial plugins work
     natively on iOS and Android without a `WebView`.
 
 --------------------------------------------------------------------------------
@@ -126,8 +126,8 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 ### Register optional plugins for advanced features
 
 When bundling with Vite, Rollup, esbuild, or Webpack, you can pair the
-`<xr-live>` core (`three-live/xr-live` at `< 72 KB gz`, or
-`three-live/xr-live-viewer` at `< 51 KB gz`) with only the specific plugins your
+`<xr-live>` core (`three-live/xr-live` at `< 73 KB gz`, or
+`three-live/xr-live-viewer` at `< 52 KB gz`) with only the specific plugins your
 application uses:
 
 ```ts
@@ -144,9 +144,9 @@ XRLiveElement.registerPlugin(magneticSnapPlugin);
 XRLiveElement.registerPlugin(explodedViewPlugin);
 ```
 
-To load all 14 spatial plugins without a bundler, import
-`/dist/xr-live-spatial.min.js` (`< 57 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 188 KB gz`, which also includes `xr-live-sensors` and the 6 `xr-live-sim`
+To load all 15 spatial plugins without a bundler, import
+`/dist/xr-live-spatial.min.js` (`< 61 KB gz`) or `/dist/xr-live-full.min.js`
+(`< 193 KB gz`, which also includes `xr-live-sensors` and the 6 `xr-live-sim`
 simulation plugins).
 
 --------------------------------------------------------------------------------
@@ -237,7 +237,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`outline`** | `{ color?: string, thickness?: number } \| boolean \| string` | Renders an inverted-hull / screen-space silhouette outline (`thickness` in `[0.002, 0.25]`) around the node. |
 | **`ik`** | `{ root: string, mid?: string, effector: string, target: string \| [x, y, z], pole?: string \| [x, y, z], solver?: 'two-bone' \| 'fabrik', iterations?: number, tolerance?: number, weight?: number }` | Solves analytical 2-bone (`root` → `mid` → `effector`) or FABRIK inverse kinematics toward `target` (and optional `pole`, alias `poleTarget`) every frame. |
 | **`text`** | `{ text: string, size?: number, depth?: number, bevelEnabled?: boolean, bevelThickness?: number, bevelSize?: number }` | Extruded 3D vector text metadata exported to glTF `extras.xr.text` and USDZ `customData.xr`. |
-| **`audio`** | `string` **or** `{ src: string, refDistance?: number, loop?: boolean }` | Attaches a 3D `PannerNode` HRTF audio source to the mesh. |
+| **`audioEmitter`** / **`audio`** | `string` **or** `{ preset?: 'hum' \| 'reactor' \| 'wind' \| 'beacon' \| 'geiger' \| 'chimeLoop' \| 'machinery' \| 'water' \| string, src?: string, volume?: number, loop?: boolean, autoplay?: boolean, playOnSelect?: boolean, distanceModel?: 'inverse' \| 'linear' \| 'exponential', refDistance?: number, maxDistance?: number, rolloffFactor?: number, coneInnerAngle?: number, coneOuterAngle?: number, coneOuterGain?: number, pitchHz?: number }` | Attaches a 3D positional and directional spatial audio emitter (`spatial-audio`), supporting 8 zero-asset ambient loop presets, 13 one-shot cues, or `safeMediaUrl` streams, plus `KHR_audio_emitter` and USDZ `SpatialAudio` export. |
 | **`pointerEvents`** | `'none'` | Excludes the mesh from raycast picking so rays pass through it. |
 <!-- mdformat on -->
 
@@ -245,7 +245,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 
 ## Spatial plugin suite
 
-All 14 spatial plugins are included in `xr-live-full.min.js` and
+All 15 spatial plugins are included in `xr-live-full.min.js` and
 `xr-live-spatial.min.js`, or can be imported individually from
 `xr-live/src/plugins/<name>` and registered via
 `XRLiveElement.registerPlugin(plugin)`. Every plugin has a corresponding native
@@ -353,6 +353,17 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     creates the `RTCPeerConnection`s and plays the audio, and signaling is
     visible to every room member). Dispatches `peerjoin`, `peerleave`,
     `peersync`, and `peergrabconflict`.
+*   **`spatial-audio` (`xr-live-spatial-audio`):** 3D positional and directional
+    spatial audio emitters (`userData.xr.audioEmitter`, `userData.xr.audio`, or
+    `KHR_audio_emitter`). Synthesizes 8 zero-asset phase-locked ambient loop
+    presets (`hum`, `reactor`, `wind`, `beacon`, `geiger`, `chimeLoop`,
+    `machinery`, `water`) and 13 one-shot procedural cues
+    (`renderAmbientLoopPcm`), or streams validated `safeMediaUrl` audio.
+    Evaluates `inverse`, `linear`, and `exponential` distance falloff,
+    directional cone attenuation (`coneInnerAngle`, `coneOuterAngle`,
+    `coneOuterGain`), and stereo panning (`computeSpatialAudioMix`), and exports
+    `KHR_audio_emitter` in `.glb` and `def SpatialAudio "AudioEmitter"` in
+    `.usdz`. Dispatches `xraudioplay`.
 
 --------------------------------------------------------------------------------
 
@@ -589,6 +600,7 @@ table:
 | `peerjoin`, `peerleave` | `{ peerId: string, name: string, color: string }` | Fired when a remote participant joins, disconnects, or times out of `shared-room`. |
 | `peergrabconflict` | `{ peerId: string, nodeId: string }` | Fired when a remote participant wins a near-simultaneous grab of the same node and the local hold is released. |
 | `peersync` | `{ peerId: string, nodeId: string }` | Fired when `shared-room` applies a remote node transform, explode factor (`__explode__`), or paint stroke (`paint:<id>`). |
+| `xraudioplay` | `{ node: string, meshIndex: number, preset: string \| null, src: string \| null, gain: number, pan: number, triggerCount: number }` | Fired when a `spatial-audio` emitter is triggered by `playOnSelect` tap/pinch or `playNode()`. |
 | `xr-webmcp-capture` | `{}` | Fired when a WebMCP agent invokes `capture_xr_view` (sets `data-xr-webmcp-indicator="active"`). |
 <!-- mdformat on -->
 
@@ -607,13 +619,13 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
     [`XRSpatialFeatures.kt`](../mobile/android/src/main/java/com/google/threelive/XRSpatialFeatures.kt),
     and modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`,
     `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`,
-    `SpatialLocomotion.kt`, `SharedRoom.kt`):** Executes lazy head-follow
-    springs, orbits, manipulation handles, Catmull-Rom spatial paint tubes,
-    depth-colliding particles, Gaussian splat sorting, 3D dimension callouts and
-    tape measure, magnetic socket and grid snapping, gaze dwell, exploded-view
-    assemblies and section clipping, persistent anchors, parabolic locomotion,
-    multi-user room sync, and `KHR_interactivity` behavior graphs natively on
-    Google Filament. In a shared room, start host grabs with
+    `SpatialLocomotion.kt`, `SharedRoom.kt`, `SpatialAudio.kt`):** Executes lazy
+    head-follow springs, orbits, manipulation handles, Catmull-Rom spatial paint
+    tubes, depth-colliding particles, Gaussian splat sorting, 3D dimension
+    callouts and tape measure, magnetic socket and grid snapping, gaze dwell,
+    exploded-view assemblies and section clipping, persistent anchors, parabolic
+    locomotion, multi-user room sync, and `KHR_interactivity` behavior graphs
+    natively on Google Filament. In a shared room, start host grabs with
     `XRSpatialFeatures.requestGrab(node)` (or check the return value of
     `XRLiveRuntimeSession.setNodeGrabbed(node, true)`) and cancel the gesture
     when it returns `false`: another peer holds the node. Near-simultaneous
@@ -633,15 +645,14 @@ embedded spatial trait metadata (`extras.xr`, `ANDROID_xr_scenecore`, and USDZ
     [`XRSpatialRealityKitFeatures.swift`](../mobile/ios/Sources/ThreeLiveCompiler/XRSpatialRealityKitFeatures.swift),
     and modular feature controllers (`SpatialMeasure.swift`,
     `MagneticSnap.swift`, `GazeDwell.swift`, `ExplodedView.swift`,
-    `PersistentAnchors.swift`, `SpatialLocomotion.swift`, `SharedRoom.swift`):**
-    Native Swift and RealityKit runtime supporting all 14 spatial plugin
-    behaviors, `userData.xr` traits, manipulation handles, spatial paint tubes,
-    particle emitters, Gaussian splats, `KHR_interactivity`, and
-    `XRGeminiLiveController.swift`. In a shared room, start host grabs with
-    `XRSpatialRealityKitFeatures.requestGrab(_:)` and cancel the gesture when it
-    returns `false` (another peer holds the node); near-simultaneous grabs
-    resolve like the web and call `onPeerGrabConflict`.
-
+    `PersistentAnchors.swift`, `SpatialLocomotion.swift`, `SharedRoom.swift`,
+    `SpatialAudio.swift`):** Native Swift and RealityKit runtime supporting all
+    15 spatial plugin behaviors, `userData.xr` traits, manipulation handles,
+    spatial paint tubes, particle emitters, Gaussian splats,
+    `KHR_interactivity`, and `XRGeminiLiveController.swift`. In a shared room,
+    start host grabs with `XRSpatialRealityKitFeatures.requestGrab(_:)` and
+    cancel the gesture when it returns `false` (another peer holds the node);
+    near-simultaneous grabs resolve like the web and call `onPeerGrabConflict`.
 
 ### Gemini Live session ownership
 

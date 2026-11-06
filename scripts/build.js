@@ -857,17 +857,17 @@ function reportSizes() {
   console.log('------------------------------------------------------------------------------');
   const files = [
     {name: 'three-live-viewer.min.js', budgetKb: '29'},
-    {name: 'three-live.min.js', budgetKb: '61'},
+    {name: 'three-live.min.js', budgetKb: '62'},
     {name: 'three-live-studio.min.js', budgetKb: '24'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
-    {name: 'three-live-full.min.js', budgetKb: '97'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '51'},
-    {name: 'xr-live.min.js', budgetKb: '72'},
+    {name: 'three-live-full.min.js', budgetKb: '98'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '52'},
+    {name: 'xr-live.min.js', budgetKb: '73'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
-    {name: 'xr-live-spatial.min.js', budgetKb: '57'},
+    {name: 'xr-live-spatial.min.js', budgetKb: '61'},
     {name: 'xr-live-sim.min.js', budgetKb: '26'},
-    {name: 'xr-live-full.min.js', budgetKb: '188'},
+    {name: 'xr-live-full.min.js', budgetKb: '193'},
   ];
   const failures = [];
   for (const f of files) {

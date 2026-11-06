@@ -376,6 +376,59 @@ public struct XRLiveSpatialAudio: Codable, Sendable, Equatable {
   }
 }
 
+/// Normalized 3D positional/directional `audioEmitter` trait (`spatial-audio`).
+public struct XRLiveAudioEmitter: Codable, Sendable, Equatable {
+  public var preset: String?
+  public var src: String?
+  public var type: String
+  public var volume: Float
+  public var pitch: Float
+  public var loop: Bool
+  public var autoplay: Bool
+  public var distanceModel: String
+  public var refDistance: Float
+  public var maxDistance: Float
+  public var rolloffFactor: Float
+  public var coneInnerAngle: Float
+  public var coneOuterAngle: Float
+  public var coneOuterGain: Float
+  public var playOnSelect: Bool
+
+  public init(
+    preset: String? = nil,
+    src: String? = nil,
+    type: String = "positional",
+    volume: Float = 0.6,
+    pitch: Float = 1.0,
+    loop: Bool = true,
+    autoplay: Bool = true,
+    distanceModel: String = "inverse",
+    refDistance: Float = 1.0,
+    maxDistance: Float = 25.0,
+    rolloffFactor: Float = 1.0,
+    coneInnerAngle: Float = 360.0,
+    coneOuterAngle: Float = 360.0,
+    coneOuterGain: Float = 0.0,
+    playOnSelect: Bool = false
+  ) {
+    self.preset = preset
+    self.src = src
+    self.type = type
+    self.volume = volume
+    self.pitch = pitch
+    self.loop = loop
+    self.autoplay = autoplay
+    self.distanceModel = distanceModel
+    self.refDistance = refDistance
+    self.maxDistance = maxDistance
+    self.rolloffFactor = rolloffFactor
+    self.coneInnerAngle = coneInnerAngle
+    self.coneOuterAngle = coneOuterAngle
+    self.coneOuterGain = coneOuterGain
+    self.playOnSelect = playOnSelect
+  }
+}
+
 /// Normalized uniform scale range (`scale: {min, max}`, defaults 0.05–5 like the web
 /// `XRTraitSystem`).
 public struct XRLiveScaleRange: Codable, Sendable, Equatable {
@@ -639,6 +692,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var splatUrl: String?
   public var spatialSlot: String?
   public var audio: XRLiveSpatialAudio?
+  public var audioEmitter: XRLiveAudioEmitter?
   public var dimensions: XRLiveDimensions?
   public var snapTo: XRLiveSnapTo?
   public var snapSocket: XRLiveSnapSocket?
@@ -666,7 +720,8 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
     grab == nil && scale == nil && billboard == nil && follow == nil && lazyFollow == nil
       && anchor == nil && physics == nil && orbit == nil && handles == nil && particles == nil
       && holdToAsk == nil && worldUnderstanding == nil && splatUrl == nil && spatialSlot == nil
-      && audio == nil && dimensions == nil && snapTo == nil && snapSocket == nil
+      && audio == nil && audioEmitter == nil && dimensions == nil && snapTo == nil
+      && snapSocket == nil
       && gaze == nil && explode == nil && anchorPersist == nil && bloom == nil && outline == nil
       && ik == nil && navigable == nil && sync == nil && !pointerEventsNone
   }
@@ -787,6 +842,75 @@ public enum XRLiveTraitParser {
     a.refDistance = Float(XRJSON.clampNum(r["refDistance"], 0.01, 1000, 1))
     a.loop = XRJSON.bool(r["loop"]) == true
     return a
+  }
+
+  private static let ambientSoundPresets: Set<String> = [
+    "hum", "reactor", "wind", "beacon", "geiger", "chimeLoop", "machinery", "water",
+  ]
+  private static let oneShotAudioPresets: Set<String> = [
+    "confirm", "error", "alarm", "warning", "pickup", "jump", "beam", "impact", "burst",
+    "powerup", "step", "pass", "fail",
+  ]
+
+  public static func isAudioPresetName(_ s: String?) -> Bool {
+    guard let s = s else { return false }
+    return ambientSoundPresets.contains(s) || oneShotAudioPresets.contains(s)
+  }
+
+  /// Parses an `audioEmitter` / `spatialAudio` / extended `audio` trait.
+  public static func parseAudioEmitter(_ raw: Any?) -> XRLiveAudioEmitter? {
+    guard let raw = raw else { return nil }
+    if XRJSON.bool(raw) == false { return nil }
+    let r: [String: Any]
+    if let str = XRJSON.string(raw)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+      if str.isEmpty { return nil }
+      r = isAudioPresetName(str) ? ["preset": str] : ["src": str]
+    } else if let obj = XRJSON.object(raw) {
+      r = obj
+    } else {
+      return nil
+    }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+    let rawPreset = XRJSON.shortString(r["preset"], max: 32)?.trimmingCharacters(
+      in: .whitespacesAndNewlines)
+    let preset = isAudioPresetName(rawPreset) ? rawPreset : nil
+    let src = XRJSON.safeMediaUrl(r["src"] ?? r["url"] ?? r["uri"])
+    if preset == nil && src == nil { return nil }
+    let isAmbient = preset == nil || ambientSoundPresets.contains(preset!)
+    let type =
+      (XRJSON.string(r["type"]) == "global" || XRJSON.bool(r["positional"]) == false)
+      ? "global" : "positional"
+    let volume = Float(XRJSON.clampNum(r["volume"] ?? r["gain"], 0.0, 2.0, 0.6))
+    let pitch = Float(XRJSON.clampNum(r["pitch"] ?? r["playbackRate"], 0.25, 4.0, 1.0))
+    let loop = XRJSON.bool(r["loop"]) ?? isAmbient
+    let autoplay = XRJSON.bool(r["autoplay"]) ?? XRJSON.bool(r["autoPlay"]) ?? true
+    let dmRaw = XRJSON.string(r["distanceModel"])
+    let distanceModel =
+      (dmRaw == "linear" || dmRaw == "exponential") ? dmRaw! : "inverse"
+    let refDist = XRJSON.clampNum(r["refDistance"], 0.05, 100.0, 1.0)
+    let maxDist = XRJSON.clampNum(r["maxDistance"], refDist, 500.0, max(refDist, 25.0))
+    let rolloff = XRJSON.clampNum(r["rolloffFactor"], 0.0, 10.0, 1.0)
+    let innerDeg = XRJSON.clampNum(r["coneInnerAngle"], 0.0, 360.0, 360.0)
+    let outerDeg = XRJSON.clampNum(r["coneOuterAngle"], innerDeg, 360.0, max(innerDeg, 360.0))
+    let outerGain = XRJSON.clampNum(r["coneOuterGain"], 0.0, 1.0, 0.0)
+    let playOnSelect = XRJSON.bool(r["playOnSelect"]) == true || XRJSON.bool(r["playOnTap"]) == true
+    return XRLiveAudioEmitter(
+      preset: preset,
+      src: src,
+      type: type,
+      volume: volume,
+      pitch: pitch,
+      loop: loop,
+      autoplay: autoplay,
+      distanceModel: distanceModel,
+      refDistance: Float(refDist),
+      maxDistance: Float(maxDist),
+      rolloffFactor: Float(rolloff),
+      coneInnerAngle: Float(innerDeg),
+      coneOuterAngle: Float(outerDeg),
+      coneOuterGain: Float(outerGain),
+      playOnSelect: playOnSelect
+    )
   }
 
   /// Parses a `dimensions` trait (`true` or an object).
@@ -1151,7 +1275,26 @@ public enum XRLiveTraitParser {
     out.worldUnderstanding = parseWorldUnderstanding(r["worldUnderstanding"])
     out.splatUrl = XRJSON.safeMediaUrl(r["splatUrl"])
     out.spatialSlot = XRJSON.shortString(r["spatialSlot"])
-    out.audio = parseSpatialAudio(r["audio"])
+    if let str = XRJSON.string(r["audio"]),
+      isAudioPresetName(str.trimmingCharacters(in: .whitespacesAndNewlines))
+    {
+      out.audio = nil
+    } else {
+      out.audio = parseSpatialAudio(r["audio"])
+    }
+    if let rawEmitter = r["audioEmitter"] ?? r["spatialAudio"] {
+      out.audioEmitter = parseAudioEmitter(rawEmitter)
+    } else if let rawAudio = r["audio"] {
+      let audioObj = XRJSON.object(rawAudio)
+      let hasExtended =
+        audioObj != nil
+        && (audioObj!["preset"] != nil || audioObj!["distanceModel"] != nil
+          || audioObj!["coneInnerAngle"] != nil || audioObj!["maxDistance"] != nil
+          || audioObj!["volume"] != nil)
+      if out.audio == nil || hasExtended {
+        out.audioEmitter = parseAudioEmitter(rawAudio)
+      }
+    }
     out.dimensions = parseDimensions(r["dimensions"])
     out.snapTo = parseSnapTo(r["snapTo"])
     out.snapSocket = parseSnapSocket(r["snapSocket"])
@@ -1219,6 +1362,7 @@ public enum XRLiveTraitParser {
     }
     if let w = gather("worldUnderstanding") { r["worldUnderstanding"] = w }
     if let a = gather("audio") { r["audio"] = a }
+    if let ae = gather("audioEmitter") { r["audioEmitter"] = ae }
     if let dims = gather("dimensions") { r["dimensions"] = dims }
     if let snap = gather("snapTo") {
       r["snapTo"] = snap
@@ -1256,14 +1400,68 @@ public enum XRLiveTraitParser {
   /// keyed by node index.
   public static func traits(fromGLTF root: [String: Any]) -> [Int: XRLiveNodeTraits] {
     guard let nodes = XRJSON.array(root["nodes"]) else { return [:] }
+    let khrAudioRoot = XRJSON.object(XRJSON.object(root["extensions"])?["KHR_audio_emitter"])
     var result: [Int: XRLiveNodeTraits] = [:]
     for (idx, rawNode) in nodes.prefix(XRLiveRuntimeSession.maxSceneElements).enumerated() {
-      guard let node = XRJSON.object(rawNode), let extras = XRJSON.object(node["extras"]),
-        let traits = normalize(extras["xr"])
-      else { continue }
-      result[idx] = traits
+      guard let node = XRJSON.object(rawNode) else { continue }
+      let rawXr = XRJSON.object(XRJSON.object(node["extras"])?["xr"])
+      let khrAudioMap = extractKhrAudioEmitterMap(khrAudioRoot: khrAudioRoot, node: node)
+      guard rawXr != nil || khrAudioMap != nil else { continue }
+      var xrDict = rawXr ?? [:]
+      if let khrAudioMap = khrAudioMap, xrDict["audioEmitter"] == nil {
+        xrDict["audioEmitter"] = khrAudioMap
+      }
+      if let traits = normalize(xrDict) {
+        result[idx] = traits
+      }
     }
     return result
+  }
+
+  private static func extractKhrAudioEmitterMap(
+    khrAudioRoot: [String: Any]?,
+    node: [String: Any]
+  ) -> [String: Any]? {
+    guard let khrAudioRoot = khrAudioRoot,
+      let nodeExt = XRJSON.object(XRJSON.object(node["extensions"])?["KHR_audio_emitter"]),
+      let emitterNum = XRJSON.number(nodeExt["emitter"]),
+      let emitterIdx = Int(exactly: emitterNum),
+      let emitters = XRJSON.array(khrAudioRoot["emitters"]),
+      emitterIdx >= 0, emitterIdx < emitters.count,
+      let emitterDef = XRJSON.object(emitters[emitterIdx])
+    else { return nil }
+    let sources = XRJSON.array(khrAudioRoot["sources"]) ?? []
+    let clips = XRJSON.array(khrAudioRoot["audio"]) ?? []
+    let srcIndices = XRJSON.array(emitterDef["sources"]) ?? []
+    let firstSourceIdx = srcIndices.first.flatMap { XRJSON.number($0) }.flatMap { Int(exactly: $0) }
+    let firstSource =
+      firstSourceIdx.flatMap { $0 >= 0 && $0 < sources.count ? XRJSON.object(sources[$0]) : nil }
+    let clipIdx = firstSource.flatMap { XRJSON.number($0["audio"]) }.flatMap { Int(exactly: $0) }
+    let clipDef = clipIdx.flatMap { $0 >= 0 && $0 < clips.count ? XRJSON.object(clips[$0]) : nil }
+    let extras = firstSource.flatMap { XRJSON.object($0["extras"]) }
+    let pos = XRJSON.object(emitterDef["positional"])
+    var out: [String: Any] = [:]
+    if let p = extras?["preset"] { out["preset"] = p }
+    if let pitch = extras?["pitch"] { out["pitch"] = pitch }
+    if let uri = clipDef?["uri"] { out["src"] = uri }
+    if let t = emitterDef["type"] { out["type"] = t }
+    if let vol = emitterDef["gain"] ?? firstSource?["gain"] { out["volume"] = vol }
+    if let lp = firstSource?["loop"] { out["loop"] = lp }
+    if let ap = firstSource?["autoPlay"] { out["autoplay"] = ap }
+    if let pos = pos {
+      if let dm = pos["distanceModel"] { out["distanceModel"] = dm }
+      if let rd = pos["refDistance"] { out["refDistance"] = rd }
+      if let md = pos["maxDistance"] { out["maxDistance"] = md }
+      if let rf = pos["rolloffFactor"] { out["rolloffFactor"] = rf }
+      if let innerRad = XRJSON.number(pos["coneInnerAngle"]) {
+        out["coneInnerAngle"] = innerRad * 180.0 / Double.pi
+      }
+      if let outerRad = XRJSON.number(pos["coneOuterAngle"]) {
+        out["coneOuterAngle"] = outerRad * 180.0 / Double.pi
+      }
+      if let og = pos["coneOuterGain"] { out["coneOuterGain"] = og }
+    }
+    return out.isEmpty ? nil : out
   }
 }
 

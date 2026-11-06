@@ -15,7 +15,7 @@
  * limitations under the License.
  *
  * @fileoverview Optional spatial UX, world-understanding, splat, AI & co-presence plugin bundle for `<xr-live>`
- * (`xr-live-spatial.min.js`). Importing this module registers all 14
+ * (`xr-live-spatial.min.js`). Importing this module registers all 15
  * plugins; each is inert until a scene opts in via `userData.xr` traits or
  * host attributes:
  *
@@ -35,6 +35,7 @@
  * | `persistent-anchors`   | `persistent-anchors` / `persist-url-hash` attr / `userData.xr.anchor.persist` |
  * | `spatial-locomotion`   | `locomotion` attr / `userData.xr.navigable`   |
  * | `shared-room`          | `shared-room` attr / `userData.xr.sync`       |
+ * | `spatial-audio`        | `userData.xr.audioEmitter` / `KHR_audio_emitter` |
  *
  * To register only a subset, import the individual modules and call
  * `registerPlugin()` yourself instead of importing this entry point.
@@ -51,6 +52,7 @@ import {magneticSnapPlugin} from './magnetic-snap';
 import {manipulationHandlesPlugin} from './manipulation-handles';
 import {persistentAnchorsPlugin} from './persistent-anchors';
 import {sharedRoomPlugin} from './shared-room';
+import {spatialAudioPlugin} from './spatial-audio';
 import {spatialLocomotionPlugin} from './spatial-locomotion';
 import {spatialMeasurePlugin} from './spatial-measure';
 import {spatialPaintPlugin} from './spatial-paint';
@@ -73,6 +75,7 @@ export const xrSpatialPlugins = [
   persistentAnchorsPlugin,
   spatialLocomotionPlugin,
   sharedRoomPlugin,
+  spatialAudioPlugin,
 ] as const;
 
 for (const plugin of xrSpatialPlugins) registerPlugin(plugin);
@@ -127,6 +130,7 @@ export * from './magnetic-snap';
 export * from './manipulation-handles';
 export * from './persistent-anchors';
 export * from './shared-room';
+export * from './spatial-audio';
 export * from './spatial-locomotion';
 export * from './spatial-measure';
 export * from './spatial-paint';

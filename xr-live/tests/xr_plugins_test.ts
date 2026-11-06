@@ -269,7 +269,7 @@ function meshAt(
 
 function testRegistration(): void {
   console.log('\n🧩 Plugin registration');
-  assert(xrSpatialPlugins.length === 14, 'exports fourteen plugins');
+  assert(xrSpatialPlugins.length === 15, 'exports fifteen plugins');
   assert(
     xrLiveFull.xrSpatialPlugins === xrSpatialPlugins &&
       typeof xrLiveFull.connectGeminiLive === 'function',
@@ -291,6 +291,7 @@ function testRegistration(): void {
     'xr-live-persistent-anchors',
     'xr-live-spatial-locomotion',
     'xr-live-shared-room',
+    'xr-live-spatial-audio',
   ]) {
     assert(names.includes(n), `registers ${n}`);
   }
@@ -3856,7 +3857,8 @@ async function testSplatAuditFixes(): Promise<void> {
   aaBytes[14] = 1;
   const aa = parseSpzPayload(aaBytes);
   assert(
-    aa.antialiased === true && !parseSpzPayload(buildSpzV3WithSh(0)).antialiased,
+    aa.antialiased === true &&
+      !parseSpzPayload(buildSpzV3WithSh(0)).antialiased,
     '.spz flags byte antialiased bit decoded',
   );
   const aaGl = makeSplatMockGl();
@@ -4172,6 +4174,112 @@ function testSharedRoomVoiceAuditFixes(): void {
   sender.dispose();
 }
 
+function testSpatialAudio(): void {
+  console.log('\n🔊 Spatial audio plugin (xr-live-spatial-audio)');
+  const {
+    AMBIENT_SOUND_PRESETS,
+    getSpatialAudioController,
+    renderAmbientLoopPcm,
+    spatialAudioPlugin,
+  } = xrLiveFull;
+
+  for (const preset of AMBIENT_SOUND_PRESETS) {
+    const pcm = renderAmbientLoopPcm(preset, 11025, 1.0);
+    let sumSq = 0;
+    for (let i = 0; i < pcm.length; i++) {
+      sumSq += pcm[i] * pcm[i];
+    }
+    const rms = Math.sqrt(sumSq / pcm.length);
+    const seamStep = Math.abs(pcm[0] - pcm[pcm.length - 1]);
+    assert(
+      pcm.length === 11025 && rms > 200 && seamStep < 2500,
+      `renderAmbientLoopPcm(${preset}) synthesizes non-silent phase-locked loop (rms=${Math.round(rms)}, seam=${seamStep})`,
+    );
+  }
+
+  const mReactor = meshAt('ReactorCore', [0, 1.6, -2], {
+    audioEmitter: {
+      preset: 'reactor',
+      volume: 1.0,
+      refDistance: 1.0,
+      maxDistance: 20.0,
+      coneInnerAngle: 90,
+      coneOuterAngle: 180,
+      coneOuterGain: 0.2,
+    },
+  });
+  const mButton = meshAt('ChimeBtn', [1.5, 1.6, 0], {
+    audioEmitter: {
+      preset: 'confirm',
+      autoplay: false,
+      playOnSelect: true,
+      volume: 0.8,
+    },
+  });
+  const events: Array<{node: string; preset: string | null; gain: number}> = [];
+  const container = {
+    dispatchEvent(ev: CustomEvent) {
+      events.push(ev.detail);
+      return true;
+    },
+  };
+  // tslint:disable-next-line:no-any Partial mock viewer for unit test.
+  const viewer: any = {
+    meshes: [mReactor, mButton],
+    camera: {position: [0, 1.6, 0], target: [0, 1.6, -1]},
+    container,
+  };
+
+  spatialAudioPlugin.onSceneLoaded?.(viewer);
+  spatialAudioPlugin.onUpdate?.(viewer, 0.016);
+
+  const ctrl = getSpatialAudioController(viewer);
+  const reactorMixNear = ctrl.getMix('ReactorCore');
+  const btnMixIdle = ctrl.getMix('ChimeBtn');
+  assert(
+    reactorMixNear !== null &&
+      Math.abs(reactorMixNear.distance - 2.0) < 1e-4 &&
+      Math.abs(reactorMixNear.gain - 0.5) < 1e-4 &&
+      Math.abs(reactorMixNear.pan) < 1e-4,
+    'autoplay reactor emitter evaluates inverse distance attenuation on update',
+  );
+  assert(
+    btnMixIdle !== null && btnMixIdle.gain === 0,
+    'non-autoplay emitter starts with 0 output gain until selected',
+  );
+
+  // Move listener closer to ReactorCore
+  viewer.camera.position = [0, 1.6, -1];
+  viewer.camera.target = [0, 1.6, -2];
+  spatialAudioPlugin.onUpdate?.(viewer, 0.016);
+  const reactorMixAtRef = ctrl.getMix(0);
+  assert(
+    reactorMixAtRef !== null && Math.abs(reactorMixAtRef.gain - 1.0) < 1e-4,
+    'emitter gain increases to full volume at refDistance=1m',
+  );
+
+  // Select ChimeBtn to trigger playOnSelect + xraudioplay event
+  viewer.camera.position = [0, 1.6, 0];
+  viewer.camera.target = [0, 1.6, -1];
+  spatialAudioPlugin.onMeshSelect?.(viewer, {
+    meshIndex: 1,
+    mesh: mButton,
+    point: [1.5, 1.6, 0],
+    distance: 1.5,
+  });
+  const btnMixActive = ctrl.getMix('ChimeBtn');
+  assert(
+    btnMixActive !== null &&
+      btnMixActive.gain > 0.4 &&
+      btnMixActive.pan > 0.9 &&
+      events.length === 1 &&
+      events[0].node === 'ChimeBtn' &&
+      events[0].preset === 'confirm',
+    'onMeshSelect triggers playOnSelect emitter, pans right, and dispatches xraudioplay',
+  );
+  spatialAudioPlugin.onDispose?.(viewer);
+}
+
 async function main(): Promise<void> {
   console.log('🧪 Running spatial plugin unit tests...');
   testSchema();
@@ -4193,6 +4301,7 @@ async function main(): Promise<void> {
   testSpatialLocomotion();
   testSharedRoom();
   testSharedRoomVoiceAuditFixes();
+  testSpatialAudio();
   await testAuditRegressions();
   testGoldenParity();
   console.log(`\n📊 spatial plugins: ${passed} passed, ${failed} failed`);

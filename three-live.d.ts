@@ -451,6 +451,17 @@ export interface XRLiveAttributes extends ThreeLiveAttributes {
       sdpMLineIndex: number | null;
     }>,
   ) => void;
+  onxraudioplay?: (
+    e: CustomEvent<{
+      node: string;
+      meshIndex: number;
+      preset: string | null;
+      src: string | null;
+      gain: number;
+      pan: number;
+      triggerCount: number;
+    }>,
+  ) => void;
   /** xr-live-sim events. */
   onxrcollision?: (
     e: CustomEvent<{

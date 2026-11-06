@@ -13,7 +13,11 @@
 // limitations under the License.
 
 import THREE from '../src/three-author';
-import {generateUSDA, generateUSDZ} from '../src/three-convert';
+import {
+  generateUSDA,
+  generateUSDZ,
+  sceneToCanvas3D,
+} from '../src/three-convert';
 import {parseGLB, ThreeView} from '../src/three-view';
 import {
   activateAR,
@@ -29,6 +33,14 @@ import {
   WebXRSessionManager,
 } from '../src/three-xr';
 import {installXRDepthShader} from '../src/xr-depth-shader';
+import {
+  AMBIENT_SOUND_PRESETS,
+  computeSpatialAudioMix,
+  normalizeXRTraits,
+  parseAudioEmitter,
+  registerXRTraitSerializer,
+  validateXRTraits,
+} from '../src/xr-trait-schema';
 
 let passed = 0;
 let failed = 0;
@@ -891,6 +903,163 @@ async function runXRTests() {
     console.warn = origWarn;
   }
   tv.dispose();
+
+  // -------------------------------------------------------------------------
+  // 10. 3D Spatial Audio Trait Schema, Mix Math & KHR_audio_emitter / USDZ
+  // -------------------------------------------------------------------------
+  registerXRTraitSerializer();
+  assert(
+    AMBIENT_SOUND_PRESETS.length === 8 &&
+      AMBIENT_SOUND_PRESETS.includes('reactor') &&
+      AMBIENT_SOUND_PRESETS.includes('water'),
+    'AMBIENT_SOUND_PRESETS exports all 8 procedural ambient presets',
+  );
+  const parsedPreset = parseAudioEmitter('reactor');
+  assert(
+    parsedPreset !== null &&
+      parsedPreset.preset === 'reactor' &&
+      parsedPreset.loop === true &&
+      parsedPreset.autoplay === true &&
+      parsedPreset.type === 'positional' &&
+      parsedPreset.distanceModel === 'inverse',
+    'parseAudioEmitter parses string preset shorthand with ambient defaults',
+  );
+  const parsedOneShot = parseAudioEmitter({
+    preset: 'confirm',
+    coneInnerAngle: 60,
+    coneOuterAngle: 120,
+    coneOuterGain: 0.2,
+    playOnSelect: true,
+  });
+  assert(
+    parsedOneShot !== null &&
+      parsedOneShot.preset === 'confirm' &&
+      parsedOneShot.loop === false &&
+      parsedOneShot.coneInnerAngle === 60 &&
+      parsedOneShot.coneOuterAngle === 120 &&
+      Math.abs(parsedOneShot.coneOuterGain - 0.2) < 1e-6 &&
+      parsedOneShot.playOnSelect === true,
+    'parseAudioEmitter defaults loop=false for one-shot cues and preserves directional cone',
+  );
+  assert(
+    parseAudioEmitter({src: 'javascript:alert(1)'}) === null &&
+      parseAudioEmitter({src: 'http://insecure.example.com/a.mp3'}) === null &&
+      parseAudioEmitter({src: '../secret.wav'}) === null,
+    'parseAudioEmitter rejects unsafe media URLs via safeMediaUrl',
+  );
+
+  // Distance models & directional cone math
+  const baseEmitter = parseAudioEmitter({
+    preset: 'hum',
+    volume: 1.0,
+    refDistance: 1.0,
+    maxDistance: 11.0,
+    rolloffFactor: 1.0,
+    coneInnerAngle: 60,
+    coneOuterAngle: 120,
+    coneOuterGain: 0.25,
+  })!;
+  const mixFront = computeSpatialAudioMix(
+    [0, 0, 0],
+    [0, 0, -1],
+    [1, 0, 0],
+    [0, 0, -2],
+    [0, 0, 1],
+    baseEmitter,
+  );
+  assert(
+    Math.abs(mixFront.distance - 2.0) < 1e-6 &&
+      Math.abs(mixFront.coneAttenuation - 1.0) < 1e-6 &&
+      Math.abs(mixFront.gain - 0.5) < 1e-6 &&
+      Math.abs(mixFront.pan) < 1e-6,
+    'computeSpatialAudioMix inverse distance (d=2, ref=1 => 0.5) and on-axis cone=1.0',
+  );
+  const mixBack = computeSpatialAudioMix(
+    [0, 0, 0],
+    [0, 0, -1],
+    [1, 0, 0],
+    [0, 0, -2],
+    [0, 0, -1],
+    baseEmitter,
+  );
+  assert(
+    Math.abs(mixBack.coneAttenuation - 0.25) < 1e-6 &&
+      Math.abs(mixBack.gain - 0.125) < 1e-6,
+    'computeSpatialAudioMix applies coneOuterGain behind directional emitter',
+  );
+  const mixRight = computeSpatialAudioMix(
+    [0, 0, 0],
+    [0, 0, -1],
+    [1, 0, 0],
+    [2, 0, 0],
+    [-1, 0, 0],
+    {...baseEmitter, distanceModel: 'linear'},
+  );
+  assert(
+    Math.abs(mixRight.pan - 1.0) < 1e-6 &&
+      mixRight.rightGain > 0.85 &&
+      mixRight.leftGain < 1e-6 &&
+      Math.abs(mixRight.gain - 0.9) < 1e-6,
+    'computeSpatialAudioMix linear distance model and hard-right constant-power pan',
+  );
+
+  // KHR_audio_emitter GLB & SpatialAudio USDZ export
+  const audioScene = new THREE.Scene();
+  const beaconMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.4, 0.4),
+    new THREE.MeshStandardMaterial({color: 0x38bdf8}),
+  );
+  beaconMesh.name = 'BeaconNode';
+  beaconMesh.userData.xr = {
+    audioEmitter: {
+      preset: 'beacon',
+      src: 'https://cdn.example.com/beacon.ogg',
+      volume: 0.8,
+      refDistance: 1.5,
+      maxDistance: 20,
+      coneInnerAngle: 90,
+      coneOuterAngle: 180,
+      coneOuterGain: 0.2,
+    },
+  };
+  audioScene.add(beaconMesh);
+  const {gltf: audioGltf} = sceneToCanvas3D(audioScene);
+  const khrAudio = audioGltf.extensions?.KHR_audio_emitter;
+  assert(
+    Array.isArray(audioGltf.extensionsUsed) &&
+      audioGltf.extensionsUsed.includes('KHR_audio_emitter') &&
+      khrAudio?.emitters?.length === 1 &&
+      khrAudio.emitters[0].positional?.refDistance === 1.5 &&
+      khrAudio.audio?.[0]?.uri === 'https://cdn.example.com/beacon.ogg' &&
+      audioGltf.nodes[0].extensions?.KHR_audio_emitter?.emitter === 0,
+    'sceneToCanvas3D emits KHR_audio_emitter root and node extensions',
+  );
+  const audioUsda = generateUSDA(audioScene);
+  assert(
+    audioUsda.includes('def SpatialAudio "AudioEmitter"') &&
+      audioUsda.includes('uniform token inputs:auralMode = "spatial"') &&
+      audioUsda.includes(
+        'uniform token inputs:playbackMode = "loopFromStart"',
+      ) &&
+      audioUsda.includes(
+        'asset inputs:file = @https://cdn.example.com/beacon.ogg@',
+      ),
+    'generateUSDA emits USD SpatialAudio prim with auralMode, playbackMode, and asset file',
+  );
+  const diagBadUrl = validateXRTraits(
+    {audioEmitter: {src: 'javascript:evil()', volume: 5}},
+    'BadEmitter',
+  );
+  assert(
+    diagBadUrl.some((d) => d.code === 'TL202') &&
+      diagBadUrl.some((d) => d.code === 'TL203'),
+    'validateXRTraits flags out-of-range audioEmitter parameters (TL202) and unsafe URLs (TL203)',
+  );
+  const normAudio = normalizeXRTraits({audio: 'reactor'});
+  assert(
+    normAudio?.audioEmitter?.preset === 'reactor',
+    'normalizeXRTraits promotes preset string on userData.xr.audio to audioEmitter',
+  );
 
   console.log(
     `\n🏆 three-xr Test Results: ${passed} Passed, ${failed} Failed.`,

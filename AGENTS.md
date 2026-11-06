@@ -28,16 +28,16 @@ This file provides high-signal context, architectural invariants, and authoring 
 Goal                                                                                                      | Element        | Recommended Bundle            | Enforced Budget
 :-------------------------------------------------------------------------------------------------------- | :------------- | :---------------------------- | :-------------:
 `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting)                                              | `<three-live>` | `three-live-viewer.min.js`    | `< 29 KB gz`
-Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 61 KB gz`
+Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 62 KB gz`
 Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, hotspots               | `<three-live>` | `three-live-studio.min.js`    | `< 24 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                | `<three-live>` | `three-live-cad.min.js`       | `< 10 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                 | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz`
-Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                                   | `<three-live>` | `three-live-full.min.js`      | `< 97 KB gz`
-6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`              | `< 72 KB gz`
+Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                                   | `<three-live>` | `three-live-full.min.js`      | `< 98 KB gz`
+6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`              | `< 73 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP               | `<xr-live>`    | `xr-live-sensors.min.js`      | `< 10 KB gz`
-Add-on bundle with all 14 modular `<xr-live>` spatial UX, world, splat & AI plugins                       | `<xr-live>`    | `xr-live-spatial.min.js`      | `< 57 KB gz`
+Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                | `<xr-live>`    | `xr-live-spatial.min.js`      | `< 61 KB gz`
 Add-on bundle with the 6 simulation plugins (character, agents, rigid-body, hit zones, objectives, audio) | `<xr-live>`    | `xr-live-sim.min.js`          | `< 26 KB gz`
-Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial + 6 sim plugins                  | `<xr-live>`    | `xr-live-full.min.js`         | `< 188 KB gz`
+Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim plugins                  | `<xr-live>`    | `xr-live-full.min.js`         | `< 193 KB gz`
 
 ---
 
@@ -69,6 +69,7 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial + 6 sim
       holdToAsk: { prompt: 'What is this component?', holdMs: 600 },
       worldUnderstanding: { planes: true, meshes: false, reticle: true },
       splatUrl: 'https://example.com/capture.spz',
+      audioEmitter: { preset: 'hum', volume: 0.7, loop: true, distanceModel: 'inverse', refDistance: 1.0, maxDistance: 15.0, coneInnerAngle: 90, coneOuterAngle: 180, coneOuterGain: 0.25 },
       audio: { src: 'https://example.com/chime.mp3', refDistance: 1.0, loop: false },
       character: { mode: 'third-person', speed: 4.5, jumpVelocity: 5.5, radius: 0.35, height: 1.6 },
       agent: { behavior: 'patrol', speed: 2.2, waypoints: [[-2, 0, -2], [2, 0, -2]], alertBehavior: 'chase' },
@@ -144,32 +145,33 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         (`three-live/src/plugins/postprocessing.ts`), analytical 2-bone & FABRIK
         IK (`three-live/src/plugins/ik.ts`), Worker/iframe sandboxing, and
         plugin hooks (`three-live/src/plugin.ts`).
-    -   `<xr-live>` (`xr-live/src/xr-live-element.ts`), the 14 spatial plugins
+    -   `<xr-live>` (`xr-live/src/xr-live-element.ts`), the 15 spatial plugins
         (`xr-live/src/plugins/index.ts`: `head-follow`, `manipulation-handles`,
         `world-understanding`, `gemini-live`, `spatial-paint`,
         `depth-particles`, `splat-loader` with 3D covariance + SH degree 1–3,
         `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`,
         `persistent-anchors`, `spatial-locomotion`, `shared-room` with opt-in
-        WebRTC voice signaling), and the 6 `xr-live-sim` simulation plugins
+        WebRTC voice signaling, `spatial-audio` with 8 ambient loop presets and
+        `KHR_audio_emitter`), and the 6 `xr-live-sim` simulation plugins
         (`xr-live/src/sim/index.ts`: `character-controller`, `steering-agents`,
         `rigid-body`, `hit-zones`, `objectives`, `synth-audio`) implement 6DoF
         WebXR, desktop simulation, and interactive scenarios.
 3. **In-Process Rust Compiler (`compiler/`):**
     -   Embeds `compiler/assets/three-author-engine.min.js` inside an isolated
         Boa JS context with strict opcode/wall-clock watchdogs, outputting
-        `.glb` (including `EXT_mesh_gpu_instancing` and
-        `KHR_materials_variants`) and `.usdz` (including `PointInstancer` and
-        `VariantSets`) bytes via C FFI (`compiler/include/three_live.h`) and
-        `three-live-cli`.
+        `.glb` (including `EXT_mesh_gpu_instancing`, `KHR_materials_variants`,
+        and `KHR_audio_emitter`) and `.usdz` (including `PointInstancer`,
+        `VariantSets`, and `SpatialAudio`) bytes via C FFI
+        (`compiler/include/three_live.h`) and `three-live-cli`.
 4. **Native Mobile SDKs (`mobile/android/` & `mobile/ios/`):**
     -   **Android (`mobile/android/src/main/java/com/google/threelive/`):**
         `XRLiveSceneCoreHelper.kt`, `XRSpatialMath.kt`, `XRSpatialFeatures.kt` +
         modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`,
         `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`,
-        `SpatialLocomotion.kt`, `SharedRoom.kt`, `IKSolver.kt`),
-        `XRSimWorld.kt` + simulation controllers (`CharacterController.kt`,
-        `SteeringAgents.kt`, `RigidBodyPhysics.kt`, `HitZones.kt`,
-        `Objectives.kt`, `SynthAudio.kt`, `XRSimParity.kt`,
+        `SpatialLocomotion.kt`, `SharedRoom.kt`, `SpatialAudio.kt`,
+        `IKSolver.kt`), `XRSimWorld.kt` + simulation controllers
+        (`CharacterController.kt`, `SteeringAgents.kt`, `RigidBodyPhysics.kt`,
+        `HitZones.kt`, `Objectives.kt`, `SynthAudio.kt`, `XRSimParity.kt`,
         `XRSimRenderBridge.kt`), `XRLiveRuntimeSession.kt`, and
         `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
     -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):**
@@ -177,8 +179,8 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         `XRSpatialRealityKitFeatures.swift` + modular feature controllers
         (`SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
         `ExplodedView.swift`, `PersistentAnchors.swift`,
-        `SpatialLocomotion.swift`, `SharedRoom.swift`, `IKSolver.swift`),
-        `XRSimWorld.swift` + simulation controllers
+        `SpatialLocomotion.swift`, `SharedRoom.swift`, `SpatialAudio.swift`,
+        `IKSolver.swift`), `XRSimWorld.swift` + simulation controllers
         (`CharacterController.swift`, `SteeringAgents.swift`,
         `RigidBodyPhysics.swift`, `HitZones.swift`, `Objectives.swift`,
         `SynthAudio.swift`, `XRSimRealityKitBridge.swift`), and

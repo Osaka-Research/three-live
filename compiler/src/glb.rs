@@ -861,6 +861,114 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
 
     align_bin_data(bin_data);
 
+    let mut audio_clips: Vec<serde_json::Value> = Vec::new();
+    let mut audio_sources: Vec<serde_json::Value> = Vec::new();
+    let mut audio_emitters: Vec<serde_json::Value> = Vec::new();
+    for (i, node_val) in nodes.iter_mut().enumerate() {
+        let Some(ae) = node_val
+            .get("extras")
+            .and_then(|e| e.get("xr"))
+            .and_then(|xr| xr.get("audioEmitter"))
+            .and_then(|v| v.as_object())
+            .cloned()
+        else {
+            continue;
+        };
+        let src = ae.get("src").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+        let preset = ae.get("preset").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+        if src.is_none() && preset.is_none() {
+            continue;
+        }
+        let node_name = node_val
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("Node_{}", i));
+        let volume = ae.get("volume").and_then(|v| v.as_f64()).unwrap_or(0.6).clamp(0.0, 2.0);
+        let loop_flag = ae.get("loop").and_then(|v| v.as_bool()).unwrap_or(true);
+        let autoplay = ae.get("autoplay").and_then(|v| v.as_bool()).unwrap_or(true);
+        let source_idx = audio_sources.len();
+        let mut source_obj = json!({
+            "name": format!("{}_source", node_name),
+            "gain": jnum(volume as f32),
+            "loop": loop_flag,
+            "autoPlay": autoplay,
+        });
+        if let Some(src_uri) = src {
+            let clip_idx = audio_clips.len();
+            audio_clips.push(json!({ "uri": src_uri }));
+            source_obj["audio"] = json!(clip_idx);
+        }
+        if let Some(preset_name) = preset {
+            let pitch = ae.get("pitch").and_then(|v| v.as_f64()).unwrap_or(1.0).clamp(0.25, 4.0);
+            source_obj["extras"] = json!({
+                "preset": preset_name,
+                "pitch": jnum(pitch as f32),
+            });
+        }
+        audio_sources.push(source_obj);
+
+        let emitter_idx = audio_emitters.len();
+        let emitter_type = if ae.get("type").and_then(|v| v.as_str()) == Some("global") {
+            "global"
+        } else {
+            "positional"
+        };
+        let mut emitter_obj = json!({
+            "name": format!("{}_emitter", node_name),
+            "type": emitter_type,
+            "gain": jnum(volume as f32),
+            "sources": [source_idx],
+        });
+        if emitter_type == "positional" {
+            let dist_model = match ae.get("distanceModel").and_then(|v| v.as_str()) {
+                Some("linear") => "linear",
+                Some("exponential") => "exponential",
+                _ => "inverse",
+            };
+            let ref_dist =
+                ae.get("refDistance").and_then(|v| v.as_f64()).unwrap_or(1.0).clamp(0.05, 100.0);
+            let max_dist = ae
+                .get("maxDistance")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(25.0)
+                .clamp(ref_dist, 500.0);
+            let rolloff =
+                ae.get("rolloffFactor").and_then(|v| v.as_f64()).unwrap_or(1.0).clamp(0.0, 10.0);
+            let cone_inner_deg = ae
+                .get("coneInnerAngle")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(360.0)
+                .clamp(0.0, 360.0);
+            let cone_outer_deg = ae
+                .get("coneOuterAngle")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(360.0)
+                .clamp(cone_inner_deg, 360.0);
+            let cone_outer_gain =
+                ae.get("coneOuterGain").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 1.0);
+            let round6 = |rad: f64| ((rad * 1_000_000.0).round()) / 1_000_000.0;
+            emitter_obj["positional"] = json!({
+                "distanceModel": dist_model,
+                "refDistance": jnum(ref_dist as f32),
+                "maxDistance": jnum(max_dist as f32),
+                "rolloffFactor": jnum(rolloff as f32),
+                "coneInnerAngle": round6(cone_inner_deg * std::f64::consts::PI / 180.0),
+                "coneOuterAngle": round6(cone_outer_deg * std::f64::consts::PI / 180.0),
+                "coneOuterGain": jnum(cone_outer_gain as f32),
+            });
+        }
+        audio_emitters.push(emitter_obj);
+        if !node_val.get("extensions").is_some_and(|e| e.is_object()) {
+            node_val["extensions"] = json!({});
+        }
+        node_val["extensions"]["KHR_audio_emitter"] = json!({ "emitter": emitter_idx });
+    }
+    if !audio_emitters.is_empty() && !extensions_used.contains(&"KHR_audio_emitter") {
+        extensions_used.push("KHR_audio_emitter");
+    }
+
     // The glTF 2.0 schema sets `minItems: 1` on every top-level array and requires
     // `buffer.byteLength >= 1`, so an empty collection has to be omitted rather than
     // written as `[]`. A script that threw early, produced no geometry, or was just a
@@ -924,6 +1032,15 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                 extensions_used.push("KHR_materials_variants");
             }
             root_exts.insert("KHR_materials_variants".to_string(), variants.clone());
+        }
+        if !audio_emitters.is_empty() {
+            let mut khr_audio = serde_json::Map::new();
+            if !audio_clips.is_empty() {
+                khr_audio.insert("audio".to_string(), json!(audio_clips));
+            }
+            khr_audio.insert("sources".to_string(), json!(audio_sources));
+            khr_audio.insert("emitters".to_string(), json!(audio_emitters));
+            root_exts.insert("KHR_audio_emitter".to_string(), serde_json::Value::Object(khr_audio));
         }
         if !root_exts.is_empty() {
             root.insert("extensions".to_string(), serde_json::Value::Object(root_exts));

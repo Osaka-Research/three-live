@@ -294,6 +294,265 @@ export function parseSpatialAudio(raw: unknown): SpatialAudioTrait | null {
   };
 }
 
+/** Built-in procedural ambient loop presets for `userData.xr.audioEmitter`. */
+export const AMBIENT_SOUND_PRESETS = [
+  'hum',
+  'reactor',
+  'wind',
+  'beacon',
+  'geiger',
+  'chimeLoop',
+  'machinery',
+  'water',
+] as const;
+
+/** Procedural ambient sound preset name. */
+export type AmbientSoundPreset = (typeof AMBIENT_SOUND_PRESETS)[number];
+
+/** Built-in one-shot synth cue presets usable on `audioEmitter`. */
+export const ONE_SHOT_AUDIO_PRESETS = [
+  'confirm',
+  'error',
+  'alarm',
+  'warning',
+  'pickup',
+  'jump',
+  'beam',
+  'impact',
+  'burst',
+  'powerup',
+  'step',
+  'pass',
+  'fail',
+] as const;
+
+/** Any supported procedural preset name (ambient loop or one-shot cue). */
+export type AudioPresetName =
+  | AmbientSoundPreset
+  | (typeof ONE_SHOT_AUDIO_PRESETS)[number];
+
+/** Distance attenuation curve model (`KHR_audio_emitter` / Web Audio `PannerNode`). */
+export type AudioDistanceModel = 'inverse' | 'linear' | 'exponential';
+
+/** Normalized 3D positional/directional audio emitter trait (`userData.xr.audioEmitter`). */
+export interface AudioEmitterOptions {
+  readonly preset?: AudioPresetName;
+  readonly src?: string;
+  readonly type: 'positional' | 'global';
+  readonly volume: number;
+  readonly pitch: number;
+  readonly loop: boolean;
+  readonly autoplay: boolean;
+  readonly distanceModel: AudioDistanceModel;
+  readonly refDistance: number;
+  readonly maxDistance: number;
+  readonly rolloffFactor: number;
+  readonly coneInnerAngle: number;
+  readonly coneOuterAngle: number;
+  readonly coneOuterGain: number;
+  readonly playOnSelect: boolean;
+}
+
+const AMBIENT_SET: ReadonlySet<string> = new Set(AMBIENT_SOUND_PRESETS);
+const ONE_SHOT_SET: ReadonlySet<string> = new Set(ONE_SHOT_AUDIO_PRESETS);
+
+function isAudioPresetName(s: string | undefined): s is AudioPresetName {
+  return Boolean(s && (AMBIENT_SET.has(s) || ONE_SHOT_SET.has(s)));
+}
+
+/**
+ * Parses an `audioEmitter` / `spatialAudio` / extended `audio` trait into
+ * {@link AudioEmitterOptions}, or `null` when absent, disabled, or invalid.
+ */
+export function parseAudioEmitter(raw: unknown): AudioEmitterOptions | null {
+  if (!raw) return null;
+  let r: Record<string, unknown> | null = null;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    r = isAudioPresetName(trimmed) ? {preset: trimmed} : {src: trimmed};
+  } else {
+    r = asRecord(raw);
+  }
+  if (!r || r['enabled'] === false) return null;
+  const rawPreset = shortString(r['preset'], 32)?.trim();
+  const preset = isAudioPresetName(rawPreset) ? rawPreset : undefined;
+  const src = safeMediaUrl(r['src'] ?? r['url'] ?? r['uri']);
+  if (!preset && !src) return null;
+  const isAmbient = !preset || AMBIENT_SET.has(preset);
+  const type =
+    r['type'] === 'global' || r['positional'] === false
+      ? 'global'
+      : 'positional';
+  const volume = clampNum(r['volume'] ?? r['gain'], 0, 2, 0.6);
+  const pitch = clampNum(r['pitch'] ?? r['playbackRate'], 0.25, 4, 1);
+  const loop = typeof r['loop'] === 'boolean' ? r['loop'] : isAmbient;
+  const autoplay =
+    typeof r['autoplay'] === 'boolean'
+      ? r['autoplay']
+      : typeof r['autoPlay'] === 'boolean'
+        ? r['autoPlay']
+        : true;
+  const distanceModel: AudioDistanceModel =
+    r['distanceModel'] === 'linear' || r['distanceModel'] === 'exponential'
+      ? r['distanceModel']
+      : 'inverse';
+  const refDistance = clampNum(r['refDistance'], 0.05, 100, 1);
+  const maxDistance = clampNum(
+    r['maxDistance'],
+    refDistance,
+    500,
+    Math.max(refDistance, 25),
+  );
+  const rolloffFactor = clampNum(r['rolloffFactor'], 0, 10, 1);
+  const coneInnerAngle = clampNum(r['coneInnerAngle'], 0, 360, 360);
+  const coneOuterAngle = clampNum(
+    r['coneOuterAngle'],
+    coneInnerAngle,
+    360,
+    Math.max(coneInnerAngle, 360),
+  );
+  const coneOuterGain = clampNum(r['coneOuterGain'], 0, 1, 0);
+  const playOnSelect = r['playOnSelect'] === true || r['playOnTap'] === true;
+  return {
+    ...(preset ? {preset} : {}),
+    ...(src ? {src} : {}),
+    type,
+    volume,
+    pitch,
+    loop,
+    autoplay,
+    distanceModel,
+    refDistance,
+    maxDistance,
+    rolloffFactor,
+    coneInnerAngle,
+    coneOuterAngle,
+    coneOuterGain,
+    playOnSelect,
+  };
+}
+
+/** Evaluated 3D spatial audio mix for a single emitter at a listener pose. */
+export interface SpatialAudioMix {
+  readonly gain: number;
+  readonly pan: number;
+  readonly leftGain: number;
+  readonly rightGain: number;
+  readonly distance: number;
+  readonly coneAttenuation: number;
+}
+
+/**
+ * Pure 3D spatial audio distance, directional cone, and constant-power stereo
+ * pan law shared across Web, Android, and iOS.
+ */
+export function computeSpatialAudioMix(
+  listenerPos: readonly [number, number, number],
+  _listenerForward: readonly [number, number, number],
+  listenerRight: readonly [number, number, number],
+  emitterPos: readonly [number, number, number],
+  emitterForward: readonly [number, number, number],
+  opts: Pick<
+    AudioEmitterOptions,
+    | 'type'
+    | 'volume'
+    | 'distanceModel'
+    | 'refDistance'
+    | 'maxDistance'
+    | 'rolloffFactor'
+    | 'coneInnerAngle'
+    | 'coneOuterAngle'
+    | 'coneOuterGain'
+  >,
+): SpatialAudioMix {
+  const vol = clampNum(opts.volume, 0, 2, 0.6);
+  if (opts.type === 'global') {
+    const s = Math.SQRT1_2 * vol;
+    return {
+      gain: vol,
+      pan: 0,
+      leftGain: s,
+      rightGain: s,
+      distance: 0,
+      coneAttenuation: 1,
+    };
+  }
+  const dx = emitterPos[0] - listenerPos[0];
+  const dy = emitterPos[1] - listenerPos[1];
+  const dz = emitterPos[2] - listenerPos[2];
+  const distance = Math.hypot(dx, dy, dz);
+  const dRef = Math.max(1e-4, opts.refDistance);
+  const dMax = Math.max(dRef, opts.maxDistance);
+  const rolloff = Math.max(0, opts.rolloffFactor);
+  const dClamped = Math.max(dRef, Math.min(distance, dMax));
+
+  let distGain = 1;
+  if (opts.distanceModel === 'linear') {
+    const span = dMax - dRef;
+    distGain = span > 1e-6 ? 1 - rolloff * ((dClamped - dRef) / span) : 1;
+  } else if (opts.distanceModel === 'exponential') {
+    distGain = Math.pow(dClamped / dRef, -rolloff);
+  } else {
+    distGain = dRef / (dRef + rolloff * (dClamped - dRef));
+  }
+  distGain = Math.max(0, Math.min(1, Number.isFinite(distGain) ? distGain : 0));
+
+  let coneAttenuation = 1;
+  const innerDeg = clampNum(opts.coneInnerAngle, 0, 360, 360);
+  const outerDeg = clampNum(opts.coneOuterAngle, innerDeg, 360, 360);
+  if (distance > 1e-6 && (innerDeg < 360 || outerDeg < 360)) {
+    const efLen =
+      Math.hypot(emitterForward[0], emitterForward[1], emitterForward[2]) || 1;
+    const toLx = -dx / distance;
+    const toLy = -dy / distance;
+    const toLz = -dz / distance;
+    const cosTheta = Math.max(
+      -1,
+      Math.min(
+        1,
+        (emitterForward[0] * toLx +
+          emitterForward[1] * toLy +
+          emitterForward[2] * toLz) /
+          efLen,
+      ),
+    );
+    const angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
+    const halfInner = innerDeg * 0.5;
+    const halfOuter = outerDeg * 0.5;
+    const outerGain = clampNum(opts.coneOuterGain, 0, 1, 0);
+    if (angleDeg <= halfInner) {
+      coneAttenuation = 1;
+    } else if (angleDeg >= halfOuter) {
+      coneAttenuation = outerGain;
+    } else {
+      const t = (angleDeg - halfInner) / Math.max(1e-6, halfOuter - halfInner);
+      coneAttenuation = 1 + (outerGain - 1) * t;
+    }
+  }
+
+  let pan = 0;
+  if (distance > 1e-6) {
+    const lrLen =
+      Math.hypot(listenerRight[0], listenerRight[1], listenerRight[2]) || 1;
+    const dotRight =
+      (dx * listenerRight[0] + dy * listenerRight[1] + dz * listenerRight[2]) /
+      (distance * lrLen);
+    pan = Math.max(-1, Math.min(1, Number.isFinite(dotRight) ? dotRight : 0));
+  }
+
+  const gain = vol * distGain * coneAttenuation;
+  const panAngle = ((pan + 1) * Math.PI) / 4;
+  return {
+    gain,
+    pan,
+    leftGain: gain * Math.cos(panAngle),
+    rightGain: gain * Math.sin(panAngle),
+    distance,
+    coneAttenuation,
+  };
+}
+
 /** Sanitizes `#rgb` / `#rrggbb` hex strings, returning `fallback` when invalid. */
 export function safeHexColor(raw: unknown, fallback: string): string {
   const s = shortString(raw, 16)?.trim();
@@ -719,6 +978,7 @@ export interface NormalizedXRTraits {
   spawner?: SpawnerOptions;
   objective?: ObjectiveOptions;
   audioCues?: AudioCueOptions;
+  audioEmitter?: AudioEmitterOptions;
   rigidBody?: PhysicsBodyOptions;
   /** Static obstacle for `character-controller` and `steering-agents`. */
   collidable?: true;
@@ -850,8 +1110,41 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   }
   const slot = shortString(r['spatialSlot']);
   if (slot) out.spatialSlot = slot;
-  const audio = parseSpatialAudio(r['audio']);
+  const isStringPreset =
+    typeof r['audio'] === 'string' && isAudioPresetName(r['audio'].trim());
+  const audio = isStringPreset ? null : parseSpatialAudio(r['audio']);
   if (audio) out.audio = audio;
+  const rawEmitter = r['audioEmitter'] ?? r['spatialAudio'];
+  if (rawEmitter !== undefined) {
+    const emitter = parseAudioEmitter(rawEmitter);
+    if (emitter) out.audioEmitter = emitter;
+  } else if (r['audio'] !== undefined) {
+    const audioRec = asRecord(r['audio']);
+    const hasExtendedKeys = Boolean(
+      audioRec &&
+        ('preset' in audioRec ||
+          'type' in audioRec ||
+          'positional' in audioRec ||
+          'volume' in audioRec ||
+          'gain' in audioRec ||
+          'pitch' in audioRec ||
+          'playbackRate' in audioRec ||
+          'autoplay' in audioRec ||
+          'autoPlay' in audioRec ||
+          'distanceModel' in audioRec ||
+          'maxDistance' in audioRec ||
+          'rolloffFactor' in audioRec ||
+          'coneInnerAngle' in audioRec ||
+          'coneOuterAngle' in audioRec ||
+          'coneOuterGain' in audioRec ||
+          'playOnSelect' in audioRec ||
+          'playOnTap' in audioRec),
+    );
+    if (!audio || hasExtendedKeys) {
+      const emitter = parseAudioEmitter(r['audio']);
+      if (emitter) out.audioEmitter = emitter;
+    }
+  }
   const dims = parseDimensions(r['dimensions']);
   if (dims) out.dimensions = dims;
   const snapTo = parseSnapTo(r['snapTo']);
@@ -945,6 +1238,7 @@ export function buildXRSceneCoreExtension(
   }
   if (n.spatialSlot) comp['spatialPanel'] = {slot: n.spatialSlot};
   if (n.audio) comp['spatialAudio'] = {...n.audio};
+  if (n.audioEmitter) comp['audioEmitter'] = {...n.audioEmitter};
   if (n.dimensions)
     comp['dimensions'] = {...n.dimensions, axes: [...n.dimensions.axes]};
   if (n.snapTo) {
@@ -1033,6 +1327,7 @@ export function flattenXRTraitsForUsd(
   if (n.splatQuality) out['splatQuality'] = n.splatQuality;
   if (n.spatialSlot) out['spatialSlot'] = n.spatialSlot;
   if (n.audio) put('audio', n.audio);
+  if (n.audioEmitter) put('audioEmitter', n.audioEmitter);
   if (n.dimensions) {
     put('dimensions', {...n.dimensions, axes: n.dimensions.axes.join('')});
   }
@@ -1181,6 +1476,8 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'splatQuality',
   'spatialSlot',
   'audio',
+  'audioEmitter',
+  'spatialAudio',
   'dimensions',
   'snapTo',
   'snapSocket',
@@ -1294,8 +1591,16 @@ const XR_KEY_SYNONYMS: Readonly<
     hint: "Use 'navigable: \"walkable\"' instead of 'teleport'.",
   },
   sound: {
-    target: 'audio',
-    hint: "Use 'audio: { src: \"...\" }' or 'audioCues' instead of 'sound'.",
+    target: 'audioEmitter',
+    hint: "Use 'audioEmitter: { preset: \"hum\", refDistance: 1 }' or 'audio' instead of 'sound'.",
+  },
+  positionalaudio: {
+    target: 'audioEmitter',
+    hint: "Use 'audioEmitter: { preset: \"hum\", refDistance: 1 }' instead of 'positionalAudio'.",
+  },
+  panner: {
+    target: 'audioEmitter',
+    hint: "Use 'audioEmitter: { preset: \"hum\", coneInnerAngle: 90 }' instead of 'panner'.",
   },
   sfx: {
     target: 'audioCues',
@@ -1598,6 +1903,57 @@ export function validateXRTraits(
   if (audioObj) {
     checkRange('audio.refDistance', audioObj['refDistance'], 0.01, 1000);
   }
+  const emitterObj =
+    asRecord(r['audioEmitter']) ??
+    asRecord(r['spatialAudio']) ??
+    (audioObj && !audioObj['src'] ? audioObj : null);
+  if (emitterObj && emitterObj['enabled'] !== false) {
+    checkRange(
+      'audioEmitter.volume',
+      emitterObj['volume'] ?? emitterObj['gain'],
+      0,
+      2,
+    );
+    checkRange(
+      'audioEmitter.pitch',
+      emitterObj['pitch'] ?? emitterObj['playbackRate'],
+      0.25,
+      4,
+    );
+    checkRange(
+      'audioEmitter.refDistance',
+      emitterObj['refDistance'],
+      0.05,
+      100,
+    );
+    const refD = clampNum(emitterObj['refDistance'], 0.05, 100, 1);
+    checkRange(
+      'audioEmitter.maxDistance',
+      emitterObj['maxDistance'],
+      refD,
+      500,
+    );
+    checkRange(
+      'audioEmitter.rolloffFactor',
+      emitterObj['rolloffFactor'],
+      0,
+      10,
+    );
+    checkRange(
+      'audioEmitter.coneInnerAngle',
+      emitterObj['coneInnerAngle'],
+      0,
+      360,
+    );
+    const innerA = clampNum(emitterObj['coneInnerAngle'], 0, 360, 360);
+    checkRange(
+      'audioEmitter.coneOuterAngle',
+      emitterObj['coneOuterAngle'],
+      innerA,
+      360,
+    );
+    checkRange('audioEmitter.coneOuterGain', emitterObj['coneOuterGain'], 0, 1);
+  }
   const snapToObj = asRecord(r['snapTo']);
   if (snapToObj) {
     checkRange('snapTo.angleDeg', snapToObj['angleDeg'], 0, 180);
@@ -1764,15 +2120,42 @@ export function validateXRTraits(
     checkUrl('splatUrl', r['splatUrl']);
   }
   if (typeof r['audio'] === 'string') {
-    checkUrl('audio', r['audio']);
+    if (!isAudioPresetName(r['audio'].trim())) {
+      checkUrl('audio', r['audio']);
+    }
   } else if (audioObj) {
     if (audioObj['src'] !== undefined) {
       checkUrl('audio.src', audioObj['src']);
-    } else if (Object.keys(audioObj).some((k) => k.startsWith('on'))) {
+    } else if (
+      audioObj['preset'] === undefined &&
+      Object.keys(audioObj).some((k) => k.startsWith('on'))
+    ) {
       pushDiag(
         'TL201',
         `userData.xr.audio on node '${nodeName}' contains event keys without 'src'; did you mean 'audioCues'?`,
         'Use \'audioCues: { onTap: "confirm", onHit: "impact" }\' for procedural synth cues, or provide \'audio: { src: "https://..." }\' for spatial audio files.',
+      );
+    }
+  }
+  const rawEmitterVal = r['audioEmitter'] ?? r['spatialAudio'];
+  if (typeof rawEmitterVal === 'string') {
+    if (!isAudioPresetName(rawEmitterVal.trim())) {
+      checkUrl('audioEmitter', rawEmitterVal);
+    }
+  } else if (emitterObj) {
+    const srcCandidate =
+      emitterObj['src'] ?? emitterObj['url'] ?? emitterObj['uri'];
+    if (srcCandidate !== undefined) {
+      checkUrl('audioEmitter.src', srcCandidate);
+    }
+    if (
+      typeof emitterObj['preset'] === 'string' &&
+      !isAudioPresetName(emitterObj['preset'].trim())
+    ) {
+      pushDiag(
+        'TL201',
+        `Unknown audio preset '${emitterObj['preset']}' in audioEmitter on node '${nodeName}'.`,
+        `Supported ambient presets: ${AMBIENT_SOUND_PRESETS.join(', ')}.`,
       );
     }
   }

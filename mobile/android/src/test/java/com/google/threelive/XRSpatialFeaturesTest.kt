@@ -830,6 +830,57 @@ class XRSpatialFeaturesTest {
     return glb
   }
 
+  @Test
+  fun spatialAudio_mixMathPresetSynthesisAndControllerParity() {
+    for (preset in SpatialAudio.AMBIENT_PRESETS) {
+      val pcm = SpatialAudio.renderAmbientLoopPcm(preset, 11025, 1.0)
+      assertEquals(11025, pcm.size)
+      var sumSq = 0.0
+      for (s in pcm) sumSq += s.toDouble() * s.toDouble()
+      val rms = kotlin.math.sqrt(sumSq / pcm.size)
+      val seam = kotlin.math.abs(pcm[0].toInt() - pcm[pcm.size - 1].toInt())
+      assertTrue("Preset $preset RMS=$rms", rms > 200.0)
+      assertTrue("Preset $preset seam=$seam", seam < 2500)
+    }
+
+    val gltfJson =
+      """{
+        "asset":{"version":"2.0"},
+        "scenes":[{"nodes":[0,1]}],
+        "nodes":[
+          {"name":"ReactorCore","translation":[0,1.6,-2],"extras":{"xr":{"audioEmitter":{"preset":"reactor","volume":1.0,"refDistance":1.0,"maxDistance":11.0,"coneInnerAngle":60,"coneOuterAngle":120,"coneOuterGain":0.25}}}},
+          {"name":"ChimeBtn","translation":[1.5,1.6,0],"extras":{"xr":{"audioEmitter":{"preset":"confirm","autoplay":false,"playOnSelect":true,"volume":0.8}}}}
+        ]
+      }"""
+    val session = XRLiveRuntimeSession(gltfJson)
+    assertEquals("reactor", session.traits[0].audioEmitter?.preset)
+    assertEquals(true, session.traits[1].audioEmitter?.playOnSelect)
+
+    var playedNode = ""
+    var playedPreset: String? = null
+    val ctrl =
+      SpatialAudio.EmitterController(session) { _, name, preset, _, _, _, _ ->
+        playedNode = name
+        playedPreset = preset
+      }
+    ctrl.step(
+      listenerPos = doubleArrayOf(0.0, 1.6, 0.0),
+      listenerForward = doubleArrayOf(0.0, 0.0, -1.0),
+      listenerRight = doubleArrayOf(1.0, 0.0, 0.0),
+    )
+    val mixFront = ctrl.getMix("ReactorCore")!!
+    assertEquals(2.0, mixFront.distance, 1e-5)
+    assertEquals(1.0, mixFront.coneAttenuation, 1e-5)
+    assertEquals(0.5, mixFront.gain, 1e-5)
+    assertEquals(0.0, mixFront.pan, 1e-5)
+    assertEquals(0.0, ctrl.getMix("ChimeBtn")!!.gain, 1e-5)
+
+    // Trigger ChimeBtn via select(1)
+    ctrl.select(1)
+    assertEquals("ChimeBtn", playedNode)
+    assertEquals("confirm", playedPreset)
+  }
+
   private companion object {
     val IDENTITY =
       FloatArray(16).also {

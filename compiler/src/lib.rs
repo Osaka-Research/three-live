@@ -276,6 +276,7 @@ const XR_ONLY_PLUGINS: &[&str] = &[
     "magnetic-snap",
     "exploded-view",
     "spatial-locomotion",
+    "spatial-audio",
     "character-controller",
     "steering-agents",
     "hit-zones",
