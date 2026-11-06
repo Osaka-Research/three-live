@@ -136,8 +136,24 @@ function runThreeAuthorTests() {
 
   const c = new Color(0xff0000);
   assert(c.r === 1 && c.g === 0 && c.b === 0, 'Color hex parsing');
+  c.setHex(0x808080);
+  assert(
+    Math.abs(c.r - 0.2158605) < 1e-5 && c.getHex() === 0x808080,
+    'Color setHex sRGB-to-linear and getHex round-trip',
+  );
+  c.setStyle('#3366ff');
+  assert(
+    Math.abs(c.r - 0.0331048) < 1e-5 &&
+      Math.abs(c.g - 0.1328683) < 1e-5 &&
+      c.b === 1 &&
+      c.getHex() === 0x3366ff,
+    'Color CSS hex sRGB-to-linear and getHex round-trip',
+  );
   c.setRGB(0.5, 0.5, 0.5);
-  assert(c.getHex() === 0x808080, 'Color getHex');
+  assert(
+    c.r === 0.5 && c.getHex() === 0xbcbcbc,
+    'Color linear setRGB to sRGB getHex',
+  );
 
   // 2. Geometries
   const box = new BoxGeometry(2, 2, 2);

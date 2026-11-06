@@ -1650,8 +1650,8 @@ fn usdz_points(usdz: &[u8]) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// A rotated parent must rotate (and offset) its children in both formats:
-/// GLB keeps local TRS on a parent/child pair, USDZ bakes the world transform.
+/// A rotated parent preserves its local TRS hierarchy and local mesh vertices
+/// in both GLB and USDZ.
 #[test]
 fn test_rotated_parent_world_transform_in_glb_and_usdz() {
     use three_live_compiler::compile_three_to_usdz;
@@ -1684,14 +1684,26 @@ fn test_rotated_parent_world_transform_in_glb_and_usdz() {
     assert!(nodes[1].get("rotation").is_none(), "child keeps its local (identity) rotation");
 
     let usdz = compile_three_to_usdz(script).expect("USDZ should compile");
+    let usda = String::from_utf8_lossy(&usdz);
+    assert!(usda.contains("def Xform \"Turntable\""), "USDZ preserves parent Xform: {}", usda);
+    assert!(usda.contains("xformOp:translate = (10.0, 0, 0)"), "parent local translate: {}", usda);
+    assert!(
+        usda.contains("xformOp:orient = (0.70711, 0, 0, 0.70711)"),
+        "parent local orient: {}",
+        usda
+    );
+    assert!(usda.contains("def Mesh \"Tri\""), "USDZ preserves child Mesh: {}", usda);
+    assert!(usda.contains("MaterialBindingAPI"), "Mesh applies MaterialBindingAPI: {}", usda);
+    assert!(usda.contains("xformOp:translate = (1.0, 0, 0)"), "child local translate: {}", usda);
+
     let points = usdz_points(&usdz);
-    let expected = [[10.0, 2.0, 0.0], [9.0, 1.0, 0.0], [10.0, 1.0, 1.0]];
+    let expected = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     assert_eq!(points.len(), 3, "points: {:?}", points);
     for (p, e) in points.iter().zip(expected) {
         for c in 0..3 {
             assert!(
                 (p[c] - e[c]).abs() < 1e-4,
-                "world-space points {:?} != {:?}",
+                "local-space points {:?} != {:?}",
                 points,
                 expected
             );
@@ -1718,6 +1730,9 @@ fn test_deep_and_cyclic_hierarchies_are_bounded() {
     assert_eq!(nodes.len(), 301);
     assert_eq!(nodes[299]["children"], serde_json::json!([300]));
     assert!(nodes[300]["mesh"].is_u64());
+    let deep_usdz =
+        three_live_compiler::compile_three_to_usdz(deep).expect("deep USDZ hierarchy compiles");
+    assert!(String::from_utf8_lossy(&deep_usdz).contains("def Xform \"Group_299\""));
 
     let cyclic = r#"
         const a = new THREE.Group(); a.name = "A";
@@ -1731,6 +1746,10 @@ fn test_deep_and_cyclic_hierarchies_are_bounded() {
         gltf["nodes"].as_array().unwrap().iter().filter_map(|n| n["name"].as_str()).collect();
     assert_eq!(names, ["A", "B"]);
     assert!(gltf["nodes"][1].get("children").is_none(), "the back edge is dropped");
+    let cyclic_usdz =
+        three_live_compiler::compile_three_to_usdz(cyclic).expect("cyclic USDZ compiles");
+    let cyclic_usda = String::from_utf8_lossy(&cyclic_usdz);
+    assert!(cyclic_usda.contains("def Xform \"A\"") && cyclic_usda.contains("def Xform \"B\""));
 }
 
 #[test]

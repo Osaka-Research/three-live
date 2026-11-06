@@ -612,7 +612,7 @@ function testExportPipelines() {
   assert(usda.includes('string audioCuesOnHit = "impact"'), 'USDA cue');
   assert(
     usda.includes(
-      'prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]',
+      'prepend apiSchemas = ["MaterialBindingAPI", "PhysicsBodyAPI", "PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]',
     ),
     'USDA PhysicsRigidBodyAPI + PhysicsMassAPI schemas',
   );

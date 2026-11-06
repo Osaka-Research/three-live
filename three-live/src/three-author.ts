@@ -602,6 +602,31 @@ export class Matrix3 {
   }
 }
 
+const srgbToLinear = (c: number): number =>
+  c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const linearToSrgb = (c: number): number =>
+  c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055;
+const CSS_COLORS: Record<string, number> = {
+  black: 0,
+  white: 0xffffff,
+  red: 0xff0000,
+  green: 0x8000,
+  lime: 0xff00,
+  blue: 255,
+  yellow: 0xffff00,
+  cyan: 0xffff,
+  aqua: 0xffff,
+  magenta: 0xff00ff,
+  fuchsia: 0xff00ff,
+  gray: 0x808080,
+  grey: 0x808080,
+  silver: 0xc0c0c0,
+  orange: 0xffa500,
+  purple: 0x800080,
+  pink: 0xffc0cb,
+  gold: 0xffd700,
+};
+
 export class Color {
   public r: number = 1;
   public g: number = 1;
@@ -619,23 +644,12 @@ export class Color {
 
   public set(val: any): this {
     if (typeof val === 'number') {
-      this.setHex(val);
-    } else if (typeof val === 'string') {
-      if (val.startsWith('#')) {
-        const hex = parseInt(val.slice(1), 16);
-        this.setHex(hex);
-      } else if (val === 'red') {
-        this.setRGB(1, 0, 0);
-      } else if (val === 'green') {
-        this.setRGB(0, 1, 0);
-      } else if (val === 'blue') {
-        this.setRGB(0, 0, 1);
-      } else if (val === 'white') {
-        this.setRGB(1, 1, 1);
-      } else if (val === 'black') {
-        this.setRGB(0, 0, 0);
-      }
-    } else if (val && typeof val === 'object' && 'r' in val) {
+      return this.setHex(val);
+    }
+    if (typeof val === 'string') {
+      return this.setStyle(val);
+    }
+    if (val && typeof val === 'object' && 'r' in val) {
       this.r = Number(val.r);
       this.g = Number(val.g);
       this.b = Number(val.b);
@@ -643,11 +657,40 @@ export class Color {
     return this;
   }
 
+  public setStyle(style: string): this {
+    const s = style.trim().toLowerCase();
+    if (s[0] === '#') {
+      let h = s.slice(1);
+      if (h.length === 3 || h.length === 4) {
+        h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      } else if (h.length === 8) {
+        h = h.slice(0, 6);
+      }
+      const hex = parseInt(h, 16);
+      if (h.length === 6 && !Number.isNaN(hex)) this.setHex(hex);
+    } else if (s in CSS_COLORS) {
+      this.setHex(CSS_COLORS[s]);
+    } else {
+      const p = /^rgba?\(([^)]+)\)$/.exec(s)?.[1].trim().split(/[\s,/]+/);
+      if (p && p.length >= 3) {
+        const ch = (x: string) =>
+          srgbToLinear(
+            Math.max(
+              0,
+              Math.min(1, (parseFloat(x) || 0) / (x.endsWith('%') ? 100 : 255)),
+            ),
+          );
+        this.setRGB(ch(p[0]), ch(p[1]), ch(p[2]));
+      }
+    }
+    return this;
+  }
+
   public setHex(hex: number): this {
     const h = Math.floor(hex);
-    this.r = ((h >> 16) & 255) / 255;
-    this.g = ((h >> 8) & 255) / 255;
-    this.b = (h & 255) / 255;
+    this.r = srgbToLinear(((h >> 16) & 255) / 255);
+    this.g = srgbToLinear(((h >> 8) & 255) / 255);
+    this.b = srgbToLinear((h & 255) / 255);
     return this;
   }
 
@@ -658,12 +701,24 @@ export class Color {
     return this;
   }
 
+  public convertSRGBToLinear(): this {
+    this.r = srgbToLinear(this.r);
+    this.g = srgbToLinear(this.g);
+    this.b = srgbToLinear(this.b);
+    return this;
+  }
+
+  public convertLinearToSRGB(): this {
+    this.r = linearToSrgb(this.r);
+    this.g = linearToSrgb(this.g);
+    this.b = linearToSrgb(this.b);
+    return this;
+  }
+
   public getHex(): number {
-    return (
-      (Math.round(Math.max(0, Math.min(1, this.r)) * 255) << 16) |
-      (Math.round(Math.max(0, Math.min(1, this.g)) * 255) << 8) |
-      Math.round(Math.max(0, Math.min(1, this.b)) * 255)
-    );
+    const ch = (v: number) =>
+      Math.round(linearToSrgb(Math.max(0, Math.min(1, v))) * 255);
+    return (ch(this.r) << 16) | (ch(this.g) << 8) | ch(this.b);
   }
 
   public getHexString(): string {
@@ -846,41 +901,24 @@ export class BufferGeometry {
     const cb = new Vector3(),
       ab = new Vector3();
 
-    if (this.index) {
-      const idx = this.index.array;
-      for (let i = 0; i < idx.length; i += 3) {
-        const a = idx[i],
-          b = idx[i + 1],
-          c = idx[i + 2];
-        vA.set(pos.getX(a), pos.getY(a), pos.getZ(a));
-        vB.set(pos.getX(b), pos.getY(b), pos.getZ(b));
-        vC.set(pos.getX(c), pos.getY(c), pos.getZ(c));
+    const idx = this.index?.array;
+    const triLen = idx ? idx.length : count;
+    for (let i = 0; i < triLen; i += 3) {
+      const a = idx ? idx[i] : i,
+        b = idx ? idx[i + 1] : i + 1,
+        c = idx ? idx[i + 2] : i + 2;
+      vA.set(pos.getX(a), pos.getY(a), pos.getZ(a));
+      vB.set(pos.getX(b), pos.getY(b), pos.getZ(b));
+      vC.set(pos.getX(c), pos.getY(c), pos.getZ(c));
 
-        cb.subVectors(vC, vB);
-        ab.subVectors(vA, vB);
-        cb.cross(ab).normalize();
+      cb.subVectors(vC, vB);
+      ab.subVectors(vA, vB);
+      cb.cross(ab).normalize();
 
-        for (const vi of [a, b, c]) {
-          normals[vi * 3] += cb.x;
-          normals[vi * 3 + 1] += cb.y;
-          normals[vi * 3 + 2] += cb.z;
-        }
-      }
-    } else {
-      for (let i = 0; i < count; i += 3) {
-        vA.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-        vB.set(pos.getX(i + 1), pos.getY(i + 1), pos.getZ(i + 1));
-        vC.set(pos.getX(i + 2), pos.getY(i + 2), pos.getZ(i + 2));
-
-        cb.subVectors(vC, vB);
-        ab.subVectors(vA, vB);
-        cb.cross(ab).normalize();
-
-        for (let j = 0; j < 3; j++) {
-          normals[(i + j) * 3] = cb.x;
-          normals[(i + j) * 3 + 1] = cb.y;
-          normals[(i + j) * 3 + 2] = cb.z;
-        }
+      for (const vi of [a, b, c]) {
+        normals[vi * 3] += cb.x;
+        normals[vi * 3 + 1] += cb.y;
+        normals[vi * 3 + 2] += cb.z;
       }
     }
 
@@ -977,84 +1015,12 @@ export class BoxGeometry extends BufferGeometry {
       h2 = height / 2,
       d2 = depth / 2;
     const positions = [
-      // +Z
-      -w2,
-      -h2,
-      d2,
-      w2,
-      -h2,
-      d2,
-      w2,
-      h2,
-      d2,
-      -w2,
-      h2,
-      d2,
-      // -Z
-      w2,
-      -h2,
-      -d2,
-      -w2,
-      -h2,
-      -d2,
-      -w2,
-      h2,
-      -d2,
-      w2,
-      h2,
-      -d2,
-      // +Y
-      -w2,
-      h2,
-      d2,
-      w2,
-      h2,
-      d2,
-      w2,
-      h2,
-      -d2,
-      -w2,
-      h2,
-      -d2,
-      // -Y
-      -w2,
-      -h2,
-      -d2,
-      w2,
-      -h2,
-      -d2,
-      w2,
-      -h2,
-      d2,
-      -w2,
-      -h2,
-      d2,
-      // +X
-      w2,
-      -h2,
-      d2,
-      w2,
-      -h2,
-      -d2,
-      w2,
-      h2,
-      -d2,
-      w2,
-      h2,
-      d2,
-      // -X
-      -w2,
-      -h2,
-      -d2,
-      -w2,
-      -h2,
-      d2,
-      -w2,
-      h2,
-      d2,
-      -w2,
-      h2,
-      -d2,
+      -w2, -h2, d2, w2, -h2, d2, w2, h2, d2, -w2, h2, d2,
+      w2, -h2, -d2, -w2, -h2, -d2, -w2, h2, -d2, w2, h2, -d2,
+      -w2, h2, d2, w2, h2, d2, w2, h2, -d2, -w2, h2, -d2,
+      -w2, -h2, -d2, w2, -h2, -d2, w2, -h2, d2, -w2, -h2, d2,
+      w2, -h2, d2, w2, -h2, -d2, w2, h2, -d2, w2, h2, d2,
+      -w2, -h2, -d2, -w2, -h2, d2, -w2, h2, d2, -w2, h2, -d2,
     ];
     const normals = [
       0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
@@ -1230,47 +1196,32 @@ export class CylinderGeometry extends BufferGeometry {
       indices.push(a, b, d, b, c, d);
     }
 
-    if (radiusTop > 0) {
+    const addCap = (r: number, sign: number) => {
+      if (r <= 0) return;
+      const py = sign * halfHeight;
       const centerIdx = positions.length / 3;
-      positions.push(0, halfHeight, 0);
-      normals.push(0, 1, 0);
+      positions.push(0, py, 0);
+      normals.push(0, sign, 0);
       uvs.push(0.5, 0.5);
       const rimStart = positions.length / 3;
       for (let x = 0; x <= radialSegments; x++) {
         const theta = (x / radialSegments) * Math.PI * 2;
         const sinTheta = Math.sin(theta),
           cosTheta = Math.cos(theta);
-        positions.push(radiusTop * sinTheta, halfHeight, radiusTop * cosTheta);
-        normals.push(0, 1, 0);
-        uvs.push(cosTheta * 0.5 + 0.5, sinTheta * 0.5 + 0.5);
+        positions.push(r * sinTheta, py, r * cosTheta);
+        normals.push(0, sign, 0);
+        uvs.push(cosTheta * 0.5 + 0.5, 0.5 + sign * sinTheta * 0.5);
       }
       for (let x = 0; x < radialSegments; x++) {
-        indices.push(centerIdx, rimStart + x, rimStart + x + 1);
-      }
-    }
-
-    if (radiusBottom > 0) {
-      const centerIdx = positions.length / 3;
-      positions.push(0, -halfHeight, 0);
-      normals.push(0, -1, 0);
-      uvs.push(0.5, 0.5);
-      const rimStart = positions.length / 3;
-      for (let x = 0; x <= radialSegments; x++) {
-        const theta = (x / radialSegments) * Math.PI * 2;
-        const sinTheta = Math.sin(theta),
-          cosTheta = Math.cos(theta);
-        positions.push(
-          radiusBottom * sinTheta,
-          -halfHeight,
-          radiusBottom * cosTheta,
+        indices.push(
+          centerIdx,
+          rimStart + x + (sign > 0 ? 0 : 1),
+          rimStart + x + (sign > 0 ? 1 : 0),
         );
-        normals.push(0, -1, 0);
-        uvs.push(cosTheta * 0.5 + 0.5, 1 - (sinTheta * 0.5 + 0.5));
       }
-      for (let x = 0; x < radialSegments; x++) {
-        indices.push(centerIdx, rimStart + x + 1, rimStart + x);
-      }
-    }
+    };
+    addCap(radiusTop, 1);
+    addCap(radiusBottom, -1);
 
     this.setFromBuffers(positions, normals, uvs, indices);
   }
@@ -1531,7 +1482,7 @@ export class Material {
     );
     this.emissiveIntensity = numberOr(params.emissiveIntensity, 1.0);
     this.roughness = numberOr(params.roughness, 0.5);
-    this.metalness = numberOr(params.metalness, 0.1);
+    this.metalness = numberOr(params.metalness, 0.0);
     this.opacity = numberOr(params.opacity, 1.0);
     this.transparent = booleanOr(params.transparent, false);
     this.wireframe = booleanOr(params.wireframe, false);
@@ -1641,9 +1592,17 @@ export class Object3D {
   }
 
   public traverse(cb: (node: Object3D) => void): void {
-    cb(this);
-    for (const child of this.children) {
-      child.traverse(cb);
+    const seen = new Set<Object3D>();
+    const stack: Object3D[] = [this];
+    while (stack.length > 0) {
+      const n = stack.pop()!;
+      if (!n || typeof n !== 'object' || seen.has(n)) continue;
+      seen.add(n);
+      cb(n);
+      const kids = n.children;
+      if (Array.isArray(kids)) {
+        for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+      }
     }
   }
 
@@ -1652,16 +1611,15 @@ export class Object3D {
   }
 
   public updateMatrixWorld(force: boolean = false): void {
-    materializeDeclarativeGeometry(this);
-    if (this.matrixAutoUpdate || force) this.updateMatrix();
-    if (this.parent) {
-      this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix);
-    } else {
-      this.matrixWorld.copy(this.matrix);
-    }
-    for (const child of this.children) {
-      child.updateMatrixWorld(force);
-    }
+    this.traverse((n) => {
+      materializeDeclarativeGeometry(n);
+      if (n.matrixAutoUpdate || force) n.updateMatrix?.();
+      if (n.parent && n.parent.matrixWorld) {
+        n.matrixWorld?.multiplyMatrices(n.parent.matrixWorld, n.matrix);
+      } else if (n.matrix) {
+        n.matrixWorld?.copy(n.matrix);
+      }
+    });
   }
 
   public lookAt(x: any, y?: number, z?: number): void {
@@ -1861,8 +1819,8 @@ export class DirectionalLight extends Light {
 }
 
 export class PointLight extends Light {
-  public distance: number = 0;
-  public decay: number = 2;
+  public distance: number;
+  public decay: number;
   constructor(
     color?: any,
     intensity?: number,
@@ -2063,8 +2021,8 @@ export class WebGLRenderer {
   public shadowMap = {enabled: false, type: 0};
   public capabilities = {isWebGL2: true, maxTextures: 16};
   private boundViewer: any = null;
-  public isSandboxed: boolean = false;
-  public containerId: string = '';
+  public isSandboxed: boolean;
+  public containerId: string;
   private hasInitialModelRendered: boolean = false;
 
   constructor(opts: Record<string, any> = {}) {
@@ -2511,6 +2469,16 @@ export function getSandboxEngineSrc(): string | null {
   return null;
 }
 
+function resolveAllowedUrl(url: string, label: string): string {
+  if (!isAllowedSandboxEngineUrl(url)) {
+    throw new Error(
+      `SecurityError: Refusing to load ${label} from disallowed URL "${url}". ` +
+        'Only http:, https:, and blob: URLs are permitted.',
+    );
+  }
+  return new URL(url, getBaseHref()).href;
+}
+
 function resolveSandboxEngineSrc(): string {
   const src = getSandboxEngineSrc();
   if (!src) {
@@ -2522,13 +2490,7 @@ function resolveSandboxEngineSrc(): string {
         'unsandboxed host-realm execution is prohibited.',
     );
   }
-  if (!isAllowedSandboxEngineUrl(src)) {
-    throw new Error(
-      `SecurityError: Refusing to load sandbox engine from disallowed URL "${src}". ` +
-        'Only http:, https:, and blob: URLs are permitted.',
-    );
-  }
-  return new URL(src, getBaseHref()).href;
+  return resolveAllowedUrl(src, 'sandbox engine');
 }
 
 /**
@@ -2562,13 +2524,7 @@ function resolveSandboxIframeSrc(): string {
         '(or ThreeLiveElement.sandboxEngineSrc) explicitly.',
     );
   }
-  if (!isAllowedSandboxEngineUrl(src)) {
-    throw new Error(
-      `SecurityError: Refusing to load sandbox iframe from disallowed URL "${src}". ` +
-        'Only http:, https:, and blob: URLs are permitted.',
-    );
-  }
-  return new URL(src, getBaseHref()).href;
+  return resolveAllowedUrl(src, 'sandbox iframe');
 }
 
 /**
@@ -2590,13 +2546,7 @@ export function getAllowClientScripts(): boolean {
 }
 
 function resolveSandboxScriptUrl(scriptUrl: string): string {
-  if (!isAllowedSandboxEngineUrl(scriptUrl)) {
-    throw new Error(
-      `SecurityError: Refusing to load procedural scene script from disallowed URL "${scriptUrl}". ` +
-        'Only http:, https:, and blob: URLs are permitted.',
-    );
-  }
-  return new URL(scriptUrl, getBaseHref()).href;
+  return resolveAllowedUrl(scriptUrl, 'procedural scene script');
 }
 
 // -------------------------------------------------------------------------
@@ -2807,59 +2757,56 @@ function sandboxWorkerMain(
   // prototype chain (DedicatedWorkerGlobalScope.prototype -> WorkerGlobalScope.prototype)
   // so scripts cannot bypass self.fetch = undefined via
   // Object.getPrototypeOf(self).fetch.call(self, ...).
-  for (let i = 0; i < REVOKED.length; i++) {
-    const key = REVOKED[i];
-    let proto = scope;
-    while (proto && proto !== Object.prototype) {
-      if (proto !== scope) {
+  function lockProto(key: string, val: unknown, ownOnly?: boolean) {
+    let p = scope;
+    while (p && p !== Object.prototype) {
+      if (!ownOnly && p !== scope) {
         try {
-          delete proto[key];
-        } catch (e) {}
+          delete p[key];
+        } catch {}
+      }
+      if (
+        !ownOnly ||
+        p === scope ||
+        Object.prototype.hasOwnProperty.call(p, key)
+      ) {
+        try {
+          Object.defineProperty(
+            p,
+            key,
+            ownOnly
+              ? {value: val, writable: false, configurable: false}
+              : {
+                  value: val,
+                  writable: false,
+                  configurable: false,
+                  enumerable: false,
+                },
+          );
+        } catch {}
       }
       try {
-        Object.defineProperty(proto, key, {
-          value: undefined,
-          writable: false,
-          configurable: false,
-          enumerable: false,
-        });
-      } catch (e) {}
-      try {
-        proto = Object.getPrototypeOf(proto);
-      } catch (e) {
+        p = Object.getPrototypeOf(p);
+      } catch {
         break;
       }
     }
   }
 
+  for (let i = 0; i < REVOKED.length; i++) {
+    lockProto(REVOKED[i], undefined);
+  }
+
   // Coarsen self.performance to millisecond resolution and strip resource-timing
   // methods while keeping performance.now() functional for THREE.Clock.
-  const coarsePerformance = Object.freeze({
-    now: function () {
-      return Date.now();
-    },
-  });
-  let perfProto = scope;
-  while (perfProto && perfProto !== Object.prototype) {
-    if (perfProto !== scope) {
-      try {
-        delete perfProto.performance;
-      } catch (e) {}
-    }
-    try {
-      Object.defineProperty(perfProto, 'performance', {
-        value: coarsePerformance,
-        writable: false,
-        configurable: false,
-        enumerable: false,
-      });
-    } catch (e) {}
-    try {
-      perfProto = Object.getPrototypeOf(perfProto);
-    } catch (e) {
-      break;
-    }
-  }
+  lockProto(
+    'performance',
+    Object.freeze({
+      now: function () {
+        return Date.now();
+      },
+    }),
+  );
 
   // The sandboxed WebGLRenderer legitimately posts scene updates via
   // self.postMessage, so this cannot simply throw. Instead, allowlist the two
@@ -2890,26 +2837,7 @@ function sandboxWorkerMain(
     emit(msg, transfer);
   };
 
-  let pmProto = scope;
-  while (pmProto && pmProto !== Object.prototype) {
-    if (
-      pmProto === scope ||
-      Object.prototype.hasOwnProperty.call(pmProto, 'postMessage')
-    ) {
-      try {
-        Object.defineProperty(pmProto, 'postMessage', {
-          value: guardedPostMessage,
-          writable: false,
-          configurable: false,
-        });
-      } catch (e) {}
-    }
-    try {
-      pmProto = Object.getPrototypeOf(pmProto);
-    } catch (e) {
-      break;
-    }
-  }
+  lockProto('postMessage', guardedPostMessage, true);
 
   let started = false;
 
@@ -3569,6 +3497,15 @@ function validateRequestedSandboxMode(
   return null;
 }
 
+const makeRunnerReject =
+  (callbacks: ScriptExecutionCallbacks) =>
+  (message: string, toast?: string): Promise<ScriptExecutionHandle | void> => {
+    const error = new Error(message);
+    callbacks.onError?.(error);
+    if (toast) callbacks.onToast?.(toast);
+    return Promise.reject(error);
+  };
+
 /**
  * Sandboxed procedural Three.js script runner supporting both server-generated
  * script URLs (`executeUrl`) and opt-in client script strings (`execute`).
@@ -3580,15 +3517,7 @@ export const authorScriptRunner: ScriptRunner = {
     callbacks: ScriptExecutionCallbacks,
     options?: ScriptExecutionOptions,
   ): Promise<ScriptExecutionHandle | void> {
-    const reject = (
-      message: string,
-      toast?: string,
-    ): Promise<ScriptExecutionHandle | void> => {
-      const error = new Error(message);
-      callbacks.onError?.(error);
-      if (toast) callbacks.onToast?.(toast);
-      return Promise.reject(error);
-    };
+    const reject = makeRunnerReject(callbacks);
 
     const modeError = validateRequestedSandboxMode(sandbox, reject);
     if (modeError) return modeError;
@@ -3622,15 +3551,7 @@ export const authorScriptRunner: ScriptRunner = {
     sandbox: SandboxMode | string,
     callbacks: ScriptExecutionCallbacks,
   ): Promise<ScriptExecutionHandle | void> {
-    const reject = (
-      message: string,
-      toast?: string,
-    ): Promise<ScriptExecutionHandle | void> => {
-      const error = new Error(message);
-      callbacks.onError?.(error);
-      if (toast) callbacks.onToast?.(toast);
-      return Promise.reject(error);
-    };
+    const reject = makeRunnerReject(callbacks);
 
     const modeError = validateRequestedSandboxMode(sandbox, reject);
     if (modeError) return modeError;
@@ -3747,8 +3668,8 @@ export class CircleGeometry extends CylinderGeometry {
 
 export class SpotLight extends PointLight {
   public target: Object3D = new Object3D();
-  public angle: number = Math.PI / 3;
-  public penumbra: number = 0;
+  public angle: number;
+  public penumbra: number;
   constructor(
     color?: any,
     intensity?: number,
@@ -4108,7 +4029,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             mat.color.b,
             mat.opacity !== undefined ? mat.opacity : 1.0,
           ],
-          metallic: mat.metalness !== undefined ? mat.metalness : 0.1,
+          metallic: mat.metalness !== undefined ? mat.metalness : 0.0,
           roughness: mat.roughness !== undefined ? mat.roughness : 0.5,
           double_sided: mat.side === 2 || mat.doubleSided,
           base_color_texture: mapUrl || null,
@@ -4397,6 +4318,18 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     }
 
     const diagnostics: SchemaDiagnostic[] = [];
+    const pushDiag = (
+      code: string,
+      message: string,
+      hint: string,
+      node?: string,
+    ) => {
+      diagnostics.push(
+        node
+          ? {code, severity: 'warning', node, message, hint}
+          : {code, severity: 'warning', message, hint},
+      );
+    };
     for (const message of getAuthorWarnings()) {
       const [code, hint] =
         message.includes('ShaderMaterial') ||
@@ -4413,7 +4346,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
               ]
             : message.includes('Controls')
               ? [
-                  'TL106',
+                   'TL106',
                   'Remove THREE.OrbitControls; <three-live camera-controls> and <xr-live> provide built-in camera controls.',
                 ]
               : message.includes('EffectComposer') || message.includes('Pass')
@@ -4435,7 +4368,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                         'TL102',
                         'Use core primitives (BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, TorusGeometry, TorusKnotGeometry, PlaneGeometry) and DirectionalLight / PointLight / AmbientLight.',
                       ];
-      diagnostics.push({code, severity: 'warning', message, hint});
+      pushDiag(code, message, hint);
     }
 
     const nodeNameSet = new Set<string>();
@@ -4464,13 +4397,12 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       }
 
       if ((parsedXR || inter) && !explicitName) {
-        diagnostics.push({
-          code: 'TL205',
-          severity: 'warning',
-          node: nodeLabel,
-          message: `Interactive node '${nodeLabel}' is missing an explicit mesh.name.`,
-          hint: "Assign a unique mesh.name = '...' so raycasting, meshclick, and WebMCP tools can target it.",
-        });
+        pushDiag(
+          'TL205',
+          `Interactive node '${nodeLabel}' is missing an explicit mesh.name.`,
+          "Assign a unique mesh.name = '...' so raycasting, meshclick, and WebMCP tools can target it.",
+          nodeLabel,
+        );
       }
 
       if (parsedXR !== null) {
@@ -4483,13 +4415,12 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             targetName.trim().length > 0 &&
             !nodeNameSet.has(targetName)
           ) {
-            diagnostics.push({
-              code: 'TL204',
-              severity: 'warning',
-              node: nodeLabel,
-              message: `userData.xr.${fieldPath} on node '${nodeLabel}' references target node '${targetName}', which does not exist in scene.`,
-              hint: `Ensure a node with mesh.name = '${targetName}' is added to scene via scene.add().`,
-            });
+            pushDiag(
+              'TL204',
+              `userData.xr.${fieldPath} on node '${nodeLabel}' references target node '${targetName}', which does not exist in scene.`,
+              `Ensure a node with mesh.name = '${targetName}' is added to scene via scene.add().`,
+              nodeLabel,
+            );
           }
         };
         if (parsedXR.orbit && typeof parsedXR.orbit === 'object') {
@@ -4551,13 +4482,12 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
               typeof actionKind === 'string' &&
               !VALID_ACTIONS.has(actionKind)
             ) {
-              diagnostics.push({
-                code: 'TL201',
-                severity: 'warning',
-                node: nodeLabel,
-                message: `Unrecognized action '${actionKind}' in userData.interactivity.${triggerName} on node '${nodeLabel}'.`,
-                hint: 'Supported interactivity actions: interpolate, toggleTransform, setProperty, toggleVisibility, cycleMaterialColor, playAnimation, stopAnimation, sendEvent.',
-              });
+              pushDiag(
+                'TL201',
+                `Unrecognized action '${actionKind}' in userData.interactivity.${triggerName} on node '${nodeLabel}'.`,
+                'Supported interactivity actions: interpolate, toggleTransform, setProperty, toggleVisibility, cycleMaterialColor, playAnimation, stopAnimation, sendEvent.',
+                nodeLabel,
+              );
             }
             const target = (act as Record<string, unknown>)['target'];
             if (
@@ -4565,26 +4495,24 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
               target.length > 0 &&
               !nodeNameSet.has(target)
             ) {
-              diagnostics.push({
-                code: 'TL204',
-                severity: 'warning',
-                node: nodeLabel,
-                message: `userData.interactivity.${triggerName} on node '${nodeLabel}' references target node '${target}', which does not exist in scene.`,
-                hint: `Ensure a node with mesh.name = '${target}' is added to scene via scene.add().`,
-              });
+              pushDiag(
+                'TL204',
+                `userData.interactivity.${triggerName} on node '${nodeLabel}' references target node '${target}', which does not exist in scene.`,
+                `Ensure a node with mesh.name = '${target}' is added to scene via scene.add().`,
+                nodeLabel,
+              );
             }
             const targetNode = (act as Record<string, unknown>)['targetNode'];
             if (
               typeof targetNode === 'number' &&
               (targetNode < 0 || targetNode >= rawNodes.length)
             ) {
-              diagnostics.push({
-                code: 'TL204',
-                severity: 'warning',
-                node: nodeLabel,
-                message: `userData.interactivity.${triggerName} on node '${nodeLabel}' references out-of-range targetNode ${targetNode} (scene has ${rawNodes.length} nodes).`,
-                hint: "Prefer referencing nodes by name via target: '<nodeName>'.",
-              });
+              pushDiag(
+                'TL204',
+                `userData.interactivity.${triggerName} on node '${nodeLabel}' references out-of-range targetNode ${targetNode} (scene has ${rawNodes.length} nodes).`,
+                "Prefer referencing nodes by name via target: '<nodeName>'.",
+                nodeLabel,
+              );
             }
           }
         };
@@ -4602,15 +4530,14 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                   : lowerK === 'onmouseleave'
                     ? 'onHoverOut'
                     : null;
-            diagnostics.push({
-              code: 'TL201',
-              severity: 'warning',
-              node: nodeLabel,
-              message: suggested
+            pushDiag(
+              'TL201',
+              suggested
                 ? `Unrecognized trigger '${key}' in userData.interactivity on node '${nodeLabel}'; did you mean '${suggested}'?`
                 : `Unrecognized trigger '${key}' in userData.interactivity on node '${nodeLabel}'.`,
-              hint: 'Supported interactivity triggers: onSelect, onHoverIn, onHoverOut, onStart, onReceive.',
-            });
+              'Supported interactivity triggers: onSelect, onHoverIn, onHoverOut, onStart, onReceive.',
+              nodeLabel,
+            );
           }
         }
         for (const trig of ['onSelect', 'onHoverIn', 'onHoverOut', 'onStart']) {
