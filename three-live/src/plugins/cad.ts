@@ -734,8 +734,15 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     }
   }
 
-  // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
-  function setGeoBuffers(geo: any, pos: number[] | Float32Array, norm: number[] | Float32Array, uv: number[] | Float32Array, idx: number[] | Uint32Array): any {
+  function setGeoBuffers(
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
+    geo: any,
+    pos: number[] | Float32Array,
+    norm: number[] | Float32Array,
+    uv: number[] | Float32Array,
+    idx: number[] | Uint32Array,
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry from threeNs.
+  ): any {
     geo.setAttribute('position', new BufferAttribute(pos, 3));
     geo.setAttribute('normal', new BufferAttribute(norm, 3));
     geo.setAttribute('uv', new BufferAttribute(uv, 2));
@@ -2583,7 +2590,11 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       reg.authorNamespace = {};
     }
     Object.assign(reg.authorNamespace, exportsMap);
-    reg.materializeDeclarativeGeometry = materializeDeclarativeGeometry;
+    reg._cadMaterialize = materializeDeclarativeGeometry;
+    reg.materializeDeclarativeGeometry = (node: unknown) => {
+      reg._cadMaterialize?.(node);
+      reg._lodMaterialize?.(node);
+    };
   }
 
   return exportsMap;

@@ -46,7 +46,7 @@ display existing models only, use the viewer-only build:
 | :--- | :--- |
 | `dist/three-live-viewer.min.js` | Viewer only: `.glb` display, PBR, orbit controls, animation |
 | `dist/three-live.min.js` | Standard: viewer + sandboxed `<script type="text/three">` + AR handoff |
-| `dist/three-live-studio.min.js` | Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, hotspots |
+| `dist/three-live-studio.min.js` | Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), hotspots |
 | `dist/three-live-cad.min.js` | Add-on: 2D `Path`/`Shape`, `ExtrudeGeometry`, 3D `CSG` Booleans, stroke-font `TextGeometry` |
 | `dist/three-live-animation.min.js` | Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver` |
 | `dist/three-live-full.min.js` | Standard + all plugins (`studio`, `cad`, `animation`) |

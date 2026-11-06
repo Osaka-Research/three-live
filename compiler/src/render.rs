@@ -17,8 +17,8 @@
 
 use crate::scene::{CameraConfig, Light3D, Material3D, SceneGraph};
 use crate::spatial_lint::{
-    compute_node_world_aabbs, compute_node_world_matrices, mat4_look_at, mat4_mul,
-    mat4_perspective, mat4_transform_point, mat4_transform_vec4, WorldAABB,
+    compute_effective_node_visibility, compute_node_world_aabbs, compute_node_world_matrices,
+    mat4_look_at, mat4_mul, mat4_perspective, mat4_transform_point, mat4_transform_vec4, WorldAABB,
 };
 use crate::usdz::calculate_crc32;
 
@@ -606,13 +606,24 @@ pub fn render_viewport_rgba(
     let world_matrices = compute_node_world_matrices(scene);
     let node_aabbs = compute_node_world_aabbs(scene, &world_matrices);
     let mut scene_aabb = WorldAABB::empty();
-    for aabb in node_aabbs.iter().flatten() {
-        scene_aabb.union(aabb);
+    for (idx, aabb_opt) in node_aabbs.iter().enumerate() {
+        let init_vis = scene.nodes.get(idx).map(|n| n.visible).unwrap_or(true);
+        if init_vis {
+            if let Some(aabb) = aabb_opt {
+                scene_aabb.union(aabb);
+            }
+        }
+    }
+    if !scene_aabb.is_valid() {
+        for aabb in node_aabbs.iter().flatten() {
+            scene_aabb.union(aabb);
+        }
     }
 
     let aspect = (w as f32) / (h as f32);
     let (view, proj, eye_pos, _is_ortho) = compute_view_camera(scene, &scene_aabb, mode, aspect);
     let vp = mat4_mul(&proj, &view);
+    let effective_vis = compute_effective_node_visibility(scene, &world_matrices, eye_pos);
 
     // Optional reference ground grid (or automatic floor line on Front/Top views)
     if show_grid || mode == RenderViewMode::Top || mode == RenderViewMode::Iso {
@@ -684,6 +695,9 @@ pub fn render_viewport_rgba(
     let node_count = if !scene.nodes.is_empty() { scene.nodes.len() } else { scene.meshes.len() };
 
     for node_idx in 0..node_count {
+        if !effective_vis.get(node_idx).copied().unwrap_or(true) {
+            continue;
+        }
         let (mesh_idx_opt, base_world, inst_matrices, inst_colors) = if !scene.nodes.is_empty() {
             let n = &scene.nodes[node_idx];
             (
@@ -927,8 +941,12 @@ pub fn render_viewport_rgba(
 
     // Optional AABB wireframes
     if show_annotations {
-        for aabb in node_aabbs.iter().flatten() {
-            draw_aabb_wireframe(&mut ss_buf, &vp, aabb, [56, 189, 248, 200]);
+        for (idx, aabb_opt) in node_aabbs.iter().enumerate() {
+            if effective_vis.get(idx).copied().unwrap_or(true) {
+                if let Some(aabb) = aabb_opt {
+                    draw_aabb_wireframe(&mut ss_buf, &vp, aabb, [56, 189, 248, 200]);
+                }
+            }
         }
     }
 
@@ -954,6 +972,9 @@ pub fn render_viewport_rgba(
     // Draw 2D node name labels if annotations enabled
     if show_annotations {
         for (i, aabb_opt) in node_aabbs.iter().enumerate() {
+            if !effective_vis.get(i).copied().unwrap_or(true) {
+                continue;
+            }
             let Some(aabb) = aabb_opt else {
                 continue;
             };

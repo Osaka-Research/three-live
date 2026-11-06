@@ -33,6 +33,19 @@ import {
   parseSafeGltfPointer,
   sendInteractivityEvent,
 } from './plugins/interactivity';
+import {
+  decimateGeometry,
+  getLodController,
+  installLodExtension,
+  LOD,
+  LodController,
+  lodPlugin,
+  parseLod,
+  selectLodLevelIndex,
+  type LodGroupState,
+  type LodLevel,
+  type LodOptions,
+} from './plugins/lod';
 import {materialsPlugin, registerMaterialShader} from './plugins/materials';
 import {
   applyMeshoptFilter,
@@ -70,11 +83,13 @@ registerPlugin(interactivityPlugin);
 registerPlugin(meshoptPlugin);
 registerPlugin(variantsPlugin);
 registerPlugin(postprocessingPlugin);
+registerPlugin(lodPlugin);
 
 export {
   applyMeshoptFilter,
   computeOutlineClipOffset,
   contactShadowPlugin,
+  decimateGeometry,
   decodeMeshoptBuffer,
   decodeMeshoptGLB,
   encodeMeshoptBuffer,
@@ -84,21 +99,31 @@ export {
   extractPrimitiveVariantMappings,
   getEnvironmentSH,
   getInteractivityVM,
+  getLodController,
   hotspotPlugin,
+  installLodExtension,
   interactivityPlugin,
   InteractivityVM,
+  LOD,
+  LodController,
+  lodPlugin,
   materialsPlugin,
   meshoptDecoder,
   meshoptPlugin,
   parseHexRgb,
+  parseLod,
   parseSafeGltfPointer,
   postprocessingPlugin,
   registerMaterialShader,
+  selectLodLevelIndex,
   selectMaterialVariant,
   sendInteractivityEvent,
   setEnvironmentSH,
   variantsPlugin,
   webxrPlugin,
+  type LodGroupState,
+  type LodLevel,
+  type LodOptions,
   type MeshoptFilter,
   type MeshoptMode,
   type VariantMapping,

@@ -668,6 +668,44 @@ public struct XRLiveIK: Codable, Sendable, Equatable {
   }
 }
 
+/// One distance threshold level in an `XRLiveLod` trait (`userData.xr.lod`).
+public struct XRLiveLodLevel: Codable, Sendable, Equatable {
+  public var distance: Float
+  public var ratio: Float?
+
+  public init(distance: Float, ratio: Float? = nil) {
+    self.distance = Float(XRJSON.clampNum(Double(distance), 0, 500, 0))
+    self.ratio = ratio.map { Float(XRJSON.clampNum(Double($0), 0.05, 1.0, 1.0)) }
+  }
+}
+
+/// Normalized distance-based Level-of-Detail `lod` options (`userData.xr.lod` / `MSFT_lod`).
+public struct XRLiveLod: Codable, Sendable, Equatable {
+  public var enabled: Bool
+  public var distances: [Float]
+  public var levels: [XRLiveLodLevel]
+  public var cullDistance: Float?
+  public var hysteresis: Float
+
+  public init(
+    enabled: Bool = true,
+    distances: [Float] = [0.0, 3.0, 8.0],
+    levels: [XRLiveLodLevel] = [
+      XRLiveLodLevel(distance: 0.0, ratio: 1.0),
+      XRLiveLodLevel(distance: 3.0, ratio: 0.5),
+      XRLiveLodLevel(distance: 8.0, ratio: 0.25),
+    ],
+    cullDistance: Float? = nil,
+    hysteresis: Float = 0.05
+  ) {
+    self.enabled = enabled
+    self.distances = distances
+    self.levels = levels
+    self.cullDistance = cullDistance
+    self.hysteresis = Float(XRJSON.clampNum(Double(hysteresis), 0, 0.5, 0.05))
+  }
+}
+
 /// Canonical, fully-normalized trait set for one glTF node (`NormalizedXRTraits` in TS).
 public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   /// `"1-hand"` or `"2-hand"`.
@@ -702,6 +740,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
   public var bloom: XRLiveBloom?
   public var outline: XRLiveOutline?
   public var ik: XRLiveIK?
+  public var lod: XRLiveLod?
   /// `"walkable"` or `"blocked"` when authored via `navigable`.
   public var navigable: String?
   /// Explicit multi-user `shared-room` transform sync flag (`nil` inherits grabbable default).
@@ -723,7 +762,7 @@ public struct XRLiveNodeTraits: Codable, Sendable, Equatable {
       && audio == nil && audioEmitter == nil && dimensions == nil && snapTo == nil
       && snapSocket == nil
       && gaze == nil && explode == nil && anchorPersist == nil && bloom == nil && outline == nil
-      && ik == nil && navigable == nil && sync == nil && !pointerEventsNone
+      && ik == nil && lod == nil && navigable == nil && sync == nil && !pointerEventsNone
   }
 }
 
@@ -1136,6 +1175,140 @@ public enum XRLiveTraitParser {
     )
   }
 
+  private static let defaultLodDistances: [Float] = [0.0, 3.0, 8.0]
+  private static let defaultLodRatios: [Float] = [1.0, 0.5, 0.25, 0.125]
+
+  /// Port of `selectLodLevelIndex()`.
+  public static func selectLodLevelIndex(
+    distance: Float,
+    distances: [Float],
+    cullDistance: Float? = nil,
+    currentLevel: Int = -1,
+    hysteresis: Float = 0.0
+  ) -> Int {
+    XRLiveLodController.selectLodLevelIndex(
+      distance: distance,
+      distances: distances,
+      cullDistance: cullDistance,
+      currentLevel: currentLevel,
+      hysteresis: hysteresis
+    )
+  }
+
+  /// Parses a `lod` trait (`true`, `[3, 8]`, or `{distances, levels, cullDistance, hysteresis}`).
+  public static func parseLod(_ raw: Any?) -> XRLiveLod? {
+    guard XRJSON.truthy(raw) else { return nil }
+    if XRJSON.bool(raw) == true {
+      return XRLiveLod()
+    }
+    if let arr = XRJSON.array(raw) {
+      var parsed: [Float] = []
+      for item in arr.prefix(8) {
+        if let n = XRJSON.number(item), n.isFinite, n >= 0 {
+          parsed.append(Float(XRJSON.clampNum(n, 0, 500, 0)))
+        }
+      }
+      guard !parsed.isEmpty else { return nil }
+      parsed.sort()
+      let levels = parsed.enumerated().map { (idx, dist) -> XRLiveLodLevel in
+        let r =
+          idx < defaultLodRatios.count
+          ? defaultLodRatios[idx]
+          : Swift.max(Float(0.05), pow(Float(0.5), Float(idx)))
+        return XRLiveLodLevel(distance: dist, ratio: r)
+      }
+      return XRLiveLod(
+        enabled: true,
+        distances: parsed,
+        levels: levels,
+        cullDistance: nil,
+        hysteresis: 0.05
+      )
+    }
+    guard let r = XRJSON.object(raw) else { return nil }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+
+    var levels: [XRLiveLodLevel] = []
+    var distances: [Float] = []
+    let rawLevels = XRJSON.array(r["levels"])
+    let rawDists = XRJSON.array(r["distances"] ?? r["thresholds"])
+
+    if let rawLevels = rawLevels, !rawLevels.isEmpty {
+      for (i, item) in rawLevels.prefix(8).enumerated() {
+        let defR =
+          i < defaultLodRatios.count
+          ? defaultLodRatios[i]
+          : Swift.max(Float(0.05), pow(Float(0.5), Float(i)))
+        if let d = XRJSON.number(item), d.isFinite, d >= 0 {
+          levels.append(
+            XRLiveLodLevel(
+              distance: Float(XRJSON.clampNum(d, 0, 500, 0)),
+              ratio: defR
+            ))
+        } else if let obj = XRJSON.object(item) {
+          let dVal = obj["distance"] ?? obj["threshold"]
+          let d: Float
+          if let dn = XRJSON.number(dVal), dn.isFinite, dn >= 0 {
+            d = Float(XRJSON.clampNum(dn, 0, 500, 0))
+          } else if i < defaultLodDistances.count {
+            d = defaultLodDistances[i]
+          } else {
+            d = Float(i * 5)
+          }
+          let ratioVal = obj["ratio"] ?? obj["decimate"]
+          let ratio: Float
+          if let rn = XRJSON.number(ratioVal), rn.isFinite {
+            ratio = Float(XRJSON.clampNum(rn, 0.05, 1.0, Double(defR)))
+          } else {
+            ratio = defR
+          }
+          levels.append(XRLiveLodLevel(distance: d, ratio: ratio))
+        }
+      }
+      levels.sort { $0.distance < $1.distance }
+      distances = levels.map { $0.distance }
+    } else if let rawDists = rawDists, !rawDists.isEmpty {
+      for item in rawDists.prefix(8) {
+        if let n = XRJSON.number(item), n.isFinite, n >= 0 {
+          distances.append(Float(XRJSON.clampNum(n, 0, 500, 0)))
+        }
+      }
+      distances.sort()
+      levels = distances.enumerated().map { (idx, dist) -> XRLiveLodLevel in
+        let defR =
+          idx < defaultLodRatios.count
+          ? defaultLodRatios[idx]
+          : Swift.max(Float(0.05), pow(Float(0.5), Float(idx)))
+        return XRLiveLodLevel(distance: dist, ratio: defR)
+      }
+    }
+
+    if distances.isEmpty {
+      distances = defaultLodDistances
+      levels = [
+        XRLiveLodLevel(distance: 0.0, ratio: 1.0),
+        XRLiveLodLevel(distance: 3.0, ratio: 0.5),
+        XRLiveLodLevel(distance: 8.0, ratio: 0.25),
+      ]
+    }
+
+    let hysteresis = Float(XRJSON.clampNum(r["hysteresis"], 0, 0.5, 0.05))
+    let cullVal = r["cullDistance"] ?? r["cull"] ?? r["maxDistance"]
+    var cullDistance: Float?
+    if let cn = XRJSON.number(cullVal), cn.isFinite, cn > 0 {
+      let maxD = Double(distances.last ?? 8.0)
+      cullDistance = Float(XRJSON.clampNum(cn, Swift.max(0.5, maxD + 0.5), 1000.0, maxD + 10.0))
+    }
+
+    return XRLiveLod(
+      enabled: true,
+      distances: distances,
+      levels: levels,
+      cullDistance: cullDistance,
+      hysteresis: hysteresis
+    )
+  }
+
   /// Evaluates the canonical PBR tone-mapping curve (`neutral`, `aces`, `agx`, `reinhard`, `none`),
   /// matching `evaluateToneMapping()` in `three-view.ts`.
   public static func evaluateToneMapping(
@@ -1303,6 +1476,7 @@ public enum XRLiveTraitParser {
     out.bloom = parseBloom(r["bloom"])
     out.outline = parseOutline(r["outline"])
     out.ik = parseIK(r["ik"])
+    out.lod = parseLod(r["lod"])
     out.navigable = parseNavigable(r["navigable"])
     out.sync = XRJSON.bool(r["sync"])
     out.pointerEventsNone = XRJSON.string(r["pointerEvents"]) == "none"
@@ -1393,6 +1567,11 @@ public enum XRLiveTraitParser {
     if let ik = gather("ik") {
       r["ik"] = ik
     }
+    if let ld = gather("lod") {
+      r["lod"] = ld
+    } else if let ld = d["lod"] {
+      r["lod"] = ld
+    }
     return normalize(r)
   }
 
@@ -1405,11 +1584,16 @@ public enum XRLiveTraitParser {
     for (idx, rawNode) in nodes.prefix(XRLiveRuntimeSession.maxSceneElements).enumerated() {
       guard let node = XRJSON.object(rawNode) else { continue }
       let rawXr = XRJSON.object(XRJSON.object(node["extras"])?["xr"])
+      let extMap = XRJSON.object(node["extensions"])
+      let msftLod = XRJSON.object(extMap?["MSFT_lod"])
       let khrAudioMap = extractKhrAudioEmitterMap(khrAudioRoot: khrAudioRoot, node: node)
-      guard rawXr != nil || khrAudioMap != nil else { continue }
+      guard rawXr != nil || khrAudioMap != nil || msftLod != nil else { continue }
       var xrDict = rawXr ?? [:]
       if let khrAudioMap = khrAudioMap, xrDict["audioEmitter"] == nil {
         xrDict["audioEmitter"] = khrAudioMap
+      }
+      if msftLod != nil && xrDict["lod"] == nil {
+        xrDict["lod"] = true
       }
       if let traits = normalize(xrDict) {
         result[idx] = traits

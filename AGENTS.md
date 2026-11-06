@@ -29,15 +29,15 @@ Goal                                                                            
 :-------------------------------------------------------------------------------------------------------- | :------------- | :---------------------------- | :-------------:
 `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting)                                              | `<three-live>` | `three-live-viewer.min.js`    | `< 29 KB gz`
 Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 62 KB gz`
-Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, hotspots               | `<three-live>` | `three-live-studio.min.js`    | `< 24 KB gz`
+Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots        | `<three-live>` | `three-live-studio.min.js`    | `< 29 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                | `<three-live>` | `three-live-cad.min.js`       | `< 10 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                 | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz`
-Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                                   | `<three-live>` | `three-live-full.min.js`      | `< 98 KB gz`
-6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`              | `< 73 KB gz`
+Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                                   | `<three-live>` | `three-live-full.min.js`      | `< 103 KB gz`
+6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`              | `< 74 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP               | `<xr-live>`    | `xr-live-sensors.min.js`      | `< 10 KB gz`
-Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                | `<xr-live>`    | `xr-live-spatial.min.js`      | `< 61 KB gz`
+Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                | `<xr-live>`    | `xr-live-spatial.min.js`      | `< 62 KB gz`
 Add-on bundle with the 6 simulation plugins (character, agents, rigid-body, hit zones, objectives, audio) | `<xr-live>`    | `xr-live-sim.min.js`          | `< 26 KB gz`
-Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim plugins                  | `<xr-live>`    | `xr-live-full.min.js`         | `< 193 KB gz`
+Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim plugins                  | `<xr-live>`    | `xr-live-full.min.js`         | `< 198 KB gz`
 
 ---
 
@@ -81,6 +81,7 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
       bloom: { strength: 1.4, threshold: 0.75, radius: 0.5 }, // HDR emissive bloom (or host `bloom` attr)
       outline: { color: '#38bdf8', thickness: 0.03 }, // inverted-hull or screen-space silhouette outline
       ik: { root: 'Shoulder', mid: 'Forearm', effector: 'WristEffector', target: 'GripperTarget', pole: 'ElbowPole' }, // 2-bone / FABRIK IK
+      lod: { distances: [0, 5, 12], ratios: [1.0, 0.4, 0.15], cullDistance: 30, hysteresis: 0.05 }, // distance-based LOD & mesh decimation
       text: { text: '3D Label', size: 0.18, depth: 0.04, bevelEnabled: true }, // 3D extruded vector text trait
     };
     ```
@@ -169,22 +170,22 @@ Every procedural scene and `userData.xr` trait runs across **Web**, **Android**,
         modular feature controllers (`SpatialMeasure.kt`, `MagneticSnap.kt`,
         `GazeDwell.kt`, `ExplodedView.kt`, `PersistentAnchors.kt`,
         `SpatialLocomotion.kt`, `SharedRoom.kt`, `SpatialAudio.kt`,
-        `IKSolver.kt`), `XRSimWorld.kt` + simulation controllers
-        (`CharacterController.kt`, `SteeringAgents.kt`, `RigidBodyPhysics.kt`,
-        `HitZones.kt`, `Objectives.kt`, `SynthAudio.kt`, `XRSimParity.kt`,
-        `XRSimRenderBridge.kt`), `XRLiveRuntimeSession.kt`, and
-        `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
+        `IKSolver.kt`, `LodController.kt`), `XRSimWorld.kt` + simulation
+        controllers (`CharacterController.kt`, `SteeringAgents.kt`,
+        `RigidBodyPhysics.kt`, `HitZones.kt`, `Objectives.kt`, `SynthAudio.kt`,
+        `XRSimParity.kt`, `XRSimRenderBridge.kt`), `XRLiveRuntimeSession.kt`,
+        and `mobile/android-filament/` (`ThreeLiveFilamentRenderer.kt`).
     -   **iOS & visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):**
         `XRLiveRuntimeSession.swift`, `XRLiveRealityKitSession.swift`,
         `XRSpatialRealityKitFeatures.swift` + modular feature controllers
         (`SpatialMeasure.swift`, `MagneticSnap.swift`, `GazeDwell.swift`,
         `ExplodedView.swift`, `PersistentAnchors.swift`,
         `SpatialLocomotion.swift`, `SharedRoom.swift`, `SpatialAudio.swift`,
-        `IKSolver.swift`), `XRSimWorld.swift` + simulation controllers
-        (`CharacterController.swift`, `SteeringAgents.swift`,
-        `RigidBodyPhysics.swift`, `HitZones.swift`, `Objectives.swift`,
-        `SynthAudio.swift`, `XRSimRealityKitBridge.swift`), and
-        `XRLiveRealityKit.swift`.
+        `IKSolver.swift`, `LodController.swift`), `XRSimWorld.swift` +
+        simulation controllers (`CharacterController.swift`,
+        `SteeringAgents.swift`, `RigidBodyPhysics.swift`, `HitZones.swift`,
+        `Objectives.swift`, `SynthAudio.swift`, `XRSimRealityKitBridge.swift`),
+        and `XRLiveRealityKit.swift`.
 
 **Parity Rule:** Whenever you add or modify a trait in `three-live/src/xr-trait-schema.ts`, you must update its handling in Web (`xr-live/src/plugins/`), Android (`mobile/android/`), and iOS/visionOS (`mobile/ios/`) and keep `XRLiveSwiftSourceParityTest.kt` green.
 

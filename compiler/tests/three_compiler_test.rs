@@ -2836,3 +2836,82 @@ fn test_spatial_audio_khr_audio_emitter_and_usdz_export() {
     assert!(usdz_str.contains("asset inputs:file = @https://cdn.example.com/beacon.ogg@"));
     assert!(usdz_str.contains("string audioEmitterPreset = \"beacon\""));
 }
+
+#[test]
+fn test_lod_plugin_msft_lod_export_and_spatial_lint_no_false_overlap() {
+    let script = r#"
+        const lodGroup = new THREE.LOD();
+        lodGroup.name = "HeroStatueLOD";
+        const hi = new THREE.Mesh(
+            new THREE.SphereGeometry(0.5, 24, 16),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        hi.name = "HeroStatue_L0";
+        const lo = new THREE.Mesh(
+            new THREE.BoxGeometry(0.8, 0.8, 0.8),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e })
+        );
+        lo.name = "HeroStatue_L1";
+        lodGroup.addLevel(hi, 0);
+        lodGroup.addLevel(lo, 6);
+        lodGroup.position.set(-1.2, 0.5, 0);
+        scene.add(lodGroup);
+
+        const autoTree = new THREE.Mesh(
+            new THREE.SphereGeometry(0.5, 20, 14),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b })
+        );
+        autoTree.name = "AutoTreeLOD";
+        autoTree.position.set(1.2, 0.5, 0);
+        autoTree.userData.xr = {
+            lod: {
+                distances: [0, 4, 10],
+                ratios: [1.0, 0.45, 0.2],
+                cullDistance: 25,
+                hysteresis: 0.05
+            }
+        };
+        scene.add(autoTree);
+
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(2, 4, 3);
+        scene.add(sun);
+    "#;
+
+    let glb = three_live_compiler::transcode_three_to_glb(script)
+        .expect("GLB compilation with THREE.LOD and userData.xr.lod should succeed");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON chunk");
+    let exts_used = gltf["extensionsUsed"].as_array().expect("extensionsUsed present");
+    assert!(exts_used.iter().any(|e| e.as_str() == Some("MSFT_lod")));
+    assert!(exts_used.iter().any(|e| e.as_str() == Some("KHR_node_visibility")));
+
+    let nodes = gltf["nodes"].as_array().expect("nodes array");
+    let hero_node = nodes.iter().find(|n| n["name"].as_str() == Some("HeroStatueLOD")).unwrap();
+    let hero_ids = hero_node["extensions"]["MSFT_lod"]["ids"].as_array().expect("MSFT_lod.ids");
+    assert_eq!(hero_ids.len(), 2);
+    let l1_idx = hero_ids[1].as_u64().unwrap() as usize;
+    assert_eq!(
+        nodes[l1_idx]["extensions"]["KHR_node_visibility"]["visible"].as_bool(),
+        Some(false)
+    );
+
+    let tree_node = nodes.iter().find(|n| n["name"].as_str() == Some("AutoTreeLOD")).unwrap();
+    let tree_ids = tree_node["extensions"]["MSFT_lod"]["ids"].as_array().expect("MSFT_lod.ids");
+    assert_eq!(tree_ids.len(), 3);
+
+    // Spatial lint must NOT emit TL306 overlapping-mesh warnings for co-located LOD tiers.
+    let report = three_live_compiler::validate_and_lint_scene(script, "lod.js", 1.5);
+    assert!(
+        !report.diagnostics.iter().any(|d| d.code == "TL306"),
+        "Expected no TL306 overlap diagnostic between co-located LOD children, got: {:?}",
+        report.diagnostics
+    );
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("USDZ compilation with LOD should succeed");
+    let usdz_str = String::from_utf8_lossy(&usdz);
+    assert!(usdz_str.contains("bool lodEnabled = true"));
+    assert!(usdz_str.contains("double lodCullDistance = 25"));
+}

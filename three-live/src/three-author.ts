@@ -35,6 +35,7 @@ import {
 import {getSharedRegistry} from './plugin';
 import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
+import {installLodExtension} from './plugins/lod';
 import {
   generateUSDZ,
   glbToUSDZ,
@@ -3946,11 +3947,12 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
-  // Native GLB/USDZ exports carry the full canonical spatial trait set and CAD/IK authoring extensions.
+  // Native GLB/USDZ exports carry the full canonical spatial trait set and CAD/IK/LOD authoring extensions.
   registerXRTraitSerializer();
   registerSimTraitSchema();
   installCadExtension(THREE, getSharedRegistry());
   installIKExtension(THREE, getSharedRegistry());
+  installLodExtension(THREE, getSharedRegistry());
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
@@ -4355,6 +4357,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         rotation,
         scale,
         mesh: meshIdx,
+        visible: node.visible !== false,
         xr_traits_json: hasXR ? JSON.stringify(safeXR) : null,
         interactivity_events_json:
           interEvents.length > 0 ? JSON.stringify(interEvents) : null,

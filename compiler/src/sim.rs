@@ -342,6 +342,7 @@ fn run_simulation_loop(
                 instance_colors: Vec::new(),
                 interactivity_events: Vec::new(),
                 interactivity: None,
+                visible: true,
             });
         }
     }
@@ -1106,6 +1107,7 @@ fn build_snapshot_scene(
             node.translation = apply_explode_offset(&st.xr, st.translation, explode_factor);
             node.rotation = st.rotation;
             node.scale = if st.visible && !st.destroyed { st.scale } else { [0.0, 0.0, 0.0] };
+            node.visible = st.visible && !st.destroyed;
         }
     }
     snap
@@ -1430,7 +1432,7 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
         rotation: node.rotation,
         scale: node.scale,
         velocity: initial_velocity,
-        visible: true,
+        visible: node.visible,
         destroyed: false,
         grounded,
         toggle_active: false,

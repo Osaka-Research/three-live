@@ -881,6 +881,62 @@ class XRSpatialFeaturesTest {
     assertEquals("confirm", playedPreset)
   }
 
+  @Test
+  fun lodController_hysteresisCullingAndRuntimeSessionVisibilityParity() {
+    val dists = listOf(0.0, 5.0, 12.0)
+    val idx0 = LodController.selectLodLevelIndex(2.0, dists, 30.0, 0, 0.1)
+    val idxStay0 = LodController.selectLodLevelIndex(5.2, dists, 30.0, idx0, 0.1)
+    val idxSwitch1 = LodController.selectLodLevelIndex(5.6, dists, 30.0, idxStay0, 0.1)
+    val idxStay1 = LodController.selectLodLevelIndex(4.8, dists, 30.0, idxSwitch1, 0.1)
+    val idxBack0 = LodController.selectLodLevelIndex(4.4, dists, 30.0, idxStay1, 0.1)
+    val idxCull = LodController.selectLodLevelIndex(35.0, dists, 30.0, idxBack0, 0.1)
+    val idxUncullStay = LodController.selectLodLevelIndex(28.0, dists, 30.0, idxCull, 0.1)
+    val idxUncull = LodController.selectLodLevelIndex(26.0, dists, 30.0, idxUncullStay, 0.1)
+    assertEquals(0, idx0)
+    assertEquals(0, idxStay0)
+    assertEquals(1, idxSwitch1)
+    assertEquals(1, idxStay1)
+    assertEquals(0, idxBack0)
+    assertEquals(-1, idxCull)
+    assertEquals(-1, idxUncullStay)
+    assertEquals(2, idxUncull)
+
+    val gltfJson =
+      """{
+        "asset":{"version":"2.0"},
+        "scenes":[{"nodes":[0]}],
+        "nodes":[
+          {"name":"LodGroup","translation":[0,0,0],"children":[1,2],"extensions":{"MSFT_lod":{"ids":[1,2]}},"extras":{"xr":{"lod":{"distances":[0,5],"cullDistance":15,"hysteresis":0.05}}}},
+          {"name":"Lod_L0","mesh":0},
+          {"name":"Lod_L1","mesh":0,"extensions":{"KHR_node_visibility":{"visible":false}}}
+        ],
+        "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+        "accessors":[{"componentType":5126,"count":8,"type":"VEC3","min":[-0.5,-0.5,-0.5],"max":[0.5,0.5,0.5]}]
+      }"""
+    val session = XRLiveRuntimeSession(gltfJson)
+    assertEquals(0, session.activeLodLevel(0))
+    assertTrue(session.isVisible(1))
+    assertFalse(session.isVisible(2))
+
+    // Move head to distance 8m -> switches to L1 (child node 2)
+    session.step(1.0 / 60.0, XRPose(floatArrayOf(0f, 0f, 8f), floatArrayOf(0f, 0f, 0f, 1f)))
+    assertEquals(1, session.activeLodLevel(0))
+    assertFalse(session.isVisible(1))
+    assertTrue(session.isVisible(2))
+
+    // Move head to distance 20m -> culled (-1)
+    session.step(1.0 / 60.0, XRPose(floatArrayOf(0f, 0f, 20f), floatArrayOf(0f, 0f, 0f, 1f)))
+    assertEquals(-1, session.activeLodLevel(0))
+    assertFalse(session.isVisible(1))
+    assertFalse(session.isVisible(2))
+
+    // Force level 0 override
+    session.forceLodLevel(0, 0)
+    assertEquals(0, session.activeLodLevel(0))
+    assertTrue(session.isVisible(1))
+    assertFalse(session.isVisible(2))
+  }
+
   private companion object {
     val IDENTITY =
       FloatArray(16).also {

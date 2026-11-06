@@ -180,6 +180,19 @@ data class XRIKTrait(
   val weight: Double = 1.0,
 )
 
+/** One distance threshold level in an [XRLodTrait] (`userData.xr.lod`). */
+data class XRLodLevel(val distance: Double, val ratio: Double? = null)
+
+/** Normalized distance-based Level-of-Detail `lod` trait (`userData.xr.lod` / `MSFT_lod`). */
+data class XRLodTrait(
+  val enabled: Boolean = true,
+  val distances: List<Double> = listOf(0.0, 3.0, 8.0),
+  val levels: List<XRLodLevel> =
+    listOf(XRLodLevel(0.0, 1.0), XRLodLevel(3.0, 0.5), XRLodLevel(8.0, 0.25)),
+  val cullDistance: Double? = null,
+  val hysteresis: Double = 0.05,
+)
+
 /** Normalized lazy-follow spatial options (see `parseLazyFollow()` in `xr-trait-schema.ts`). */
 data class XRLazyFollowOptions(
   /** `head`, `hand-left` or `hand-right`. */
@@ -240,6 +253,7 @@ data class XRLiveNodeTraits(
   val bloom: XRBloomTrait? = null,
   val outline: XROutlineTrait? = null,
   val ik: XRIKTrait? = null,
+  val lod: XRLodTrait? = null,
   /** `"walkable"` or `"blocked"` when authored via `navigable`. */
   val navigable: String? = null,
   /** Explicit multi-user `shared-room` transform sync flag (`null` inherits grabbable default). */
@@ -344,6 +358,8 @@ interface SceneCoreComponentApplier<EntityT> {
 
   fun onAttachIK(entity: EntityT, node: XRLiveNodeTraits) {}
 
+  fun onAttachLod(entity: EntityT, node: XRLiveNodeTraits) {}
+
   fun onAttachSync(entity: EntityT, node: XRLiveNodeTraits) {}
 }
 
@@ -437,14 +453,24 @@ object XRLiveSceneCoreHelper {
     for ((idx, raw) in nodes.withIndex()) {
       val node = MiniJson.asMap(raw) ?: continue
       val rawXr = MiniJson.asMap(MiniJson.asMap(node["extras"])?.get("xr"))
-      val sc = MiniJson.asMap(MiniJson.asMap(node["extensions"])?.get("ANDROID_xr_scenecore"))
+      val extMap = MiniJson.asMap(node["extensions"])
+      val sc = MiniJson.asMap(extMap?.get("ANDROID_xr_scenecore"))
+      val msftLod = MiniJson.asMap(extMap?.get("MSFT_lod"))
       val khrAudioMap = extractKhrAudioEmitterMap(khrAudioRoot, node)
-      if (rawXr == null && sc == null && khrAudioMap == null) continue
+      if (rawXr == null && sc == null && khrAudioMap == null && msftLod == null) continue
       val xr =
-        if (khrAudioMap != null && rawXr?.get("audioEmitter") == null) {
+        if (
+          (khrAudioMap != null && rawXr?.get("audioEmitter") == null) ||
+            (msftLod != null && rawXr?.get("lod") == null)
+        ) {
           val merged = LinkedHashMap<String, Any?>()
           if (rawXr != null) merged.putAll(rawXr)
-          merged["audioEmitter"] = khrAudioMap
+          if (khrAudioMap != null && merged["audioEmitter"] == null) {
+            merged["audioEmitter"] = khrAudioMap
+          }
+          if (msftLod != null && merged["lod"] == null) {
+            merged["lod"] = true
+          }
           merged
         } else {
           rawXr ?: emptyMap()
@@ -552,6 +578,7 @@ object XRLiveSceneCoreHelper {
     if (trait.bloom != null) applier.onAttachBloom(entity, trait)
     if (trait.outline != null) applier.onAttachOutline(entity, trait)
     if (trait.ik != null) applier.onAttachIK(entity, trait)
+    if (trait.lod != null) applier.onAttachLod(entity, trait)
     if (trait.sync == true) applier.onAttachSync(entity, trait)
   }
 
@@ -1067,6 +1094,144 @@ object XRLiveSceneCoreHelper {
     )
   }
 
+  private val DEFAULT_LOD_DISTANCES = listOf(0.0, 3.0, 8.0)
+  private val DEFAULT_LOD_RATIOS = listOf(1.0, 0.5, 0.25, 0.125)
+
+  /** Port of `selectLodLevelIndex()`. */
+  @JvmStatic
+  @JvmOverloads
+  fun selectLodLevelIndex(
+    distance: Double,
+    distances: List<Double>,
+    cullDistance: Double? = null,
+    currentLevel: Int = -1,
+    hysteresis: Double = 0.0,
+  ): Int =
+    LodController.selectLodLevelIndex(distance, distances, cullDistance, currentLevel, hysteresis)
+
+  /** Port of `parseLod()`. */
+  @JvmStatic
+  fun parseLod(raw: Any?): XRLodTrait? {
+    if (!truthy(raw)) return null
+    if (raw == true) {
+      return XRLodTrait()
+    }
+    if (raw is List<*>) {
+      val parsed = ArrayList<Double>()
+      val count = Math.min(raw.size, 8)
+      for (i in 0 until count) {
+        val n = (raw[i] as? Number)?.toDouble()
+        if (n != null && n.isFinite() && n >= 0.0) {
+          parsed.add(clampNum(n, 0.0, 500.0, 0.0))
+        }
+      }
+      if (parsed.isEmpty()) return null
+      parsed.sort()
+      val levels = parsed.mapIndexed { idx, dist ->
+        val r =
+          if (idx < DEFAULT_LOD_RATIOS.size) DEFAULT_LOD_RATIOS[idx]
+          else Math.max(0.05, Math.pow(0.5, idx.toDouble()))
+        XRLodLevel(distance = dist, ratio = r)
+      }
+      return XRLodTrait(
+        enabled = true,
+        distances = parsed,
+        levels = levels,
+        cullDistance = null,
+        hysteresis = 0.05,
+      )
+    }
+    val r = MiniJson.asMap(raw) ?: return null
+    if (r["enabled"] == false) return null
+
+    var levels = ArrayList<XRLodLevel>()
+    var distances = ArrayList<Double>()
+    val rawLevels = r["levels"] as? List<*>
+    val rawDists = (r["distances"] ?: r["thresholds"]) as? List<*>
+
+    if (rawLevels != null && rawLevels.isNotEmpty()) {
+      val count = Math.min(rawLevels.size, 8)
+      for (i in 0 until count) {
+        val item = rawLevels[i]
+        if (item is Number) {
+          val d = item.toDouble()
+          if (d.isFinite() && d >= 0.0) {
+            val cd = clampNum(d, 0.0, 500.0, 0.0)
+            val defR =
+              if (i < DEFAULT_LOD_RATIOS.size) DEFAULT_LOD_RATIOS[i]
+              else Math.max(0.05, Math.pow(0.5, i.toDouble()))
+            levels.add(XRLodLevel(distance = cd, ratio = defR))
+          }
+        } else {
+          val obj = MiniJson.asMap(item) ?: continue
+          val dRaw = obj["distance"] ?: obj["threshold"]
+          val d =
+            if (dRaw is Number && dRaw.toDouble().isFinite() && dRaw.toDouble() >= 0.0) {
+              clampNum(dRaw.toDouble(), 0.0, 500.0, 0.0)
+            } else if (i < DEFAULT_LOD_DISTANCES.size) {
+              DEFAULT_LOD_DISTANCES[i]
+            } else {
+              i * 5.0
+            }
+          val ratioRaw = obj["ratio"] ?: obj["decimate"]
+          val defR =
+            if (i < DEFAULT_LOD_RATIOS.size) DEFAULT_LOD_RATIOS[i]
+            else Math.max(0.05, Math.pow(0.5, i.toDouble()))
+          val ratio =
+            if (ratioRaw is Number && ratioRaw.toDouble().isFinite()) {
+              clampNum(ratioRaw.toDouble(), 0.05, 1.0, defR)
+            } else {
+              defR
+            }
+          levels.add(XRLodLevel(distance = d, ratio = ratio))
+        }
+      }
+      levels.sortBy { it.distance }
+      distances = ArrayList(levels.map { it.distance })
+    } else if (rawDists != null && rawDists.isNotEmpty()) {
+      val count = Math.min(rawDists.size, 8)
+      for (i in 0 until count) {
+        val n = (rawDists[i] as? Number)?.toDouble()
+        if (n != null && n.isFinite() && n >= 0.0) {
+          distances.add(clampNum(n, 0.0, 500.0, 0.0))
+        }
+      }
+      distances.sort()
+      levels =
+        ArrayList(
+          distances.mapIndexed { idx, dist ->
+            val defR =
+              if (idx < DEFAULT_LOD_RATIOS.size) DEFAULT_LOD_RATIOS[idx]
+              else Math.max(0.05, Math.pow(0.5, idx.toDouble()))
+            XRLodLevel(distance = dist, ratio = defR)
+          }
+        )
+    }
+
+    if (distances.isEmpty()) {
+      distances = ArrayList(DEFAULT_LOD_DISTANCES)
+      levels = ArrayList(listOf(XRLodLevel(0.0, 1.0), XRLodLevel(3.0, 0.5), XRLodLevel(8.0, 0.25)))
+    }
+
+    val hysteresis = clampNum(r["hysteresis"], 0.0, 0.5, 0.05)
+    val cullRaw = (r["cullDistance"] ?: r["cull"] ?: r["maxDistance"]) as? Number
+    val cullDistance =
+      if (cullRaw != null && cullRaw.toDouble().isFinite() && cullRaw.toDouble() > 0.0) {
+        val maxD = distances.lastOrNull() ?: 8.0
+        clampNum(cullRaw.toDouble(), Math.max(0.5, maxD + 0.5), 1000.0, maxD + 10.0)
+      } else {
+        null
+      }
+
+    return XRLodTrait(
+      enabled = true,
+      distances = distances,
+      levels = levels,
+      cullDistance = cullDistance,
+      hysteresis = hysteresis,
+    )
+  }
+
   /**
    * Evaluates the canonical PBR tone-mapping curve (`neutral`, `aces`, `agx`, `reinhard`, `none`),
    * matching `evaluateToneMapping()` in `three-view.ts`.
@@ -1316,6 +1481,7 @@ object XRLiveSceneCoreHelper {
       bloom = parseBloom(xr["bloom"] ?: sc["bloom"]),
       outline = parseOutline(xr["outline"] ?: sc["outline"]),
       ik = parseIK(xr["ik"] ?: sc["ik"]),
+      lod = parseLod(xr["lod"] ?: sc["lod"]),
       navigable = parseNavigable(xr["navigable"] ?: sc["navigable"]),
       sync = (xr["sync"] as? Boolean) ?: (MiniJson.asMap(sc["sync"])?.get("enabled") as? Boolean),
       pointerEvents = if (xr["pointerEvents"] == "none") "none" else null,

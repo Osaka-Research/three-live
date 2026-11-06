@@ -584,6 +584,144 @@ fn is_environment_or_container_name(name: &str) -> bool {
     ENV_KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
+/// Pure function that selects the active 0-based LOD child index for a given distance,
+/// or `-1` when culled beyond `cull_distance`.
+///
+/// Supports both:
+/// - `distances[0] == 0.0` (`[0.0, 3.0, 8.0]` for 3 children: `<3 -> 0`, `[3,8) -> 1`, `>=8 -> 2`)
+/// - `distances[0] > 0.0` (`[3.0, 8.0]` switch thresholds for 3 children: `<3 -> 0`, `[3,8) -> 1`,
+///   `>=8 -> 2`)
+pub fn select_lod_level_index(
+    distance: f32,
+    distances: &[f32],
+    cull_distance: Option<f32>,
+) -> isize {
+    if distances.is_empty() {
+        return -1;
+    }
+    if let Some(cull) = cull_distance {
+        if cull > 0.0 && distance > cull {
+            return -1;
+        }
+    }
+    let starts_at_zero = distances[0] <= 1e-4;
+    if starts_at_zero {
+        let mut active: isize = 0;
+        for (i, &d) in distances.iter().enumerate() {
+            if distance >= d {
+                active = i as isize;
+            } else {
+                break;
+            }
+        }
+        active
+    } else {
+        let mut active: isize = 0;
+        for (i, &d) in distances.iter().enumerate() {
+            if distance >= d {
+                active = (i + 1) as isize;
+            } else {
+                break;
+            }
+        }
+        active
+    }
+}
+
+/// Returns `Some((distances, cull_distance))` when `node` carries an `xr.lod` trait.
+pub fn extract_node_lod_config(node: &crate::scene::SceneNode) -> Option<(Vec<f32>, Option<f32>)> {
+    let xr = node.xr_normalized.as_ref().or(node.xr_traits.as_ref())?.as_object()?;
+    let lod = xr.get("lod")?.as_object()?;
+    let mut distances = Vec::new();
+    if let Some(arr) = lod.get("distances").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(d) = item.as_f64() {
+                let df = d as f32;
+                if df.is_finite() && df >= 0.0 {
+                    distances.push(df);
+                }
+            }
+        }
+    } else if let Some(levels) = lod.get("levels").and_then(|v| v.as_array()) {
+        for item in levels {
+            if let Some(d) =
+                item.as_object().and_then(|o| o.get("distance")).and_then(|v| v.as_f64())
+            {
+                let df = d as f32;
+                if df.is_finite() && df >= 0.0 {
+                    distances.push(df);
+                }
+            }
+        }
+    }
+    let cull_distance = lod
+        .get("cullDistance")
+        .or_else(|| lod.get("cull_distance"))
+        .and_then(|v| v.as_f64())
+        .map(|d| d as f32)
+        .filter(|d| d.is_finite() && *d > 0.0);
+    Some((distances, cull_distance))
+}
+
+/// Computes effective visibility for every node in `scene` from camera position `eye_pos`,
+/// evaluating `xr.lod` distance thresholds on LOD parent containers and propagating parent
+/// visibility down the hierarchy.
+pub fn compute_effective_node_visibility(
+    scene: &SceneGraph,
+    world_matrices: &[[f32; 16]],
+    eye_pos: [f32; 3],
+) -> Vec<bool> {
+    if scene.nodes.is_empty() {
+        return vec![true; scene.meshes.len()];
+    }
+    let n_len = scene.nodes.len();
+    let mut vis: Vec<bool> = scene.nodes.iter().map(|n| n.visible).collect();
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n_len];
+    for (i, node) in scene.nodes.iter().enumerate() {
+        if let Some(p) = node.parent {
+            if p < i {
+                children[p].push(i);
+            }
+        }
+    }
+
+    for i in 0..n_len {
+        if let Some((distances, cull_distance)) = extract_node_lod_config(&scene.nodes[i]) {
+            if !distances.is_empty() {
+                let m = &world_matrices[i];
+                let dx = m[12] - eye_pos[0];
+                let dy = m[13] - eye_pos[1];
+                let dz = m[14] - eye_pos[2];
+                let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                let active_idx = select_lod_level_index(dist, &distances, cull_distance);
+                if children[i].is_empty() {
+                    if scene.nodes[i].mesh.is_some() {
+                        vis[i] = active_idx >= 0;
+                    }
+                } else if active_idx < 0 {
+                    for &child_idx in &children[i] {
+                        vis[child_idx] = false;
+                    }
+                } else {
+                    let clamped = (active_idx as usize).min(children[i].len() - 1);
+                    for (k, &child_idx) in children[i].iter().enumerate() {
+                        vis[child_idx] = k == clamped;
+                    }
+                }
+            }
+        }
+    }
+
+    for i in 0..n_len {
+        if let Some(p) = scene.nodes[i].parent {
+            if p < i && !vis[p] {
+                vis[i] = false;
+            }
+        }
+    }
+    vis
+}
+
 /// Runs the Phase 2 spatial, frustum, grounding, and lighting linter (`TL301–TL307`) on `scene`
 /// and produces the full [`ValidationReport`].
 pub fn build_validation_report(
@@ -626,10 +764,21 @@ pub fn build_validation_report(
 
     let world_matrices = compute_node_world_matrices(scene);
     let node_aabbs = compute_node_world_aabbs(scene, &world_matrices);
+    let effective_vis = compute_effective_node_visibility(scene, &world_matrices, cam.position);
 
     let mut scene_aabb = WorldAABB::empty();
-    for aabb in node_aabbs.iter().flatten() {
-        scene_aabb.union(aabb);
+    for (idx, aabb_opt) in node_aabbs.iter().enumerate() {
+        if effective_vis.get(idx).copied().unwrap_or(true) {
+            if let Some(aabb) = aabb_opt {
+                scene_aabb.union(aabb);
+            }
+        }
+    }
+    // Fallback if all nodes were culled at cam.position
+    if !scene_aabb.is_valid() {
+        for aabb in node_aabbs.iter().flatten() {
+            scene_aabb.union(aabb);
+        }
     }
 
     let view = mat4_look_at(cam.position, cam.target, [0.0, 1.0, 0.0]);
@@ -713,8 +862,9 @@ pub fn build_validation_report(
             .unwrap_or(false);
 
         if let Some(aabb) = node_aabbs.get(i).and_then(|a| *a) {
+            let is_vis = effective_vis.get(i).copied().unwrap_or(true);
             let (in_frustum, coverage_pct, off_dirs) = project_aabb_frustum(&aabb, &vp, 0.1);
-            if mesh_idx.is_some() {
+            if mesh_idx.is_some() && is_vis {
                 if in_frustum {
                     visible_mesh_count += 1;
                 } else {
@@ -809,8 +959,8 @@ pub fn build_validation_report(
                 name: node_name,
                 mesh_index: mesh_idx,
                 world_bounds: Some(aabb.rounded()),
-                screen_coverage_pct: coverage_pct,
-                in_frustum,
+                screen_coverage_pct: if is_vis { coverage_pct } else { 0.0 },
+                in_frustum: is_vis && in_frustum,
                 xr_traits: xr_keys,
                 interactivity_events: inter_events,
             });
@@ -905,6 +1055,9 @@ pub fn build_validation_report(
 
     // TL306: Unintended Sibling Mesh Interpenetration or Coplanar Z-Fighting
     for i in 0..node_len {
+        if !effective_vis.get(i).copied().unwrap_or(true) {
+            continue;
+        }
         let Some(aabb_a) = node_aabbs.get(i).and_then(|a| *a) else {
             continue;
         };
@@ -915,10 +1068,16 @@ pub fn build_validation_report(
             continue;
         }
         let parent_a = scene.nodes.get(i).and_then(|n| n.parent);
+        if parent_a.and_then(|p| scene.nodes.get(p)).and_then(extract_node_lod_config).is_some() {
+            continue;
+        }
         let mat_a = scene.meshes.get(mesh_a_idx).and_then(|m| m.material_index);
         let vol_a = aabb_a.volume();
 
         for j in (i + 1)..node_len {
+            if !effective_vis.get(j).copied().unwrap_or(true) {
+                continue;
+            }
             let Some(aabb_b) = node_aabbs.get(j).and_then(|a| *a) else {
                 continue;
             };

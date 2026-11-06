@@ -936,6 +936,226 @@ export function parseIKTrait(raw: unknown): IKTraitOptions | null {
   };
 }
 
+/** Single distance-based level of detail (`lod`). */
+export interface LodLevel {
+  /** Camera distance threshold in meters (>= 0). */
+  readonly distance: number;
+  /** Optional per-level hysteresis fraction (`0..0.5`). */
+  readonly hysteresis?: number;
+  /** Optional vertex decimation ratio (`0.05..1.0`) for auto-decimated levels. */
+  readonly ratio?: number;
+  /** Child index (`0..K-1`) under the LOD parent node. */
+  readonly childIndex?: number;
+  /** Optional named child mesh node. */
+  readonly node?: string;
+}
+
+/** Normalized level-of-detail trait (`userData.xr.lod`). */
+export interface LodOptions {
+  /** Monotonically sorted LOD levels (starting with level 0 at distance 0). */
+  readonly levels: readonly LodLevel[];
+  /** Monotonically sorted distance thresholds `[0, d1, d2, ...]`. */
+  readonly distances: readonly number[];
+  /** Optional vertex decimation ratios `[r1, r2, ...]` for declarative auto-decimation. */
+  readonly ratios?: readonly number[];
+  /** Hysteresis deadband fraction (`0..0.5`, default `0.05`). */
+  readonly hysteresis: number;
+  /** Optional far distance threshold in meters beyond which all LOD levels are culled (`1..10000`). */
+  readonly cullDistance?: number;
+}
+
+/**
+ * Selects the active LOD level index (`0..distances.length - 1`), or `-1` when
+ * culled beyond `cullDistance`, applying a symmetric hysteresis deadband around
+ * each distance threshold so camera micro-jitter does not flicker levels.
+ */
+export function selectLodLevelIndex(
+  distances: readonly number[],
+  currentDistance: number,
+  previousIndex = 0,
+  hysteresis = 0.05,
+  cullDistance?: number,
+): number {
+  if (!distances.length) return -1;
+  const thresh = distances[0] > 0 ? [0, ...distances] : distances;
+  const d = Number.isFinite(currentDistance) ? Math.max(0, currentDistance) : 0;
+  const h = Number.isFinite(hysteresis)
+    ? Math.max(0, Math.min(0.5, hysteresis))
+    : 0.05;
+  if (
+    typeof cullDistance === 'number' &&
+    Number.isFinite(cullDistance) &&
+    cullDistance > 0
+  ) {
+    const cullThreshold =
+      previousIndex === -1 ? cullDistance * (1 - h) : cullDistance * (1 + h);
+    if (d > cullThreshold) return -1;
+  }
+  let baseIdx = 0;
+  for (let i = thresh.length - 1; i >= 1; i--) {
+    if (d >= thresh[i]) {
+      baseIdx = i;
+      break;
+    }
+  }
+  if (
+    previousIndex < 0 ||
+    previousIndex >= thresh.length ||
+    previousIndex === baseIdx
+  ) {
+    return baseIdx;
+  }
+  if (baseIdx > previousIndex) {
+    let idx = previousIndex;
+    for (let i = previousIndex + 1; i <= baseIdx; i++) {
+      if (d >= thresh[i] * (1 + h)) {
+        idx = i;
+      } else {
+        break;
+      }
+    }
+    return idx;
+  }
+  let idx = previousIndex;
+  for (let i = previousIndex; i > baseIdx; i--) {
+    if (d < thresh[i] * (1 - h)) {
+      idx = i - 1;
+    } else {
+      break;
+    }
+  }
+  return idx;
+}
+
+/** Parses a `lod` trait (`true`, distance array, or `{levels?, distances?, ratios?, hysteresis?, cullDistance?}`). */
+export function parseLod(raw: unknown): LodOptions | null {
+  if (!raw) return null;
+  const r =
+    raw === true
+      ? {distances: [4, 10], ratios: [0.5, 0.25]}
+      : Array.isArray(raw)
+        ? {distances: raw}
+        : asRecord(raw);
+  if (!r || r['enabled'] === false) return null;
+  const hysteresis = clampNum(r['hysteresis'], 0, 0.5, 0.05);
+  let levels: LodLevel[] = [];
+  let ratios: number[] | undefined;
+
+  if (Array.isArray(r['levels']) && r['levels'].length > 0) {
+    const rawLevels = r['levels'].slice(0, 8);
+    for (let i = 0; i < rawLevels.length; i++) {
+      const lv = asRecord(rawLevels[i]);
+      if (!lv) continue;
+      const dist = clampNum(lv['distance'], 0, 10000, i === 0 ? 0 : i * 4);
+      const h =
+        typeof lv['hysteresis'] === 'number'
+          ? clampNum(lv['hysteresis'], 0, 0.5, hysteresis)
+          : undefined;
+      const ratio =
+        typeof lv['ratio'] === 'number'
+          ? clampNum(lv['ratio'], 0.05, 1, 0.5)
+          : undefined;
+      const childIndex =
+        typeof lv['childIndex'] === 'number' &&
+        Number.isFinite(lv['childIndex'])
+          ? Math.max(0, Math.round(lv['childIndex']))
+          : undefined;
+      const node = safeAnchorId(lv['node']);
+      levels.push({
+        distance: dist,
+        ...(h !== undefined ? {hysteresis: h} : {}),
+        ...(ratio !== undefined ? {ratio} : {}),
+        ...(childIndex !== undefined ? {childIndex} : {}),
+        ...(node ? {node} : {}),
+      });
+    }
+    levels.sort((a, b) => a.distance - b.distance);
+    if (levels.length > 0 && levels[0].distance > 0) {
+      levels.unshift({distance: 0, childIndex: 0});
+    }
+    // Enforce monotonic non-decreasing distances and default childIndex
+    let prevD = 0;
+    levels = levels.slice(0, 8).map((lv, idx) => {
+      const d = idx === 0 ? 0 : Math.max(prevD, lv.distance);
+      prevD = d;
+      return {
+        ...lv,
+        distance: d,
+        childIndex: lv.childIndex ?? idx,
+      };
+    });
+  }
+
+  if (Array.isArray(r['ratios']) && r['ratios'].length > 0) {
+    const parsedRatios: number[] = [];
+    for (const rv of r['ratios'].slice(0, 7)) {
+      if (typeof rv === 'number') {
+        parsedRatios.push(clampNum(rv, 0.05, 1, 0.5));
+      }
+    }
+    if (parsedRatios.length > 0) ratios = parsedRatios;
+  }
+
+  if (levels.length === 0) {
+    const rawDist = Array.isArray(r['distances']) ? r['distances'] : [];
+    const numDist: number[] = [];
+    for (const dv of rawDist.slice(0, 8)) {
+      if (typeof dv === 'number') {
+        numDist.push(clampNum(dv, 0, 10000, 4));
+      }
+    }
+    if (numDist.length === 0 && ratios && ratios.length > 0) {
+      for (let i = 0; i < ratios.length; i++) {
+        numDist.push((i + 1) * 4);
+      }
+    }
+    if (numDist.length === 0 && r['cullDistance'] === undefined) {
+      return null;
+    }
+    if (numDist.length === 0 || numDist[0] > 0) {
+      numDist.unshift(0);
+    } else if (ratios && ratios.length === numDist.length && ratios[0] === 1) {
+      ratios = ratios.slice(1);
+    }
+    let prevD = 0;
+    for (let i = 0; i < Math.min(8, numDist.length); i++) {
+      const d = i === 0 ? 0 : Math.max(prevD, numDist[i]);
+      prevD = d;
+      const ratio = i > 0 && ratios ? ratios[i - 1] : undefined;
+      levels.push({
+        distance: d,
+        childIndex: i,
+        ...(ratio !== undefined ? {ratio} : {}),
+      });
+    }
+  } else if (!ratios) {
+    const levelRatios: number[] = [];
+    for (let i = 1; i < levels.length; i++) {
+      if (typeof levels[i].ratio === 'number') {
+        levelRatios.push(levels[i].ratio!);
+      }
+    }
+    if (levelRatios.length > 0) ratios = levelRatios;
+  }
+
+  const distances = levels.map((l) => l.distance);
+  const maxLevelDist = distances[distances.length - 1] ?? 0;
+  const cullDistance =
+    r['cullDistance'] !== undefined &&
+    r['cullDistance'] !== null &&
+    r['cullDistance'] !== false
+      ? clampNum(r['cullDistance'], Math.max(1, maxLevelDist), 10000, 100)
+      : undefined;
+
+  return {
+    levels,
+    distances,
+    ...(ratios ? {ratios} : {}),
+    hysteresis,
+    ...(cullDistance !== undefined ? {cullDistance} : {}),
+  };
+}
+
 /** Canonical, fully-normalized trait set for one node. */
 export interface NormalizedXRTraits {
   grab?: '1-hand' | '2-hand';
@@ -969,6 +1189,7 @@ export interface NormalizedXRTraits {
   bloom?: BloomTraitOptions;
   outline?: OutlineTraitOptions;
   ik?: IKTraitOptions;
+  lod?: LodOptions;
   sync?: boolean;
   pointerEvents?: 'none';
   character?: CharacterOptions;
@@ -1165,6 +1386,8 @@ export function normalizeXRTraits(raw: unknown): NormalizedXRTraits | null {
   if (outlineTrait) out.outline = outlineTrait;
   const ikTrait = parseIKTrait(r['ik']);
   if (ikTrait) out.ik = ikTrait;
+  const lodTrait = parseLod(r['lod']);
+  if (lodTrait) out.lod = lodTrait;
   if (typeof r['sync'] === 'boolean') out.sync = r['sync'];
   if (r['pointerEvents'] === 'none') out.pointerEvents = 'none';
 
@@ -1266,6 +1489,16 @@ export function buildXRSceneCoreExtension(
       ...(Array.isArray(n.ik.pole) ? {pole: [...n.ik.pole]} : {}),
     };
   }
+  if (n.lod) {
+    comp['lod'] = {
+      distances: [...n.lod.distances],
+      ...(n.lod.ratios ? {ratios: [...n.lod.ratios]} : {}),
+      hysteresis: n.lod.hysteresis,
+      ...(n.lod.cullDistance !== undefined
+        ? {cullDistance: n.lod.cullDistance}
+        : {}),
+    };
+  }
   if (typeof n.sync === 'boolean') comp['sync'] = {enabled: n.sync};
   for (const ext of XR_TRAIT_EXTENSIONS) ext.sceneCore(n, comp);
   return comp;
@@ -1343,6 +1576,15 @@ export function flattenXRTraitsForUsd(
   if (n.bloom) put('bloom', n.bloom);
   if (n.outline) put('outline', n.outline);
   if (n.ik) put('ik', n.ik);
+  if (n.lod) {
+    out['lodEnabled'] = true;
+    out['lodHysteresis'] = n.lod.hysteresis;
+    out['lodDistances'] = n.lod.distances.join(',');
+    if (n.lod.ratios) out['lodRatios'] = n.lod.ratios.join(',');
+    if (n.lod.cullDistance !== undefined) {
+      out['lodCullDistance'] = n.lod.cullDistance;
+    }
+  }
   if (typeof n.sync === 'boolean') out['sync'] = n.sync;
   if (n.pointerEvents) out['pointerEvents'] = n.pointerEvents;
   for (const ext of XR_TRAIT_EXTENSIONS) ext.usd(n, put, out);
@@ -1488,6 +1730,7 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'bloom',
   'outline',
   'ik',
+  'lod',
   'sync',
   'pointerEvents',
   'character',
@@ -1509,6 +1752,22 @@ const XR_KEY_SYNONYMS: Readonly<
   rigidbody: {
     target: 'rigidBody',
     hint: "Use 'rigidBody: { body: \"dynamic\", mass: 1, restitution: 0.35 }' or 'physics' instead of 'rigidbody'.",
+  },
+  levelofdetail: {
+    target: 'lod',
+    hint: "Use 'lod: { distances: [3, 8], ratios: [0.5, 0.2] }' instead of 'levelOfDetail'.",
+  },
+  detail: {
+    target: 'lod',
+    hint: "Use 'lod: { distances: [3, 8], ratios: [0.5, 0.2] }' instead of 'detail'.",
+  },
+  decimate: {
+    target: 'lod',
+    hint: "Use 'lod: { distances: [3, 8], ratios: [0.5, 0.2] }' instead of 'decimate'.",
+  },
+  simplify: {
+    target: 'lod',
+    hint: "Use 'lod: { distances: [3, 8], ratios: [0.5, 0.2] }' instead of 'simplify'.",
   },
   grabbable: {
     target: 'grab',
@@ -2011,6 +2270,39 @@ export function validateXRTraits(
     checkRange('ik.iterations', ikObj['iterations'], 1, 32);
     checkRange('ik.tolerance', ikObj['tolerance'], 1e-5, 0.1);
     checkRange('ik.weight', ikObj['weight'], 0, 1);
+  }
+  const lodObj = asRecord(r['lod']);
+  if (lodObj && lodObj['enabled'] !== false) {
+    checkRange('lod.hysteresis', lodObj['hysteresis'], 0, 0.5);
+    if (
+      lodObj['cullDistance'] !== undefined &&
+      lodObj['cullDistance'] !== null &&
+      lodObj['cullDistance'] !== false
+    ) {
+      checkRange('lod.cullDistance', lodObj['cullDistance'], 1, 10000);
+    }
+    if (Array.isArray(lodObj['distances'])) {
+      let prevD = -Infinity;
+      for (let i = 0; i < Math.min(8, lodObj['distances'].length); i++) {
+        const dv = lodObj['distances'][i];
+        checkRange(`lod.distances[${i}]`, dv, 0, 10000);
+        if (typeof dv === 'number' && Number.isFinite(dv)) {
+          if (dv < prevD) {
+            pushDiag(
+              'TL202',
+              `lod.distances[${i}] (${dv}) on node '${nodeName}' is less than previous distance (${prevD}); clamped to monotonic order.`,
+              'Sort lod.distances in non-decreasing order (e.g. [3, 8]).',
+            );
+          }
+          prevD = Math.max(prevD, dv);
+        }
+      }
+    }
+    if (Array.isArray(lodObj['ratios'])) {
+      for (let i = 0; i < Math.min(7, lodObj['ratios'].length); i++) {
+        checkRange(`lod.ratios[${i}]`, lodObj['ratios'][i], 0.05, 1);
+      }
+    }
   }
   const charObj = asRecord(r['character']);
   if (charObj && charObj['enabled'] !== false) {

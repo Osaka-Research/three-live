@@ -42,6 +42,7 @@ import {
   vec3Lerp,
   type AnimationChannel,
 } from '../src/plugins/keyframes';
+import {getLodController, lodPlugin} from '../src/plugins/lod';
 import {materialsPlugin} from '../src/plugins/materials';
 import {morphPlugin, setMorphTargetWeight} from '../src/plugins/morph';
 import {
@@ -2631,6 +2632,81 @@ async function runThreeViewTests() {
           restoredHooks === 1 &&
           lv.meshes.length === 1,
         `WebGL context loss pauses rendering and restore rebuilds programs, plugins and the last model (programs ${programsBefore} -> ${programs}, hooks ${restoredHooks})`,
+      );
+    }
+
+    // 25. Distance-Based Level of Detail (lodPlugin & LodController)
+    {
+      registerPlugin(lodPlugin);
+      const lodScene = new THREE.Scene();
+      const lod = new THREE.LOD();
+      lod.name = 'LodStatue';
+      const m0 = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({color: 0x38bdf8}),
+      );
+      m0.name = 'LodStatue_L0';
+      const m1 = new THREE.Mesh(
+        new THREE.BoxGeometry(0.8, 0.8, 0.8),
+        new THREE.MeshStandardMaterial({color: 0x22c55e}),
+      );
+      m1.name = 'LodStatue_L1';
+      lod.addLevel(m0, 0);
+      lod.addLevel(m1, 5);
+      lod.userData.xr = {
+        lod: {distances: [0, 5], cullDistance: 15, hysteresis: 0.05},
+      };
+      lodScene.add(lod);
+      const lodGlb = parseGLB(lodScene.toGLB().buffer);
+      instView.loadModel(lodGlb);
+      const ctrl = getLodController(instView);
+      assert(
+        ctrl !== undefined && ctrl.getGroups().length === 1,
+        'lodPlugin registers LodController on ThreeView with 1 LOD group',
+      );
+      instView.setOrbitLimits({minDistance: 0.1, maxDistance: 100});
+      instView.setTarget(0, 0, 0);
+      instView.setCamera(0, 0, 2.0);
+      instView.jumpCameraToGoal();
+      lodPlugin.onUpdate?.(instView, 1 / 60);
+      const activeNear = ctrl!.getActiveLevel('LodStatue');
+      const visNear0 = instView.meshes[0]?.visible;
+      const visNear1 = instView.meshes[1]?.visible;
+
+      instView.setCamera(0, 0, 8.0);
+      instView.jumpCameraToGoal();
+      lodPlugin.onUpdate?.(instView, 1 / 60);
+      const activeFar = ctrl!.getActiveLevel('LodStatue');
+      const visFar0 = instView.meshes[0]?.visible;
+      const visFar1 = instView.meshes[1]?.visible;
+
+      instView.setCamera(0, 0, 20.0);
+      instView.jumpCameraToGoal();
+      lodPlugin.onUpdate?.(instView, 1 / 60);
+      const activeCulled = ctrl!.getActiveLevel('LodStatue');
+      const visCulled0 = instView.meshes[0]?.visible;
+      const visCulled1 = instView.meshes[1]?.visible;
+
+      ctrl!.forceLodLevel('LodStatue', 0);
+      const activeForced = ctrl!.getActiveLevel('LodStatue');
+      const visForced0 = instView.meshes[0]?.visible;
+      const visForced1 = instView.meshes[1]?.visible;
+      ctrl!.forceLodLevel('LodStatue', null);
+
+      assert(
+        activeNear === 0 &&
+          visNear0 === true &&
+          visNear1 === false &&
+          activeFar === 1 &&
+          visFar0 === false &&
+          visFar1 === true &&
+          activeCulled === -1 &&
+          visCulled0 === false &&
+          visCulled1 === false &&
+          activeForced === 0 &&
+          visForced0 === true &&
+          visForced1 === false,
+        'LodController switches ThreeView child mesh visibility across near, far, culled, and forced LOD levels',
       );
     }
   }

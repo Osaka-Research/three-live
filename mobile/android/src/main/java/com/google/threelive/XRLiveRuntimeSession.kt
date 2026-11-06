@@ -205,6 +205,10 @@ class XRLiveRuntimeSession(gltfJson: String) {
   private val ikNodes: IntArray
   private val ikRestOffsets = HashMap<Int, List<DoubleArray>>()
   private val ikRestRotations = HashMap<String, List<DoubleArray>>()
+  private val lodNodes: IntArray
+  private val lodChildren = HashMap<Int, IntArray>()
+  private val lodActiveLevels = HashMap<Int, Int>()
+  private val lodForcedLevels = HashMap<Int, Int>()
   private val dynamicBodies: Array<PhysicsBody>
   private val staticColliders: Array<DoubleArray>
   private val physicsFloorY: Double
@@ -373,6 +377,7 @@ class XRLiveRuntimeSession(gltfJson: String) {
     val ob = ArrayList<Int>()
     val bb = ArrayList<Int>()
     val ikList = ArrayList<Int>()
+    val lodList = ArrayList<Int>()
     val dynNodes = ArrayList<Int>()
     followOptions = arrayOfNulls(n)
     for (t in traits) {
@@ -393,11 +398,36 @@ class XRLiveRuntimeSession(gltfJson: String) {
       if (t.ik != null) {
         ikList.add(t.nodeIndex)
       }
+      if (t.lod != null) {
+        val nodeMap = MiniJson.asMap(nodes.getOrNull(t.nodeIndex))
+        val msftIds =
+          MiniJson.asList(
+            MiniJson.asMap(MiniJson.asMap(nodeMap?.get("extensions"))?.get("MSFT_lod"))?.get("ids")
+          )
+        val rawChildren = msftIds ?: MiniJson.asList(nodeMap?.get("children")) ?: emptyList()
+        val chList = ArrayList<Int>(rawChildren.size)
+        for (c in rawChildren) {
+          val ci = intIndex(c)
+          if (ci in 0 until n && ci != t.nodeIndex) chList.add(ci)
+        }
+        if (chList.isEmpty() && nodeMesh[t.nodeIndex] >= 0) {
+          chList.add(t.nodeIndex)
+        }
+        if (chList.isNotEmpty()) {
+          lodList.add(t.nodeIndex)
+          lodChildren[t.nodeIndex] = chList.toIntArray()
+          lodActiveLevels[t.nodeIndex] = 0
+          for ((idx, ci) in chList.withIndex()) {
+            visible[ci] = (idx == 0)
+          }
+        }
+      }
     }
     followers = fl.toIntArray()
     orbiters = ob.toIntArray()
     billboards = bb.toIntArray()
     ikNodes = ikList.toIntArray()
+    lodNodes = lodList.toIntArray()
 
     // Parse mesh local bounds from POSITION accessors when dynamic physics is present.
     if (dynNodes.isEmpty()) {
@@ -647,6 +677,9 @@ class XRLiveRuntimeSession(gltfJson: String) {
       for (i in ikNodes) {
         stepIK(i, traitByNode[i]?.ik ?: continue, headPose, handPoses)
       }
+      for (i in lodNodes) {
+        stepLod(i, traitByNode[i]?.lod ?: continue, headPose)
+      }
       if (dynamicBodies.isNotEmpty()) {
         stepPhysics(dt)
       }
@@ -791,6 +824,68 @@ class XRLiveRuntimeSession(gltfJson: String) {
   /** Returns the GPU instance count of [nodeIndex] (`EXT_mesh_gpu_instancing`), or `1`. */
   fun nodeInstanceCount(nodeIndex: Int): Int =
     if (nodeIndex in 0 until nodeCount) nodeInstanceCounts[nodeIndex] else 0
+
+  /**
+   * Returns the currently active 0-based LOD child index for [nodeIndex], `-1` if culled, or `null`
+   * if not an LOD node.
+   */
+  fun activeLodLevel(nodeIndex: Int): Int? = lodActiveLevels[nodeIndex]
+
+  /**
+   * Forces [nodeIndex]'s active LOD level to [levelIndex] (`0..N-1`, or `-1` to cull all levels),
+   * or clears the override when [levelIndex] is `null`.
+   */
+  fun forceLodLevel(nodeIndex: Int, levelIndex: Int?) {
+    val ch = lodChildren[nodeIndex] ?: return
+    if (levelIndex == null) {
+      lodForcedLevels.remove(nodeIndex)
+      return
+    }
+    val clamped = if (levelIndex < 0) -1 else Math.min(levelIndex, ch.size - 1)
+    lodForcedLevels[nodeIndex] = clamped
+    applyLodActiveLevel(nodeIndex, ch, clamped)
+    flush()
+  }
+
+  private fun stepLod(nodeIndex: Int, lod: XRLodTrait, headPose: XRPose) {
+    val ch = lodChildren[nodeIndex] ?: return
+    if (ch.isEmpty()) return
+    val forced = lodForcedLevels[nodeIndex]
+    val nextIdx =
+      if (forced != null) {
+        forced
+      } else {
+        worldMatrix(nodeIndex, mA)
+        val dx = mA[12] - headPose.position[0]
+        val dy = mA[13] - headPose.position[1]
+        val dz = mA[14] - headPose.position[2]
+        val dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        val cur = lodActiveLevels[nodeIndex] ?: 0
+        val raw =
+          LodController.selectLodLevelIndex(
+            dist,
+            lod.distances,
+            lod.cullDistance,
+            cur,
+            lod.hysteresis,
+          )
+        if (raw < 0) -1 else Math.min(raw, ch.size - 1)
+      }
+    applyLodActiveLevel(nodeIndex, ch, nextIdx)
+  }
+
+  private fun applyLodActiveLevel(nodeIndex: Int, ch: IntArray, nextIdx: Int) {
+    lodActiveLevels[nodeIndex] = nextIdx
+    for (k in ch.indices) {
+      val ci = ch[k]
+      val shouldVis = nextIdx >= 0 && k == nextIdx
+      if (visible[ci] != shouldVis) {
+        visible[ci] = shouldVis
+        dirtyVisibility[ci] = true
+        anyDirty = true
+      }
+    }
+  }
 
   /** Returns the currently active material index for [meshIndex] and [primitiveIndex], or `-1`. */
   fun meshPrimitiveMaterial(meshIndex: Int, primitiveIndex: Int): Int {

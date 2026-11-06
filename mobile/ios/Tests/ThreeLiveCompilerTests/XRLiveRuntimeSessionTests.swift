@@ -2599,6 +2599,97 @@ final class XRLiveRuntimeSessionTests: XCTestCase {
     XCTAssertEqual(events.first?.nodeName, "ChimeBtn")
     XCTAssertEqual(events.first?.preset, "confirm")
   }
+
+  func testLodControllerHysteresisAndRuntimeSessionVisibilityParity() throws {
+    let dists: [Double] = [0.0, 5.0, 12.0]
+    let idx0 = XRLiveLodController.selectLodLevelIndex(
+      distance: 2.0, distances: dists, cullDistance: 30.0, currentIndex: 0, hysteresis: 0.1)
+    let idxStay0 = XRLiveLodController.selectLodLevelIndex(
+      distance: 5.2, distances: dists, cullDistance: 30.0, currentIndex: idx0, hysteresis: 0.1)
+    let idxSwitch1 = XRLiveLodController.selectLodLevelIndex(
+      distance: 5.6, distances: dists, cullDistance: 30.0, currentIndex: idxStay0, hysteresis: 0.1)
+    let idxStay1 = XRLiveLodController.selectLodLevelIndex(
+      distance: 4.8, distances: dists, cullDistance: 30.0, currentIndex: idxSwitch1, hysteresis: 0.1
+    )
+    let idxBack0 = XRLiveLodController.selectLodLevelIndex(
+      distance: 4.4, distances: dists, cullDistance: 30.0, currentIndex: idxStay1, hysteresis: 0.1)
+    let idxCull = XRLiveLodController.selectLodLevelIndex(
+      distance: 35.0, distances: dists, cullDistance: 30.0, currentIndex: idxBack0, hysteresis: 0.1)
+    let idxUncullStay = XRLiveLodController.selectLodLevelIndex(
+      distance: 28.0, distances: dists, cullDistance: 30.0, currentIndex: idxCull, hysteresis: 0.1)
+    let idxUncull = XRLiveLodController.selectLodLevelIndex(
+      distance: 26.0, distances: dists, cullDistance: 30.0, currentIndex: idxUncullStay,
+      hysteresis: 0.1)
+    XCTAssertEqual(idx0, 0)
+    XCTAssertEqual(idxStay0, 0)
+    XCTAssertEqual(idxSwitch1, 1)
+    XCTAssertEqual(idxStay1, 1)
+    XCTAssertEqual(idxBack0, 0)
+    XCTAssertEqual(idxCull, -1)
+    XCTAssertEqual(idxUncullStay, -1)
+    XCTAssertEqual(idxUncull, 2)
+
+    let usdLod = XRLiveTraitParser.normalize(usdCustomData: [
+      "lodEnabled": true,
+      "lodDistances": [0.0, 4.0, 10.0],
+      "lodRatios": [1.0, 0.5, 0.25],
+      "lodCullDistance": 25.0,
+      "lodHysteresis": 0.08,
+    ])
+    XCTAssertEqual(usdLod?.lod?.distances.count, 3)
+    XCTAssertEqual(Double(usdLod?.lod?.cullDistance ?? 0), 25.0, accuracy: 1e-5)
+
+    let gltfJSON = """
+      {
+        "asset": {"version": "2.0"},
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+          {
+            "name": "LodGroup",
+            "translation": [0, 0, 0],
+            "children": [1, 2],
+            "extensions": {"MSFT_lod": {"ids": [1, 2]}},
+            "extras": {
+              "xr": {
+                "lod": {
+                  "distances": [0, 5],
+                  "cullDistance": 15,
+                  "hysteresis": 0.05
+                }
+              }
+            }
+          },
+          {"name": "Lod_L0", "mesh": 0},
+          {
+            "name": "Lod_L1",
+            "mesh": 0,
+            "extensions": {"KHR_node_visibility": {"visible": false}}
+          }
+        ],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"componentType": 5126, "count": 8, "type": "VEC3", "min": [-0.5, -0.5, -0.5], "max": [0.5, 0.5, 0.5]}]
+      }
+      """
+    let session = try XCTUnwrap(XRLiveRuntimeSession(gltfJSONData: Data(gltfJSON.utf8)))
+    XCTAssertEqual(session.activeLodLevel(at: 0), 0)
+    XCTAssertTrue(session.isVisible(1))
+    XCTAssertFalse(session.isVisible(2))
+
+    session.step(dt: 1.0 / 60.0, headPose: XRPose(position: SIMD3<Float>(0, 0, 8)))
+    XCTAssertEqual(session.activeLodLevel(at: 0), 1)
+    XCTAssertFalse(session.isVisible(1))
+    XCTAssertTrue(session.isVisible(2))
+
+    session.step(dt: 1.0 / 60.0, headPose: XRPose(position: SIMD3<Float>(0, 0, 20)))
+    XCTAssertEqual(session.activeLodLevel(at: 0), -1)
+    XCTAssertFalse(session.isVisible(1))
+    XCTAssertFalse(session.isVisible(2))
+
+    session.forceLodLevel(at: 0, level: 0)
+    XCTAssertEqual(session.activeLodLevel(at: 0), 0)
+    XCTAssertTrue(session.isVisible(1))
+    XCTAssertFalse(session.isVisible(2))
+  }
 }
 
 /// `URLProtocol` stub serving canned responses (keyed by path) for `SplatParser.loadURL` tests.

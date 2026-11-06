@@ -1207,6 +1207,12 @@ impl ThreeEngine {
                 &mut self.context,
             );
 
+            let visible = node_obj
+                .get(js_string!("visible"), &mut self.context)
+                .ok()
+                .and_then(|v| v.as_boolean())
+                .unwrap_or(true);
+
             nodes.push(SceneNode {
                 name,
                 parent,
@@ -1222,6 +1228,7 @@ impl ThreeEngine {
                 instance_colors,
                 interactivity_events,
                 interactivity,
+                visible,
             });
         }
         Ok(nodes)

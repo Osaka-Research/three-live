@@ -68,6 +68,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `bloom`: `{ strength: 1.2, threshold: 0.8, radius: 0.5 } | boolean | number`
   - `outline`: `{ color: '#38bdf8', thickness: 0.03 } | boolean | string`
   - `ik`: `{ root: 'RootNode', mid: 'MidNode', effector: 'EffectorNode', target: 'TargetNodeName' | [x, y, z], pole: 'PoleNodeName' | [x, y, z], solver: 'two-bone' | 'fabrik', iterations: 10, tolerance: 0.001, weight: 1 }`
+  - `lod`: `true` or `[0, 5, 12]` or `{ distances: [0, 5, 12], ratios: [1.0, 0.4, 0.15], cullDistance: 30, hysteresis: 0.05 }` (also `new THREE.LOD()` with `.addLevel(obj, distance)`)
   - `text`: `{ text: '3D Label', size: 0.2, depth: 0.04, bevelEnabled: true }`
   - `audioEmitter` / `audio`: `'hum'` or `{ preset: 'hum' | 'reactor' | 'wind' | 'beacon' | 'geiger' | 'chimeLoop' | 'machinery' | 'water' | 'confirm', src: 'https://.../sound.mp3', volume: 0.7, loop: true, autoplay: true, playOnSelect: false, distanceModel: 'inverse' | 'linear' | 'exponential', refDistance: 1.0, maxDistance: 20.0, rolloffFactor: 1.0, coneInnerAngle: 360, coneOuterAngle: 360, coneOuterGain: 0, pitchHz: 440 }`
   - `character`: `true` or `{ mode: 'third-person' | 'first-person' | 'top-down' | 'fixed-camera', speed: 4, jumpVelocity: 5.5, gravity: 15, radius: 0.35, height: 1.7, cameraDistance: 3.5, cameraHeight: 1.6 }`
@@ -86,7 +87,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
 - Math & IK: `Vector2`, `Vector3`, `Vector4`, `Euler`, `Quaternion`, `Matrix3`, `Matrix4`, `Color`, `MathUtils`, `Clock`, `IKSolver` (`solveTwoBone`, `solveFABRIK`)
 - Geometries & CAD: `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `LatheGeometry`, `TubeGeometry`, `Shape`, `Path`, `ShapeGeometry`, `ExtrudeGeometry`, `TextGeometry`, `CSG` (`union`, `subtract`, `intersect`), `BufferGeometry`, `BufferAttribute`
 - Materials: `MeshStandardMaterial`, `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` (plus `mesh.userData.variants` for `KHR_materials_variants`)
-- Scene Graph & Instancing: `Scene`, `Group`, `Mesh`, `InstancedMesh` (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`), `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`)
+- Scene Graph, LOD & Instancing: `Scene`, `Group`, `Mesh`, `LOD` (`addLevel`, `getObjectForDistance`), `InstancedMesh` (`setMatrixAt`, `getMatrixAt`, `setColorAt`, `getColorAt`, `count`), `Object3D` (`position`, `rotation`, `scale`, `matrix`, `add`, `remove`, `traverse`)
 - Lights & Cameras: `AmbientLight`, `DirectionalLight`, `PointLight`, `Camera`, `PerspectiveCamera`
 ```
 

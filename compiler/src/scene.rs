@@ -89,6 +89,13 @@ pub struct SceneNode {
     pub interactivity_events: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interactivity: Option<serde_json::Value>,
+    /// Whether this node is initially visible (`KHR_node_visibility`). Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub visible: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for SceneNode {
@@ -108,6 +115,7 @@ impl Default for SceneNode {
             instance_colors: Vec::new(),
             interactivity_events: Vec::new(),
             interactivity: None,
+            visible: true,
         }
     }
 }

@@ -209,6 +209,14 @@ position, normal })`.
         `mesh.userData.xr.outline`):** Inverted-hull and screen-space Sobel
         silhouette outlines (`{ color: '#38bdf8', thickness: 0.03 }`),
         automatically highlighting `selected-mesh` or outlined nodes.
+-   **Distance-Based Level of Detail (`three-live/studio` / `lodPlugin`):**
+    -   **`THREE.LOD` & `mesh.userData.xr.lod`:** Author multi-tier LOD groups
+        via `const lod = new THREE.LOD(); lod.addLevel(highMesh, 0);
+        lod.addLevel(lowMesh, 8);` or attach automatic vertex-clustering
+        decimation via `mesh.userData.xr = { lod: { distances: [0, 5, 12],
+        ratios: [1.0, 0.4, 0.15], cullDistance: 30, hysteresis: 0.05 } }`.
+        Exports to glTF `MSFT_lod` + `KHR_node_visibility` and evaluates
+        per-frame across Web, Android, and iOS.
 -   **PBR Next Materials, HDRI & Contact Shadows (`three-live/studio`):**
     -   **glTF PBR Next Extensions:** Shader support for Clearcoat
         (`KHR_materials_clearcoat`), Transmission

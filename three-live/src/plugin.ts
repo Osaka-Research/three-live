@@ -162,10 +162,12 @@ export interface SharedThreeLiveRegistry {
   authorNamespace?: Record<string, unknown>;
   /**
    * Hook invoked before world-matrix and GLB/USDZ serialization to materialize
-   * declarative `userData.xr.text` and `userData.csg` meshes when `cadPlugin`
-   * is loaded.
+   * declarative `userData.xr.text`, `userData.csg`, and `userData.xr.lod`
+   * meshes when `cadPlugin` / `lodPlugin` are loaded.
    */
   materializeDeclarativeGeometry?: (node: unknown) => void;
+  _cadMaterialize?: (node: unknown) => void;
+  _lodMaterialize?: (node: unknown) => void;
   /**
    * Self-contained worker bootstrap functions `(THREE, reg) => void` serialized
    * into `buildSandboxWorkerSource` so Web Worker sandboxes install optional

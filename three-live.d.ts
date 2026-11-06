@@ -88,6 +88,20 @@ export {
   type InteractivityVariableDef,
 } from './three-live/src/plugins/interactivity';
 export {
+  decimateGeometry,
+  getLodController,
+  installLodExtension,
+  LOD,
+  LodController,
+  lodPlugin,
+  materializeLodGeometry,
+  parseLod,
+  selectLodLevelIndex,
+  type LodGroupState,
+  type LodLevel,
+  type LodOptions,
+} from './three-live/src/plugins/lod';
+export {
   applyMeshoptFilter,
   decodeMeshoptBuffer,
   decodeMeshoptGLB,

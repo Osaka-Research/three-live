@@ -145,12 +145,12 @@ export interface ViewOptions {
 // 1. Minimal Self-Contained Matrix Math
 // =========================================================================
 
-import {createProgram} from './gl-program';
 import {
   applyTextureTransform,
   readAccessorAsFloat32,
   type TextureTransformLike,
 } from './accessor';
+import {createProgram} from './gl-program';
 import {
   mat3NormalFromMat4,
   mat4Create,
@@ -810,6 +810,7 @@ interface MeshGpu {
   extras?: Record<string, any>;
   instanceMatrices?: Float32Array;
   instanceColors?: Float32Array;
+  visible?: boolean;
 }
 
 /**
@@ -1374,6 +1375,10 @@ function buildGpuSceneUnchecked(
       normalMatrix: normMat,
       primitives: [],
       extras: item.node.extras || m.extras,
+      ...(item.node?.visible === false ||
+      item.node?.extensions?.KHR_node_visibility?.visible === false
+        ? {visible: false}
+        : {}),
     };
     track.mesh = meshGpu;
 
@@ -4134,7 +4139,13 @@ export class ThreeView {
           gl.bindVertexArray(prim.vao);
           const instMats = mesh.instanceMatrices;
           if (prim.instanceCount !== undefined) {
-            gl.drawElementsInstanced(gl.TRIANGLES, prim.indexCount, prim.indexType, 0, prim.instanceCount);
+            gl.drawElementsInstanced(
+              gl.TRIANGLES,
+              prim.indexCount,
+              prim.indexType,
+              0,
+              prim.instanceCount,
+            );
           } else if (
             instMats &&
             instMats.length >= 16 &&
@@ -4211,8 +4222,12 @@ export class ThreeView {
 
     for (const plugin of registeredPlugins) {
       plugin.onAfterRender?.(
-        gl, this, vp, xrOverride?.eye ?? 'none',
-        [vpX, vpY, vpW, vpH], xrOverride?.projMatrix ?? this.projMatrix,
+        gl,
+        this,
+        vp,
+        xrOverride?.eye ?? 'none',
+        [vpX, vpY, vpW, vpH],
+        xrOverride?.projMatrix ?? this.projMatrix,
       );
     }
   }

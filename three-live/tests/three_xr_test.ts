@@ -35,10 +35,14 @@ import {
 import {installXRDepthShader} from '../src/xr-depth-shader';
 import {
   AMBIENT_SOUND_PRESETS,
+  buildXRSceneCoreExtension,
   computeSpatialAudioMix,
+  flattenXRTraitsForUsd,
   normalizeXRTraits,
   parseAudioEmitter,
+  parseLod,
   registerXRTraitSerializer,
+  selectLodLevelIndex,
   validateXRTraits,
 } from '../src/xr-trait-schema';
 
@@ -1059,6 +1063,78 @@ async function runXRTests() {
   assert(
     normAudio?.audioEmitter?.preset === 'reactor',
     'normalizeXRTraits promotes preset string on userData.xr.audio to audioEmitter',
+  );
+
+  // -------------------------------------------------------------------------
+  // 11. LOD Trait Schema, Distance Hysteresis & ANDROID_xr_scenecore / USDZ
+  // -------------------------------------------------------------------------
+  const defaultLod = parseLod(true);
+  assert(
+    defaultLod !== null &&
+      defaultLod.distances.length === 3 &&
+      defaultLod.distances[0] === 0 &&
+      defaultLod.distances[1] === 4 &&
+      defaultLod.distances[2] === 10 &&
+      defaultLod.ratios !== undefined &&
+      Math.abs(defaultLod.ratios[0] - 0.5) < 1e-6 &&
+      Math.abs(defaultLod.ratios[1] - 0.25) < 1e-6 &&
+      Math.abs(defaultLod.hysteresis - 0.05) < 1e-6,
+    'parseLod(true) returns 3-level default LOD configuration',
+  );
+  const customLod = parseLod({
+    distances: [0, 5, 12],
+    ratios: [1.0, 0.4, 0.15],
+    cullDistance: 30,
+    hysteresis: 0.1,
+  });
+  assert(
+    customLod !== null &&
+      customLod.distances[1] === 5 &&
+      customLod.distances[2] === 12 &&
+      customLod.ratios !== undefined &&
+      Math.abs(customLod.ratios[0] - 0.4) < 1e-6 &&
+      Math.abs(customLod.ratios[1] - 0.15) < 1e-6 &&
+      customLod.cullDistance === 30 &&
+      Math.abs(customLod.hysteresis - 0.1) < 1e-6,
+    'parseLod normalizes custom distances, ratios, cullDistance, and hysteresis',
+  );
+  // Hysteresis deadband check: threshold=5.0, hysteresis=0.1 => upward at 5.5, downward at 4.5
+  const idx0 = selectLodLevelIndex([0, 5, 12], 2.0, 0, 0.1, 30);
+  const idxStay0 = selectLodLevelIndex([0, 5, 12], 5.2, idx0, 0.1, 30);
+  const idxSwitch1 = selectLodLevelIndex([0, 5, 12], 5.6, idxStay0, 0.1, 30);
+  const idxStay1 = selectLodLevelIndex([0, 5, 12], 4.8, idxSwitch1, 0.1, 30);
+  const idxBack0 = selectLodLevelIndex([0, 5, 12], 4.4, idxStay1, 0.1, 30);
+  const idxCull = selectLodLevelIndex([0, 5, 12], 35.0, idxBack0, 0.1, 30);
+  const idxUncullStay = selectLodLevelIndex([0, 5, 12], 28.0, idxCull, 0.1, 30);
+  const idxUncull = selectLodLevelIndex(
+    [0, 5, 12],
+    26.0,
+    idxUncullStay,
+    0.1,
+    30,
+  );
+  assert(
+    idx0 === 0 &&
+      idxStay0 === 0 &&
+      idxSwitch1 === 1 &&
+      idxStay1 === 1 &&
+      idxBack0 === 0 &&
+      idxCull === -1 &&
+      idxUncullStay === -1 &&
+      idxUncull === 2,
+    'selectLodLevelIndex applies upward/downward hysteresis and cullDistance deadband',
+  );
+  const normLod = normalizeXRTraits({
+    lod: {distances: [0, 4, 10], cullDistance: 25, hysteresis: 0.08},
+  });
+  const scExt = buildXRSceneCoreExtension(normLod!);
+  const usdFlat = flattenXRTraitsForUsd(normLod!);
+  assert(
+    (scExt.lod as {cullDistance?: number} | undefined)?.cullDistance === 25 &&
+      usdFlat.lodHysteresis === 0.08 &&
+      usdFlat.lodCullDistance === 25 &&
+      usdFlat.lodDistances === '0,4,10',
+    'buildXRSceneCoreExtension and flattenXRTraitsForUsd serialize normalized lod traits',
   );
 
   console.log(

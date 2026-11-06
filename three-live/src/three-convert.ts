@@ -180,6 +180,24 @@ export interface XRMeshTraits {
         depth?: number;
         color?: string;
       };
+  /** Camera-distance level of detail (`THREE.LOD` / `userData.xr.lod`). */
+  lod?:
+    | boolean
+    | number[]
+    | {
+        enabled?: boolean;
+        distances?: number[];
+        ratios?: number[];
+        hysteresis?: number;
+        cullDistance?: number;
+        levels?: Array<{
+          distance: number;
+          ratio?: number;
+          hysteresis?: number;
+          childIndex?: number;
+          node?: string;
+        }>;
+      };
   [key: string]: any;
 }
 
@@ -207,6 +225,7 @@ export interface USDAMeshData {
   emissiveColor?: [number, number, number];
   xrTraits?: XRMeshTraits;
   timeSamples?: USDAMeshTimeSamples;
+  invisible?: boolean;
 }
 
 export interface ZipEntry {
@@ -542,6 +561,7 @@ export function sceneToCanvas3D(
   const rootNodeIndices: number[] = [];
 
   function processNode(obj: Object3D): number {
+    getSharedRegistry().materializeDeclarativeGeometry?.(obj);
     const node: any = {name: obj.name || ''};
     const pos = obj.position,
       rot = obj.quaternion,
@@ -551,6 +571,13 @@ export function sceneToCanvas3D(
       node.rotation = [rot.x, rot.y, rot.z, rot.w];
     if (scl.x !== 1 || scl.y !== 1 || scl.z !== 1)
       node.scale = [scl.x, scl.y, scl.z];
+    if (obj.visible === false) {
+      node.extensions = {
+        ...(node.extensions || {}),
+        KHR_node_visibility: {visible: false},
+      };
+      nodeExtensionsUsed.add('KHR_node_visibility');
+    }
 
     if (obj.userData && Object.keys(obj.userData).length > 0) {
       node.extras = JSON.parse(
@@ -747,6 +774,17 @@ export function sceneToCanvas3D(
       node.children = [];
       for (const child of obj.children) {
         node.children.push(processNode(child));
+      }
+      if (
+        node.extras?.xr?.lod ||
+        node.extensions?.ANDROID_xr_scenecore?.lod ||
+        (obj as {isLOD?: boolean}).isLOD
+      ) {
+        node.extensions = {
+          ...(node.extensions || {}),
+          MSFT_lod: {ids: [...node.children]},
+        };
+        nodeExtensionsUsed.add('MSFT_lod');
       }
     }
     return nodeIdx;
@@ -1173,6 +1211,14 @@ export function extractMeshesFromScene(
     fps?: number;
   },
 ): USDAMeshData[] {
+  const materializeDecl = getSharedRegistry().materializeDeclarativeGeometry;
+  if (typeof materializeDecl === 'function') {
+    const initialNodes: Object3D[] = [];
+    scene.traverse((o: Object3D) => initialNodes.push(o));
+    for (const o of initialNodes) {
+      materializeDecl(o);
+    }
+  }
   scene.updateMatrixWorld(true);
   const result: USDAMeshData[] = [];
 
@@ -1437,6 +1483,20 @@ export function extractMeshesFromScene(
         return;
       }
 
+      // tslint:disable-next-line:no-any
+      const parentObj = (obj as any).parent;
+      const parentHasMesh = Boolean(
+        parentObj?.geometry?.attributes?.position?.count > 0,
+      );
+      const parentXr = !parentHasMesh ? parentObj?.userData?.xr : undefined;
+      const effectiveXr =
+        parentXr && obj.userData?.xr
+          ? {...parentXr, ...obj.userData.xr}
+          : (obj.userData?.xr ?? parentXr);
+      const isInvisible =
+        obj.visible === false ||
+        (!parentHasMesh && parentObj?.visible === false);
+
       result.push({
         name: obj.name || `Mesh_${result.length}`,
         positions,
@@ -1452,8 +1512,9 @@ export function extractMeshesFromScene(
         ior,
         opacity,
         emissiveColor,
-        xrTraits: obj.userData?.xr,
+        xrTraits: effectiveXr,
         timeSamples,
+        ...(isInvisible ? {invisible: true} : {}),
       });
     }
   });
@@ -1517,6 +1578,7 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
     worldMatrix: Float32Array,
     instanceName: string,
     nodeExtras?: Record<string, any>,
+    invisible?: boolean,
   ) {
     const mesh = meshes[meshIdx];
     if (!mesh) return;
@@ -1684,17 +1746,41 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
         opacity,
         emissiveColor,
         xrTraits: nodeExtras?.xr || mesh.extras?.xr,
+        ...(invisible ? {invisible: true} : {}),
       });
     }
   }
 
   if (nodes.length > 0) {
+    // tslint:disable-next-line:no-any
+    const parentExtras = new Map<number, Record<string, any>>();
+    for (let nIdx = 0; nIdx < nodes.length; nIdx++) {
+      const pNode = nodes[nIdx];
+      if (
+        pNode &&
+        pNode.mesh === undefined &&
+        pNode.extras?.xr &&
+        Array.isArray(pNode.children)
+      ) {
+        for (const cIdx of pNode.children) {
+          if (typeof cIdx === 'number' && !parentExtras.has(cIdx)) {
+            parentExtras.set(cIdx, pNode.extras);
+          }
+        }
+      }
+    }
     for (let nIdx = 0; nIdx < nodes.length; nIdx++) {
       const node = nodes[nIdx];
       if (node.mesh !== undefined && node.mesh < meshes.length) {
         const worldM = nodeTransforms.get(nIdx) || mat4Create();
         const instanceName =
           node.name || meshes[node.mesh].name || `Node_${nIdx}`;
+        const effectiveExtras = node.extras?.xr
+          ? node.extras
+          : parentExtras.get(nIdx) || node.extras;
+        const isInvisible =
+          node.visible === false ||
+          node.extensions?.KHR_node_visibility?.visible === false;
         const instExt = node.extensions?.EXT_mesh_gpu_instancing?.attributes;
         if (instExt && typeof instExt === 'object') {
           const tAccIdx = instExt.TRANSLATION;
@@ -1755,13 +1841,20 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
                 node.mesh,
                 combinedM,
                 `${instanceName}_${inst}`,
-                node.extras,
+                effectiveExtras,
+                isInvisible,
               );
             }
             continue;
           }
         }
-        processMeshInstance(node.mesh, worldM, instanceName, node.extras);
+        processMeshInstance(
+          node.mesh,
+          worldM,
+          instanceName,
+          effectiveExtras,
+          isInvisible,
+        );
       }
     }
   } else {
@@ -2063,6 +2156,9 @@ def Scope "Meshes"
     usda += `def Mesh "${safeMeshName}"${meshHeaderMeta}
 {
 `;
+    if (mesh.invisible) {
+      usda += `uniform token visibility = "invisible"\n`;
+    }
     if (hasPhysics) {
       // tslint:disable-next-line:no-any Compact physics trait inspection.
       const rb: any = xr?.rigidBody ?? xr?.physics;

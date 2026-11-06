@@ -736,6 +736,21 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
                     merged_node_exts.insert(k, v);
                 }
             }
+            if !node.visible {
+                add_ext("KHR_node_visibility");
+                merged_node_exts
+                    .insert("KHR_node_visibility".to_string(), json!({ "visible": false }));
+            }
+            if !children[i].is_empty()
+                && node_json
+                    .get("extras")
+                    .and_then(|e| e.get("xr"))
+                    .and_then(|xr| xr.get("lod"))
+                    .is_some()
+            {
+                add_ext("MSFT_lod");
+                merged_node_exts.insert("MSFT_lod".to_string(), json!({ "ids": children[i] }));
+            }
             let inst_count = node.instance_matrices.len() / 16;
             if inst_count > 0 {
                 add_ext("EXT_mesh_gpu_instancing");
@@ -1412,6 +1427,8 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
 
             let mesh = gn["mesh"].as_u64().map(|m| m as usize).filter(|&m| m < meshes.len());
             let xr_normalized = gn["extras"]["xr"].as_object().map(|_| gn["extras"]["xr"].clone());
+            let visible =
+                gn["extensions"]["KHR_node_visibility"]["visible"].as_bool().unwrap_or(true);
             nodes.push(SceneNode {
                 name,
                 parent: parents[i],
@@ -1420,6 +1437,7 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
                 scale,
                 mesh,
                 xr_normalized,
+                visible,
                 ..Default::default()
             });
         }

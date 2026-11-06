@@ -21,6 +21,11 @@ import {
   MAX_TEXT_GEOMETRY_CHARS,
 } from '../src/plugins/cad';
 import {
+  decimateGeometry,
+  installLodExtension,
+  lodPlugin,
+} from '../src/plugins/lod';
+import {
   applyMeshoptFilter,
   decodeMeshoptBuffer,
   decodeMeshoptGLB,
@@ -57,6 +62,7 @@ import THREE, {
 } from '../src/three-author';
 
 registerPlugin(cadPlugin);
+registerPlugin(lodPlugin);
 const {Path, Shape, ShapeGeometry, ExtrudeGeometry, TextGeometry, CSG} = THREE;
 
 let passed = 0;
@@ -1382,6 +1388,78 @@ function runCadRegressionTests(
       new fresh.ShapeGeometry(sq).index.count === 3 &&
         typeof fresh.CSG.subtract === 'function',
       'installCadExtension is self-contained (toString round-trip works)',
+    );
+  }
+
+  // Coverage: THREE.LOD, decimateGeometry, and userData.xr.lod materialization + MSFT_lod export.
+  {
+    const freshLod = new Function('return ' + installLodExtension.toString())()(
+      THREE,
+      {},
+    );
+    assert(
+      typeof freshLod.LOD === 'function' &&
+        typeof freshLod.decimateGeometry === 'function',
+      'installLodExtension is self-contained (toString round-trip works)',
+    );
+
+    const hiSphere = new SphereGeometry(1, 24, 16);
+    const decimated = decimateGeometry(hiSphere, 0.35);
+    assert(
+      decimated.index !== null &&
+        decimated.index.count > 0 &&
+        decimated.index.count < hiSphere.index!.count &&
+        allFinite(decimated),
+      `decimateGeometry reduces sphere triangles (${hiSphere.index!.count / 3} -> ${decimated.index!.count / 3}) with finite vertices`,
+    );
+
+    const lodScene = new Scene();
+    const lodGroup = new THREE.LOD();
+    lodGroup.name = 'HeroTurretLOD';
+    lodGroup.addLevel(
+      new Mesh(
+        new SphereGeometry(0.5, 24, 16),
+        new MeshStandardMaterial({color: 0x38bdf8}),
+      ),
+      0,
+    );
+    lodGroup.addLevel(
+      new Mesh(
+        new BoxGeometry(0.8, 0.8, 0.8),
+        new MeshStandardMaterial({color: 0x22c55e}),
+      ),
+      6,
+    );
+    lodScene.add(lodGroup);
+
+    const autoMesh = new Mesh(
+      new SphereGeometry(0.6, 20, 14),
+      new MeshStandardMaterial({color: 0xf59e0b}),
+    );
+    autoMesh.name = 'AutoDecimatedTree';
+    autoMesh.userData.xr = {
+      lod: {distances: [0, 4, 10], ratios: [1.0, 0.45, 0.2], cullDistance: 25},
+    };
+    lodScene.add(autoMesh);
+
+    const {gltf: lodGltf} = lodScene.toCanvas3D();
+    const heroNode = lodGltf.nodes.find(
+      (n: {name?: string}) => n.name === 'HeroTurretLOD',
+    );
+    const autoNode = lodGltf.nodes.find(
+      (n: {name?: string}) => n.name === 'AutoDecimatedTree',
+    );
+    assert(
+      Array.isArray(lodGltf.extensionsUsed) &&
+        lodGltf.extensionsUsed.includes('MSFT_lod') &&
+        lodGltf.extensionsUsed.includes('KHR_node_visibility') &&
+        heroNode?.children?.length === 2 &&
+        heroNode?.extensions?.MSFT_lod?.ids?.length === 2 &&
+        lodGltf.nodes[heroNode.children[1]]?.extensions?.KHR_node_visibility
+          ?.visible === false &&
+        autoNode?.children?.length === 3 &&
+        autoNode?.extensions?.MSFT_lod?.ids?.length === 3,
+      'THREE.LOD and userData.xr.lod materialize LOD child tiers and export MSFT_lod + KHR_node_visibility',
     );
   }
 }

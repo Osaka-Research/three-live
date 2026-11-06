@@ -311,6 +311,9 @@ public final class XRLiveRuntimeSession {
   private var orbitTimes: [Int: Double] = [:]
   private var ikRestOffsets: [Int: [SIMD3<Float>]] = [:]
   private var ikRestRotations: [String: [SIMD4<Double>]] = [:]
+  private var lodChildren: [Int: [Int]] = [:]
+  private var lodActiveLevels: [Int: Int] = [:]
+  private var lodForcedLevels: [Int: Int] = [:]
   private var physicsStates: [Int: PhysicsBodyState] = [:]
   private var staticColliders: [StaticAabb] = []
   private var collidersInitialized = false
@@ -410,14 +413,42 @@ public final class XRLiveRuntimeSession {
         state.mesh = mi
       }
       state.traits = XRLiveTraitParser.normalize(XRJSON.object(n["extras"])?["xr"])
+      if state.traits?.lod == nil, XRJSON.object(ext?["MSFT_lod"]) != nil {
+        if state.traits == nil { state.traits = XRLiveNodeTraits() }
+        state.traits?.lod = XRLiveLod()
+      }
+      var childIndices: [Int] = []
       for c in XRJSON.array(n["children"]) ?? [] {
         if let cd = XRJSON.number(c), let ci = Int(exactly: cd), ci >= 0, ci < rawNodes.count,
           ci != i
         {
           parentOf[ci] = i
+          childIndices.append(ci)
+        }
+      }
+      if state.traits?.lod != nil {
+        let fallbackChildren = childIndices.isEmpty && state.mesh != nil ? [i] : childIndices
+        let resolvedChildren: [Int]
+        if let msftLod = XRJSON.object(ext?["MSFT_lod"]),
+          let ids = XRJSON.array(msftLod["ids"])
+        {
+          let msftIds = ids.compactMap { XRJSON.number($0).flatMap { Int(exactly: $0) } }
+            .filter { $0 >= 0 && $0 < rawNodes.count && $0 != i }
+          resolvedChildren = msftIds.isEmpty ? fallbackChildren : msftIds
+        } else {
+          resolvedChildren = fallbackChildren
+        }
+        if !resolvedChildren.isEmpty {
+          lodChildren[i] = resolvedChildren
+          lodActiveLevels[i] = 0
         }
       }
       nodes.append(state)
+    }
+    for (_, ch) in lodChildren {
+      for (idx, ci) in ch.enumerated() where ci >= 0 && ci < nodes.count {
+        nodes[ci].visible = (idx == 0)
+      }
     }
 
     if let rootExts = XRJSON.object(root["extensions"]),
@@ -650,6 +681,59 @@ public final class XRLiveRuntimeSession {
   public func nodeInstanceCount(at index: Int) -> Int {
     guard index >= 0, index < nodeInstanceCounts.count else { return 0 }
     return nodeInstanceCounts[index]
+  }
+
+  /// Currently active 0-based LOD child index for `index`, `-1` if culled, or `nil` if not an LOD node.
+  public func activeLodLevel(at index: Int) -> Int? {
+    lodActiveLevels[index]
+  }
+
+  /// Forces `index`'s active LOD level to `level` (`0..N-1`, or `-1` to cull all levels),
+  /// or clears the override when `level` is `nil`.
+  public func forceLodLevel(at index: Int, level: Int?) {
+    guard let ch = lodChildren[index], !ch.isEmpty else { return }
+    guard let level = level else {
+      lodForcedLevels.removeValue(forKey: index)
+      return
+    }
+    let clamped = level < 0 ? -1 : min(level, ch.count - 1)
+    lodForcedLevels[index] = clamped
+    applyLodActiveLevel(index, children: ch, nextIdx: clamped)
+    flush()
+  }
+
+  private func stepLod(_ index: Int, lod: XRLiveLod, headPose: XRPose?) {
+    guard let ch = lodChildren[index], !ch.isEmpty else { return }
+    let nextIdx: Int
+    if let forced = lodForcedLevels[index] {
+      nextIdx = forced
+    } else if let head = headPose {
+      let nodePos = readNodeWorldPosition(index)
+      let dist = simd_distance(nodePos, head.position)
+      let cur = lodActiveLevels[index] ?? 0
+      let raw = XRLiveLodController.selectLodLevelIndex(
+        distance: dist,
+        distances: lod.distances,
+        cullDistance: lod.cullDistance,
+        currentLevel: cur,
+        hysteresis: lod.hysteresis
+      )
+      nextIdx = raw < 0 ? -1 : min(raw, ch.count - 1)
+    } else {
+      nextIdx = lodActiveLevels[index] ?? 0
+    }
+    applyLodActiveLevel(index, children: ch, nextIdx: nextIdx)
+  }
+
+  private func applyLodActiveLevel(_ index: Int, children ch: [Int], nextIdx: Int) {
+    lodActiveLevels[index] = nextIdx
+    for (k, ci) in ch.enumerated() where ci >= 0 && ci < nodes.count {
+      let shouldVis = nextIdx >= 0 && k == nextIdx
+      if nodes[ci].visible != shouldVis {
+        nodes[ci].visible = shouldVis
+        dirtyVisibility.insert(ci)
+      }
+    }
   }
 
   /// Selects a `KHR_materials_variants` material variant by name, or resets to default when
@@ -1914,20 +1998,21 @@ public final class XRLiveRuntimeSession {
       if grabbed.contains(i) {
         followStates[i] = nil
         physicsStates[i] = nil
-        continue
-      }
-      if let follow = traits.lazyFollow {
+      } else if let follow = traits.lazyFollow {
         stepFollow(i, follow, headPose: headPose, handPoses: handPoses, dt: stepDt)
-        continue
-      }
-      if let orbit = traits.orbit {
-        stepOrbit(i, orbit, headPose: headPose, dt: stepDt)
-      }
-      if let bb = traits.billboard, !bb.isEmpty, let head = headPose {
-        stepBillboard(i, mode: bb, headPose: head, dt: stepDt)
+      } else {
+        if let orbit = traits.orbit {
+          stepOrbit(i, orbit, headPose: headPose, dt: stepDt)
+        }
+        if let bb = traits.billboard, !bb.isEmpty, let head = headPose {
+          stepBillboard(i, mode: bb, headPose: head, dt: stepDt)
+        }
       }
       if let ik = traits.ik {
         stepIK(i, ik: ik, headPose: headPose, handPoses: handPoses)
+      }
+      if let lod = traits.lod {
+        stepLod(i, lod: lod, headPose: headPose)
       }
     }
     stepPhysics(dt: stepDt)
