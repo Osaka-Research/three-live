@@ -329,6 +329,170 @@ async function runTests() {
     'generateUSDA escapes userData.xr traits and prevents USDA block injection',
   );
 
+  // -------------------------------------------------------------------------
+  // 12. Issue #13: USDZ Hierarchy & Local Mesh Coordinates (Scene & GLB)
+  // -------------------------------------------------------------------------
+  const armScene = new Scene();
+  const armGroup = new Group();
+  armGroup.name = 'Arm';
+  armGroup.position.set(1, 0, 0);
+  armGroup.rotation.y = Math.PI / 2;
+
+  const handMesh = new Mesh(
+    new BoxGeometry(1, 1, 1),
+    new MeshStandardMaterial({color: 0xffffff}),
+  );
+  handMesh.name = 'Hand';
+  handMesh.position.set(0, 2, 0);
+
+  const fingerMesh = new Mesh(
+    new BoxGeometry(0.2, 0.2, 0.2),
+    new MeshStandardMaterial({color: 0xff0000}),
+  );
+  fingerMesh.name = 'Finger';
+  fingerMesh.position.set(0, 0.6, 0);
+  handMesh.add(fingerMesh);
+  armGroup.add(handMesh);
+  armScene.add(armGroup);
+
+  const armUSDA = generateUSDA(armScene);
+  assert(
+    armUSDA.includes('def Xform "Arm"') &&
+      armUSDA.includes('double3 xformOp:translate = (1.0, 0, 0)'),
+    'Issue #13: generateUSDA(scene) preserves parent Group as Xform with local translate',
+  );
+  assert(
+    armUSDA.includes('def Xform "Hand"') &&
+      armUSDA.includes('def Mesh "Hand_mesh"') &&
+      armUSDA.includes('double3 xformOp:translate = (0, 2.0, 0)') &&
+      armUSDA.includes('def Mesh "Finger"'),
+    'Issue #13: Mesh with child Mesh wraps in Xform + sibling _mesh (no nested Gprims)',
+  );
+  assert(
+    armUSDA.includes('(-0.5, -0.5, 0.5)') ||
+      armUSDA.includes('(-0.5, -0.5, -0.5)'),
+    'Issue #13: Mesh vertices stay in local space instead of baked world space',
+  );
+
+  const armGlbUSDA = generateUSDA(sceneToGLB(armScene));
+  assert(
+    armGlbUSDA.includes('def Xform "Arm"') &&
+      armGlbUSDA.includes('double3 xformOp:translate = (1.0, 0, 0)') &&
+      armGlbUSDA.includes('double3 xformOp:translate = (0, 2.0, 0)'),
+    'Issue #13: glbToUSDZ / generateUSDA(glb) preserves node hierarchy and local TRS',
+  );
+
+  // -------------------------------------------------------------------------
+  // 13. Issue #14 & #15: USDZ Parent Group Animation & No Double-Transform
+  // -------------------------------------------------------------------------
+  const animScene = new Scene();
+  const orbit = new Group();
+  orbit.name = 'Orbit';
+  const moon = new Mesh(
+    new BoxGeometry(1, 1, 1),
+    new MeshStandardMaterial({color: 0xcccccc}),
+  );
+  moon.name = 'Moon';
+  moon.position.set(3, 0, 0);
+  orbit.add(moon);
+
+  const slider = new Mesh(
+    new BoxGeometry(1, 1, 1),
+    new MeshStandardMaterial({color: 0x00ccff}),
+  );
+  slider.name = 'Slider';
+  slider.position.set(2, 0, 0);
+  animScene.add(orbit);
+  animScene.add(slider);
+  animScene.userData.animate = (t: number) => {
+    orbit.rotation.y = t;
+    slider.position.x = 2 + Math.sin(t);
+  };
+
+  const animUSDA = generateUSDA(animScene, {duration: 1.0, fps: 4});
+  const orbitBlock = animUSDA.split('def Xform "Orbit"')[1]?.split('def Mesh "Moon"')[0] || '';
+  const moonBlock = animUSDA.split('def Mesh "Moon"')[1]?.split('def Mesh "Slider"')[0] || '';
+  const sliderBlock = animUSDA.split('def Mesh "Slider"')[1] || '';
+  assert(
+    orbitBlock.includes('quatf xformOp:orient.timeSamples'),
+    'Issue #14: Animated parent Group exports xformOp:orient.timeSamples in USDZ',
+  );
+  assert(
+    moonBlock.includes('double3 xformOp:translate = (3.0, 0, 0)') &&
+      !moonBlock.includes('timeSamples'),
+    'Issue #14: Unanimated child under animated Group keeps static local xformOp',
+  );
+  assert(
+    sliderBlock.includes('0: (2.0, 0, 0)') &&
+      (sliderBlock.includes('(-0.5, -0.5, 0.5)') ||
+        sliderBlock.includes('(-0.5, -0.5, -0.5)')),
+    'Issue #15: Self-animated Mesh keeps local points and starts timeSamples at (2, 0, 0) without double transform',
+  );
+
+  // -------------------------------------------------------------------------
+  // 14. Issue #17: MaterialBindingAPI Schema Applied on USDZ Meshes
+  // -------------------------------------------------------------------------
+  const schemaScene = new Scene();
+  const plainMesh = new Mesh(
+    new BoxGeometry(1, 1, 1),
+    new MeshStandardMaterial({color: 0xff8800}),
+  );
+  plainMesh.name = 'PlainCrate';
+  const physMesh = new Mesh(
+    new BoxGeometry(1, 1, 1),
+    new MeshStandardMaterial({color: 0x0088ff}),
+  );
+  physMesh.name = 'DynamicCrate';
+  physMesh.userData = {xr: {physics: 'dynamic'}};
+  schemaScene.add(plainMesh);
+  schemaScene.add(physMesh);
+
+  const schemaUSDA = generateUSDA(schemaScene);
+  assert(
+    schemaUSDA.includes('prepend apiSchemas = ["MaterialBindingAPI"]'),
+    'Issue #17: Standard Mesh applies prepend apiSchemas = ["MaterialBindingAPI"]',
+  );
+  assert(
+    schemaUSDA.includes(
+      'prepend apiSchemas = ["MaterialBindingAPI", "PhysicsBodyAPI", "PhysicsCollisionAPI"]',
+    ),
+    'Issue #17: Physics Mesh merges MaterialBindingAPI with PhysicsBodyAPI and PhysicsCollisionAPI',
+  );
+
+  // -------------------------------------------------------------------------
+  // 15. Issue #18: sRGB-to-Linear Hex/CSS Color & Default Metalness = 0.0
+  // -------------------------------------------------------------------------
+  const colorScene = new Scene();
+  const grayMat = new MeshStandardMaterial({color: 0x808080});
+  grayMat.name = 'MidGray';
+  const blueMat = new MeshStandardMaterial({color: 0x3366ff});
+  blueMat.name = 'BrandBlue';
+  colorScene.add(new Mesh(new BoxGeometry(1, 1, 1), grayMat));
+  colorScene.add(new Mesh(new BoxGeometry(1, 1, 1), blueMat));
+
+  const colorCanvas = sceneToCanvas3D(colorScene);
+  const grayGltf = colorCanvas.gltf.materials[0].pbrMetallicRoughness;
+  const blueGltf = colorCanvas.gltf.materials[1].pbrMetallicRoughness;
+  assert(
+    Math.abs(grayGltf.baseColorFactor[0] - 0.21586) < 1e-4 &&
+      grayGltf.metallicFactor === 0,
+    'Issue #18: GLB exports 0x808080 as linear ~0.21586 and default metallicFactor = 0',
+  );
+  assert(
+    Math.abs(blueGltf.baseColorFactor[0] - 0.0331) < 1e-4 &&
+      Math.abs(blueGltf.baseColorFactor[1] - 0.13287) < 1e-4 &&
+      Math.abs(blueGltf.baseColorFactor[2] - 1.0) < 1e-4,
+    'Issue #18: GLB exports 0x3366ff as linear (0.03310, 0.13287, 1.0)',
+  );
+
+  const colorUSDA = generateUSDA(colorScene);
+  assert(
+    colorUSDA.includes('color3f inputs:diffuseColor = (0.21586, 0.21586, 0.21586)') &&
+      colorUSDA.includes('color3f inputs:diffuseColor = (0.0331, 0.13287, 1.0)') &&
+      colorUSDA.includes('float inputs:metallic = 0'),
+    'Issue #18: USDZ UsdPreviewSurface exports linear diffuseColor and default metallic = 0',
+  );
+
   // Summary
   console.log(`\n========================================`);
   console.log(`Tests finished: ${passed} passed, ${failed} failed`);

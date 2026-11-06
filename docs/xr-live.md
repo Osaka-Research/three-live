@@ -62,7 +62,7 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 `<xr-live>` addresses both web and native apps from a single scene definition:
 
 *   **On the web (`<xr-live>`):** Starts with small core bundles (`< 51 KB gz`
-    for `xr-live-viewer.min.js`, or `< 72 KB gz` for `xr-live.min.js` with live
+    for `xr-live-viewer.min.js`, or `< 73 KB gz` for `xr-live.min.js` with live
     Three.js authoring) and optional plugins for advanced features (`~2–5 KB gz`
     each, or `< 57 KB gz` for all 14 combined).
 *   **In native Android, iOS, and visionOS apps (`XRLiveRuntimeSession` and
@@ -126,7 +126,7 @@ browser WebXR (`navigator.xr`) alone has three practical limitations:
 ### Register optional plugins for advanced features
 
 When bundling with Vite, Rollup, esbuild, or Webpack, you can pair the
-`<xr-live>` core (`three-live/xr-live` at `< 72 KB gz`, or
+`<xr-live>` core (`three-live/xr-live` at `< 73 KB gz`, or
 `three-live/xr-live-viewer` at `< 51 KB gz`) with only the specific plugins your
 application uses:
 
@@ -146,7 +146,7 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 
 To load all 14 spatial plugins without a bundler, import
 `/dist/xr-live-spatial.min.js` (`< 57 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 184 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
+(`< 185 KB gz`, which also includes `xr-live-sensors` and the 5 `xr-live-sim`
 simulation plugins).
 
 --------------------------------------------------------------------------------

@@ -28,16 +28,16 @@ This file provides high-signal context, architectural invariants, and authoring 
 Goal                                                                                          | Element        | Recommended Bundle            | Enforced Budget
 :-------------------------------------------------------------------------------------------- | :------------- | :---------------------------- | :-------------:
 `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting)                                  | `<three-live>` | `three-live-viewer.min.js`    | `< 29 KB gz`
-Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR          | `<three-live>` | `three-live.min.js`           | `< 61 KB gz`
+Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR          | `<three-live>` | `three-live.min.js`           | `< 62 KB gz`
 Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, hotspots   | `<three-live>` | `three-live-studio.min.js`    | `< 24 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`    | `<three-live>` | `three-live-cad.min.js`       | `< 10 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`     | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz`
-Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                       | `<three-live>` | `three-live-full.min.js`      | `< 97 KB gz`
-6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>`    | `xr-live.min.js`              | `< 72 KB gz`
+Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                       | `<three-live>` | `three-live-full.min.js`      | `< 98 KB gz`
+6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">` | `<xr-live>`    | `xr-live.min.js`              | `< 73 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP   | `<xr-live>`    | `xr-live-sensors.min.js`      | `< 10 KB gz`
 Add-on bundle with all 14 modular `<xr-live>` spatial UX, world, splat & AI plugins           | `<xr-live>`    | `xr-live-spatial.min.js`      | `< 57 KB gz`
 Add-on bundle with the 5 simulation plugins (character, agents, hit zones, objectives, audio) | `<xr-live>`    | `xr-live-sim.min.js`          | `< 22 KB gz`
-Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial + 5 sim plugins      | `<xr-live>`    | `xr-live-full.min.js`         | `< 184 KB gz`
+Full Spatial Computing + Depth Physics + 25-Joint Hands + all 14 spatial + 5 sim plugins      | `<xr-live>`    | `xr-live-full.min.js`         | `< 185 KB gz`
 
 ---
 

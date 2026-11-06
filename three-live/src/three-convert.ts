@@ -29,15 +29,7 @@ import type {
   Object3D,
   Scene,
 } from './three-author';
-import {
-  mat3NormalFromMat4,
-  mat4Create,
-  mat4FromRotationTranslationScale,
-  mat4Multiply,
-  resolveNodeWorldMatrices,
-  toGLBData,
-  type GLBData,
-} from './three-view';
+import {toGLBData, type GLBData} from './three-view';
 
 declare const ENABLE_NATIVE_HOOKS: boolean;
 
@@ -207,6 +199,11 @@ export interface USDAMeshData {
   emissiveColor?: [number, number, number];
   xrTraits?: XRMeshTraits;
   timeSamples?: USDAMeshTimeSamples;
+  translation?: [number, number, number];
+  rotation?: [number, number, number, number];
+  scale?: [number, number, number];
+  children?: USDAMeshData[];
+  isXform?: boolean;
 }
 
 export interface ZipEntry {
@@ -224,6 +221,17 @@ function align4(n: number): number {
   return (n + 3) & ~3;
 }
 
+const finUsd = (v: unknown, fb: number): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fb;
+
+function uniqName(used: Set<string>, base: string): string {
+  let name = base;
+  let s = 1;
+  while (used.has(name)) name = `${base}_${s++}`;
+  used.add(name);
+  return name;
+}
+
 function decomposeMat4ToTRS(
   m: ArrayLike<number>,
   offset = 0,
@@ -232,21 +240,10 @@ function decomposeMat4ToTRS(
   r: [number, number, number, number];
   s: [number, number, number];
 } {
-  const fin = (v: unknown, fb: number) =>
-    typeof v === 'number' && Number.isFinite(v) ? v : fb;
-  const tx = fin(m[offset + 12], 0);
-  const ty = fin(m[offset + 13], 0);
-  const tz = fin(m[offset + 14], 0);
-
-  const m00 = fin(m[offset + 0], 1);
-  const m01 = fin(m[offset + 1], 0);
-  const m02 = fin(m[offset + 2], 0);
-  const m10 = fin(m[offset + 4], 0);
-  const m11 = fin(m[offset + 5], 1);
-  const m12 = fin(m[offset + 6], 0);
-  const m20 = fin(m[offset + 8], 0);
-  const m21 = fin(m[offset + 9], 0);
-  const m22 = fin(m[offset + 10], 1);
+  const [m00, m01, m02, , m10, m11, m12, , m20, m21, m22, , tx, ty, tz] =
+    Array.from({length: 15}, (_, k) =>
+      finUsd(m[offset + k], k % 5 === 0 ? 1 : 0),
+    );
 
   let sx = Math.hypot(m00, m01, m02);
   const sy = Math.hypot(m10, m11, m12);
@@ -357,6 +354,13 @@ function buildSceneCoreExtension(xr: XRMeshTraits): Record<string, any> {
 
 export {compileInteractivityGraph};
 
+type ConvertAnimOptions = {
+  animateFn?: (time: number) => void;
+  animateCallback?: (time: number) => void;
+  duration?: number;
+  fps?: number;
+};
+
 /**
  * Serializes a Three.js Scene into in-memory GLBData ({ gltf, bin }) for WebGL2 rendering.
  * Automatically preserves `userData.xr` traits in `node.extras.xr` and bakes `animate(time)`
@@ -364,12 +368,15 @@ export {compileInteractivityGraph};
  */
 export function sceneToCanvas3D(
   scene: Scene,
-  options?: {
-    animateFn?: (time: number) => void;
-    duration?: number;
-    fps?: number;
-  },
+  options?: ConvertAnimOptions,
 ): GLBData {
+  return serializeScene(scene, options)[0];
+}
+
+function serializeScene(
+  scene: Scene,
+  options?: ConvertAnimOptions,
+): [GLBData, Object3D[]] {
   scene.updateMatrixWorld(true);
   const buffers: Uint8Array[] = [];
   let byteOffset = 0;
@@ -415,7 +422,7 @@ export function sceneToCanvas3D(
       name: m.name || '',
       pbrMetallicRoughness: {
         baseColorFactor: [r, g, b, opacity],
-        metallicFactor: m.metalness ?? 0.1,
+        metallicFactor: m.metalness ?? 0.0,
         roughnessFactor: m.roughness ?? 0.5,
       },
       doubleSided: m.side === 2 || Boolean(m.doubleSided),
@@ -540,17 +547,33 @@ export function sceneToCanvas3D(
   });
 
   const rootNodeIndices: number[] = [];
+  const seenObjs = new Set<Object3D>([scene]);
+  const nodeStack: Array<{obj: Object3D; parentKids: number[]}> = [];
+  if (Array.isArray(scene.children)) {
+    for (let i = scene.children.length - 1; i >= 0; i--) {
+      nodeStack.push({obj: scene.children[i], parentKids: rootNodeIndices});
+    }
+  }
 
-  function processNode(obj: Object3D): number {
+  while (nodeStack.length > 0) {
+    const {obj, parentKids} = nodeStack.pop()!;
+    if (!obj || typeof obj !== 'object' || seenObjs.has(obj)) continue;
+    seenObjs.add(obj);
+
     const node: any = {name: obj.name || ''};
-    const pos = obj.position,
-      rot = obj.quaternion,
-      scl = obj.scale;
-    if (pos.x || pos.y || pos.z) node.translation = [pos.x, pos.y, pos.z];
-    if (rot.x || rot.y || rot.z || rot.w !== 1)
-      node.rotation = [rot.x, rot.y, rot.z, rot.w];
-    if (scl.x !== 1 || scl.y !== 1 || scl.z !== 1)
-      node.scale = [scl.x, scl.y, scl.z];
+    const px = finUsd(obj.position?.x, 0),
+      py = finUsd(obj.position?.y, 0),
+      pz = finUsd(obj.position?.z, 0);
+    const rx = finUsd(obj.quaternion?.x, 0),
+      ry = finUsd(obj.quaternion?.y, 0),
+      rz = finUsd(obj.quaternion?.z, 0),
+      rw = finUsd(obj.quaternion?.w, 1);
+    const sx = finUsd(obj.scale?.x, 1),
+      sy = finUsd(obj.scale?.y, 1),
+      sz = finUsd(obj.scale?.z, 1);
+    if (px || py || pz) node.translation = [px, py, pz];
+    if (rx || ry || rz || rw !== 1) node.rotation = [rx, ry, rz, rw];
+    if (sx !== 1 || sy !== 1 || sz !== 1) node.scale = [sx, sy, sz];
 
     if (obj.userData && Object.keys(obj.userData).length > 0) {
       node.extras = JSON.parse(
@@ -635,8 +658,11 @@ export function sceneToCanvas3D(
           );
         }
 
-        if (obj.material) {
-          primitive.material = serializeMaterial(obj.material);
+        const rawMat = Array.isArray(obj.material)
+          ? obj.material[0]
+          : obj.material;
+        if (rawMat) {
+          primitive.material = serializeMaterial(rawMat);
         }
 
         const rawVariants = obj.userData?.variants;
@@ -742,18 +768,19 @@ export function sceneToCanvas3D(
     const nodeIdx = nodes.length;
     nodes.push(node);
     nodeObjects.push(obj);
+    parentKids.push(nodeIdx);
 
-    if (obj.children.length > 0) {
-      node.children = [];
-      for (const child of obj.children) {
-        node.children.push(processNode(child));
+    const kids = obj.children;
+    if (Array.isArray(kids) && kids.length > 0) {
+      const childIndices: number[] = [];
+      node.children = childIndices;
+      for (let i = kids.length - 1; i >= 0; i--) {
+        nodeStack.push({obj: kids[i], parentKids: childIndices});
       }
     }
-    return nodeIdx;
   }
-
-  for (const child of scene.children) {
-    rootNodeIndices.push(processNode(child));
+  for (const n of nodes) {
+    if (n.children && n.children.length === 0) delete n.children;
   }
 
   // Auto-bake procedural animate(time) function if provided on options, scene.userData, or globalThis
@@ -775,18 +802,18 @@ export function sceneToCanvas3D(
     const numSteps = Math.max(2, Math.round(duration * fps) + 1);
     const times = new Float32Array(numSteps);
 
-    const saved = nodeObjects.map((o) => ({
-      px: o.position.x,
-      py: o.position.y,
-      pz: o.position.z,
-      qx: o.quaternion.x,
-      qy: o.quaternion.y,
-      qz: o.quaternion.z,
-      qw: o.quaternion.w,
-      sx: o.scale.x,
-      sy: o.scale.y,
-      sz: o.scale.z,
-    }));
+    const saved = nodeObjects.map((o) => [
+      finUsd(o.position?.x, 0),
+      finUsd(o.position?.y, 0),
+      finUsd(o.position?.z, 0),
+      finUsd(o.quaternion?.x, 0),
+      finUsd(o.quaternion?.y, 0),
+      finUsd(o.quaternion?.z, 0),
+      finUsd(o.quaternion?.w, 1),
+      finUsd(o.scale?.x, 1),
+      finUsd(o.scale?.y, 1),
+      finUsd(o.scale?.z, 1),
+    ]);
 
     const posTracks = nodeObjects.map(() => new Float32Array(numSteps * 3));
     const rotTracks = nodeObjects.map(() => new Float32Array(numSteps * 4));
@@ -800,16 +827,35 @@ export function sceneToCanvas3D(
       } catch (_) {}
       for (let i = 0; i < nodeObjects.length; i++) {
         const o = nodeObjects[i];
-        posTracks[i][step * 3] = o.position.x;
-        posTracks[i][step * 3 + 1] = o.position.y;
-        posTracks[i][step * 3 + 2] = o.position.z;
-        rotTracks[i][step * 4] = o.quaternion.x;
-        rotTracks[i][step * 4 + 1] = o.quaternion.y;
-        rotTracks[i][step * 4 + 2] = o.quaternion.z;
-        rotTracks[i][step * 4 + 3] = o.quaternion.w;
-        sclTracks[i][step * 3] = o.scale.x;
-        sclTracks[i][step * 3 + 1] = o.scale.y;
-        sclTracks[i][step * 3 + 2] = o.scale.z;
+        posTracks[i][step * 3] = finUsd(o.position?.x, 0);
+        posTracks[i][step * 3 + 1] = finUsd(o.position?.y, 0);
+        posTracks[i][step * 3 + 2] = finUsd(o.position?.z, 0);
+        let qx = finUsd(o.quaternion?.x, 0),
+          qy = finUsd(o.quaternion?.y, 0),
+          qz = finUsd(o.quaternion?.z, 0),
+          qw = finUsd(o.quaternion?.w, 1);
+        const qLen = Math.hypot(qx, qy, qz, qw) || 1;
+        qx /= qLen;
+        qy /= qLen;
+        qz /= qLen;
+        qw /= qLen;
+        if (step > 0) {
+          const b = (step - 1) * 4,
+            r = rotTracks[i];
+          if (r[b] * qx + r[b + 1] * qy + r[b + 2] * qz + r[b + 3] * qw < 0) {
+            qx = -qx;
+            qy = -qy;
+            qz = -qz;
+            qw = -qw;
+          }
+        }
+        rotTracks[i][step * 4] = qx;
+        rotTracks[i][step * 4 + 1] = qy;
+        rotTracks[i][step * 4 + 2] = qz;
+        rotTracks[i][step * 4 + 3] = qw;
+        sclTracks[i][step * 3] = finUsd(o.scale?.x, 1);
+        sclTracks[i][step * 3 + 1] = finUsd(o.scale?.y, 1);
+        sclTracks[i][step * 3 + 2] = finUsd(o.scale?.z, 1);
       }
     }
 
@@ -817,9 +863,9 @@ export function sceneToCanvas3D(
     for (let i = 0; i < nodeObjects.length; i++) {
       const o = nodeObjects[i];
       const s = saved[i];
-      o.position.set(s.px, s.py, s.pz);
-      o.quaternion.set(s.qx, s.qy, s.qz, s.qw);
-      o.scale.set(s.sx, s.sy, s.sz);
+      o.position?.set(s[0], s[1], s[2]);
+      o.quaternion?.set(s[3], s[4], s[5], s[6]);
+      o.scale?.set(s[7], s[8], s[9]);
     }
     scene.updateMatrixWorld(true);
 
@@ -844,73 +890,28 @@ export function sceneToCanvas3D(
 
     for (let i = 0; i < nodeObjects.length; i++) {
       const s = saved[i];
-      let posChanged = false;
-      let rotChanged = false;
-      let sclChanged = false;
-      for (let step = 0; step < numSteps; step++) {
-        if (
-          Math.abs(posTracks[i][step * 3] - s.px) > 1e-4 ||
-          Math.abs(posTracks[i][step * 3 + 1] - s.py) > 1e-4 ||
-          Math.abs(posTracks[i][step * 3 + 2] - s.pz) > 1e-4
-        ) {
-          posChanged = true;
-        }
-        if (
-          Math.abs(rotTracks[i][step * 4] - s.qx) > 1e-4 ||
-          Math.abs(rotTracks[i][step * 4 + 1] - s.qy) > 1e-4 ||
-          Math.abs(rotTracks[i][step * 4 + 2] - s.qz) > 1e-4 ||
-          Math.abs(rotTracks[i][step * 4 + 3] - s.qw) > 1e-4
-        ) {
-          rotChanged = true;
-        }
-        if (
-          Math.abs(sclTracks[i][step * 3] - s.sx) > 1e-4 ||
-          Math.abs(sclTracks[i][step * 3 + 1] - s.sy) > 1e-4 ||
-          Math.abs(sclTracks[i][step * 3 + 2] - s.sz) > 1e-4
-        ) {
-          sclChanged = true;
-        }
-      }
-
-      if (posChanged) {
-        const outAcc = addAccessor(posTracks[i], 'VEC3', 0, 5126, numSteps);
-        const sampIdx = samplers.length;
-        samplers.push({
-          input: ensureTimeAccessor(),
-          interpolation: 'LINEAR',
-          output: outAcc,
-        });
+      const chg = (tr: Float32Array, st: number, off: number) =>
+        tr.some((v, k) => Math.abs(v - s[off + (k % st)]) > 1e-4);
+      const pushTrack = (
+        changed: boolean,
+        arr: Float32Array,
+        type: string,
+        path: string,
+      ) => {
+        if (!changed) return;
         channels.push({
-          sampler: sampIdx,
-          target: {node: i, path: 'translation'},
+          sampler:
+            samplers.push({
+              input: ensureTimeAccessor(),
+              interpolation: 'LINEAR',
+              output: addAccessor(arr, type, 0, 5126, numSteps),
+            }) - 1,
+          target: {node: i, path},
         });
-      }
-      if (rotChanged) {
-        const outAcc = addAccessor(rotTracks[i], 'VEC4', 0, 5126, numSteps);
-        const sampIdx = samplers.length;
-        samplers.push({
-          input: ensureTimeAccessor(),
-          interpolation: 'LINEAR',
-          output: outAcc,
-        });
-        channels.push({
-          sampler: sampIdx,
-          target: {node: i, path: 'rotation'},
-        });
-      }
-      if (sclChanged) {
-        const outAcc = addAccessor(sclTracks[i], 'VEC3', 0, 5126, numSteps);
-        const sampIdx = samplers.length;
-        samplers.push({
-          input: ensureTimeAccessor(),
-          interpolation: 'LINEAR',
-          output: outAcc,
-        });
-        channels.push({
-          sampler: sampIdx,
-          target: {node: i, path: 'scale'},
-        });
-      }
+      };
+      pushTrack(chg(posTracks[i], 3, 0), posTracks[i], 'VEC3', 'translation');
+      pushTrack(chg(rotTracks[i], 4, 3), rotTracks[i], 'VEC4', 'rotation');
+      pushTrack(chg(sclTracks[i], 3, 7), sclTracks[i], 'VEC3', 'scale');
     }
 
     if (channels.length > 0) {
@@ -976,12 +977,15 @@ export function sceneToCanvas3D(
     offset += b.byteLength;
   }
 
-  return {
-    gltf,
-    bin: bin.buffer,
-    lights,
-    environmentIntensity: scene.environmentIntensity,
-  };
+  return [
+    {
+      gltf,
+      bin: bin.buffer,
+      lights,
+      environmentIntensity: scene.environmentIntensity,
+    },
+    nodeObjects,
+  ];
 }
 
 export function encodeUtf8(str: string): Uint8Array {
@@ -1035,305 +1039,12 @@ export function sceneToGLB(
 // 3. Direct Scene Graph Mesh Extraction for USDZ
 // =========================================================================
 
-/**
- * Extracts mesh geometry data directly from an in-memory Three.js Scene.
- * Bypasses glTF serialization entirely, applying world transforms in a single pass.
- */
 export function extractMeshesFromScene(
   scene: Scene,
-  options?: {
-    animateFn?: (time: number) => void;
-    animateCallback?: (time: number) => void;
-    duration?: number;
-    fps?: number;
-  },
+  options?: ConvertAnimOptions,
 ): USDAMeshData[] {
-  scene.updateMatrixWorld(true);
-  const result: USDAMeshData[] = [];
-
-  scene.traverse((obj: Object3D) => {
-    if ((obj as any).geometry) {
-      const geo = (obj as any).geometry;
-      const posAttr = geo.attributes.position;
-      if (!posAttr || posAttr.count === 0) return;
-
-      const posCount = posAttr.count;
-      const positions = new Float32Array(posCount * 3);
-      const m = obj.matrixWorld.elements;
-
-      for (let i = 0; i < posCount; i++) {
-        const x = posAttr.getX(i);
-        const y = posAttr.getY(i);
-        const z = posAttr.getZ(i);
-        positions[i * 3] = m[0] * x + m[4] * y + m[8] * z + m[12];
-        positions[i * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
-        positions[i * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
-      }
-
-      let normals: Float32Array | undefined;
-      if (geo.attributes.normal) {
-        const normAttr = geo.attributes.normal;
-        normals = new Float32Array(posCount * 3);
-        const normalMat = new Float32Array(9);
-        mat3NormalFromMat4(normalMat, m);
-
-        for (let i = 0; i < posCount; i++) {
-          const x = normAttr.getX(i);
-          const y = normAttr.getY(i);
-          const z = normAttr.getZ(i);
-          const nx = normalMat[0] * x + normalMat[3] * y + normalMat[6] * z;
-          const ny = normalMat[1] * x + normalMat[4] * y + normalMat[7] * z;
-          const nz = normalMat[2] * x + normalMat[5] * y + normalMat[8] * z;
-          const len = Math.hypot(nx, ny, nz) || 1;
-          normals[i * 3] = nx / len;
-          normals[i * 3 + 1] = ny / len;
-          normals[i * 3 + 2] = nz / len;
-        }
-      }
-
-      let uvs: Float32Array | undefined;
-      if (geo.attributes.uv) {
-        const uvAttr = geo.attributes.uv;
-        uvs = new Float32Array(posCount * 2);
-        for (let i = 0; i < posCount; i++) {
-          uvs[i * 2] = uvAttr.getX(i);
-          uvs[i * 2 + 1] = uvAttr.getY(i);
-        }
-      }
-
-      let indices: Uint16Array | Uint32Array;
-      if (geo.index) {
-        indices = geo.index.array;
-      } else {
-        indices =
-          posCount > 65535
-            ? new Uint32Array(posCount)
-            : new Uint16Array(posCount);
-        for (let i = 0; i < posCount; i++) indices[i] = i;
-      }
-
-      let materialName = 'DefaultMaterial';
-      let color: [number, number, number] = [0.8, 0.8, 0.8];
-      let roughness = 0.5;
-      let metallic = 0.1;
-      let clearcoat = 0.0;
-      let clearcoatRoughness = 0.0;
-      let ior = 1.5;
-      let opacity = 1.0;
-      let emissiveColor: [number, number, number] = [0, 0, 0];
-
-      if (obj.material) {
-        const mat = obj.material as any;
-        materialName = mat.name || `Material_${result.length}`;
-        if (mat.color) {
-          color = [mat.color.r, mat.color.g, mat.color.b];
-        }
-        if (typeof mat.roughness === 'number') roughness = mat.roughness;
-        if (typeof mat.metalness === 'number') metallic = mat.metalness;
-        if (typeof mat.clearcoat === 'number') clearcoat = mat.clearcoat;
-        if (typeof mat.clearcoatRoughness === 'number')
-          clearcoatRoughness = mat.clearcoatRoughness;
-        if (typeof mat.ior === 'number') ior = mat.ior;
-        const baseOp = typeof mat.opacity === 'number' ? mat.opacity : 1.0;
-        const trans =
-          typeof mat.transmission === 'number' ? mat.transmission : 0.0;
-        opacity = baseOp * (1.0 - trans);
-        if (
-          mat.emissive &&
-          (mat.emissive.r > 0 || mat.emissive.g > 0 || mat.emissive.b > 0)
-        ) {
-          const ei = mat.emissiveIntensity ?? 1.0;
-          emissiveColor = [
-            mat.emissive.r * ei,
-            mat.emissive.g * ei,
-            mat.emissive.b * ei,
-          ];
-        }
-      }
-
-      let timeSamples: USDAMeshTimeSamples | undefined;
-      const animateFn =
-        options?.animateCallback ||
-        options?.animateFn ||
-        (typeof (scene as any).userData?.animate === 'function'
-          ? (scene as any).userData.animate
-          : typeof (scene as any).__animateFn === 'function'
-            ? (scene as any).__animateFn
-            : typeof (globalThis as any).animate === 'function'
-              ? (globalThis as any).animate
-              : undefined);
-      if (typeof animateFn === 'function') {
-        const duration = options?.duration ?? 4.0;
-        const fps = options?.fps ?? 4;
-        const numSteps = Math.max(2, Math.round(duration * fps) + 1);
-        const times: number[] = [];
-        const translations: Array<[number, number, number]> = [];
-        const rotations: Array<[number, number, number, number]> = [];
-        const scales: Array<[number, number, number]> = [];
-        const origP = [obj.position.x, obj.position.y, obj.position.z];
-        const origQ = [
-          obj.quaternion.x,
-          obj.quaternion.y,
-          obj.quaternion.z,
-          obj.quaternion.w,
-        ];
-        const origS = [obj.scale.x, obj.scale.y, obj.scale.z];
-        let changed = false;
-        for (let step = 0; step < numSteps; step++) {
-          const t = (step / (numSteps - 1)) * duration;
-          times.push(t);
-          try {
-            animateFn(t);
-          } catch (_) {}
-          translations.push([obj.position.x, obj.position.y, obj.position.z]);
-          rotations.push([
-            obj.quaternion.x,
-            obj.quaternion.y,
-            obj.quaternion.z,
-            obj.quaternion.w,
-          ]);
-          scales.push([obj.scale.x, obj.scale.y, obj.scale.z]);
-          if (
-            Math.abs(obj.position.x - origP[0]) > 1e-4 ||
-            Math.abs(obj.position.y - origP[1]) > 1e-4 ||
-            Math.abs(obj.position.z - origP[2]) > 1e-4 ||
-            Math.abs(obj.quaternion.x - origQ[0]) > 1e-4 ||
-            Math.abs(obj.quaternion.y - origQ[1]) > 1e-4 ||
-            Math.abs(obj.quaternion.z - origQ[2]) > 1e-4 ||
-            Math.abs(obj.quaternion.w - origQ[3]) > 1e-4 ||
-            Math.abs(obj.scale.x - origS[0]) > 1e-4
-          ) {
-            changed = true;
-          }
-        }
-        obj.position.set(origP[0], origP[1], origP[2]);
-        obj.quaternion.set(origQ[0], origQ[1], origQ[2], origQ[3]);
-        obj.scale.set(origS[0], origS[1], origS[2]);
-        if (changed) {
-          timeSamples = {times, translations, rotations, scales};
-        }
-      }
-
-      const maybeInst = obj as Partial<InstancedMesh>;
-      if (
-        maybeInst.isInstancedMesh &&
-        typeof maybeInst.count === 'number' &&
-        maybeInst.count > 0 &&
-        maybeInst.instanceMatrix?.array
-      ) {
-        const instCount = Math.min(1000, Math.floor(maybeInst.count));
-        const instMats = maybeInst.instanceMatrix.array as Float32Array;
-        const instCols = maybeInst.instanceColor?.array as
-          | Float32Array
-          | undefined;
-        const baseName = obj.name || `Mesh_${result.length}`;
-        const combinedM = new Float32Array(16);
-        const instNormalMat = new Float32Array(9);
-
-        for (let inst = 0; inst < instCount; inst++) {
-          const instSlice = instMats.subarray(inst * 16, (inst + 1) * 16);
-          mat4Multiply(combinedM, m as unknown as Float32Array, instSlice);
-          const instPositions = new Float32Array(posCount * 3);
-          for (let i = 0; i < posCount; i++) {
-            const x = posAttr.getX(i);
-            const y = posAttr.getY(i);
-            const z = posAttr.getZ(i);
-            instPositions[i * 3] =
-              combinedM[0] * x +
-              combinedM[4] * y +
-              combinedM[8] * z +
-              combinedM[12];
-            instPositions[i * 3 + 1] =
-              combinedM[1] * x +
-              combinedM[5] * y +
-              combinedM[9] * z +
-              combinedM[13];
-            instPositions[i * 3 + 2] =
-              combinedM[2] * x +
-              combinedM[6] * y +
-              combinedM[10] * z +
-              combinedM[14];
-          }
-          let instNormals: Float32Array | undefined;
-          if (geo.attributes.normal) {
-            const normAttr = geo.attributes.normal;
-            instNormals = new Float32Array(posCount * 3);
-            mat3NormalFromMat4(instNormalMat, combinedM);
-            for (let i = 0; i < posCount; i++) {
-              const x = normAttr.getX(i);
-              const y = normAttr.getY(i);
-              const z = normAttr.getZ(i);
-              const nx =
-                instNormalMat[0] * x +
-                instNormalMat[3] * y +
-                instNormalMat[6] * z;
-              const ny =
-                instNormalMat[1] * x +
-                instNormalMat[4] * y +
-                instNormalMat[7] * z;
-              const nz =
-                instNormalMat[2] * x +
-                instNormalMat[5] * y +
-                instNormalMat[8] * z;
-              const len = Math.hypot(nx, ny, nz) || 1;
-              instNormals[i * 3] = nx / len;
-              instNormals[i * 3 + 1] = ny / len;
-              instNormals[i * 3 + 2] = nz / len;
-            }
-          }
-          let instColor = color;
-          let instMatName = materialName;
-          if (instCols && instCols.length >= (inst + 1) * 3) {
-            instColor = [
-              color[0] * instCols[inst * 3]!,
-              color[1] * instCols[inst * 3 + 1]!,
-              color[2] * instCols[inst * 3 + 2]!,
-            ];
-            instMatName = `${materialName}_inst_${inst}`;
-          }
-          result.push({
-            name: `${baseName}_${inst}`,
-            positions: instPositions,
-            indices,
-            normals: instNormals,
-            uvs,
-            materialName: instMatName,
-            color: instColor,
-            roughness,
-            metallic,
-            clearcoat,
-            clearcoatRoughness,
-            ior,
-            opacity,
-            emissiveColor,
-            xrTraits: obj.userData?.xr,
-          });
-        }
-        return;
-      }
-
-      result.push({
-        name: obj.name || `Mesh_${result.length}`,
-        positions,
-        indices,
-        normals,
-        uvs,
-        materialName,
-        color,
-        roughness,
-        metallic,
-        clearcoat,
-        clearcoatRoughness,
-        ior,
-        opacity,
-        emissiveColor,
-        xrTraits: obj.userData?.xr,
-        timeSamples,
-      });
-    }
-  });
-
-  return result;
+  const [glb, rawNodes] = serializeScene(scene, options);
+  return extractMeshesFromGLB(glb, rawNodes);
 }
 
 // =========================================================================
@@ -1341,9 +1052,12 @@ export function extractMeshesFromScene(
 // =========================================================================
 
 /**
- * Extracts mesh geometry data from GLBData for USDA serialization.
+ * Extracts hierarchical node and mesh data from GLBData for USDA serialization.
  */
-export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
+export function extractMeshesFromGLB(
+  glb: GLBData,
+  rawNodes?: Object3D[],
+): USDAMeshData[] {
   const result: USDAMeshData[] = [];
   const gltf = glb.gltf;
   const meshoptDec = getSharedRegistry().decoders.get('meshopt');
@@ -1364,6 +1078,10 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
   const materials = gltf.materials || [];
   const meshes = gltf.meshes || [];
   const nodes = gltf.nodes || [];
+  const usedMatNames = new Set<string>();
+  const matIdNames: string[] = materials.map((m: any, idx: number) =>
+    uniqName(usedMatNames, sanitizeUsdIdentifier(m?.name, `Material_${idx}`)),
+  );
 
   function getBufferSlice(accessorIndex: number): {
     acc: any;
@@ -1374,60 +1092,25 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
     const bv = bufferViews[acc.bufferView || 0];
     const byteOffset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
     const byteLength = bv.byteLength || 0;
-    const slice = binBuffer.slice(byteOffset, byteOffset + byteLength);
-    return {acc, buffer: slice};
+    return {acc, buffer: binBuffer.slice(byteOffset, byteOffset + byteLength)};
   }
 
-  const nodeTransforms = new Map<number, Float32Array>();
-
-  if (nodes.length > 0) {
-    const worldMatrices = resolveNodeWorldMatrices(gltf);
-    for (let i = 0; i < worldMatrices.length; i++) {
-      nodeTransforms.set(i, worldMatrices[i]);
-    }
-  }
-
-  function processMeshInstance(
+  function extractPrimitives(
     meshIdx: number,
-    worldMatrix: Float32Array,
     instanceName: string,
-    nodeExtras?: Record<string, any>,
-  ) {
+    nodeXr?: XRMeshTraits,
+  ): USDAMeshData[] {
+    const out: USDAMeshData[] = [];
     const mesh = meshes[meshIdx];
-    if (!mesh) return;
-
-    const normalMat = new Float32Array(9);
-    mat3NormalFromMat4(normalMat, worldMatrix);
-
-    for (let pIdx = 0; pIdx < (mesh.primitives || []).length; pIdx++) {
-      const prim = mesh.primitives[pIdx];
+    if (!mesh) return out;
+    const prims = mesh.primitives || [];
+    for (let pIdx = 0; pIdx < prims.length; pIdx++) {
+      const prim = prims[pIdx];
       const posAccIdx = prim.attributes?.POSITION;
       if (posAccIdx === undefined) continue;
 
       const {acc: posAcc, buffer: posBuf} = getBufferSlice(posAccIdx);
-      const rawPositions = new Float32Array(posBuf, 0, posAcc.count * 3);
-      const positions = new Float32Array(rawPositions.length);
-
-      for (let i = 0; i < posAcc.count; i++) {
-        const x = rawPositions[i * 3];
-        const y = rawPositions[i * 3 + 1];
-        const z = rawPositions[i * 3 + 2];
-        positions[i * 3] =
-          worldMatrix[0] * x +
-          worldMatrix[4] * y +
-          worldMatrix[8] * z +
-          worldMatrix[12];
-        positions[i * 3 + 1] =
-          worldMatrix[1] * x +
-          worldMatrix[5] * y +
-          worldMatrix[9] * z +
-          worldMatrix[13];
-        positions[i * 3 + 2] =
-          worldMatrix[2] * x +
-          worldMatrix[6] * y +
-          worldMatrix[10] * z +
-          worldMatrix[14];
-      }
+      const positions = new Float32Array(posBuf, 0, posAcc.count * 3);
 
       let normals: Float32Array | undefined;
       const normAccIdx = prim.attributes?.NORMAL;
@@ -1436,12 +1119,9 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
         const rawNormals = new Float32Array(normBuf, 0, normAcc.count * 3);
         normals = new Float32Array(rawNormals.length);
         for (let i = 0; i < normAcc.count; i++) {
-          const x = rawNormals[i * 3];
-          const y = rawNormals[i * 3 + 1];
-          const z = rawNormals[i * 3 + 2];
-          const nx = normalMat[0] * x + normalMat[3] * y + normalMat[6] * z;
-          const ny = normalMat[1] * x + normalMat[4] * y + normalMat[7] * z;
-          const nz = normalMat[2] * x + normalMat[5] * y + normalMat[8] * z;
+          const nx = rawNormals[i * 3];
+          const ny = rawNormals[i * 3 + 1];
+          const nz = rawNormals[i * 3 + 2];
           const len = Math.hypot(nx, ny, nz) || 1;
           normals[i * 3] = nx / len;
           normals[i * 3 + 1] = ny / len;
@@ -1459,11 +1139,10 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
       let indices: Uint16Array | Uint32Array;
       if (prim.indices !== undefined) {
         const {acc: idxAcc, buffer: idxBuf} = getBufferSlice(prim.indices);
-        if (idxAcc.componentType === 5125) {
-          indices = new Uint32Array(idxBuf, 0, idxAcc.count);
-        } else {
-          indices = new Uint16Array(idxBuf, 0, idxAcc.count);
-        }
+        indices =
+          idxAcc.componentType === 5125
+            ? new Uint32Array(idxBuf, 0, idxAcc.count)
+            : new Uint16Array(idxBuf, 0, idxAcc.count);
         // Validate on the host: the sandbox worker's own index checks are not
         // a trust boundary, and out-of-range indices are invalid glTF that
         // would otherwise be written verbatim into USDA faceVertexIndices.
@@ -1486,7 +1165,7 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
       let materialName = 'DefaultMaterial';
       let color: [number, number, number] = [0.8, 0.8, 0.8];
       let roughness = 0.5;
-      let metallic = 0.1;
+      let metallic = 0.0;
       let clearcoat = 0.0;
       let clearcoatRoughness = 0.0;
       let ior = 1.5;
@@ -1495,56 +1174,39 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
 
       if (prim.material !== undefined && materials[prim.material]) {
         const mat = materials[prim.material];
-        materialName = mat.name || `Material_${prim.material}`;
+        materialName = matIdNames[prim.material] || `Material_${prim.material}`;
         const pbr = mat.pbrMetallicRoughness || {};
-        let baseOp = 1.0;
-        if (Array.isArray(pbr.baseColorFactor)) {
-          color = [
-            pbr.baseColorFactor[0],
-            pbr.baseColorFactor[1],
-            pbr.baseColorFactor[2],
-          ];
-          if (typeof pbr.baseColorFactor[3] === 'number') {
-            baseOp = pbr.baseColorFactor[3];
-          }
-        }
+        const rgb3 = (
+          a: unknown,
+          fb: [number, number, number],
+        ): [number, number, number] =>
+          Array.isArray(a) && a.length >= 3 ? [a[0], a[1], a[2]] : fb;
+        color = rgb3(pbr.baseColorFactor, [1, 1, 1]);
+        const baseOp =
+          Array.isArray(pbr.baseColorFactor) &&
+          typeof pbr.baseColorFactor[3] === 'number'
+            ? pbr.baseColorFactor[3]
+            : 1;
         if (typeof pbr.roughnessFactor === 'number')
           roughness = pbr.roughnessFactor;
         if (typeof pbr.metallicFactor === 'number')
           metallic = pbr.metallicFactor;
-
-        if (
-          Array.isArray(mat.emissiveFactor) &&
-          mat.emissiveFactor.length >= 3
-        ) {
-          emissiveColor = [
-            mat.emissiveFactor[0],
-            mat.emissiveFactor[1],
-            mat.emissiveFactor[2],
-          ];
-        }
+        emissiveColor = rgb3(mat.emissiveFactor, [0, 0, 0]);
         const ext = mat.extensions || {};
         if (ext.KHR_materials_clearcoat) {
-          clearcoat = ext.KHR_materials_clearcoat.clearcoatFactor ?? 0.0;
+          clearcoat = ext.KHR_materials_clearcoat.clearcoatFactor ?? 0;
           clearcoatRoughness =
-            ext.KHR_materials_clearcoat.clearcoatRoughnessFactor ?? 0.0;
+            ext.KHR_materials_clearcoat.clearcoatRoughnessFactor ?? 0;
         }
-        if (
-          ext.KHR_materials_ior &&
-          typeof ext.KHR_materials_ior.ior === 'number'
-        ) {
+        if (typeof ext.KHR_materials_ior?.ior === 'number') {
           ior = ext.KHR_materials_ior.ior;
         }
-        const trans = ext.KHR_materials_transmission?.transmissionFactor ?? 0.0;
-        opacity = baseOp * (1.0 - trans);
+        opacity =
+          baseOp * (1 - (ext.KHR_materials_transmission?.transmissionFactor ?? 0));
       }
 
-      const pName =
-        (mesh.primitives || []).length > 1
-          ? `${instanceName}_p${pIdx}`
-          : instanceName;
-      result.push({
-        name: pName,
+      out.push({
+        name: prims.length > 1 ? `${instanceName}_p${pIdx}` : instanceName,
         positions,
         indices,
         normals,
@@ -1558,44 +1220,188 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
         ior,
         opacity,
         emissiveColor,
-        xrTraits: nodeExtras?.xr || mesh.extras?.xr,
+        xrTraits: nodeXr || mesh.extras?.xr,
       });
     }
+    return out;
   }
 
   if (nodes.length > 0) {
-    for (let nIdx = 0; nIdx < nodes.length; nIdx++) {
+    const emptyF32 = new Float32Array(0);
+    const emptyU16 = new Uint16Array(0);
+    const readVec = (aIdx: number | undefined, stride: number) => {
+      if (aIdx === undefined) return null;
+      const {acc, buffer} = getBufferSlice(aIdx);
+      return new Float32Array(buffer, 0, acc.count * stride);
+    };
+    const v3 = (a: unknown, fb: number): [number, number, number] =>
+      Array.isArray(a) && a.length >= 3
+        ? [finUsd(a[0], fb), finUsd(a[1], fb), finUsd(a[2], fb)]
+        : [fb, fb, fb];
+    const slice3 = (
+      b: Float32Array | null,
+      k: number,
+      fb: [number, number, number],
+    ): [number, number, number] =>
+      b && b.length >= (k + 1) * 3
+        ? [b[k * 3]!, b[k * 3 + 1]!, b[k * 3 + 2]!]
+        : fb;
+    const slice4 = (
+      b: Float32Array | null,
+      k: number,
+      fb: [number, number, number, number],
+    ): [number, number, number, number] =>
+      b && b.length >= (k + 1) * 4
+        ? [b[k * 4]!, b[k * 4 + 1]!, b[k * 4 + 2]!, b[k * 4 + 3]!]
+        : fb;
+
+    const animByNode = new Map<
+      number,
+      {input: number; t?: number; r?: number; s?: number}
+    >();
+    const anim0 = gltf.animations?.[0];
+    if (anim0 && Array.isArray(anim0.channels) && Array.isArray(anim0.samplers)) {
+      for (const ch of anim0.channels) {
+        const samp = anim0.samplers[ch?.sampler];
+        const nIdx = ch?.target?.node;
+        const p = ch?.target?.path;
+        if (!samp || typeof nIdx !== 'number' || samp.input === undefined) continue;
+        let rec = animByNode.get(nIdx);
+        if (!rec) {
+          rec = {input: samp.input};
+          animByNode.set(nIdx, rec);
+        }
+        if (p === 'translation') rec.t = samp.output;
+        else if (p === 'rotation') rec.r = samp.output;
+        else if (p === 'scale') rec.s = samp.output;
+      }
+    }
+
+    let rootIndices: number[] =
+      gltf.scenes?.[gltf.scene ?? 0]?.nodes ?? [];
+    if (!Array.isArray(rootIndices) || rootIndices.length === 0) {
+      const childSet = new Set<number>();
+      for (const n of nodes) {
+        if (Array.isArray(n?.children)) {
+          for (const c of n.children) childSet.add(c);
+        }
+      }
+      rootIndices = [];
+      for (let i = 0; i < nodes.length; i++) {
+        if (!childSet.has(i)) rootIndices.push(i);
+      }
+      if (rootIndices.length === 0) rootIndices = [0];
+    }
+
+    const seenNodes = new Set<number>();
+    const stack: Array<{idx: number; out: USDAMeshData[]}> = [];
+    const pushNodeIndices = (indices: unknown, out: USDAMeshData[]) => {
+      if (!Array.isArray(indices)) return;
+      for (let i = indices.length - 1; i >= 0; i--) {
+        stack.push({idx: indices[i], out});
+      }
+    };
+    pushNodeIndices(rootIndices, result);
+
+    while (stack.length > 0) {
+      const {idx: nIdx, out} = stack.pop()!;
+      if (
+        typeof nIdx !== 'number' ||
+        nIdx < 0 ||
+        nIdx >= nodes.length ||
+        seenNodes.has(nIdx)
+      ) {
+        continue;
+      }
+      seenNodes.add(nIdx);
       const node = nodes[nIdx];
-      if (node.mesh !== undefined && node.mesh < meshes.length) {
-        const worldM = nodeTransforms.get(nIdx) || mat4Create();
+      if (!node) continue;
+
+      let translation: [number, number, number] = [0, 0, 0];
+      let rotation: [number, number, number, number] = [0, 0, 0, 1];
+      let scale: [number, number, number] = [1, 1, 1];
+      if (Array.isArray(node.matrix) && node.matrix.length === 16) {
+        const trs = decomposeMat4ToTRS(node.matrix);
+        translation = trs.t;
+        rotation = trs.r;
+        scale = trs.s;
+      } else {
+        translation = v3(node.translation, 0);
+        if (Array.isArray(node.rotation) && node.rotation.length >= 4) {
+          rotation = [
+            finUsd(node.rotation[0], 0),
+            finUsd(node.rotation[1], 0),
+            finUsd(node.rotation[2], 0),
+            finUsd(node.rotation[3], 1),
+          ];
+        }
+        scale = v3(node.scale, 1);
+      }
+
+      let timeSamples: USDAMeshTimeSamples | undefined;
+      const anim = animByNode.get(nIdx);
+      if (anim) {
+        const timesBuf = readVec(anim.input, 1);
+        if (timesBuf && timesBuf.length > 0) {
+          const tBuf = readVec(anim.t, 3);
+          const rBuf = readVec(anim.r, 4);
+          const sBuf = readVec(anim.s, 3);
+          const times = Array.from(timesBuf);
+          const translations: Array<[number, number, number]> = [];
+          const rotations: Array<[number, number, number, number]> = [];
+          const scales: Array<[number, number, number]> = [];
+          for (let k = 0; k < timesBuf.length; k++) {
+            translations.push(slice3(tBuf, k, translation));
+            rotations.push(slice4(rBuf, k, rotation));
+            scales.push(slice3(sBuf, k, scale));
+          }
+          timeSamples = {times, translations, rotations, scales};
+        }
+      }
+
+      const rawKids = Array.isArray(node.children) ? node.children : [];
+      const hasMesh =
+        typeof node.mesh === 'number' &&
+        node.mesh >= 0 &&
+        node.mesh < meshes.length;
+      const nodeXr: XRMeshTraits | undefined =
+        rawNodes?.[nIdx]?.userData?.xr ?? node.extras?.xr;
+      if (
+        !hasMesh &&
+        rawKids.length === 0 &&
+        (node.camera !== undefined ||
+          node.extensions?.KHR_lights_punctual ||
+          (!node.name && !node.extras && !nodeXr && !timeSamples))
+      ) {
+        continue;
+      }
+
+      const mkXform = (
+        name: string,
+        children: USDAMeshData[],
+      ): USDAMeshData => ({
+        name,
+        positions: emptyF32,
+        indices: emptyU16,
+        isXform: true,
+        xrTraits: nodeXr,
+        timeSamples,
+        translation,
+        rotation,
+        scale,
+        children,
+      });
+
+      if (hasMesh) {
         const instanceName =
-          node.name || meshes[node.mesh].name || `Node_${nIdx}`;
+          node.name || meshes[node.mesh]?.name || `Mesh_${nIdx}`;
+        const primMeshes = extractPrimitives(node.mesh, instanceName, nodeXr);
         const instExt = node.extensions?.EXT_mesh_gpu_instancing?.attributes;
-        if (instExt && typeof instExt === 'object') {
-          const tAccIdx = instExt.TRANSLATION;
-          const rAccIdx = instExt.ROTATION;
-          const sAccIdx = instExt.SCALE;
-          const tData =
-            tAccIdx !== undefined
-              ? (() => {
-                  const {acc, buffer} = getBufferSlice(tAccIdx);
-                  return new Float32Array(buffer, 0, acc.count * 3);
-                })()
-              : null;
-          const rData =
-            rAccIdx !== undefined
-              ? (() => {
-                  const {acc, buffer} = getBufferSlice(rAccIdx);
-                  return new Float32Array(buffer, 0, acc.count * 4);
-                })()
-              : null;
-          const sData =
-            sAccIdx !== undefined
-              ? (() => {
-                  const {acc, buffer} = getBufferSlice(sAccIdx);
-                  return new Float32Array(buffer, 0, acc.count * 3);
-                })()
-              : null;
+        if (instExt && typeof instExt === 'object' && primMeshes.length > 0) {
+          const tData = readVec(instExt.TRANSLATION, 3);
+          const rData = readVec(instExt.ROTATION, 4);
+          const sData = readVec(instExt.SCALE, 3);
+          const cData = readVec(instExt._COLOR_0, 3);
           const instCount = Math.min(
             1000,
             tData
@@ -1607,43 +1413,66 @@ export function extractMeshesFromGLB(glb: GLBData): USDAMeshData[] {
                   : 0,
           );
           if (instCount > 0) {
-            const localInstM = new Float32Array(16);
-            const combinedM = new Float32Array(16);
+            const children: USDAMeshData[] = [];
             for (let inst = 0; inst < instCount; inst++) {
-              const t: [number, number, number] = tData
-                ? [tData[inst * 3]!, tData[inst * 3 + 1]!, tData[inst * 3 + 2]!]
-                : [0, 0, 0];
-              const r: [number, number, number, number] = rData
-                ? [
-                    rData[inst * 4]!,
-                    rData[inst * 4 + 1]!,
-                    rData[inst * 4 + 2]!,
-                    rData[inst * 4 + 3]!,
-                  ]
-                : [0, 0, 0, 1];
-              const s: [number, number, number] = sData
-                ? [sData[inst * 3]!, sData[inst * 3 + 1]!, sData[inst * 3 + 2]!]
-                : [1, 1, 1];
-              mat4FromRotationTranslationScale(localInstM, r, t, s);
-              mat4Multiply(combinedM, worldM, localInstM);
-              processMeshInstance(
-                node.mesh,
-                combinedM,
-                `${instanceName}_${inst}`,
-                node.extras,
-              );
+              const t = slice3(tData, inst, [0, 0, 0]);
+              const r = slice4(rData, inst, [0, 0, 0, 1]);
+              const s = slice3(sData, inst, [1, 1, 1]);
+              for (const pm of primMeshes) {
+                const baseCol = pm.color || [0.8, 0.8, 0.8];
+                const hasCol = cData && cData.length >= (inst + 1) * 3;
+                children.push({
+                  ...pm,
+                  name: `${pm.name}_${inst}`,
+                  materialName: hasCol
+                    ? `${pm.materialName}_inst_${inst}`
+                    : pm.materialName,
+                  color: hasCol
+                    ? [
+                        baseCol[0] * cData![inst * 3]!,
+                        baseCol[1] * cData![inst * 3 + 1]!,
+                        baseCol[2] * cData![inst * 3 + 2]!,
+                      ]
+                    : pm.color,
+                  translation: t,
+                  rotation: r,
+                  scale: s,
+                });
+              }
             }
+            pushNodeIndices(rawKids, children);
+            out.push(mkXform(instanceName, children));
             continue;
           }
         }
-        processMeshInstance(node.mesh, worldM, instanceName, node.extras);
+
+        if (primMeshes.length === 1) {
+          primMeshes[0].translation = translation;
+          primMeshes[0].rotation = rotation;
+          primMeshes[0].scale = scale;
+          primMeshes[0].timeSamples = timeSamples;
+          if (rawKids.length > 0) {
+            primMeshes[0].children = [];
+            pushNodeIndices(rawKids, primMeshes[0].children);
+          }
+          out.push(primMeshes[0]);
+        } else {
+          const children = [...primMeshes];
+          pushNodeIndices(rawKids, children);
+          out.push(mkXform(instanceName, children));
+        }
+      } else {
+        const children: USDAMeshData[] = [];
+        pushNodeIndices(rawKids, children);
+        out.push(mkXform(node.name || `Group_${nIdx}`, children));
       }
     }
   } else {
-    const identity = mat4Create();
     for (let mIdx = 0; mIdx < meshes.length; mIdx++) {
       const meshName = meshes[mIdx].name || `Mesh_${mIdx}`;
-      processMeshInstance(mIdx, identity, meshName, meshes[mIdx].extras);
+      result.push(
+        ...extractPrimitives(mIdx, meshName, meshes[mIdx].extras?.xr),
+      );
     }
   }
 
@@ -1689,6 +1518,11 @@ function formatNum(n: number): string {
   return str.indexOf('.') === -1 ? `${str}.0` : str;
 }
 
+const f3 = (a: number, b: number, c: number): string =>
+  `(${formatNum(a)}, ${formatNum(b)}, ${formatNum(c)})`;
+const f4 = (a: number, b: number, c: number, d: number): string =>
+  `(${formatNum(a)}, ${formatNum(b)}, ${formatNum(c)}, ${formatNum(d)})`;
+
 function formatPointsArray(positions: Float32Array): string {
   if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
     const nativeFn = (globalThis as any)
@@ -1700,9 +1534,7 @@ function formatPointsArray(positions: Float32Array): string {
   const posCount = positions.length / 3;
   const parts: string[] = new Array(posCount);
   for (let i = 0; i < posCount; i++) {
-    parts[i] = `(${formatNum(positions[i * 3])}, ${formatNum(
-      positions[i * 3 + 1],
-    )}, ${formatNum(positions[i * 3 + 2])})`;
+    parts[i] = f3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
   }
   return parts.join(', ');
 }
@@ -1734,7 +1566,7 @@ function formatIndicesArray(
 }
 
 /**
- * Generates valid Universal Scene Description ASCII (.usda) text from mesh data.
+ * Generates valid Universal Scene Description ASCII (.usda) text from mesh/node data.
  */
 export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
   const materialsMap = new Map<
@@ -1750,25 +1582,28 @@ export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
       emissiveColor: [number, number, number];
     }
   >();
-  for (const m of meshes) {
-    const matName = sanitizeUsdIdentifier(m.materialName, 'DefaultMaterial');
-    if (!materialsMap.has(matName)) {
-      materialsMap.set(matName, {
-        color: m.color || [0.8, 0.8, 0.8],
-        roughness: m.roughness ?? 0.5,
-        metallic: m.metallic ?? 0.0,
-        clearcoat: m.clearcoat ?? 0.0,
-        clearcoatRoughness: m.clearcoatRoughness ?? 0.0,
-        ior: m.ior ?? 1.5,
-        opacity: m.opacity ?? 1.0,
-        emissiveColor: m.emissiveColor || [0, 0, 0],
-      });
-    }
-  }
 
   let maxTimeCode = 0;
   let rootAnchorPlane: string | null = null;
-  for (const m of meshes) {
+  const scanStack: USDAMeshData[] = [...meshes];
+  while (scanStack.length > 0) {
+    const m = scanStack.pop()!;
+    const hasMeshGeo = !m.isXform && m.positions && m.positions.length > 0;
+    if (hasMeshGeo) {
+      const matName = sanitizeUsdIdentifier(m.materialName, 'DefaultMaterial');
+      if (!materialsMap.has(matName)) {
+        materialsMap.set(matName, {
+          color: m.color || [0.8, 0.8, 0.8],
+          roughness: m.roughness ?? 0.5,
+          metallic: m.metallic ?? 0.0,
+          clearcoat: m.clearcoat ?? 0.0,
+          clearcoatRoughness: m.clearcoatRoughness ?? 0.0,
+          ior: m.ior ?? 1.5,
+          opacity: m.opacity ?? 1.0,
+          emissiveColor: m.emissiveColor || [0, 0, 0],
+        });
+      }
+    }
     if (m.timeSamples && m.timeSamples.times.length > 0) {
       const lastT = m.timeSamples.times[m.timeSamples.times.length - 1];
       if (lastT > maxTimeCode) maxTimeCode = lastT;
@@ -1778,6 +1613,11 @@ export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
         m.xrTraits.anchor === 'vertical' || m.xrTraits.anchor === 'wall'
           ? 'vertical'
           : 'horizontal';
+    }
+    if (m.children) {
+      for (let i = m.children.length - 1; i >= 0; i--) {
+        scanStack.push(m.children[i]);
+      }
     }
   }
 
@@ -1821,14 +1661,14 @@ ${rootAnchorAttrs}def Scope "Materials"
       extraInputs += `float inputs:opacity = ${formatNum(matProps.opacity)}\n`;
     }
     if (er > 0 || eg > 0 || eb > 0) {
-      extraInputs += `color3f inputs:emissiveColor = (${formatNum(er)}, ${formatNum(eg)}, ${formatNum(eb)})\n`;
+      extraInputs += `color3f inputs:emissiveColor = ${f3(er, eg, eb)}\n`;
     }
     usda += `def Material "${matName}"
 {
 def Shader "PBRShader"
 {
 uniform token info:id = "UsdPreviewSurface"
-color3f inputs:diffuseColor = (${formatNum(r)}, ${formatNum(g)}, ${formatNum(b)})
+color3f inputs:diffuseColor = ${f3(r, g, b)}
 float inputs:metallic = ${formatNum(matProps.metallic)}
 float inputs:roughness = ${formatNum(matProps.roughness)}
 ${extraInputs}token outputs:surface
@@ -1843,61 +1683,19 @@ def Scope "Meshes"
 {
 `;
 
-  const usedMeshNames = new Set<string>();
-  for (let meshIdx = 0; meshIdx < meshes.length; meshIdx++) {
-    const mesh = meshes[meshIdx];
-    const posCount = mesh.positions.length / 3;
-    let minX = Infinity,
-      minY = Infinity,
-      minZ = Infinity;
-    let maxX = -Infinity,
-      maxY = -Infinity,
-      maxZ = -Infinity;
-
-    for (let i = 0; i < posCount; i++) {
-      const x = mesh.positions[i * 3];
-      const y = mesh.positions[i * 3 + 1];
-      const z = mesh.positions[i * 3 + 2];
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z;
-      if (z > maxZ) maxZ = z;
+  const formatPrimMeta = (
+    xr: XRMeshTraits | undefined,
+    isMesh: boolean,
+  ): {header: string; body: string} => {
+    const schemas: string[] = [];
+    if (isMesh) schemas.push('"MaterialBindingAPI"');
+    const hasPhysics = Boolean(xr?.physics && xr.physics !== 'none');
+    if (hasPhysics) schemas.push('"PhysicsBodyAPI"', '"PhysicsCollisionAPI"');
+    const metaLines: string[] = [];
+    if (schemas.length > 0) {
+      metaLines.push(`prepend apiSchemas = [${schemas.join(', ')}]`);
     }
-
-    if (!isFinite(minX)) {
-      minX = minY = minZ = -1;
-      maxX = maxY = maxZ = 1;
-    }
-
-    const triCount = Math.floor(mesh.indices.length / 3);
-    const matBinding = sanitizeUsdIdentifier(
-      mesh.materialName,
-      'DefaultMaterial',
-    );
-    let safeMeshName = sanitizeUsdIdentifier(mesh.name, `Mesh_${meshIdx}`);
-    if (usedMeshNames.has(safeMeshName)) {
-      safeMeshName = `${safeMeshName}_${meshIdx}`;
-    }
-    usedMeshNames.add(safeMeshName);
-
-    const faceVertexCountsStr =
-      triCount > 0
-        ? triCount === 1
-          ? '3'
-          : '3, '.repeat(triCount - 1) + '3'
-        : '';
-
-    const xr = mesh.xrTraits;
-    let meshHeaderMeta = '';
     if (xr) {
-      const metaLines: string[] = [];
-      if (xr.physics && xr.physics !== 'none') {
-        metaLines.push(
-          `prepend apiSchemas = ["PhysicsBodyAPI", "PhysicsCollisionAPI"]`,
-        );
-      }
       const xrDictLines: string[] =
         getSharedRegistry().xrTraitSerializer?.usdLines(
           xr,
@@ -1924,65 +1722,181 @@ def Scope "Meshes"
           `customData = {\n  dictionary xr = {\n    ${xrDictLines.join('\n    ')}\n  }\n}`,
         );
       }
-      if (metaLines.length > 0) {
-        meshHeaderMeta = ` (\n${metaLines.join('\n')}\n)`;
+    }
+    const header = metaLines.length > 0 ? ` (\n${metaLines.join('\n')}\n)` : '';
+    const body = hasPhysics
+      ? `bool physics:rigidBodyEnabled = true\nbool physics:kinematicEnabled = ${xr!.physics === 'static' ? 'true' : 'false'}\nbool physics:collisionEnabled = true\n`
+      : '';
+    return {header, body};
+  };
+
+  const formatXformOps = (node: USDAMeshData): string => {
+    if (node.timeSamples && node.timeSamples.times.length > 0) {
+      const ts = node.timeSamples;
+      const fmtTs = <T>(
+        arr: T[] | undefined,
+        fb: T,
+        fn: (v: T) => string,
+      ) =>
+        ts.times
+          .map((t, idx) => `${formatNum(t)}: ${fn(arr?.[idx] || fb)}`)
+          .join(', ');
+      const tSamples = fmtTs(ts.translations, [0, 0, 0], (p) =>
+        f3(p[0], p[1], p[2]),
+      );
+      const rSamples = fmtTs(ts.rotations, [0, 0, 0, 1], (q) => {
+        const len = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+        return f4(q[3] / len, q[0] / len, q[1] / len, q[2] / len);
+      });
+      const sSamples = fmtTs(ts.scales, [1, 1, 1], (s) =>
+        f3(s[0], s[1], s[2]),
+      );
+      return `double3 xformOp:translate.timeSamples = { ${tSamples} }\nquatf xformOp:orient.timeSamples = { ${rSamples} }\ndouble3 xformOp:scale.timeSamples = { ${sSamples} }\nuniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]\n`;
+    }
+    const ops: string[] = [];
+    let out = '';
+    const t = node.translation;
+    if (
+      t &&
+      (Math.abs(t[0]) > 1e-7 || Math.abs(t[1]) > 1e-7 || Math.abs(t[2]) > 1e-7)
+    ) {
+      out += `double3 xformOp:translate = ${f3(t[0], t[1], t[2])}\n`;
+      ops.push('"xformOp:translate"');
+    }
+    const q = node.rotation;
+    if (q) {
+      const len = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+      const qx = q[0] / len,
+        qy = q[1] / len,
+        qz = q[2] / len,
+        qw = q[3] / len;
+      if (1 - Math.abs(qw) > 1e-7 || Math.hypot(qx, qy, qz) > 1e-7) {
+        out += `quatf xformOp:orient = ${f4(qw, qx, qy, qz)}\n`;
+        ops.push('"xformOp:orient"');
       }
     }
-
-    usda += `def Mesh "${safeMeshName}"${meshHeaderMeta}
-{
-`;
-    if (xr?.physics && xr.physics !== 'none') {
-      const isKinematic = xr.physics === 'static' ? 'true' : 'false';
-      usda += `bool physics:rigidBodyEnabled = true\nbool physics:kinematicEnabled = ${isKinematic}\nbool physics:collisionEnabled = true\n`;
+    const s = node.scale;
+    if (
+      s &&
+      (Math.abs(s[0] - 1) > 1e-7 ||
+        Math.abs(s[1] - 1) > 1e-7 ||
+        Math.abs(s[2] - 1) > 1e-7)
+    ) {
+      out += `float3 xformOp:scale = ${f3(s[0], s[1], s[2])}\n`;
+      ops.push('"xformOp:scale"');
     }
-
-    if (mesh.timeSamples && mesh.timeSamples.times.length > 0) {
-      const ts = mesh.timeSamples;
-      const tSamples = ts.times
-        .map((t, idx) => {
-          const p = ts.translations?.[idx] || [0, 0, 0];
-          return `${formatNum(t)}: (${formatNum(p[0])}, ${formatNum(p[1])}, ${formatNum(p[2])})`;
-        })
-        .join(', ');
-      const rSamples = ts.times
-        .map((t, idx) => {
-          const q = ts.rotations?.[idx] || [0, 0, 0, 1];
-          return `${formatNum(t)}: (${formatNum(q[3])}, ${formatNum(q[0])}, ${formatNum(q[1])}, ${formatNum(q[2])})`;
-        })
-        .join(', ');
-      const sSamples = ts.times
-        .map((t, idx) => {
-          const s = ts.scales?.[idx] || [1, 1, 1];
-          return `${formatNum(t)}: (${formatNum(s[0])}, ${formatNum(s[1])}, ${formatNum(s[2])})`;
-        })
-        .join(', ');
-      usda += `double3 xformOp:translate.timeSamples = { ${tSamples} }\nquatf xformOp:orient.timeSamples = { ${rSamples} }\ndouble3 xformOp:scale.timeSamples = { ${sSamples} }\nuniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]\n`;
+    if (ops.length > 0) {
+      out += `uniform token[] xformOpOrder = [${ops.join(', ')}]\n`;
     }
+    return out;
+  };
 
-    usda += `float3[] extent = [(${formatNum(minX)}, ${formatNum(minY)}, ${formatNum(minZ)}), (${formatNum(maxX)}, ${formatNum(maxY)}, ${formatNum(maxZ)})]
+  const formatMeshBody = (mesh: USDAMeshData): string => {
+    const posCount = mesh.positions.length / 3;
+    let minX = Infinity,
+      minY = Infinity,
+      minZ = Infinity;
+    let maxX = -Infinity,
+      maxY = -Infinity,
+      maxZ = -Infinity;
+    for (let i = 0; i < posCount; i++) {
+      const x = mesh.positions[i * 3];
+      const y = mesh.positions[i * 3 + 1];
+      const z = mesh.positions[i * 3 + 2];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+    if (!isFinite(minX)) {
+      minX = minY = minZ = -1;
+      maxX = maxY = maxZ = 1;
+    }
+    const triCount = Math.floor(mesh.indices.length / 3);
+    const matBinding = sanitizeUsdIdentifier(
+      mesh.materialName,
+      'DefaultMaterial',
+    );
+    const faceVertexCountsStr =
+      triCount > 0
+        ? triCount === 1
+          ? '3'
+          : '3, '.repeat(triCount - 1) + '3'
+        : '';
+    let body = `float3[] extent = [${f3(minX, minY, minZ)}, ${f3(maxX, maxY, maxZ)}]
 int[] faceVertexCounts = [${faceVertexCountsStr}]
 int[] faceVertexIndices = [${formatIndicesArray(mesh.indices)}]
 point3f[] points = [${formatPointsArray(mesh.positions)}]
 `;
-
     if (mesh.normals && mesh.normals.length === mesh.positions.length) {
-      usda += `normal3f[] normals = [${formatPointsArray(mesh.normals)}] (
+      body += `normal3f[] normals = [${formatPointsArray(mesh.normals)}] (
 interpolation = "vertex"
 )
 `;
     }
-
     if (mesh.uvs && mesh.uvs.length === posCount * 2) {
-      usda += `texCoord2f[] primvars:st = [${formatUVsArray(mesh.uvs, posCount)}] (
+      body += `texCoord2f[] primvars:st = [${formatUVsArray(mesh.uvs, posCount)}] (
 interpolation = "vertex"
 )
 `;
     }
+    body += `rel material:binding = </Root/Materials/${matBinding}>\n`;
+    return body;
+  };
 
-    usda += `rel material:binding = </Root/Materials/${matBinding}>
-}
-`;
+  type EmitTask =
+    | {close: true}
+    | {close?: false; node: USDAMeshData; siblings: Set<string>};
+  const rootSiblings = new Set<string>();
+  const emitStack: EmitTask[] = [];
+  for (let i = meshes.length - 1; i >= 0; i--) {
+    emitStack.push({node: meshes[i], siblings: rootSiblings});
+  }
+
+  let primIdx = 0;
+  while (emitStack.length > 0) {
+    const item = emitStack.pop()!;
+    if (item.close) {
+      usda += `}\n`;
+      continue;
+    }
+    const {node, siblings} = item;
+    const isXformOnly = Boolean(node.isXform || node.positions.length === 0);
+    const safeName = uniqName(
+      siblings,
+      sanitizeUsdIdentifier(
+        node.name,
+        isXformOnly ? `Group_${primIdx}` : `Mesh_${primIdx}`,
+      ),
+    );
+    primIdx++;
+
+    const kids = node.children || [];
+    if (isXformOnly) {
+      const meta = formatPrimMeta(node.xrTraits, false);
+      usda += `def Xform "${safeName}"${meta.header}\n{\n${meta.body}${formatXformOps(node)}`;
+      emitStack.push({close: true});
+      const childSiblings = new Set<string>();
+      for (let i = kids.length - 1; i >= 0; i--) {
+        emitStack.push({node: kids[i], siblings: childSiblings});
+      }
+    } else if (kids.length > 0) {
+      // Avoid nested Gprims: wrap mesh + children inside a parent Xform.
+      const xformMeta = formatPrimMeta(node.xrTraits, false);
+      const meshChildName = `${safeName}_mesh`;
+      usda += `def Xform "${safeName}"${xformMeta.header}\n{\n${xformMeta.body}${formatXformOps(node)}`;
+      usda += `def Mesh "${meshChildName}" (\nprepend apiSchemas = ["MaterialBindingAPI"]\n)\n{\n${formatMeshBody(node)}}\n`;
+      emitStack.push({close: true});
+      const childSiblings = new Set<string>([meshChildName]);
+      for (let i = kids.length - 1; i >= 0; i--) {
+        emitStack.push({node: kids[i], siblings: childSiblings});
+      }
+    } else {
+      const meta = formatPrimMeta(node.xrTraits, true);
+      usda += `def Mesh "${safeName}"${meta.header}\n{\n${meta.body}${formatXformOps(node)}${formatMeshBody(node)}}\n`;
+    }
   }
 
   usda += `}
@@ -2073,32 +1987,20 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
     const uncompressedSize = entry.data.length;
 
     const localHeaderBase = 30 + filenameBytes.length;
-    let potentialDataOffset = currentOffset + localHeaderBase;
-    let extraPadding = 0;
-    const rem = potentialDataOffset % 64;
-    if (rem !== 0) {
-      extraPadding = 64 - rem;
-    }
+    const rem = (currentOffset + localHeaderBase) % 64;
+    const extraPadding = rem !== 0 ? 64 - rem : 0;
 
     const localHeader = new Uint8Array(localHeaderBase + extraPadding);
     const view = new DataView(localHeader.buffer);
 
     view.setUint32(0, 0x04034b50, true); // PK\x03\x04
     view.setUint16(4, 20, true);
-    view.setUint16(6, 0, true);
-    view.setUint16(8, 0, true); // Stored (uncompressed)
-    view.setUint16(10, 0, true);
-    view.setUint16(12, 0, true);
     view.setUint32(14, crc, true);
     view.setUint32(18, uncompressedSize, true);
     view.setUint32(22, uncompressedSize, true);
     view.setUint16(26, filenameBytes.length, true);
     view.setUint16(28, extraPadding, true);
-
     localHeader.set(filenameBytes, 30);
-    if (extraPadding > 0) {
-      localHeader.fill(0, 30 + filenameBytes.length);
-    }
 
     fileHeaders.push({
       offset: currentOffset,
@@ -2108,8 +2010,7 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
       entry,
     });
 
-    chunks.push(localHeader);
-    chunks.push(entry.data);
+    chunks.push(localHeader, entry.data);
     currentOffset += localHeader.length + entry.data.length;
   }
 
@@ -2122,19 +2023,10 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
     view.setUint32(0, 0x02014b50, true); // PK\x01\x02
     view.setUint16(4, 20, true);
     view.setUint16(6, 20, true);
-    view.setUint16(8, 0, true);
-    view.setUint16(10, 0, true);
-    view.setUint16(12, 0, true);
-    view.setUint16(14, 0, true);
     view.setUint32(16, h.crc, true);
     view.setUint32(20, h.size, true);
     view.setUint32(24, h.size, true);
     view.setUint16(28, h.filenameBytes.length, true);
-    view.setUint16(30, 0, true);
-    view.setUint16(32, 0, true);
-    view.setUint16(34, 0, true);
-    view.setUint16(36, 0, true);
-    view.setUint32(38, 0, true);
     view.setUint32(42, h.offset, true);
 
     cdRecord.set(h.filenameBytes, 46);
@@ -2148,13 +2040,10 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
   const eocdView = new DataView(eocd.buffer);
 
   eocdView.setUint32(0, 0x06054b50, true); // PK\x05\x06
-  eocdView.setUint16(4, 0, true);
-  eocdView.setUint16(6, 0, true);
   eocdView.setUint16(8, fileHeaders.length, true);
   eocdView.setUint16(10, fileHeaders.length, true);
   eocdView.setUint32(12, centralDirSize, true);
   eocdView.setUint32(16, centralDirStart, true);
-  eocdView.setUint16(20, 0, true);
 
   chunks.push(eocd);
   currentOffset += 22;
@@ -2173,13 +2062,14 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
 // 7. High-Level Conversion APIs
 // =========================================================================
 
+const packUsda = (usdaText: string): Uint8Array =>
+  buildUSDZZip([{filename: 'model.usda', data: encodeUtf8(usdaText)}]);
+
 /**
  * Directly compiles a Three.js Scene into Apple USDZ format with 64-byte alignment.
  */
 export function sceneToUSDZ(scene: Scene): Uint8Array {
-  const usdaText = generateUSDA(scene);
-  const usdaBytes = encodeUtf8(usdaText);
-  return buildUSDZZip([{filename: 'model.usda', data: usdaBytes}]);
+  return packUsda(generateUSDA(scene));
 }
 
 /**
@@ -2188,11 +2078,9 @@ export function sceneToUSDZ(scene: Scene): Uint8Array {
 export function glbToUSDZ(
   glbOrBuffer: GLBData | ArrayBuffer | ArrayBufferView,
 ): Uint8Array {
-  const glb = toGLBData(glbOrBuffer);
-  const meshes = extractMeshesFromGLB(glb);
-  const usdaText = generateUSDAFromMeshes(meshes);
-  const usdaBytes = encodeUtf8(usdaText);
-  return buildUSDZZip([{filename: 'model.usda', data: usdaBytes}]);
+  return packUsda(
+    generateUSDAFromMeshes(extractMeshesFromGLB(toGLBData(glbOrBuffer))),
+  );
 }
 
 /**
@@ -2201,9 +2089,6 @@ export function glbToUSDZ(
 export function generateUSDZ(source: SceneOrGLBSource): Uint8Array {
   if (source && typeof (source as any).toUSDZ === 'function') {
     return (source as any).toUSDZ();
-  }
-  if (source && typeof (source as any).traverse === 'function') {
-    return sceneToUSDZ(source as Scene);
   }
   return glbToUSDZ(source as GLBData | ArrayBuffer | ArrayBufferView);
 }

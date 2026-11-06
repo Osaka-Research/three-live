@@ -911,7 +911,7 @@ impl ThreeEngine {
                                 .get(js_string!("metallic"), &mut self.context)
                                 .ok()
                                 .and_then(|v| v.as_number())
-                                .unwrap_or(0.1) as f32;
+                                .unwrap_or(0.0) as f32;
 
                             let roughness = mat_obj
                                 .get(js_string!("roughness"), &mut self.context)
