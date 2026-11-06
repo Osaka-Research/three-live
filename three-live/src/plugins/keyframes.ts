@@ -428,6 +428,10 @@ export function evaluateAnimation(viewer: any, t: number): void {
   }
 }
 
+const clearMixer = (viewer: any): void => {
+  viewerMixers.delete(viewer);
+};
+
 export const keyframeAnimationPlugin: ThreeLivePlugin & {
   evaluateAnimation?: (viewer: any, t: number) => void;
   crossFadeTo?: (viewer: any, clipName: string, duration?: number) => void;
@@ -442,17 +446,9 @@ export const keyframeAnimationPlugin: ThreeLivePlugin & {
     }
   },
 
-  onLoadModel(viewer: any): void {
-    viewerMixers.delete(viewer);
-  },
-
-  onClearScene(viewer: any): void {
-    viewerMixers.delete(viewer);
-  },
-
-  onDestroy(_gl: WebGL2RenderingContext, viewer: any): void {
-    viewerMixers.delete(viewer);
-  },
+  onLoadModel: clearMixer,
+  onClearScene: clearMixer,
+  onDestroy: (_gl: WebGL2RenderingContext, viewer: any) => clearMixer(viewer),
 
   onUpdate(viewer: any, dt: number): void {
     if (!viewer.isPlayingAnimation) return;

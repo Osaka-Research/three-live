@@ -174,9 +174,19 @@ function buildTarget(options) {
     let code = fs.readFileSync(options.outfile, 'utf8');
     code = code.replace(WEBGL_REGEX, (_, _obj, prop) => String(WEBGL_CONSTANTS[prop]));
     // Fold arithmetic exposed by enum substitution; keep the complete license.
-    code = esbuild
-      ? esbuild.transformSync(code, {minify: true, target: options.target, legalComments: 'inline'}).code
-      : execFileSync(ESBUILD_BIN, ['--minify', `--target=${options.target}`, '--legal-comments=inline'], {input: code, encoding: 'utf8'});
+    code = esbuild ?
+        esbuild
+            .transformSync(
+                code,
+                {minify: true, target: options.target, legalComments: 'inline'})
+            .code :
+        execFileSync(
+            ESBUILD_BIN,
+            [
+              '--minify', `--target=${options.target}`,
+              '--legal-comments=inline'
+            ],
+            {input: code, encoding: 'utf8'});
     fs.writeFileSync(options.outfile, code, 'utf8');
   }
 }
@@ -549,7 +559,8 @@ function buildThreeLive() {
     fs.copyFileSync(cliLauncherSrc, cliLauncherDst);
     try {
       fs.chmodSync(cliLauncherDst, 0o755);
-    } catch (_) {}
+    } catch (_) {
+    }
   }
   fs.copyFileSync(
       path.join(tlDist, 'three-live.min.js'),
@@ -860,16 +871,16 @@ function reportSizes() {
   console.log('Asset                                      Raw Size     Gzip Size     Budget');
   console.log('------------------------------------------------------------------------------');
   const files = [
-    {name: 'three-live-viewer.min.js', budgetKb: '30'},
+    {name: 'three-live-viewer.min.js', budgetKb: '29'},
     {name: 'three-live.min.js', budgetKb: '63'},
     {name: 'three-live-studio.min.js', budgetKb: '29'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
     {name: 'three-live-full.min.js', budgetKb: '104'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '53'},
-    {name: 'xr-live.min.js', budgetKb: '75'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '52'},
+    {name: 'xr-live.min.js', budgetKb: '74'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
-    {name: 'xr-live-spatial.min.js', budgetKb: '63'},
+    {name: 'xr-live-spatial.min.js', budgetKb: '62'},
     {name: 'xr-live-sim.min.js', budgetKb: '26'},
     {name: 'xr-live-full.min.js', budgetKb: '199'},
   ];

@@ -107,7 +107,7 @@ if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
-PREBUILT_JNI_VERSION="v1.0.0-r3"
+PREBUILT_JNI_VERSION="v1.3.0"
 
 download_prebuilt_jnilibs() {
     # If all 3 ABI .so files and the expected prebuilt version stamp are present in jniLibs, reuse them directly.
@@ -131,7 +131,8 @@ download_prebuilt_jnilibs() {
     echo "--> Downloading prebuilt Android JNI libraries from GitHub Releases (skipping local Rust build)..."
 
     if command -v gh >/dev/null 2>&1; then
-        if gh release download v1.0.0 --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1; then
+        if gh release download "${PREBUILT_JNI_VERSION}" --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1 || \
+           gh release download v1.0.0 --repo google/three-live --pattern "three-live-compiler-release.aar" --dir "${tmp_dir}" --clobber >/dev/null 2>&1; then
             downloaded=1
         fi
     fi
@@ -143,7 +144,7 @@ download_prebuilt_jnilibs() {
         fi
         if [ -n "${gh_token}" ] && command -v python3 >/dev/null 2>&1; then
             local asset_url
-            asset_url="$(curl -fsSL -H "Authorization: token ${gh_token}" "https://api.github.com/repos/google/three-live/releases/tags/v1.0.0" 2>/dev/null | python3 -c "
+            asset_url="$(curl -fsSL -H "Authorization: token ${gh_token}" "https://api.github.com/repos/google/three-live/releases/tags/${PREBUILT_JNI_VERSION}" 2>/dev/null | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 for a in data.get('assets', []):
@@ -160,7 +161,8 @@ for a in data.get('assets', []):
     fi
 
     if [ "${downloaded}" -eq 0 ]; then
-        if curl -fsSL "https://github.com/google/three-live/releases/download/v1.0.0/three-live-compiler-release.aar" -o "${aar_file}" 2>/dev/null; then
+        if curl -fsSL "https://github.com/google/three-live/releases/download/${PREBUILT_JNI_VERSION}/three-live-compiler-release.aar" -o "${aar_file}" 2>/dev/null || \
+           curl -fsSL "https://github.com/google/three-live/releases/download/v1.0.0/three-live-compiler-release.aar" -o "${aar_file}" 2>/dev/null; then
             downloaded=1
         fi
     fi

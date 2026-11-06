@@ -94,6 +94,9 @@ jobs:
     name: Build Android AAR
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -206,8 +209,8 @@ jobs:
           path: mobile/android-hands-mediapipe/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
-      # Always validate POMs and publication wiring against mavenLocal, then publish to Maven Central
-      # when Sonatype Central Portal credentials are provisioned in repository secrets.
+      # Always validate POMs and publication wiring against mavenLocal, publish to GitHub Packages
+      # Maven using GITHUB_TOKEN, and publish to Maven Central if Sonatype credentials are set.
       - name: Publish Android AARs to Maven Local
         run: >
           gradle
@@ -218,6 +221,21 @@ jobs:
           :mobile:android-hands-androidxr:publishReleasePublicationToMavenLocal
           :mobile:android-hands-mediapipe:publishReleasePublicationToMavenLocal
           --stacktrace
+
+      - name: Publish Android AARs to GitHub Packages Maven
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          gradle \
+            :mobile:android:publishReleasePublicationToGitHubPackagesRepository \
+            :mobile:android-filament:publishReleasePublicationToGitHubPackagesRepository \
+            :mobile:android-firebase-ai:publishReleasePublicationToGitHubPackagesRepository \
+            :mobile:android-detect-mlkit:publishReleasePublicationToGitHubPackagesRepository \
+            :mobile:android-hands-androidxr:publishReleasePublicationToGitHubPackagesRepository \
+            :mobile:android-hands-mediapipe:publishReleasePublicationToGitHubPackagesRepository \
+            --stacktrace || echo "::notice::GitHub Packages Maven publish skipped or version already exists."
 
       - name: Publish Android AARs to Maven Central
         env:

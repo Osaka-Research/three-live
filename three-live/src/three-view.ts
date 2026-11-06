@@ -513,6 +513,11 @@ if(mode==4)return agxToneMapping(color);
 return color;
 }
 
+vec3 evalLight(vec3 L,vec3 V,vec3 N,vec3 base,float specExp,float specWeight){
+float NoH=max(dot(N,normalize(L+V)),0.0);
+return base*max(dot(N,L),0.0)*0.75+vec3(pow(NoH,specExp)*specWeight+uClearcoat.x*pow(NoH,mix(64.0,512.0,1.0-uClearcoat.y))*0.35);
+}
+
 void main(){
 if(uSectionEnabled==1&&dot(vWorldPos,uSectionPlane.xyz)>uSectionPlane.w)discard;
 vec4 base=uBaseColor;
@@ -550,24 +555,13 @@ float specWeight=mix(0.22*gloss,1.0,metallic);
 vec3 directLight=vec3(0.0);
 for(int i=0;i<2;i++){
 if(i>=uNumDirLights)break;
-vec3 L=normalize(uDirLightDir[i]);
-float NdotL=max(dot(N,L),0.0);
-vec3 H=normalize(L+V);
-float NoH=max(dot(N,H),0.0);
-float spec=pow(NoH,specExp)*specWeight+uClearcoat.x*pow(NoH,mix(64.0,512.0,1.0-uClearcoat.y))*0.35;
-directLight+=(base.rgb*NdotL*0.75+vec3(spec))*uDirLightColor[i];
+directLight+=evalLight(normalize(uDirLightDir[i]),V,N,base.rgb,specExp,specWeight)*uDirLightColor[i];
 }
 for(int i=0;i<2;i++){
 if(i>=uNumPointLights)break;
 vec3 toLight=uPointLightPos[i]-vWorldPos;
 float dist=length(toLight);
-vec3 L=toLight/max(dist,0.0001);
-float atten=1.0/(1.0+0.09*dist+0.032*dist*dist);
-float NdotL=max(dot(N,L),0.0);
-vec3 H=normalize(L+V);
-float NoH=max(dot(N,H),0.0);
-float spec=pow(NoH,specExp)*specWeight+uClearcoat.x*pow(NoH,mix(64.0,512.0,1.0-uClearcoat.y))*0.35;
-directLight+=(base.rgb*NdotL*0.75+vec3(spec))*uPointLightColor[i]*atten;
+directLight+=evalLight(toLight/max(dist,0.0001),V,N,base.rgb,specExp,specWeight)*uPointLightColor[i]/(1.0+0.09*dist+0.032*dist*dist);
 }
 
 vec3 R=reflect(-V,N);
@@ -612,29 +606,30 @@ export function evaluateToneMapping(
 ): [number, number, number] {
   mode = normalizeToneMapping(mode);
   const exp = Number.isFinite(exposure) ? Math.max(0, exposure) : 1.0;
-  let r = Math.max(0, (Number(rgb[0]) || 0) * exp);
-  let g = Math.max(0, (Number(rgb[1]) || 0) * exp);
-  let b = Math.max(0, (Number(rgb[2]) || 0) * exp);
+  let [r, g, b] = [0, 1, 2].map((i) =>
+    Math.max(0, (Number(rgb[i]) || 0) * exp),
+  );
   const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+  const map3 = (fn: (v: number) => number): [number, number, number] => [
+    fn(r),
+    fn(g),
+    fn(b),
+  ];
 
-  if (mode === 'none') {
-    return [clamp01(r), clamp01(g), clamp01(b)];
-  }
-  if (mode === 'reinhard') {
-    return [r / (r + 1), g / (g + 1), b / (b + 1)];
-  }
+  if (mode === 'none') return map3(clamp01);
+  if (mode === 'reinhard') return map3((v) => v / (v + 1));
   if (mode === 'aces') {
-    const aces = (x: number): number => {
+    return map3((x) => {
       const c = x * 0.6;
       return clamp01((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14));
-    };
-    return [aces(r), aces(g), aces(b)];
+    });
   }
   if (mode === 'agx') {
-    const ir = 0.84247906 * r + 0.0784336 * g + 0.07922375 * b;
-    const ig = 0.04232824 * r + 0.87846864 * g + 0.07916613 * b;
-    const ib = 0.04237565 * r + 0.0784336 * g + 0.87914297 * b;
-    const sig = (v: number): number => {
+    const [sr, sg, sb] = [
+      0.84247906 * r + 0.0784336 * g + 0.07922375 * b,
+      0.04232824 * r + 0.87846864 * g + 0.07916613 * b,
+      0.04237565 * r + 0.0784336 * g + 0.87914297 * b,
+    ].map((v) => {
       const ev = clamp01((Math.log2(Math.max(v, 1e-6)) + 12.47393) / 16.5);
       const x2 = ev * ev;
       const x4 = x2 * x2;
@@ -647,43 +642,27 @@ export function evaluateToneMapping(
         0.1191 * ev -
         0.00232
       );
-    };
-    const sr = sig(ir);
-    const sg = sig(ig);
-    const sb = sig(ib);
-    const or = 1.196879 * sr - 0.09802088 * sg - 0.09902974 * sb;
-    const og = -0.05289685 * sr + 1.15190313 * sg - 0.09896118 * sb;
-    const ob = -0.05297164 * sr - 0.09804345 * sg + 1.15107367 * sb;
+    });
     return [
-      clamp01(Math.pow(Math.max(or, 0), 2.2)),
-      clamp01(Math.pow(Math.max(og, 0), 2.2)),
-      clamp01(Math.max(0, Math.pow(Math.max(ob, 0), 2.2))),
+      1.196879 * sr - 0.09802088 * sg - 0.09902974 * sb,
+      -0.05289685 * sr + 1.15190313 * sg - 0.09896118 * sb,
+      -0.05297164 * sr - 0.09804345 * sg + 1.15107367 * sb,
+    ].map((o) => clamp01(Math.pow(Math.max(o, 0), 2.2))) as [
+      number,
+      number,
+      number,
     ];
   }
   // Khronos PBR Neutral ('neutral')
-  const startCompression = 0.76;
-  const desaturation = 0.15;
   const x = Math.min(r, g, b);
   const offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-  r -= offset;
-  g -= offset;
-  b -= offset;
+  [r, g, b] = map3((v) => v - offset);
   const peak = Math.max(r, g, b);
-  if (peak < startCompression) {
-    return [clamp01(r), clamp01(g), clamp01(b)];
-  }
-  const d = 1.0 - startCompression;
-  const newPeak = 1.0 - (d * d) / (peak + d - startCompression);
+  if (peak < 0.76) return map3(clamp01);
+  const newPeak = 1.0 - 0.0576 / (peak - 0.52);
   const scale = newPeak / peak;
-  r *= scale;
-  g *= scale;
-  b *= scale;
-  const gt = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
-  return [
-    clamp01(r + (newPeak - r) * gt),
-    clamp01(g + (newPeak - g) * gt),
-    clamp01(b + (newPeak - b) * gt),
-  ];
+  const gt = 1.0 - 1.0 / (0.15 * (peak - newPeak) + 1.0);
+  return map3((v) => clamp01(v * scale + (newPeak - v * scale) * gt));
 }
 
 const VS_PICK = `#version 300 es
@@ -1296,30 +1275,29 @@ function buildGpuSceneUnchecked(
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
+        const uploadTex = (source: TexImageSource) => {
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            source,
+          );
+          gl.generateMipmap(gl.TEXTURE_2D);
+          onTextureLoad?.();
+        };
+
         if (imgDef.bufferView !== undefined) {
           const bv = gltf.bufferViews[imgDef.bufferView];
-          const imgSlice = bin.slice(
-            bv.byteOffset || 0,
-            (bv.byteOffset || 0) + bv.byteLength,
-          );
-          const blob = new Blob([imgSlice], {
+          const offset = bv.byteOffset || 0;
+          const blob = new Blob([bin.slice(offset, offset + bv.byteLength)], {
             type: imgDef.mimeType || 'image/png',
           });
           if (typeof createImageBitmap === 'function') {
             createImageBitmap(blob)
-              .then((bmp) => {
-                gl.bindTexture(gl.TEXTURE_2D, tex);
-                gl.texImage2D(
-                  gl.TEXTURE_2D,
-                  0,
-                  gl.RGBA,
-                  gl.RGBA,
-                  gl.UNSIGNED_BYTE,
-                  bmp,
-                );
-                gl.generateMipmap(gl.TEXTURE_2D);
-                onTextureLoad?.();
-              })
+              .then(uploadTex)
               .catch(() => {});
           }
         } else if (imgDef.uri) {
@@ -1328,19 +1306,7 @@ function buildGpuSceneUnchecked(
             const img = new Image();
             img.crossOrigin = 'anonymous';
             img.referrerPolicy = 'no-referrer';
-            img.onload = () => {
-              gl.bindTexture(gl.TEXTURE_2D, tex);
-              gl.texImage2D(
-                gl.TEXTURE_2D,
-                0,
-                gl.RGBA,
-                gl.RGBA,
-                gl.UNSIGNED_BYTE,
-                img,
-              );
-              gl.generateMipmap(gl.TEXTURE_2D);
-              onTextureLoad?.();
-            };
+            img.onload = () => uploadTex(img);
             img.src = safeUri;
           } else {
             console.warn(
@@ -1618,13 +1584,11 @@ function buildGpuSceneUnchecked(
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
         if (idxAcc.componentType === 5125) {
           idxDataRaw = new Uint32Array(bin, idxOffset, idxAcc.count);
-          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
         } else if (idxAcc.componentType === 5121) {
           // UNSIGNED_BYTE indices (valid glTF) are widened to 16-bit.
           idxDataRaw = Uint16Array.from(
             new Uint8Array(bin, idxOffset, idxAcc.count),
           );
-          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
         } else {
           idxDataRaw =
             idxOffset % 2 === 0
@@ -1632,8 +1596,8 @@ function buildGpuSceneUnchecked(
               : new Uint16Array(
                   bin.slice(idxOffset, idxOffset + idxAcc.count * 2),
                 );
-          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
         }
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idxDataRaw, gl.STATIC_DRAW);
       } else {
         indexCount = posAcc.count;
       }
@@ -3025,6 +2989,8 @@ export class ThreeView {
 
   private setupEvents(): void {
     const c = this.canvas;
+    const now = () =>
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     this.boundContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -3034,8 +3000,7 @@ export class ThreeView {
     this.boundPointerDown = (e: PointerEvent) => {
       if (!this.interactive) return;
       this.isPointerDown = true;
-      this.lastInteractionTime =
-        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.lastInteractionTime = now();
       this.lastPointerX = e.clientX;
       this.lastPointerY = e.clientY;
       this.totalDragDist = 0;
@@ -3048,8 +3013,7 @@ export class ThreeView {
 
     this.boundPointerMove = (e: PointerEvent) => {
       if (!this.isPointerDown || !this.interactive) return;
-      this.lastInteractionTime =
-        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.lastInteractionTime = now();
       const prev = this.activePointers.get(e.pointerId) || {
         x: this.lastPointerX,
         y: this.lastPointerY,
@@ -3090,8 +3054,7 @@ export class ThreeView {
     c.addEventListener('pointermove', this.boundPointerMove);
 
     this.boundPointerUp = (e: PointerEvent) => {
-      this.lastInteractionTime =
-        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.lastInteractionTime = now();
       this.activePointers.delete(e.pointerId);
       if (this.activePointers.size === 0) {
         this.isPointerDown = false;
@@ -3120,8 +3083,7 @@ export class ThreeView {
     this.boundWheel = (e: WheelEvent) => {
       if (!this.interactive) return;
       e.preventDefault();
-      this.lastInteractionTime =
-        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.lastInteractionTime = now();
       const factor = Math.exp(e.deltaY * 0.001);
       this.targetDistance = this.clampDistance(this.targetDistance * factor);
     };
@@ -3156,95 +3118,71 @@ export class ThreeView {
 
     this.boundKeyDown = (e: KeyboardEvent) => {
       if (!this.interactive) return;
-      const now =
-        typeof performance !== 'undefined' ? performance.now() : Date.now();
       switch (e.key) {
         case 'ArrowLeft':
-          this.lastInteractionTime = now;
           this.targetTheta = this.clampTheta(this.targetTheta - 0.1);
-          e.preventDefault();
           break;
         case 'ArrowRight':
-          this.lastInteractionTime = now;
           this.targetTheta = this.clampTheta(this.targetTheta + 0.1);
-          e.preventDefault();
           break;
         case 'ArrowUp':
-          this.lastInteractionTime = now;
           this.targetPhi = this.clampPhi(this.targetPhi + 0.08);
-          e.preventDefault();
           break;
         case 'ArrowDown':
-          this.lastInteractionTime = now;
           this.targetPhi = this.clampPhi(this.targetPhi - 0.08);
-          e.preventDefault();
           break;
         case '+':
-        case '=': {
-          this.lastInteractionTime = now;
+        case '=':
           this.targetDistance = this.clampDistance(this.targetDistance * 0.9);
-          e.preventDefault();
           break;
-        }
         case '-':
-        case '_': {
-          this.lastInteractionTime = now;
+        case '_':
           this.targetDistance = this.clampDistance(this.targetDistance * 1.1);
-          e.preventDefault();
           break;
-        }
         case 'Home':
-          this.lastInteractionTime = now;
           this.resetCamera();
-          e.preventDefault();
           break;
+        default:
+          return;
       }
+      this.lastInteractionTime = now();
+      e.preventDefault();
     };
     c.addEventListener('keydown', this.boundKeyDown);
   }
 
   private teardownEvents(): void {
+    const rm = (
+      target: EventTarget,
+      evt: string,
+      key:
+        | 'boundContextLost'
+        | 'boundContextRestored'
+        | 'boundContextMenu'
+        | 'boundPointerDown'
+        | 'boundPointerMove'
+        | 'boundPointerUp'
+        | 'boundWheel'
+        | 'boundKeyDown'
+        | 'boundSetCamera'
+        | 'boundResetCamera',
+    ) => {
+      if (this[key]) {
+        target.removeEventListener(evt, this[key] as EventListener);
+        this[key] = null;
+      }
+    };
     const c = this.canvas;
-    if (this.boundContextLost) {
-      c.removeEventListener('webglcontextlost', this.boundContextLost);
-      this.boundContextLost = null;
-    }
-    if (this.boundContextRestored) {
-      c.removeEventListener('webglcontextrestored', this.boundContextRestored);
-      this.boundContextRestored = null;
-    }
-    if (this.boundContextMenu) {
-      c.removeEventListener('contextmenu', this.boundContextMenu);
-      this.boundContextMenu = null;
-    }
-    if (this.boundPointerDown) {
-      c.removeEventListener('pointerdown', this.boundPointerDown);
-      this.boundPointerDown = null;
-    }
-    if (this.boundPointerMove) {
-      c.removeEventListener('pointermove', this.boundPointerMove);
-      this.boundPointerMove = null;
-    }
-    if (this.boundPointerUp) {
-      c.removeEventListener('pointerup', this.boundPointerUp);
-      this.boundPointerUp = null;
-    }
-    if (this.boundWheel) {
-      c.removeEventListener('wheel', this.boundWheel);
-      this.boundWheel = null;
-    }
-    if (this.boundKeyDown) {
-      c.removeEventListener('keydown', this.boundKeyDown);
-      this.boundKeyDown = null;
-    }
-    if (this.boundSetCamera) {
-      this.container.removeEventListener('setCamera', this.boundSetCamera);
-      this.boundSetCamera = null;
-    }
-    if (this.boundResetCamera) {
-      this.container.removeEventListener('resetCamera', this.boundResetCamera);
-      this.boundResetCamera = null;
-    }
+    rm(c, 'webglcontextlost', 'boundContextLost');
+    rm(c, 'webglcontextrestored', 'boundContextRestored');
+    rm(c, 'contextmenu', 'boundContextMenu');
+    rm(c, 'pointerdown', 'boundPointerDown');
+    rm(c, 'pointermove', 'boundPointerMove');
+    rm(c, 'pointerup', 'boundPointerUp');
+    rm(c, 'wheel', 'boundWheel');
+    rm(c, 'keydown', 'boundKeyDown');
+    rm(this.container, 'setCamera', 'boundSetCamera');
+    rm(this.container, 'resetCamera', 'boundResetCamera');
   }
 
   public raycastFromScreenPoint(

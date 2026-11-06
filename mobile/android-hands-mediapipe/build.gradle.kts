@@ -87,6 +87,20 @@ publishing {
     }
   }
   repositories {
+    val ghToken = System.getenv("GITHUB_TOKEN")
+    if (!ghToken.isNullOrBlank()) {
+      maven {
+        name = "GitHubPackages"
+        url =
+          uri(
+            "https://maven.pkg.github.com/${System.getenv("GITHUB_REPOSITORY") ?: "google/three-live"}"
+          )
+        credentials {
+          username = System.getenv("GITHUB_ACTOR") ?: "github-actions"
+          password = ghToken
+        }
+      }
+    }
     val centralUser = System.getenv("MAVEN_CENTRAL_USERNAME")
     val centralPass = System.getenv("MAVEN_CENTRAL_PASSWORD")
     if (!centralUser.isNullOrBlank() && !centralPass.isNullOrBlank()) {

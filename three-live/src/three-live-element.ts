@@ -549,19 +549,18 @@ export class ThreeLiveElement extends BaseElement {
   protected getAttr(name: string): string | null {
     return this.getAttribute(name);
   }
-  protected setAttr(name: string, val: string | null): void {
-    if (val !== null) this.setAttribute(name, val);
+  protected setAttr(name: string, val: string | number | null): void {
+    if (val !== null) this.setAttribute(name, String(val));
     else this.removeAttribute(name);
   }
   protected getBoolAttr(name: string): boolean {
-    return this.hasAttribute(name) && this.getAttribute(name) !== 'false';
+    return this.hasAttribute(name) && this.getAttr(name) !== 'false';
   }
   protected setBoolAttr(name: string, val: boolean): void {
-    if (val) this.setAttribute(name, '');
-    else this.removeAttribute(name);
+    this.setAttr(name, val ? '' : null);
   }
   protected getFloatAttr(name: string, fallback: number): number {
-    const val = this.getAttribute(name);
+    const val = this.getAttr(name);
     return val !== null ? parseFloat(val) : fallback;
   }
 
@@ -638,12 +637,12 @@ export class ThreeLiveElement extends BaseElement {
    */
   get sandbox(): SandboxMode | string {
     return (
-      this.getAttribute('sandbox') ||
+      this.getAttr('sandbox') ||
       (getSharedRegistry().sandboxIframeSrc ? 'iframe' : 'worker')
     );
   }
   set sandbox(value: SandboxMode | string) {
-    this.setAttribute('sandbox', value);
+    this.setAttr('sandbox', value);
   }
 
   /**
@@ -681,7 +680,7 @@ export class ThreeLiveElement extends BaseElement {
     return this.getFloatAttr('exposure', 1.0);
   }
   set exposure(val: number) {
-    this.setAttribute('exposure', String(val));
+    this.setAttr('exposure', val);
   }
 
   get autoRotate(): boolean {
@@ -695,7 +694,7 @@ export class ThreeLiveElement extends BaseElement {
     return this.getFloatAttr('auto-rotate-delay', 3000);
   }
   set autoRotateDelay(val: number) {
-    this.setAttribute('auto-rotate-delay', String(val));
+    this.setAttr('auto-rotate-delay', val);
   }
 
   get rotationPerSecond(): string {
@@ -717,17 +716,17 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   get arScale(): 'auto' | 'fixed' {
-    return (this.getAttribute('ar-scale') as 'auto' | 'fixed') || 'auto';
+    return (this.getAttr('ar-scale') as 'auto' | 'fixed') || 'auto';
   }
   set arScale(val: 'auto' | 'fixed') {
-    this.setAttribute('ar-scale', val);
+    this.setAttr('ar-scale', val);
   }
 
   get arPlacement(): 'floor' | 'wall' {
-    return (this.getAttribute('ar-placement') as 'floor' | 'wall') || 'floor';
+    return (this.getAttr('ar-placement') as 'floor' | 'wall') || 'floor';
   }
   set arPlacement(val: 'floor' | 'wall') {
-    this.setAttribute('ar-placement', val);
+    this.setAttr('ar-placement', val);
   }
 
   get canActivateAR(): boolean {
@@ -738,48 +737,48 @@ export class ThreeLiveElement extends BaseElement {
     return this.getFloatAttr('shadow-intensity', 0);
   }
   set shadowIntensity(val: number) {
-    this.setAttribute('shadow-intensity', String(val));
+    this.setAttr('shadow-intensity', val);
   }
 
   get shadowSoftness(): number {
     return this.getFloatAttr('shadow-softness', 0.5);
   }
   set shadowSoftness(val: number) {
-    this.setAttribute('shadow-softness', String(val));
+    this.setAttr('shadow-softness', val);
   }
 
   get toneMapping(): ToneMappingMode {
-    return normalizeToneMapping(this.getAttribute('tone-mapping'));
+    return normalizeToneMapping(this.getAttr('tone-mapping'));
   }
   set toneMapping(val: ToneMappingMode) {
-    this.setAttribute('tone-mapping', val);
+    this.setAttr('tone-mapping', val);
   }
 
   get bloom(): number {
     return this.getFloatAttr('bloom', 0);
   }
   set bloom(val: number) {
-    this.setAttribute('bloom', String(val));
+    this.setAttr('bloom', val);
   }
 
   get bloomThreshold(): number {
     return parseNumericAttr(
-      this.getAttribute('bloom-threshold'),
+      this.getAttr('bloom-threshold'),
       HOST_BLOOM_DEFAULT_THRESHOLD,
     );
   }
   set bloomThreshold(val: number) {
-    this.setAttribute('bloom-threshold', String(val));
+    this.setAttr('bloom-threshold', val);
   }
 
   get bloomRadius(): number {
     return parseNumericAttr(
-      this.getAttribute('bloom-radius'),
+      this.getAttr('bloom-radius'),
       HOST_BLOOM_DEFAULT_RADIUS,
     );
   }
   set bloomRadius(val: number) {
-    this.setAttribute('bloom-radius', String(val));
+    this.setAttr('bloom-radius', val);
   }
 
   get outlineSelected(): boolean {
@@ -1034,9 +1033,7 @@ export class ThreeLiveElement extends BaseElement {
       if (typeof model === 'string') {
         const response = await fetch(model, {signal: current.signal});
         if (!response.ok) {
-          throw new Error(
-            `Failed to load "${model}": HTTP ${response.status}`,
-          );
+          throw new Error(`Failed to load "${model}": HTTP ${response.status}`);
         }
         resolvedModel = await response.arrayBuffer();
       } else {
@@ -1052,11 +1049,11 @@ export class ThreeLiveElement extends BaseElement {
       this.setSlotVisible('error', false);
       this.updateHotspots();
 
-      const selected = this.getAttribute('selected-mesh');
+      const selected = this.getAttr('selected-mesh');
       if (selected) {
         this.viewer.setSelectedMesh(selected);
       }
-      const initialVariant = this.getAttribute('variant-name');
+      const initialVariant = this.getAttr('variant-name');
       if (initialVariant) {
         this.selectVariant(initialVariant);
       }
@@ -1128,8 +1125,8 @@ export class ThreeLiveElement extends BaseElement {
       );
     }
 
-    const iosSrc = this.getAttribute('ios-src');
-    const preferredModes = (this.getAttribute('ar-modes') || '')
+    const iosSrc = this.getAttr('ios-src');
+    const preferredModes = (this.getAttr('ar-modes') || '')
       .split(/\s+/)
       .filter(Boolean) as ARMode[];
 
@@ -1255,7 +1252,7 @@ export class ThreeLiveElement extends BaseElement {
     if (!this.isModelLoaded) {
       this.setSlotVisible('poster', true);
     }
-    const posterSrc = this.getAttribute('poster');
+    const posterSrc = this.getAttr('poster');
     if (posterSrc) {
       this.updatePoster(posterSrc);
     }
@@ -1275,24 +1272,16 @@ export class ThreeLiveElement extends BaseElement {
     const autoRotate = this.autoRotate;
     const exposure = this.exposure;
 
-    const minOrbit = this.parseOrbitLimit(
-      this.getAttribute('min-camera-orbit'),
-    );
-    const maxOrbit = this.parseOrbitLimit(
-      this.getAttribute('max-camera-orbit'),
-    );
-    const cameraTarget = this.parseCameraTarget(
-      this.getAttribute('camera-target'),
-    );
-    const fieldOfView = this.parseFieldOfView(
-      this.getAttribute('field-of-view'),
-    );
+    const minOrbit = this.parseOrbitLimit(this.getAttr('min-camera-orbit'));
+    const maxOrbit = this.parseOrbitLimit(this.getAttr('max-camera-orbit'));
+    const cameraTarget = this.parseCameraTarget(this.getAttr('camera-target'));
+    const fieldOfView = this.parseFieldOfView(this.getAttr('field-of-view'));
 
     this.viewer = new ThreeView(this, this.canvas, {
       autoRotate,
       autoRotateDelay: this.autoRotateDelay,
       autoRotateSpeed: this.parseRotationPerSecond(
-        this.getAttribute('rotation-per-second'),
+        this.getAttr('rotation-per-second'),
       ),
       exposure,
       shadowIntensity: this.shadowIntensity,
@@ -1301,7 +1290,7 @@ export class ThreeLiveElement extends BaseElement {
       environmentImage: this.environmentImage,
       autoplay: this.autoplay,
       animationName: this.animationName || undefined,
-      variantName: this.getAttribute('variant-name') || undefined,
+      variantName: this.getAttr('variant-name') || undefined,
       fieldOfView,
       cameraTarget,
       minCameraOrbit: minOrbit,
@@ -1324,7 +1313,7 @@ export class ThreeLiveElement extends BaseElement {
       this.viewer.setSkyboxImage(this.skyboxImage).catch(() => {});
     }
 
-    const cameraOrbitStr = this.getAttribute('camera-orbit');
+    const cameraOrbitStr = this.getAttr('camera-orbit');
     if (cameraOrbitStr) {
       this.applyCameraOrbit(cameraOrbitStr);
     }
@@ -1358,7 +1347,7 @@ export class ThreeLiveElement extends BaseElement {
 
     if (!this.posterEl) {
       this.posterEl = document.createElement('img');
-      this.posterEl.setAttribute('alt', '3D Scene Preview');
+      this.posterEl.alt = '3D Scene Preview';
       this.posterEl.style.cssText =
         'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:opacity .35s ease-out;pointer-events:none;z-index:1';
       this.appendChild(this.posterEl);
@@ -1387,10 +1376,14 @@ export class ThreeLiveElement extends BaseElement {
     if (typeof document === 'undefined') return;
     if (!this.arButton) {
       const btn = document.createElement('button');
-      btn.setAttribute('type', 'button');
-      btn.setAttribute('aria-label', 'View in Augmented Reality');
+      btn.type = 'button';
       btn.className = 'three-live-ar-button';
-      btn.setAttribute('part', 'default-ar-button');
+      for (const [k, v] of [
+        ['aria-label', 'View in Augmented Reality'],
+        ['part', 'default-ar-button'],
+      ]) {
+        btn.setAttribute(k, v);
+      }
 
       // Build SVG icon and label via DOM APIs instead of innerHTML so
       // `require-trusted-types-for 'script'` is never violated.
@@ -1509,8 +1502,8 @@ export class ThreeLiveElement extends BaseElement {
 
   private applyOrbitLimits(): void {
     if (!this.viewer) return;
-    const min = this.parseOrbitLimit(this.getAttribute('min-camera-orbit'));
-    const max = this.parseOrbitLimit(this.getAttribute('max-camera-orbit'));
+    const min = this.parseOrbitLimit(this.getAttr('min-camera-orbit'));
+    const max = this.parseOrbitLimit(this.getAttr('max-camera-orbit'));
     this.viewer.setOrbitLimits({
       minTheta: min.theta,
       maxTheta: max.theta,
@@ -1612,13 +1605,17 @@ export class ThreeLiveElement extends BaseElement {
     return new Promise<ArrayBuffer | GLBData | void>((resolve, reject) => {
       const abort = () => reject(current.signal.reason);
       current.signal.addEventListener('abort', abort, {once: true});
-      if (!active()) { abort(); return; }
+      if (!active()) {
+        abort();
+        return;
+      }
       const callbacks: ScriptExecutionCallbacks = {
         onModelReady: (model) => {
-          this.loadModelWithLimits(model, SANDBOX_HOST_SCENE_LIMITS, current).then(
-            () => resolve(model),
-            reject,
-          );
+          this.loadModelWithLimits(
+            model,
+            SANDBOX_HOST_SCENE_LIMITS,
+            current,
+          ).then(() => resolve(model), reject);
         },
         onUpdateTransforms: (transforms) => {
           if (active()) this.viewer?.updateMeshTransforms(transforms);
@@ -1629,14 +1626,18 @@ export class ThreeLiveElement extends BaseElement {
           this.emitError(error, 'script');
           reject(error);
         },
-        onToast: (message) => { if (active()) this.showToast(message); },
+        onToast: (message) => {
+          if (active()) this.showToast(message);
+        },
       };
       invokeRunner(runner, callbacks).then(
         (handle) => {
           if (active()) this.scriptHandle = handle || null;
           else handle?.terminate();
         },
-        (error) => { if (active()) callbacks.onError?.(error); },
+        (error) => {
+          if (active()) callbacks.onError?.(error);
+        },
       );
     });
   }
