@@ -534,6 +534,43 @@ async function testDeferredBlobCallback(): Promise<void> {
   }
 }
 
+async function testFrameQuestionBinding(): Promise<void> {
+  const h = host(), first = transport(), next = transport();
+  const ctrl = new XRGeminiLiveController(h.element);
+  ctrl.connect({transport: first.socket, streamFrames: false});
+  const pending = ctrl.sendFrame();
+  ctrl.sendText('Which color?');
+  assert(first.sent.length === 0, 'question does not overtake pending canvas capture');
+  h.captures[0].resolve(frame('green'));
+  await pending; await Promise.resolve();
+  const turns = first.sent[1]?.clientContent as any;
+  assert((first.sent[0]?.realtimeInput as any)?.mediaChunks[0].data === 'green', 'local frame is forwarded before its question');
+  assert(turns?.turns[0].parts[0].inlineData.data === 'green' && turns.turns[0].parts[1].text === 'Which color?',
+    'image and question share a single conversation turn without a fixed delay');
+  const stale = ctrl.sendFrame(); ctrl.sendText('stale question');
+  ctrl.connect({transport: next.socket, streamFrames: false});
+  h.captures[1].resolve(frame('old')); await stale; await Promise.resolve();
+  assert(next.sent.length === 0, 'capture-dependent question cannot enter a replacement session');
+  ctrl.disconnect();
+}
+
+async function testVisualCaptureFailures(): Promise<void> {
+  const h = host(), t = transport();
+  const ctrl = new XRGeminiLiveController(h.element);
+  ctrl.connect({transport: t.socket, streamFrames: false});
+  ctrl.sendText('fresh question', {captureFrame: true});
+  assert(h.captures.length === 1 && t.sent.length === 0, 'explicit visual question starts a fresh capture');
+  h.captures[0].reject(new Error('capture unavailable'));
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  assert(t.sent.length === 0, 'failed capture never downgrades a visual question to text');
+  delete h.element.captureViewFrame;
+  ctrl.sendText('visual unavailable', {captureFrame: true});
+  assert(t.sent.length === 0, 'missing capture capability refuses an explicitly visual question');
+  ctrl.sendText('ordinary text');
+  assert(t.sent.length === 1, 'ordinary text keeps its immediate text-only behavior');
+  ctrl.disconnect();
+}
+
 async function testCaptureReentry(): Promise<void> {
   const h = host(), first = transport(), next = transport();
   const ctrl = new XRGeminiLiveController(h.element);
@@ -557,18 +594,6 @@ async function testCaptureReentry(): Promise<void> {
   h.captures[1].resolve(frame('new'));
   assert(await nested, 'replacement capture completes normally');
   assert(next.sent.length === 1 && JSON.stringify(next.sent[0]).includes('"new"'), 'only replacement pixels reach its transport');
-  ctrl.disconnect();
-}
-
-async function testTextProtocolUnchanged(): Promise<void> {
-  const h = host(), t = transport(), ctrl = new XRGeminiLiveController(h.element);
-  ctrl.connect({transport: t.socket, streamFrames: false});
-  const capture = ctrl.sendFrame();
-  ctrl.sendText('ordinary text');
-  assert(JSON.stringify(t.sent[0]) === JSON.stringify({clientContent: {turns: [{role: 'user', parts: [{text: 'ordinary text'}]}], turnComplete: true}}),
-    'text remains immediate and text-only while capture is pending');
-  h.captures[0].resolve(frame('pixels')); await capture;
-  assert(t.sent.length === 2 && !!t.sent[1].realtimeInput, 'frame transport retains its existing realtime format');
   ctrl.disconnect();
 }
 
@@ -650,8 +675,9 @@ async function main(): Promise<void> {
   await testFrameTimers();
   testReentrantReconnect();
   await testDeferredBlobCallback();
+  await testFrameQuestionBinding();
+  await testVisualCaptureFailures();
   await testCaptureReentry();
-  await testTextProtocolUnchanged();
   testCloseCleansBeforeReentry();
   await testHoldSessionLease();
   console.log(`Gemini Live sessions: ${passed} passed, ${failed} failed`);

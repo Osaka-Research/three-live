@@ -324,7 +324,8 @@ export class XRGeminiLiveController {
   /** Invalidates asynchronous work even when a transport object is reused. */
   private sessionId = 0;
   private frameTimer: ReturnType<typeof setInterval> | null = null;
-  private captureInFlight = false;
+  private pendingFrame: Promise<boolean> | null = null;
+  private lastFrame: {base64: string; mimeType: string} | null = null;
   private speakReplies = false;
   private playAudio = true;
   /** Set once output transcription arrives this turn; text parts are then ignored. */
@@ -408,8 +409,7 @@ export class XRGeminiLiveController {
     const id = ++this.sessionId;
     if (this.frameTimer !== null) clearInterval(this.frameTimer);
     const transport = this.transport;
-    this.frameTimer = this.frameCamera = this.transport = null;
-    this.captureInFlight = false;
+    this.frameTimer = this.pendingFrame = this.lastFrame = this.frameCamera = this.transport = null;
     this.turnHasOutputTranscription = false;
     const finalized = this.transcripts.finalize();
     const element = this.element as object;
@@ -427,25 +427,33 @@ export class XRGeminiLiveController {
     return id;
   }
 
-  /** Captures one frame; the originating session owns its admission lock. */
-  async sendFrame(): Promise<boolean> {
+  /** Captures one frame; publish its promise before invoking host callbacks. */
+  sendFrame(): Promise<boolean> {
     const host = this.element as CaptureHost;
     const transport = this.transport;
     const current = this.sessionGuard();
-    if (!transport || this.captureInFlight || typeof host?.captureViewFrame !== 'function') return false;
-    this.captureInFlight = true;
-    try {
-      const camera = this.detectObjects ? snapshotDetectionCamera(this.element) : null;
-      const frame = await host.captureViewFrame({format: 'image/jpeg', quality: 0.6});
-      if (!frame?.base64 || !current()) return false;
-      this.frameCamera = camera;
-      transport.send({realtimeInput: {mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}]}});
-      return true;
-    } catch {
-      return false;
-    } finally {
-      if (current()) this.captureInFlight = false;
-    }
+    if (!transport || this.pendingFrame || typeof host?.captureViewFrame !== 'function') return Promise.resolve(false);
+    let finish!: (sent: boolean) => void;
+    const pending = new Promise<boolean>(resolve => { finish = resolve; });
+    this.pendingFrame = pending;
+    void (async () => {
+      let sent = false;
+      try {
+        const camera = this.detectObjects ? snapshotDetectionCamera(this.element) : null;
+        const frame = await host.captureViewFrame!({format: 'image/jpeg', quality: 0.6});
+        if (frame?.base64 && current()) {
+          this.frameCamera = camera;
+          this.lastFrame = {base64: frame.base64, mimeType: frame.mimeType};
+          transport.send({realtimeInput: {mediaChunks: [{mimeType: frame.mimeType, data: frame.base64}]}});
+          sent = true;
+        }
+      } catch { /* Failed capture cannot admit a dependent visual question. */ }
+      finally {
+        if (this.pendingFrame === pending) this.pendingFrame = null;
+        finish(sent);
+      }
+    })();
+    return pending;
   }
 
   /** Sends a chunk of 16-bit little-endian mono PCM microphone audio. */
@@ -458,12 +466,30 @@ export class XRGeminiLiveController {
     });
   }
 
-  /** Sends a completed user text turn; the wire format is unchanged. */
-  sendText(text: string): void {
-    if (!this.transport) return;
+  /** Sends a text turn after any pending capture; captureFrame binds a fresh view. */
+  sendText(text: string, options?: {captureFrame?: boolean}): void {
+    const transport = this.transport;
+    const current = this.sessionGuard();
     const clipped = String(text ?? '').slice(0, MAX_TEXT_CHARS);
-    if (!clipped) return;
-    this.transport.send({clientContent: {turns: [{role: 'user', parts: [{text: clipped}]}], turnComplete: true}});
+    if (!transport || !clipped) return;
+    const canCapture = typeof (this.element as CaptureHost)?.captureViewFrame === 'function';
+    if (options?.captureFrame && !canCapture) return;
+    const pending =
+      this.pendingFrame ?? (options?.captureFrame && canCapture ? this.sendFrame() : null);
+    const send = (captured = true) => {
+      if (!captured || !current()) return;
+      const frame = pending ? this.lastFrame : null;
+      // Bind the image and question in one conversation turn. Realtime streams
+      // alone provide no cross-modality ordering guarantee at the service.
+      const parts: Array<Record<string, unknown>> = frame
+        ? [{inlineData: {mimeType: frame.mimeType, data: frame.base64}}, {text: clipped}]
+        : [{text: clipped}];
+      transport.send({clientContent: {turns: [{role: 'user', parts}], turnComplete: true}});
+    };
+    if (pending) void pending.then(send).catch((error) => {
+      if (current()) emitPluginEvent(this.element, 'xr-gemini-error', {message: String(error)});
+    });
+    else send();
   }
 
   /** Processes one server message (exposed for custom transports and tests). */
@@ -663,7 +689,7 @@ function finishHold(element: object, meshName: string, options: HoldToAskOptions
   if (!current()) return;
   const prompt = buildHoldToAskPrompt(meshName, options, transcript);
   emitPluginEvent(element, 'xr-hold-to-ask', {mesh: meshName, transcript, prompt});
-  if (current()) controllers.get(element)?.sendText(prompt);
+  if (current()) controllers.get(element)?.sendText(prompt, {captureFrame: true});
 }
 
 /** `ThreeLivePlugin` wiring press-and-hold object queries to Gemini Live. */

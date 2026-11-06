@@ -661,3 +661,20 @@ transcription, audio and recognition callbacks. Teardown detaches old state befo
 external callbacks run. Reentrant replacement keeps the newer session and closes
 superseded transports. Synchronous setup failures clean up the failed session.
 Ordinary text turns retain the existing text-only wire format.
+
+
+### Session-bound view questions
+
+`XRGeminiLiveController.sendText(text)` waits for an in-flight local canvas
+capture. The resulting conversation turn includes the captured image and text
+together. To request a fresh view even when no capture is pending, use
+`sendText(text, {captureFrame: true})`; hold-to-ask uses that path. Capture failure
+or a replaced session discards the dependent question. No fixed delay is used.
+The [Live API content contract](https://ai.google.dev/api/live#BidiGenerateContentClientContent)
+binds both parts in the conversation; realtime stream ordering alone is insufficient.
+This client contract does not certify the model's answer or live service acceptance.
+
+Explicit disconnect and remote closure clear capture, camera, transcription,
+audio and active hold state before teardown callbacks run. Hold timers and
+recognition results carry the originating session lease. Gesture cancellation
+aborts recognition; normal release can finish speech within the same lease.
