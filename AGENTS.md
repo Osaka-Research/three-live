@@ -32,7 +32,7 @@ Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` 
 Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots        | `<three-live>` | `three-live-studio.min.js`    | `< 29 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                | `<three-live>` | `three-live-cad.min.js`       | `< 10 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                 | `<three-live>` | `three-live-animation.min.js` | `< 11 KB gz`
-Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                                   | `<three-live>` | `three-live-full.min.js`      | `< 103 KB gz`
+Full 3D viewer + studio + CAD/CSG/Text + animation + IK                                                   | `<three-live>` | `three-live-full.min.js`      | `< 104 KB gz`
 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`              | `< 74 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP               | `<xr-live>`    | `xr-live-sensors.min.js`      | `< 10 KB gz`
 Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                | `<xr-live>`    | `xr-live-spatial.min.js`      | `< 62 KB gz`

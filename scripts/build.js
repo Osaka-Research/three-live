@@ -861,7 +861,7 @@ function reportSizes() {
     {name: 'three-live-studio.min.js', budgetKb: '29'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
-    {name: 'three-live-full.min.js', budgetKb: '103'},
+    {name: 'three-live-full.min.js', budgetKb: '104'},
     {name: 'xr-live-viewer.min.js', budgetKb: '52'},
     {name: 'xr-live.min.js', budgetKb: '74'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},

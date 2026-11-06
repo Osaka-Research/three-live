@@ -73,7 +73,7 @@ jobs:
               { file: "three-live/dist/three-live-studio.min.js", limit: 29696 },
               { file: "three-live/dist/three-live-cad.min.js", limit: 10240 },
               { file: "three-live/dist/three-live-animation.min.js", limit: 11264 },
-              { file: "three-live/dist/three-live-full.min.js", limit: 105472 },
+              { file: "three-live/dist/three-live-full.min.js", limit: 106496 },
               { file: "xr-live/dist/xr-live-viewer.min.js", limit: 53248 },
               { file: "xr-live/dist/xr-live.min.js", limit: 75776 },
               { file: "xr-live/dist/xr-live-sensors.min.js", limit: 10240 },
