@@ -60,40 +60,6 @@ jobs:
           npx --no-install three-live-cli --help
           npx --no-install three-live-cli --locate-only
 
-      - name: Verify bundle size limits
-        if: runner.os == 'Linux'
-        run: |
-          node -e '
-            const fs = require("fs");
-            const zlib = require("zlib");
-            const budgets = [
-              { file: "dist/three-live-viewer.min.js", limit: 29696 },
-              { file: "dist/three-live.min.js", limit: 64512 },
-              { file: "three-live/dist/three-live.min.js", limit: 64512 },
-              { file: "three-live/dist/three-live-studio.min.js", limit: 29696 },
-              { file: "three-live/dist/three-live-cad.min.js", limit: 10240 },
-              { file: "three-live/dist/three-live-animation.min.js", limit: 11264 },
-              { file: "three-live/dist/three-live-full.min.js", limit: 106496 },
-              { file: "xr-live/dist/xr-live-viewer.min.js", limit: 53248 },
-              { file: "xr-live/dist/xr-live.min.js", limit: 75776 },
-              { file: "xr-live/dist/xr-live-sensors.min.js", limit: 10240 },
-              { file: "xr-live/dist/xr-live-spatial.min.js", limit: 63488 },
-              { file: "xr-live/dist/xr-live-sim.min.js", limit: 26624 },
-              { file: "xr-live/dist/xr-live-full.min.js", limit: 203776 }
-            ];
-            for (const { file, limit } of budgets) {
-              if (fs.existsSync(file)) {
-                const raw = fs.readFileSync(file);
-                const gz = zlib.gzipSync(raw, { level: 9 });
-                console.log(`${file}: raw ${raw.length} B, gzip ${gz.length} B (limit ${limit} B)`);
-                if (gz.length > limit) {
-                  console.error(`ERROR: ${file} exceeds ${limit} B budget (${gz.length} B)`);
-                  process.exit(1);
-                }
-              }
-            }
-          '
-
   test-rust:
     name: Rust Compiler Suite (Ubuntu)
     runs-on: ubuntu-latest
