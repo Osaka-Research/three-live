@@ -173,6 +173,10 @@ function buildTarget(options) {
   if (options.minify && fs.existsSync(options.outfile)) {
     let code = fs.readFileSync(options.outfile, 'utf8');
     code = code.replace(WEBGL_REGEX, (_, _obj, prop) => String(WEBGL_CONSTANTS[prop]));
+    // Fold arithmetic exposed by enum substitution; keep the complete license.
+    code = esbuild
+      ? esbuild.transformSync(code, {minify: true, target: options.target, legalComments: 'inline'}).code
+      : execFileSync(ESBUILD_BIN, ['--minify', `--target=${options.target}`, '--legal-comments=inline'], {input: code, encoding: 'utf8'});
     fs.writeFileSync(options.outfile, code, 'utf8');
   }
 }

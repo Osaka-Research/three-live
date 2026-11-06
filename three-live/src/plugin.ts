@@ -31,6 +31,7 @@ export interface ThreeLivePlugin {
   onElementDisconnected?(element: any): void;
   onParseGLB?(glbData: any): void;
   onLoadModel?(viewer: any, gltf: any): void;
+  onClearScene?(viewer: any): void;
   onMeshSelect?(viewer: any, hit: any): void;
   onResolveShader?(
     primitiveDef: any,

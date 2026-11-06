@@ -442,6 +442,18 @@ export const keyframeAnimationPlugin: ThreeLivePlugin & {
     }
   },
 
+  onLoadModel(viewer: any): void {
+    viewerMixers.delete(viewer);
+  },
+
+  onClearScene(viewer: any): void {
+    viewerMixers.delete(viewer);
+  },
+
+  onDestroy(_gl: WebGL2RenderingContext, viewer: any): void {
+    viewerMixers.delete(viewer);
+  },
+
   onUpdate(viewer: any, dt: number): void {
     if (!viewer.isPlayingAnimation) return;
 

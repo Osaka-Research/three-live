@@ -333,6 +333,18 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   private scriptHandle: ScriptExecutionHandle | null = null;
+  private loadController: AbortController | null = null;
+
+  private beginLoad(): AbortController {
+    const previous = this.loadController;
+    const handle = this.scriptHandle;
+    const current = new AbortController();
+    this.loadController = current;
+    this.scriptHandle = null;
+    previous?.abort();
+    handle?.terminate();
+    return current;
+  }
   private resizeObserver: ResizeObserver | null = null;
   private mutationObserver: MutationObserver | null = null;
 
@@ -378,8 +390,7 @@ export class ThreeLiveElement extends BaseElement {
       plugin.onElementDisconnected?.(this);
     }
 
-    this.scriptHandle?.terminate();
-    this.scriptHandle = null;
+    this.beginLoad().abort();
     this.mutationObserver?.disconnect();
     this.mutationObserver = null;
     this.resizeObserver?.disconnect();
@@ -997,7 +1008,7 @@ export class ThreeLiveElement extends BaseElement {
     };
   }
 
-  public async loadModel(
+  public loadModel(
     model: GLBData | ArrayBuffer | ArrayBufferView | string,
   ): Promise<void> {
     return this.loadModelWithLimits(model);
@@ -1010,7 +1021,9 @@ export class ThreeLiveElement extends BaseElement {
   private async loadModelWithLimits(
     model: GLBData | ArrayBuffer | ArrayBufferView | string,
     limits?: HostSceneLimits,
+    current = this.beginLoad(),
   ): Promise<void> {
+    current.signal.throwIfAborted();
     if (!this.viewer) {
       this.currentModel = model;
       this.currentModelLimits = limits;
@@ -1019,18 +1032,17 @@ export class ThreeLiveElement extends BaseElement {
     try {
       let resolvedModel: GLBData | ArrayBuffer | ArrayBufferView;
       if (typeof model === 'string') {
-        this.isModelLoaded = false;
-        this.viewer?.clearScene?.();
-        const response = await fetch(model);
+        const response = await fetch(model, {signal: current.signal});
         if (!response.ok) {
           throw new Error(
-            `Failed to load 3D model from "${model}": HTTP ${response.status}`,
+            `Failed to load "${model}": HTTP ${response.status}`,
           );
         }
         resolvedModel = await response.arrayBuffer();
       } else {
         resolvedModel = model;
       }
+      current.signal.throwIfAborted();
       const glbData = toGLBData(resolvedModel);
       this.viewer.loadGLBData(glbData, limits);
       this.currentModel = glbData;
@@ -1055,7 +1067,9 @@ export class ThreeLiveElement extends BaseElement {
         source: typeof model === 'string' ? 'src' : 'model',
       });
     } catch (err: any) {
-      this.emitError(err, 'load');
+      if (!current.signal.aborted) {
+        this.emitError(err, 'load');
+      }
       throw err;
     }
   }
@@ -1586,70 +1600,43 @@ export class ThreeLiveElement extends BaseElement {
     const runner = ThreeLiveElement.scriptRunner;
     if (!runner) {
       const error = new Error(
-        'Procedural script execution requires "three-live/full" or ThreeLiveElement.registerScriptRunner().',
+        'Script execution requires "three-live/full" or registerScriptRunner().',
       );
       this.showToast(error.message);
       this.emitError(error, 'script');
       return Promise.reject(error);
     }
 
-    if (this.scriptHandle) {
-      this.scriptHandle.terminate();
-      this.scriptHandle = null;
-    }
-    this.isModelLoaded = false;
-    this.viewer?.clearScene?.();
-
+    const current = this.beginLoad();
+    const active = () => !current.signal.aborted;
     return new Promise<ArrayBuffer | GLBData | void>((resolve, reject) => {
-      let settled = false;
+      const abort = () => reject(current.signal.reason);
+      current.signal.addEventListener('abort', abort, {once: true});
+      if (!active()) { abort(); return; }
       const callbacks: ScriptExecutionCallbacks = {
         onModelReady: (model) => {
-          this.loadModelWithLimits(model, SANDBOX_HOST_SCENE_LIMITS).then(
-            () => {
-              if (!settled) {
-                settled = true;
-                resolve(model);
-              }
-            },
-            (error: unknown) => {
-              const message =
-                error instanceof Error ? error.message : String(error);
-              this.showToast(message);
-              if (!settled) {
-                settled = true;
-                reject(error);
-              }
-            },
+          this.loadModelWithLimits(model, SANDBOX_HOST_SCENE_LIMITS, current).then(
+            () => resolve(model),
+            reject,
           );
         },
-        onUpdateTransforms: (transforms) =>
-          this.viewer?.updateMeshTransforms(transforms),
+        onUpdateTransforms: (transforms) => {
+          if (active()) this.viewer?.updateMeshTransforms(transforms);
+        },
         onError: (error) => {
+          if (!active()) return;
           this.showToast(error.message);
           this.emitError(error, 'script');
-          if (!settled) {
-            settled = true;
-            reject(error);
-          }
+          reject(error);
         },
-        onToast: (message) => this.showToast(message),
+        onToast: (message) => { if (active()) this.showToast(message); },
       };
-
       invokeRunner(runner, callbacks).then(
         (handle) => {
-          if (handle) {
-            this.scriptHandle = handle;
-          }
+          if (active()) this.scriptHandle = handle || null;
+          else handle?.terminate();
         },
-        (error: unknown) => {
-          if (error instanceof Error && error.message) {
-            this.showToast(error.message);
-          }
-          if (!settled) {
-            settled = true;
-            reject(error);
-          }
-        },
+        (error) => { if (active()) callbacks.onError?.(error); },
       );
     });
   }

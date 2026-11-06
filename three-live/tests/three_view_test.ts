@@ -884,6 +884,31 @@ async function runThreeViewTests() {
   });
   await viewInstance.loadModel(glbBytes.buffer);
 
+  // Replacements retire playback only after GPU preparation succeeds.
+  const priorModel = (viewInstance as any).lastGlbData;
+  const clip = {name: 'Old', duration: 2, channels: []};
+  viewInstance.animations = [clip];
+  viewInstance.currentClip = clip;
+  viewInstance.isPlayingAnimation = true;
+  viewInstance.animationTime = 0.75;
+  crossFadeTo(viewInstance, 'Old', 1);
+  let replacementFailed = false;
+  try { viewInstance.loadGLBData({gltf: {asset: {version: '2.0'}, meshes: 'invalid'}, bin: new ArrayBuffer(0)} as any); }
+  catch { replacementFailed = true; }
+  assert(replacementFailed && viewInstance.currentClip === clip && viewInstance.isPlayingAnimation &&
+    (viewInstance as any).lastGlbData === priorModel,
+    'failed scene preparation preserves playback and context-restoration source');
+  viewInstance.loadGLBData(priorModel);
+  assert(viewInstance.currentClip === null && !viewInstance.isPlayingAnimation && viewInstance.animationTime === 0,
+    'accepted scene replacement retires previous clip and clock');
+  viewInstance.isPlayingAnimation = true;
+  keyframeAnimationPlugin.onUpdate?.(viewInstance, 0.25);
+  assert(viewInstance.animationTime === 0, 'accepted replacement retires stale crossfade mixers');
+  viewInstance.clearScene();
+  assert((viewInstance as any).lastGlbData === null && viewInstance.animationTime === 0,
+    'explicit clear cannot resurrect the old scene on context restoration');
+  viewInstance.loadGLBData(priorModel);
+
   // Camera state APIs
   viewInstance.setCamera(30, 60, 4.0);
   viewInstance.jumpCameraToGoal();
