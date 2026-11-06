@@ -197,12 +197,20 @@ fn shade_pbr(
             color: [1.0, 0.98, 0.95],
             intensity: 1.35,
             position: [4.0, 7.0, 5.0],
+            direction: None,
+            range: 0.0,
+            inner_cone_angle: 0.0,
+            outer_cone_angle: 0.0,
         },
         Light3D {
             light_type: "directional".to_string(),
             color: [0.55, 0.70, 0.95],
             intensity: 0.55,
             position: [-4.0, 3.0, -3.0],
+            direction: None,
+            range: 0.0,
+            inner_cone_angle: 0.0,
+            outer_cone_angle: 0.0,
         },
     ];
     let active_lights: &[Light3D] = if lights.is_empty() { &default_lights } else { lights };
@@ -225,6 +233,33 @@ fn shade_pbr(
             let dz = light.position[2] - world_pos[2];
             let d2 = (dx * dx + dy * dy + dz * dz).max(0.05);
             (normalize3([dx, dy, dz]), 1.0 / (1.0 + 0.08 * d2))
+        } else if lt == "spot" {
+            let dx = light.position[0] - world_pos[0];
+            let dy = light.position[1] - world_pos[1];
+            let dz = light.position[2] - world_pos[2];
+            let d2 = (dx * dx + dy * dy + dz * dz).max(0.05);
+            let l_dir = normalize3([dx, dy, dz]);
+            let mut dist_atten = 1.0 / (1.0 + 0.08 * d2);
+            if light.range > 0.0 {
+                let d = d2.sqrt();
+                let r_ratio = (d / light.range).clamp(0.0, 1.0);
+                let r2 = r_ratio * r_ratio;
+                let window = (1.0 - r2 * r2).max(0.0);
+                dist_atten *= window * window;
+            }
+            let spot_dir = light.direction.map(normalize3).unwrap_or([0.0, -1.0, 0.0]);
+            let cos_theta = dot3([-l_dir[0], -l_dir[1], -l_dir[2]], spot_dir);
+            let outer = if light.outer_cone_angle > 0.0 {
+                light.outer_cone_angle
+            } else {
+                std::f32::consts::FRAC_PI_3
+            };
+            let inner = light.inner_cone_angle.clamp(0.0, outer);
+            let cos_outer = outer.cos();
+            let cos_inner = inner.cos();
+            let t = ((cos_theta - cos_outer) / (cos_inner - cos_outer).max(1e-4)).clamp(0.0, 1.0);
+            let cone_atten = t * t * (3.0 - 2.0 * t);
+            (l_dir, dist_atten * cone_atten)
         } else {
             (normalize3(light.position), 1.0)
         };

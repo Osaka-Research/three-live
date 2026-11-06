@@ -302,10 +302,91 @@ function runThreeAuthorTests() {
   assert(
     fallbackGlb.byteLength > 100 &&
       warnings.some((w: string) => w.includes('ShaderMaterial')) &&
-      warnings.some((w: string) => w.includes('IcosahedronGeometry')) &&
-      warnings.some((w: string) => w.includes('CapsuleGeometry')),
+      warnings.some((w: string) => w.includes('HemisphereLight')) &&
+      !warnings.some((w: string) => w.includes('IcosahedronGeometry')) &&
+      !warnings.some((w: string) => w.includes('CapsuleGeometry')) &&
+      !warnings.some((w: string) => w.includes('SpotLight')),
     'Permissive fallback shims degrade unsupported LLM geometries/materials to valid GLB meshes and record warnings',
   );
+
+  // Native polyhedron geometries (Tetrahedron, Octahedron, Icosahedron, Dodecahedron)
+  const tetra0 = new THREE.TetrahedronGeometry(1, 0);
+  const octa0 = new THREE.OctahedronGeometry(1, 0);
+  const icosa0 = new THREE.IcosahedronGeometry(1, 0);
+  const dodeca0 = new THREE.DodecahedronGeometry(1, 0);
+  const icosa1 = new THREE.IcosahedronGeometry(1, 1);
+  assert(
+    tetra0.attributes.position.count === 12 &&
+      octa0.attributes.position.count === 24 &&
+      icosa0.attributes.position.count === 60 &&
+      dodeca0.attributes.position.count === 108 &&
+      icosa1.attributes.position.count === 240,
+    'Native Polyhedron geometries (Tetrahedron, Octahedron, Icosahedron, Dodecahedron) generate exact facet & subdivided vertex counts',
+  );
+
+  // Native CapsuleGeometry, RingGeometry, CircleGeometry, SpotLight, Points, and Line/Edges/Wireframe lowering
+  {
+    const capGeo = new THREE.CapsuleGeometry(0.5, 1.0, 4, 8);
+    capGeo.computeBoundingBox();
+    const ringGeo = new THREE.RingGeometry(0.5, 1.0, 16, 1);
+    const circleGeo = new THREE.CircleGeometry(1.0, 16);
+    assert(
+      capGeo.attributes.position.count === 90 &&
+        Math.abs((capGeo.boundingBox?.max.y ?? 0) - 1.0) < 1e-4 &&
+        ringGeo.attributes.position.count === 34 &&
+        (ringGeo.index?.count ?? 0) === 96 &&
+        circleGeo.attributes.position.count === 34 &&
+        (circleGeo.index?.count ?? 0) === 48,
+      'Native CapsuleGeometry, RingGeometry, and CircleGeometry generate true hemispherical caps, annulus holes, and planar disks',
+    );
+
+    const spotLight = new THREE.SpotLight(0xffaa00, 2.5, 15, Math.PI / 4, 0.5, 2);
+    spotLight.position.set(0, 5, 5);
+    spotLight.lookAt(1, 0, -2);
+    assert(
+      spotLight.type === 'spot' &&
+        spotLight.target.position.x === 1 &&
+        spotLight.target.position.y === 0 &&
+        spotLight.target.position.z === -2 &&
+        spotLight.penumbra === 0.5,
+      'Native SpotLight preserves cone angle, penumbra, range, and target.position on lookAt()',
+    );
+
+    // Points + deferred BufferGeometry + Line / EdgesGeometry / WireframeGeometry lowering
+    const ptsGeo = new THREE.BufferGeometry();
+    const ptsMat = new THREE.PointsMaterial({color: 0x00ffcc, size: 0.08});
+    const ptsObj = new THREE.Points(ptsGeo, ptsMat);
+    // Deferred attribute assignment after Points construction (common in LLM particle scripts)
+    ptsGeo.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 1, 1, 1, -1, 2, 0], 3),
+    );
+
+    const edgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1), 15);
+    const lineSegs = new THREE.LineSegments(
+      edgesGeo,
+      new THREE.LineBasicMaterial({color: 0xffffff}),
+    );
+    const wireGeo = new THREE.WireframeGeometry(new THREE.TetrahedronGeometry(1, 0));
+    const wireLine = new THREE.LineSegments(
+      wireGeo,
+      new THREE.LineDashedMaterial({color: 0xff0088}),
+    );
+    const clonedPts = ptsObj.clone();
+    const lowerScene = new THREE.Scene();
+    lowerScene.add(ptsObj, lineSegs, wireLine);
+    const lowerGlb = lowerScene.toGLB();
+    assert(
+      lowerGlb.byteLength > 200 &&
+        clonedPts instanceof THREE.Points &&
+        ptsObj.geometry.attributes.position.count === 3 * 6 &&
+        (ptsObj.geometry.index?.count ?? 0) === 3 * 24 &&
+        edgesGeo.attributes.position.count === 12 * 2 &&
+        lineSegs.geometry.attributes.position.count > 24 &&
+        wireGeo.attributes.position.count === 6 * 2,
+      'Points, LineSegments, EdgesGeometry, and WireframeGeometry lower cleanly to renderable triangle meshes (including deferred BufferGeometry and clone())',
+    );
+  }
 
   // 8. EXT_meshopt_compression (ATTRIBUTES, TRIANGLES, INDICES + Filters + Caps)
   {

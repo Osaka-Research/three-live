@@ -423,7 +423,7 @@ impl ThreeEngine {
         // grants it nothing: the wrapper is a scoping device, not a privilege boundary,
         // and the code runs in the same realm with the same globals either way.
         let wrapped = format!(
-            "{{\n{}\n;\nif (typeof animate === 'function') {{ globalThis.animate = animate; }}\n}}",
+            "{{\n{}\n;\nif (typeof scene === 'object' && scene !== null && Array.isArray(scene.children)) {{ globalThis.scene = scene; }}\nif (typeof camera === 'object' && camera !== null && camera.position) {{ globalThis.camera = camera; }}\nif (typeof animate === 'function') {{ globalThis.animate = animate; }}\n}}",
             script
         );
         self.eval_with_deadline(
@@ -1020,7 +1020,45 @@ impl ThreeEngine {
                             let position =
                                 extract_f32_3(&pos_val, [0.0, 10.0, 10.0], &mut self.context);
 
-                            rust_lights.push(Light3D { light_type, color, intensity, position });
+                            let dir_val = light_obj
+                                .get(js_string!("direction"), &mut self.context)
+                                .unwrap_or(JsValue::undefined());
+                            let direction = if dir_val.is_undefined() || dir_val.is_null() {
+                                None
+                            } else {
+                                Some(extract_f32_3(&dir_val, [0.0, -1.0, 0.0], &mut self.context))
+                            };
+
+                            let range = light_obj
+                                .get(js_string!("range"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0) as f32;
+
+                            let inner_cone_angle = light_obj
+                                .get(js_string!("inner_cone_angle"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(0.0)
+                                as f32;
+
+                            let outer_cone_angle = light_obj
+                                .get(js_string!("outer_cone_angle"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_number())
+                                .unwrap_or(std::f64::consts::FRAC_PI_3)
+                                as f32;
+
+                            rust_lights.push(Light3D {
+                                light_type,
+                                color,
+                                intensity,
+                                position,
+                                direction,
+                                range,
+                                inner_cone_angle,
+                                outer_cone_angle,
+                            });
                         }
                     }
                 }

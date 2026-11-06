@@ -181,11 +181,14 @@ export {
 // =========================================================================
 
 export interface LightGpu {
-  type: 'ambient' | 'directional' | 'point';
+  type: 'ambient' | 'directional' | 'point' | 'spot';
   color: [number, number, number];
   intensity: number;
   position?: [number, number, number];
   direction?: [number, number, number];
+  range?: number;
+  innerConeAngle?: number;
+  outerConeAngle?: number;
 }
 
 export interface GLBData {
@@ -422,7 +425,8 @@ uniform float uNormalScale,uOcclusionStrength;
 uniform vec2 uViewportSize;
 uniform vec4 uSectionPlane;
 uniform int uToneMapping,uNumDirLights,uNumPointLights,uSectionEnabled;
-uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2];
+uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2],uPointLightSpotDir[2];
+uniform vec2 uPointLightSpotCone[2];
 out vec4 fragColor;
 
 vec2 envBRDF(float r,float n){
@@ -561,7 +565,10 @@ for(int i=0;i<2;i++){
 if(i>=uNumPointLights)break;
 vec3 toLight=uPointLightPos[i]-vWorldPos;
 float dist=length(toLight);
-directLight+=evalLight(toLight/max(dist,0.0001),V,N,base.rgb,specExp,specWeight)*uPointLightColor[i]/(1.0+0.09*dist+0.032*dist*dist);
+vec3 L=toLight/max(dist,0.0001);
+float spotAtt=clamp((dot(-L,uPointLightSpotDir[i])-uPointLightSpotCone[i].y)/max(uPointLightSpotCone[i].x-uPointLightSpotCone[i].y,0.0001),0.0,1.0);
+spotAtt*=spotAtt;
+directLight+=evalLight(L,V,N,base.rgb,specExp,specWeight)*uPointLightColor[i]*spotAtt/(1.0+0.09*dist+0.032*dist*dist);
 }
 
 vec3 R=reflect(-V,N);
@@ -721,6 +728,8 @@ const RENDER_UNIFORMS = [
   'uNumPointLights',
   'uPointLightPos',
   'uPointLightColor',
+  'uPointLightSpotDir',
+  'uPointLightSpotCone',
   'uEnvIntensity',
   'uExposure',
   'uViewportSize',
@@ -1205,10 +1214,24 @@ function buildGpuSceneUnchecked(
           meshIdx: mIdx,
         }));
 
-  // 2. Extract lights from data.lights or glTF KHR_lights_punctual
+  // 2. Extract lights from data.lights, gltf.asset.extras.lights, or glTF KHR_lights_punctual
   const lights: LightGpu[] = [];
-  if (Array.isArray(data.lights) && data.lights.length > 0) {
-    lights.push(...data.lights);
+  const rawExtrasLights =
+    Array.isArray(data.lights) && data.lights.length > 0
+      ? data.lights
+      : Array.isArray(gltf.asset?.extras?.lights) &&
+          gltf.asset.extras.lights.length > 0
+        ? gltf.asset.extras.lights
+        : null;
+  if (rawExtrasLights) {
+    for (const rl of rawExtrasLights) {
+      lights.push({
+        ...rl,
+        type: rl.type || rl.light_type || 'point',
+        innerConeAngle: rl.innerConeAngle ?? rl.inner_cone_angle,
+        outerConeAngle: rl.outerConeAngle ?? rl.outer_cone_angle,
+      });
+    }
   } else if (gltf.extensions?.KHR_lights_punctual?.lights) {
     const rawLights = gltf.extensions.KHR_lights_punctual.lights;
     for (const rl of rawLights) {
@@ -1217,7 +1240,9 @@ function buildGpuSceneUnchecked(
           ? 'directional'
           : rl.type === 'point'
             ? 'point'
-            : 'ambient';
+            : rl.type === 'spot'
+              ? 'spot'
+              : 'ambient';
       lights.push({
         type,
         color: rl.color || [1, 1, 1],
@@ -2351,6 +2376,8 @@ export class ThreeView {
     const dirCols: number[] = [];
     const ptPositions: number[] = [];
     const ptCols: number[] = [];
+    const ptSpotDirs: number[] = [];
+    const ptSpotCones: number[] = [];
 
     for (const l of this.lights) {
       const col = l.color || [1, 1, 1];
@@ -2365,10 +2392,23 @@ export class ThreeView {
           col[1] * intensity,
           col[2] * intensity,
         );
-      } else if (l.type === 'point' && ptPositions.length < 6) {
+      } else if (
+        (l.type === 'point' || l.type === 'spot') &&
+        ptPositions.length < 6
+      ) {
         const p = l.position || [0, 0, 0];
         ptPositions.push(p[0], p[1], p[2]);
         ptCols.push(col[0] * intensity, col[1] * intensity, col[2] * intensity);
+        if (l.type === 'spot') {
+          const sd = l.direction || [0, -1, 0];
+          const outer = Math.max(0.01, Math.min(Math.PI / 2, l.outerConeAngle ?? Math.PI / 3));
+          const inner = Math.max(0, Math.min(outer - 1e-4, l.innerConeAngle ?? 0));
+          ptSpotDirs.push(sd[0], sd[1], sd[2]);
+          ptSpotCones.push(Math.cos(inner), Math.cos(outer));
+        } else {
+          ptSpotDirs.push(0, -1, 0);
+          ptSpotCones.push(-2, -3);
+        }
       }
     }
 
@@ -2387,6 +2427,8 @@ export class ThreeView {
     if (ptPositions.length > 0) {
       gl.uniform3fv(u.uPointLightPos, ptPositions);
       gl.uniform3fv(u.uPointLightColor, ptCols);
+      if (u.uPointLightSpotDir) gl.uniform3fv(u.uPointLightSpotDir, ptSpotDirs);
+      if (u.uPointLightSpotCone) gl.uniform2fv(u.uPointLightSpotCone, ptSpotCones);
     }
     gl.uniform1f(u.uEnvIntensity, this.envIntensity);
   }
