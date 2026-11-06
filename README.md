@@ -82,10 +82,10 @@ Three-Live keeps its web footprint small so you can drop 3D or XR into a page
 without shipping unused code. Every bundle and plugin works on both prebuilt
 `.glb`, `.usdz`, and `.spz` assets and live `<script type="text/three">` scenes:
 
-*   **Compact core (`< 29 KB` to `< 74 KB gz`):** The 3D viewer
-    (`three-live-viewer.min.js`) is `< 29 KB gz` (`< 62 KB gz` with the live
+*   **Compact core (`< 30 KB` to `< 75 KB gz`):** The 3D viewer
+    (`three-live-viewer.min.js`) is `< 30 KB gz` (`< 63 KB gz` with the live
     Three.js compiler in `three-live.min.js`), and the WebXR viewer
-    (`xr-live-viewer.min.js`) is `< 52 KB gz` (`< 74 KB gz` with the live
+    (`xr-live-viewer.min.js`) is `< 53 KB gz` (`< 75 KB gz` with the live
     Three.js compiler in `xr-live.min.js`).
 *   **Core 3D, CAD, and animation plugins (`<three-live>`, 15 plugins):**
     Optional domain bundles (`three-live-studio.min.js` at `< 29 KB gz`,
@@ -344,12 +344,9 @@ are feature-complete and ready for integration and evaluation.
     **[npm (`three-live`)](https://www.npmjs.com/package/three-live)**,
     **[npm (`xr-live`)](https://www.npmjs.com/package/xr-live)**,
     **[Crates.io (`three-live-compiler`)](https://crates.io/crates/three-live-compiler)**,
-    **Swift Package Manager**, **GitHub Releases**, and the **jsDelivr / GitHub
-    Pages CDNs** (see [Install packages and bundles](#install-packages-and-bundles)).
-    Android Gradle modules (`com.google.threelive:*`) include `maven-publish`
-    and GPG signing for Maven Local and Maven Central (pending Maven Central
-    namespace credentials; prebuilt release AARs are published on GitHub
-    Releases today).
+    **Swift Package Manager**, **JitPack / GitHub Packages Maven**, **GitHub
+    Releases**, and the **jsDelivr / GitHub Pages CDNs** (see
+    [Install packages and bundles](#install-packages-and-bundles)).
 *   **Release notes:** See [`CHANGELOG.md`](CHANGELOG.md) for release history
     and architectural notes.
 
@@ -386,8 +383,24 @@ are feature-complete and ready for integration and evaluation.
     Swift Package Manager automatically resolves the prebuilt, checksum-pinned
     `ThreeLiveCompiler.xcframework.zip` archive from GitHub Releases—no local
     Rust or Node.js toolchain is required.
-*   **Android (prebuilt release AAR, Maven Local, or source):**
+*   **Android (JitPack, GitHub Packages Maven, prebuilt release AAR, or
+    source):**
 
+    *   **JitPack (`https://jitpack.io`, no authentication required):** Add
+        `maven("https://jitpack.io")` to `settings.gradle.kts`, then add:
+
+        ```kotlin
+        dependencies {
+          implementation("com.github.google.three-live:compiler:v1.3.0")
+          // Optional adapters: :filament, :firebase-ai, :detect-mlkit, :hands-androidxr, :hands-mediapipe
+        }
+        ```
+    *   **GitHub Packages Maven
+        (`https://maven.pkg.github.com/google/three-live`):** Configure the
+        repository in `settings.gradle.kts` and add
+        `implementation("com.google.threelive:compiler:1.3.0")` (plus optional
+        `:filament`, `:firebase-ai`, `:detect-mlkit`, `:hands-androidxr`,
+        `:hands-mediapipe`).
     *   **Prebuilt AAR:** Download `three-live-compiler-release.aar` (includes
         `arm64-v8a`, `armeabi-v7a`, and `x86_64` JNI `.so` libraries) and
         optional adapter AARs (`three-live-filament-release.aar`, etc.) from
@@ -399,7 +412,8 @@ are feature-complete and ready for integration and evaluation.
         add `implementation("com.google.threelive:compiler:1.3.0")`.
     *   **From source:** Run `make android` (or
         `bash scripts/build_android_aar.sh`).
-*   **Rust CLI (`three-live-cli`) and library crate (`Crates.io`, prebuilt binaries, or source):**
+*   **Rust CLI (`three-live-cli`) and library crate (`Crates.io`, prebuilt
+    binaries, or source):**
 
     *   **Crates.io (library & CLI):**
 
@@ -424,16 +438,16 @@ following table lists each bundle and its enforced gzipped budget:
 <!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
 | Family | Bundle file | Enforced budget (`.min.js.gz`) | Included capabilities |
 | :--------------- | :-------------------------------- | :------------: | :-------------------------- |
-| **`three-live`** | **`three-live-viewer.min.js`** | **`< 29 KB gz`** | Lean `.glb` and `.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, and AR packager. |
+| **`three-live`** | **`three-live-viewer.min.js`** | **`< 30 KB gz`** | Lean `.glb` and `.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, and AR packager. |
 |  | **`three-live.min.js`** | **`< 63 KB gz`** | Standard `<three-live>` + **`three-author`** (`<script type="text/three">`, `InstancedMesh` GPU instancing, `KHR_interactivity` compiler, 5 tone-mapping modes, contact shadows) + AR packager. |
 |  | **`three-live-studio.min.js`** | **`< 29 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-full.min.js`** | **`< 104 KB gz`** | All-in-one 3D bundle (`three-live` + `studio` + `cad` + `animation`, all 15 plugins auto-registered). |
-| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 52 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
-|  | **`xr-live.min.js`** | **`< 74 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ and GLB compiler. |
+| **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 53 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |
+|  | **`xr-live.min.js`** | **`< 75 KB gz`** | Standard `<xr-live>` + **`three-author`** (`<script type="text/three">`) + runtime USDZ and GLB compiler. |
 |  | **`xr-live-sensors.min.js`** | **`< 10 KB gz`** | Add-on plugin: Hardware XR sensors (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
-|  | **`xr-live-spatial.min.js`** | **`< 62 KB gz`** | Add-on plugin bundle registering all 15 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`, `spatial-audio`). |
+|  | **`xr-live-spatial.min.js`** | **`< 63 KB gz`** | Add-on plugin bundle registering all 15 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`, `spatial-audio`). |
 |  | **`xr-live-sim.min.js`** | **`< 26 KB gz`** | Add-on simulation plugin bundle registering all six simulation plugins (`character-controller`, `steering-agents`, `rigid-body`, `hit-zones`, `objectives`, `synth-audio`). |
 |  | **`xr-live-full.min.js`** | **`< 199 KB gz`** | All-in-one 3D, XR, and simulation bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 15 spatial plugins + all 6 simulation plugins). |
 <!-- mdformat on -->
