@@ -65,3 +65,7 @@ local.properties
 # Local planning / parity notes (never committed to GitHub).
 docs/xr-spatial-parity.md
 docs/*-plan.md
+
+# Generated evaluation reports and renders
+evals/results/
+evals/scripts/*_repaired/

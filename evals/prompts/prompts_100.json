@@ -1,0 +1,702 @@
+[
+  {
+    "id": "cad_01",
+    "category": "hard_surface_cad",
+    "title": "Vintage Brass Hurricane Lantern",
+    "prompt": "Create a 3D model of a vintage brass hurricane lantern (~0.35m tall) sitting on the ground (y=0). Include a cylindrical fuel base with a filler cap, a central transmissive glass globe, four protective vertical brass guard rods, a fluted top chimney cap, a wire bail handle, and a warm point light glowing inside the glass globe.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "MeshPhysicalMaterial", "PointLight", "Group"]
+  },
+  {
+    "id": "cad_02",
+    "category": "hard_surface_cad",
+    "title": "Flanged Industrial Pipe Valve",
+    "prompt": "Build a cast-iron flanged industrial gate valve (~0.4m wide) with a T-shaped body, circular bolted end flanges with bolt holes cut out (or bolt heads around the rim), a vertical bonnet neck, and a red spoked handwheel on top.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "CSG", "ExtrudeGeometry", "Group"]
+  },
+  {
+    "id": "cad_03",
+    "category": "hard_surface_cad",
+    "title": "Mechanical Skeleton Watch Movement",
+    "prompt": "Construct a detailed open-work mechanical watch movement (~0.5m display scale) featuring a brass mainplate, three meshing toothed gear wheels of different radii, a ruby-jeweled balance wheel with a hairspring spiral, steel bridges with screw heads, and hour/minute/second hands.",
+    "expectedFeatures": ["CylinderGeometry", "Shape", "ExtrudeGeometry", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "cad_04",
+    "category": "hard_surface_cad",
+    "title": "Mid-Century Modern Lounge Chair & Ottoman",
+    "prompt": "Model a mid-century modern molded-plywood and black-leather lounge chair with a matching ottoman on the floor (y=0). Include curved walnut veneer shell panels, tufted leather seat/back/headrest cushions, and cast-aluminum 5-star swivel bases.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ExtrudeGeometry", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "cad_05",
+    "category": "hard_surface_cad",
+    "title": "Helical Spiral Staircase",
+    "prompt": "Create a freestanding architectural spiral staircase (3.0m tall, 1.6m diameter) with a central brushed-steel column, 16 cantilevered oak treads, vertical balusters on each step, and a continuous helical handrail wrapping from bottom to top.",
+    "expectedFeatures": ["CylinderGeometry", "BoxGeometry", "TubeGeometry", "CatmullRomCurve3", "Group"]
+  },
+  {
+    "id": "cad_06",
+    "category": "hard_surface_cad",
+    "title": "Geodesic Observatory Dome",
+    "prompt": "Build an astronomical observatory (2.5m tall) with a cylindrical concrete base, an entry doorway, a rotatable hemispherical dome with a shutter slit opening, and a brass refractor telescope peeking through the slit.",
+    "expectedFeatures": ["CylinderGeometry", "SphereGeometry", "CSG", "Group", "DirectionalLight"]
+  },
+  {
+    "id": "cad_07",
+    "category": "hard_surface_cad",
+    "title": "Commercial Espresso Machine",
+    "prompt": "Model a dual-group stainless-steel commercial café espresso machine (~0.6m wide) with two portafilter handles, steam wands with articulated ball joints, a pressure gauge dial on the front faceplate, a slotted drip tray grate, and ceramic espresso cups on the top cup warmer.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "TorusGeometry", "MeshStandardMaterial", "Group"]
+  },
+  {
+    "id": "cad_08",
+    "category": "hard_surface_cad",
+    "title": "Mirrorless Camera & Telephoto Lens",
+    "prompt": "Create a detailed mirrorless camera body with an attached f/2.8 telephoto zoom lens. Include the ergonomic grip, top mode dials, hot-shoe mount, ribbed rubber focus/zoom rings on the barrel, a petal-shaped lens hood, and a multi-coated glass front element.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "MeshPhysicalMaterial", "ExtrudeGeometry", "Group"]
+  },
+  {
+    "id": "cad_09",
+    "category": "hard_surface_cad",
+    "title": "Staunton Chess Set & Board",
+    "prompt": "Construct a regulation 8x8 wooden chessboard on a pedestal table with a full set of 32 light-boxwood and dark-ebony Staunton chess pieces (pawns, rooks, knights, bishops, queens, kings) arranged in starting formation.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "ConeGeometry", "InstancedMesh"]
+  },
+  {
+    "id": "cad_10",
+    "category": "hard_surface_cad",
+    "title": "Suspension Bridge Tower & Deck Section",
+    "prompt": "Model an art-deco steel suspension bridge tower section (~4m tall) with twin stepped vertical legs connected by cross-bracing struts, a two-lane road deck with truss girders, main catenary suspension cables, and vertical suspender ropes.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "CatmullRomCurve3", "TubeGeometry", "Group"]
+  },
+  {
+    "id": "cad_11",
+    "category": "hard_surface_cad",
+    "title": "Gothic Cathedral Rose Window Frame",
+    "prompt": "Build a carved limestone Gothic cathedral rose window frame (2.4m diameter) featuring radial stone mullions, trefoil and quatrefoil tracery cutouts, a deep beveled outer arch molding, and translucent jewel-toned stained glass segments.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "ExtrudeGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "cad_12",
+    "category": "hard_surface_cad",
+    "title": "Retro 1980s Arcade Cabinet",
+    "prompt": "Create a standing 1980s coin-op arcade cabinet (1.8m tall) with side-panel profile cutouts, a recessed CRT screen with a curved glass bezel, an illuminated top marquee, a two-player control deck with ball-top joysticks and arcade buttons, and a dual coin door.",
+    "expectedFeatures": ["BoxGeometry", "ExtrudeGeometry", "SphereGeometry", "CylinderGeometry", "PointLight"]
+  },
+  {
+    "id": "cad_13",
+    "category": "hard_surface_cad",
+    "title": "Precision Machinist Milling Vise",
+    "prompt": "Model a heavy-duty CNC machinist milling vise (~0.45m long) on a slotted swivel base. Include the fixed jaw, sliding movable jaw with hardened steel jaw plates, acme leadscrew, hex drive crank handle, and a machined aluminum workpiece clamped with Boolean pocket cutouts.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "CSG", "MeshStandardMaterial", "Group"]
+  },
+  {
+    "id": "cad_14",
+    "category": "hard_surface_cad",
+    "title": "Research Submarine Hull & सेवन-Blade Propeller",
+    "prompt": "Construct a deep-sea research submersible (~2.2m long) with a yellow streamlined pressure hull, a thick acrylic hemispherical bow viewport, a conning tower sail with dive planes, thruster pods, and a skewed 7-blade bronze stern propeller.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "ConeGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "cad_15",
+    "category": "hard_surface_cad",
+    "title": "Concert Grand Piano",
+    "prompt": "Create an ebony-lacquered concert grand piano (1.8m long) with its curved rim extruded from a 2D profile, propped open lid with prop stick, gilded cast-iron harp frame with strings, 88 black-and-white keys, three brass foot pedals on a lyre, and an adjustable duet bench.",
+    "expectedFeatures": ["Shape", "ExtrudeGeometry", "BoxGeometry", "CylinderGeometry", "MeshPhysicalMaterial"]
+  },
+  {
+    "id": "cad_16",
+    "category": "hard_surface_cad",
+    "title": "Hollow-Body Archtop Electric Guitar",
+    "prompt": "Model a sunburst hollow-body electric guitar on a floor stand. Include the figure-8 body with f-holes, maple neck with 22 frets and fretboard inlays, headstock with 6 tuning pegs, dual humbucker pickups, tune-o-matic bridge, Bigsby vibrato tailpiece, and 6 steel strings.",
+    "expectedFeatures": ["Shape", "ExtrudeGeometry", "CylinderGeometry", "BoxGeometry", "Group"]
+  },
+  {
+    "id": "cad_17",
+    "category": "hard_surface_cad",
+    "title": "Steampunk Brass Pocket Transit Compass",
+    "prompt": "Build an ornate hinged brass surveyor's compass (~0.3m scale) with an engraved degree ring, a magnetic needle balanced on a central agate pivot, a folding sighting vane with a hairline slot, two spirit-level vials, and a hinged lid with a glass window.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "ConeGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "cad_18",
+    "category": "hard_surface_cad",
+    "title": "Offshore Wind Turbine Cutaway Nacelle",
+    "prompt": "Model a 3-blade offshore wind turbine (3.5m tall scale model) mounted on a monopile transition piece. Cut away one side of the top nacelle housing to reveal the main rotor shaft, planetary gearbox, high-speed generator, and yaw ring drive inside.",
+    "expectedFeatures": ["CylinderGeometry", "ConeGeometry", "ExtrudeGeometry", "CSG", "Group"]
+  },
+  {
+    "id": "cad_19",
+    "category": "hard_surface_cad",
+    "title": "Five-Story Wooden Japanese Pagoda",
+    "prompt": "Construct a traditional five-story timber pagoda (3.2m tall) on a stone foundation platform with steps. Feature cinco stacked tiers with sweeping upturned eaves, corner rafters, red perimeter railings, and a tall bronze finial spire (sorin) with nine rings on the apex.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ConeGeometry", "TorusGeometry", "Group"]
+  },
+  {
+    "id": "cad_20",
+    "category": "hard_surface_cad",
+    "title": "Hydraulic Excavator Boom & Bucket",
+    "prompt": "Create a tracked construction excavator (~2.0m long) with dual caterpillar track frames, a rotating cab with tinted windows, and a three-segment articulated arm (boom, stick, and toothed digging bucket) complete with chrome hydraulic piston-and-cylinder actuators.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ExtrudeGeometry", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_01",
+    "category": "organic_curves",
+    "title": "Greek Red-Figure Ceramic Amphora",
+    "prompt": "Create a classical Greek terracotta amphora vase (~0.6m tall) resting on y=0 with a flared foot, a smooth S-curved belly profile, a narrow neck, a rolled lip rim, and two symmetrically curved twin handles arching from the shoulder to the neck.",
+    "expectedFeatures": ["LatheGeometry", "CatmullRomCurve3", "TubeGeometry", "TorusGeometry", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_02",
+    "category": "organic_curves",
+    "title": "Windswept Juniper Bonsai Tree",
+    "prompt": "Model a gnarled juniper bonsai tree (~0.55m tall) in a glazed rectangular stoneware pot with moss soil. Build a twisted, tapering trunk splitting into asymmetrical branches and dense layered pads of pine foliage needles.",
+    "expectedFeatures": ["CatmullRomCurve3", "TubeGeometry", "ConeGeometry", "SphereGeometry", "InstancedMesh"]
+  },
+  {
+    "id": "org_03",
+    "category": "organic_curves",
+    "title": "Coiled King Cobra Ready to Strike",
+    "prompt": "Construct a coiled king cobra (~0.8m tall) with two stacked body coils on the ground, an S-curved raised neck, a flared flattened hood with dorsal markings, a sculpted head with fangs, and a forked tongue.",
+    "expectedFeatures": ["CatmullRomCurve3", "TubeGeometry", "SphereGeometry", "BufferGeometry", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_04",
+    "category": "organic_curves",
+    "title": "Bioluminescent Deep-Sea Jellyfish",
+    "prompt": "Create a translucent deep-sea jellyfish (~0.9m tall) floating in mid-air with a ribbed hemispherical bell, glowing radial canals, four frilly oral arms in the center, and 16 long sinusoidal trailing tentacles.",
+    "expectedFeatures": ["SphereGeometry", "LatheGeometry", "CatmullRomCurve3", "TubeGeometry", "MeshPhysicalMaterial"]
+  },
+  {
+    "id": "org_05",
+    "category": "organic_curves",
+    "title": "Branching Staghorn & Brain Coral Reef",
+    "prompt": "Build an underwater coral reef outcrop (~1.2m wide) on a sandy seabed rock base, featuring branching staghorn coral antlers, a grooved hemispherical brain coral, tubular sea sponges, and waving sea anemones.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "CatmullRomCurve3", "TubeGeometry", "BufferGeometry"]
+  },
+  {
+    "id": "org_06",
+    "category": "organic_curves",
+    "title": "Logarithmic Nautilus Shell Cross-Section",
+    "prompt": "Model a chambered nautilus shell (~0.45m diameter) sliced in half to reveal its logarithmic spiral growth curve, pearlescent internal septa walls, and siphuncle tube connecting the chambers.",
+    "expectedFeatures": ["TubeGeometry", "CatmullRomCurve3", "BufferGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "org_07",
+    "category": "organic_curves",
+    "title": "Blooming Sacred Lotus on Lily Pad",
+    "prompt": "Create a blooming pink sacred lotus flower (~0.5m wide) resting on a notched circular green lily pad. Build three concentric rings of cupped, pointed petals curving upward around a golden seed pod receptacle and ring of stamens.",
+    "expectedFeatures": ["Shape", "ExtrudeGeometry", "LatheGeometry", "SphereGeometry", "CylinderGeometry"]
+  },
+  {
+    "id": "org_08",
+    "category": "organic_curves",
+    "title": "Gliding Giant Oceanic Manta Ray",
+    "prompt": "Construct a graceful oceanic manta ray (~1.8m wingspan) in mid-glide with sinusoidal pectoral wing tips, forward-curling cephalic horn lobes flanking its mouth, gill slits on the white ventral underside, and a whip-like tail.",
+    "expectedFeatures": ["BufferGeometry", "Shape", "ExtrudeGeometry", "CatmullRomCurve3", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_09",
+    "category": "organic_curves",
+    "title": "Weeping Willow By a Stone Pond",
+    "prompt": "Build a weeping willow tree (~2.4m tall) beside a circular stone-rimmed pond. Feature a furrowed root-flared trunk, arching primary limbs, and dozens of cascading curtain-like vine strands of narrow willow leaves.",
+    "expectedFeatures": ["CylinderGeometry", "CatmullRomCurve3", "TubeGeometry", "InstancedMesh", "Group"]
+  },
+  {
+    "id": "org_10",
+    "category": "organic_curves",
+    "title": "Giant Pacific Octopus on Sunken Amphora",
+    "prompt": "Model a red Giant Pacific octopus (~1.0m wide) draped over a broken sunken amphora. Include its bulbous mantle head, prominent eyes, and 8 curling arms lined with two rows of white suction cups on the underside.",
+    "expectedFeatures": ["SphereGeometry", "CatmullRomCurve3", "TubeGeometry", "CylinderGeometry", "Group"]
+  },
+  {
+    "id": "org_11",
+    "category": "organic_curves",
+    "title": "Horned Dragon Skull Fossil",
+    "prompt": "Create a weathered ivory dragon skull (~0.9m long) resting on a rocky plinth, featuring an elongated snout with sharp conical teeth, deep eye sockets, swept-backridged horns, and an articulated lower mandible jaw.",
+    "expectedFeatures": ["SphereGeometry", "ConeGeometry", "CylinderGeometry", "CatmullRomCurve3", "CSG"]
+  },
+  {
+    "id": "org_12",
+    "category": "organic_curves",
+    "title": "Bioluminescent Mushroom Log Cluster",
+    "prompt": "Build a mossy fallen forest log (~1.1m long) sprouting clusters of glowing cyan bioluminescent mycena mushrooms of varying heights, complete with curved slender stems, bell-shaped caps, and radial gill plates underneath.",
+    "expectedFeatures": ["CylinderGeometry", "SphereGeometry", "ConeGeometry", "PointLight", "Group"]
+  },
+  {
+    "id": "org_13",
+    "category": "organic_curves",
+    "title": "Venetian Murano Glass Chandelier",
+    "prompt": "Construct an ornate 8-arm Murano blown-glass chandelier (~1.2m tall) with S-scrolled crystal arms, ruffled glass bobeche drip pans, candle-style warm bulbs, curved glass leaves, and hanging teardrop prisms.",
+    "expectedFeatures": ["CatmullRomCurve3", "TubeGeometry", "LatheGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "org_14",
+    "category": "organic_curves",
+    "title": "Ergonomic Sculpted Vertical Wireless Mouse",
+    "prompt": "Model a sculpted ergonomic vertical wireless mouse (~0.25m display scale) with a contoured thumb rest trough, angled left/right click paddles, a knurled aluminum scroll wheel, and a brushed metal base.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "BufferGeometry", "CSG", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_15",
+    "category": "organic_curves",
+    "title": "Desert Oasis with Wind-Rippled Sand Dunes",
+    "prompt": "Create a desert oasis diorama (~3.0m square) with procedural sine-deformed sand dunes, a clear turquoise spring pool in the depression, three curved date palm trees with frond crowns, and sandstone boulders.",
+    "expectedFeatures": ["PlaneGeometry", "BufferGeometry", "CylinderGeometry", "ConeGeometry", "MeshPhysicalMaterial"]
+  },
+  {
+    "id": "org_16",
+    "category": "organic_curves",
+    "title": "Anatomical Four-Chamber Heart Model",
+    "prompt": "Build an educational anatomical model of a human heart (~0.4m tall) on a display stand, showing the muscular ventricles, left and right atria, the arching red aorta with three superior branches, the blue vena cava, and branching coronary arteries.",
+    "expectedFeatures": ["SphereGeometry", "CatmullRomCurve3", "TubeGeometry", "CylinderGeometry", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_17",
+    "category": "organic_curves",
+    "title": "Ruby-Throated Hummingbird Feeding at Hibiscus",
+    "prompt": "Model a ruby-throated hummingbird hovering in front of a tropical red hibiscus blossom. Include the bird's iridescent green back, metallic red gorget throat, swept wings, fanned tail feathers, needle beak, and the flower's long protruding stamen column.",
+    "expectedFeatures": ["SphereGeometry", "ConeGeometry", "CylinderGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "org_18",
+    "category": "organic_curves",
+    "title": "Geometric Glass Terrarium with Echeveria Succulents",
+    "prompt": "Construct a faceted dodecahedron-style brass-and-glass tabletop terrarium (~0.4m wide) containing layered pebbles and soil, a rosette Echeveria succulent with fleshy spiral leaves, a ribbed barrel cactus, and small quartz crystals.",
+    "expectedFeatures": ["CylinderGeometry", "SphereGeometry", "ConeGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "org_19",
+    "category": "organic_curves",
+    "title": "Gnarled Halloween Pumpkin Jack-O'-Lantern",
+    "prompt": "Create a ribbed orange pumpkin jack-o'-lantern (~0.45m diameter) with vertical lobe grooves, a curling woody stem and tendril vines, triangular carved eyes and a jagged toothy grin cut out of the shell, and a flickering candle inside.",
+    "expectedFeatures": ["SphereGeometry", "TorusGeometry", "CSG", "PointLight", "MeshStandardMaterial"]
+  },
+  {
+    "id": "org_20",
+    "category": "organic_curves",
+    "title": "Twisted Mobius Ribbon Sculpture in Brushed Bronze",
+    "prompt": "Model a monumental gallery sculpture (~1.5m tall) on a dark granite plinth consisting of a continuous twisted Möbius strip / trefoil ribbon with smooth normals and a warm brushed-bronze metallic finish.",
+    "expectedFeatures": ["BufferGeometry", "TorusKnotGeometry", "BoxGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "mat_01",
+    "category": "materials_lighting",
+    "title": "Brilliant-Cut Diamond & Dispersion Prism Studio",
+    "prompt": "Create a jewelry showcase featuring a large brilliant-cut diamond (with table, crown, girdle, and pavilion facets) beside an optical triangular glass prism on a black velvet pedestal, using high IOR, transmission, dispersion, and three colored key/rim lights.",
+    "expectedFeatures": ["ConeGeometry", "CylinderGeometry", "MeshPhysicalMaterial", "PointLight", "DirectionalLight"]
+  },
+  {
+    "id": "mat_02",
+    "category": "materials_lighting",
+    "title": "Iridescent Soap Bubble Cluster & Brass Wand",
+    "prompt": "Model a cluster of 12 overlapping translucent soap bubbles of varying radii floating out of a twisted brass bubble wand, showcasing thin-film iridescence (`iridescence`, `iridescenceIOR`), transmission, and clearcoat specular highlights.",
+    "expectedFeatures": ["SphereGeometry", "TorusGeometry", "CylinderGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_03",
+    "category": "materials_lighting",
+    "title": "Automotive Clearcoat & Sheen Material Calibration Spheres",
+    "prompt": "Build a 3x3 material calibration rack displaying 9 shader balls (each with a slotted outer shell and inner core) demonstrating metallic car-paint clearcoat, velvet sheen, frosted glass transmission, brushed gold, chrome, ceramic, matte rubber, copper, and emissive plasma.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "CSG", "MeshPhysicalMaterial", "DirectionalLight"]
+  },
+  {
+    "id": "mat_04",
+    "category": "materials_lighting",
+    "title": "Art-Deco Perfume Flacon with Amber Liquid Volume",
+    "prompt": "Create a heavy fluted crystal perfume bottle (~0.3m tall) with thick glass walls (`transmission`, `ior: 1.52`), an inner chamber of golden-amber perfume (`attenuationColor`, `attenuationDistance`), a dip tube, a gold atomizer collar, and a faceted crystal stopper.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "MeshPhysicalMaterial", "Group", "PointLight"]
+  },
+  {
+    "id": "mat_05",
+    "category": "materials_lighting",
+    "title": "Cyberpunk Neon Ramen Shop Sign with Bloom",
+    "prompt": "Construct a rain-slicked cyberpunk storefront sign (~1.6m tall) mounted on steel brackets, featuring bent glowing neon tubes in magenta, cyan, and warm yellow forming a steaming noodle bowl icon and lettering, backed by a dark corrugated metal grid.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "TubeGeometry", "MeshStandardMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_06",
+    "category": "materials_lighting",
+    "title": "Royal Velvet Jewelry Box with Sapphire Ring",
+    "prompt": "Model an open hinged octagonal jewelry box lined in deep crimson velvet (`sheen`, `sheenRoughness`, `sheenColor`) with brass corner clasps, holding a platinum solitaire ring set with a transmissive blue sapphire and halo diamonds.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "ConeGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_07",
+    "category": "materials_lighting",
+    "title": "Procedural Wood-Grain & Epoxy River Dining Table",
+    "prompt": "Create a live-edge walnut and translucent turquoise epoxy-resin 'river' dining table (2.0m x 1.0m) on hairpin steel legs, using a procedurally generated `DataTexture` or `CanvasTexture` for the wood grain and rough bark edges.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "DataTexture", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "mat_08",
+    "category": "materials_lighting",
+    "title": "Alchemist's Cast-Iron Cauldron with Glowing Embers",
+    "prompt": "Build a three-legged cast-iron cauldron with iron ring handles suspended over a stone firepit of glowing orange/red charcoal embers, filled with bubbling green luminescent potion and rising vapor spheres.",
+    "expectedFeatures": ["SphereGeometry", "TorusGeometry", "CylinderGeometry", "PointLight", "MeshStandardMaterial"]
+  },
+  {
+    "id": "mat_09",
+    "category": "materials_lighting",
+    "title": "Vertex-Colored Low-Poly Alpine Mountain Island",
+    "prompt": "Construct a floating stylized alpine island (~2.0m wide) where the terrain `BufferGeometry` uses per-vertex RGB colors (`color` attribute with `vertexColors: true`) blending smoothly from deep blue water at the shore through green meadows and grey rock to white snow peaks.",
+    "expectedFeatures": ["BufferGeometry", "Float32BufferAttribute", "MeshStandardMaterial", "ConeGeometry", "DirectionalLight"]
+  },
+  {
+    "id": "mat_10",
+    "category": "materials_lighting",
+    "title": "Hammered Copper Alembic Distillation Apparatus",
+    "prompt": "Model a vintage laboratory distillation setup on an oak workbench: a hammered copper cucurbit boiler with a swan-neck helmet, a helical glass Graham condenser coil inside a water jacket, and a glass receiving flask catching turquoise distillate.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "TorusGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "mat_11",
+    "category": "materials_lighting",
+    "title": "Damascus Steel Chef Knife on Magnetic Walnut Block",
+    "prompt": "Create a Japanese Gyuto chef knife (~0.45m scale) resting on a tilted walnut magnetic knife block, featuring a procedural Damascus wave pattern texture on the blade, a polished brass bolster, and an octagonal stabilized burl-wood wa-handle.",
+    "expectedFeatures": ["BoxGeometry", "ExtrudeGeometry", "CylinderGeometry", "DataTexture", "MeshStandardMaterial"]
+  },
+  {
+    "id": "mat_12",
+    "category": "materials_lighting",
+    "title": "Erlenmeyer & Florence Flask Chemistry Titration Rack",
+    "prompt": "Build a laboratory retort stand holding a graduated burette clamped above an Erlenmeyer flask, alongside three Florence flasks and test tubes in a wooden rack filled with magenta, emerald, and cobalt transmissive solutions.",
+    "expectedFeatures": ["ConeGeometry", "CylinderGeometry", "SphereGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "mat_13",
+    "category": "materials_lighting",
+    "title": "Retro 6-Digit Nixie Tube Desk Clock",
+    "prompt": "Construct a steampunk walnut-and-brass desk clock housing 6 glass vacuum Nixie tubes. Inside each glass envelope, place a fine anode wire mesh and glowing orange cathode numerals surrounded by warm point lights.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "TorusGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_14",
+    "category": "materials_lighting",
+    "title": "Celadon Glazed Porcelain Tea Service on Bamboo Tray",
+    "prompt": "Model a traditional ceramic tea service on a slatted bamboo tray: a round teapot with a curved spout and rattan handle, a fairness pitcher, a strainer, and four small handleless teacups with a glossy pale-jade clearcoat celadon glaze and tea liquid inside.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "TorusGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "mat_15",
+    "category": "materials_lighting",
+    "title": "Three-Point Studio Photography Lighting Stage",
+    "prompt": "Build a photography cyclorama stage (~3.0m wide) with a curved white infinity cove backdrop, a central metallic geometric bust sculpture on a plinth, and three physical C-stand light rigs (key softbox, fill reflector, and warm rim spotlight) illuminating the subject.",
+    "expectedFeatures": ["CylinderGeometry", "BoxGeometry", "SpotLight", "PointLight", "DirectionalLight"]
+  },
+  {
+    "id": "mat_16",
+    "category": "materials_lighting",
+    "title": "Holographic Sci-Fi Tactical Star Map Table",
+    "prompt": "Create a circular metallic command holotable projecting a translucent glowing cyan/violet 3D star system above its emitter lens, complete with wireframe orbital rings, planet spheres, and floating coordinate markers.",
+    "expectedFeatures": ["CylinderGeometry", "SphereGeometry", "TorusGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_17",
+    "category": "materials_lighting",
+    "title": "Carbon-Fiber & Anodized Titanium Racing Quadcopter",
+    "prompt": "Model a high-performance FPV racing quadcopter (~0.5m span) with a matte weave carbon-fiber X-frame, four iridescent gold/purple anodized brushless motor bells, polycarbonate tri-blade propellers, a tilted camera pod, and a LiPo battery pack.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ExtrudeGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "mat_18",
+    "category": "materials_lighting",
+    "title": "Stained-Glass Tiffany Dragonfly Table Lamp",
+    "prompt": "Construct an Art Nouveau Tiffany table lamp (~0.6m tall) with a patinated bronze tree-trunk base and a leaded stained-glass dome shade composed of colorful amber, emerald, and cobalt glass panels with dragonfly motifs and an interior bulb.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "ConeGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_19",
+    "category": "materials_lighting",
+    "title": "Arctic Iceberg Lagoon under Aurora Ribbons",
+    "prompt": "Create an arctic seascape (~3.0m wide) featuring faceted translucent blue-white icebergs (`transmission`, `ior: 1.31`) floating on dark reflective water, crowned by three undulating emissive green-and-violet aurora curtains in the sky.",
+    "expectedFeatures": ["ConeGeometry", "PlaneGeometry", "BufferGeometry", "MeshPhysicalMaterial", "PointLight"]
+  },
+  {
+    "id": "mat_20",
+    "category": "materials_lighting",
+    "title": "Geode Crystal Cavern Cutaway",
+    "prompt": "Model a split volcanic basalt boulder (~0.7m tall) lined on the inside with a sparkling amethyst cavity of dozens of pointed purple hexagonal quartz crystal prisms (`transmission`, `dispersion`, `clearcoat`) radiating inward.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "ConeGeometry", "CSG", "MeshPhysicalMaterial"]
+  },
+  {
+    "id": "anim_01",
+    "category": "instancing_animation_ik",
+    "title": "Instanced Asteroid Belt Around Ringed Gas Giant",
+    "prompt": "Create a ringed gas giant planet surrounded by a dense asteroid belt of 1,500 rocks rendered with `THREE.InstancedMesh` (varying scale, rotation, and per-instance color tint) plus an `animate(t)` function that slowly orbits the belt.",
+    "expectedFeatures": ["InstancedMesh", "SphereGeometry", "TorusGeometry", "Matrix4", "Color"]
+  },
+  {
+    "id": "anim_02",
+    "category": "instancing_animation_ik",
+    "title": "Kinetic Wave Matrix of 400 Suspended Brass Rods",
+    "prompt": "Build a museum kinetic sculpture consisting of a 20x20 grid (400 instances via `THREE.InstancedMesh` or grouped nodes) of metallic brass spheres/rods suspended from a ceiling frame, forming a 3D radial sine-wave surface that undulates over time.",
+    "expectedFeatures": ["InstancedMesh", "SphereGeometry", "CylinderGeometry", "Matrix4", "MeshStandardMaterial"]
+  },
+  {
+    "id": "anim_03",
+    "category": "instancing_animation_ik",
+    "title": "6-Axis Industrial Robotic Welding Arm with IK",
+    "prompt": "Model an orange 6-axis industrial robotic arm mounted on a factory pedestal (`Shoulder`, `Forearm`, `Wrist`, two-finger gripper) reaching toward a `GripperTarget` node on a workbench using `THREE.IKSolver` or `userData.xr.ik`.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "IKSolver", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "anim_04",
+    "category": "instancing_animation_ik",
+    "title": "Newton's Cradle Executive Desk Toy",
+    "prompt": "Construct a chrome-and-mahogany Newton's Cradle with 5 polished steel spheres suspended by V-strings from twin parallel arch rails, animated so the outer spheres swing alternately on impact.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "BoxGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "anim_05",
+    "category": "instancing_animation_ik",
+    "title": "Clockwork Brass Solar System Orrery",
+    "prompt": "Build a table-top brass mechanical Orrery (~1.2m diameter) with a glowing central sun, engraved concentric gear rings, and 6 planets (with Earth's moon and Saturn's rings) on rotating radial arms that orbit at Keplerian relative speeds.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "TorusGeometry", "PointLight", "Group"]
+  },
+  {
+    "id": "anim_06",
+    "category": "instancing_animation_ik",
+    "title": "Wind-Swept Golden Wheat Field (1,200 Stalks)",
+    "prompt": "Create a pastoral hillside patch (~3.0m wide) with a wooden fence and 1,200 golden wheat stalks rendered via `THREE.InstancedMesh`, tilted in a coherent wind-wave pattern with warm sunset directional lighting.",
+    "expectedFeatures": ["InstancedMesh", "CylinderGeometry", "PlaneGeometry", "Matrix4", "DirectionalLight"]
+  },
+  {
+    "id": "anim_07",
+    "category": "instancing_animation_ik",
+    "title": "Interactive Bank Vault Door with Combination Dial",
+    "prompt": "Model a circular steel bank vault door set in a reinforced frame, featuring a spoked combination wheel, exposed locking bolts, and `userData.interactivity` (`onSelect`) so clicking the wheel spins it and swings the vault door open.",
+    "expectedFeatures": ["CylinderGeometry", "BoxGeometry", "TorusGeometry", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "anim_08",
+    "category": "instancing_animation_ik",
+    "title": "Amphitheater Bowl with 1,000 Instanced Seats",
+    "prompt": "Construct a modern concert amphitheater with a central stage, acoustic canopy roof, lighting truss, and 1,000 tiered spectator seats arranged in semicircular arcs using `THREE.InstancedMesh`.",
+    "expectedFeatures": ["InstancedMesh", "BoxGeometry", "CylinderGeometry", "Matrix4", "SpotLight"]
+  },
+  {
+    "id": "anim_09",
+    "category": "instancing_animation_ik",
+    "title": "Hexapod Walking Spider Robot with IK Legs",
+    "prompt": "Build a sci-fi hexapod reconnaissance robot (~0.8m wide) with a central armored chassis, an optical sensor turret, and 6 articulated two-bone legs (`coxa`, `femur`, `tibia`) solved toward ground foot-target nodes.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "IKSolver", "Group"]
+  },
+  {
+    "id": "anim_10",
+    "category": "instancing_animation_ik",
+    "title": "Rotating B-DNA Double Helix (120 Base Pairs)",
+    "prompt": "Create a 2.5m tall molecular visualization of a B-DNA double helix using `THREE.InstancedMesh` for the sugar-phosphate backbone spheres and color-coded Adenine-Thymine / Guanine-Cytosine base-pair rungs.",
+    "expectedFeatures": ["InstancedMesh", "SphereGeometry", "CylinderGeometry", "Matrix4", "Color"]
+  },
+  {
+    "id": "anim_11",
+    "category": "instancing_animation_ik",
+    "title": "Illuminated Carnival Ferris Wheel",
+    "prompt": "Model a 3.0m carnival Ferris wheel with twin A-frame support towers, a spoked rim lined with emissive neon bulbs, and 12 passenger gondolas that remain upright as the main wheel rotates.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "BoxGeometry", "PointLight", "Group"]
+  },
+  {
+    "id": "anim_12",
+    "category": "instancing_animation_ik",
+    "title": "Interactive Sneaker Product Configurator",
+    "prompt": "Create a stylized athletic running shoe (~0.35m long) on a floating display plinth with distinct named meshes (`sole`, `upper`, `swoosh`, `laces`, `tongue`) and `userData.interactivity` `onSelect` actions that cycle colorway materials and bounce the shoe.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ExtrudeGeometry", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "anim_13",
+    "category": "instancing_animation_ik",
+    "title": "Spiral Barred Galaxy of 3,000 Instanced Stars",
+    "prompt": "Construct a 3D barred spiral galaxy (~3.0m across) with a warm glowing galactic core, 4 logarithmic spiral arms populated by 3,000 instanced stars (`THREE.InstancedMesh`) colored from hot blue-white to red giant orange, and dark dust lanes.",
+    "expectedFeatures": ["InstancedMesh", "SphereGeometry", "PointLight", "Matrix4", "Color"]
+  },
+  {
+    "id": "anim_14",
+    "category": "instancing_animation_ik",
+    "title": "Steam Engine Flywheel & Piston Crank Linkage",
+    "prompt": "Build a stationary horizontal steam engine on a cast-iron bedplate featuring a spoked flywheel, eccentric crank pin, connecting rod, crosshead guide, and reciprocating piston inside a cutaway brass cylinder.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "BoxGeometry", "CSG", "Group"]
+  },
+  {
+    "id": "anim_15",
+    "category": "instancing_animation_ik",
+    "title": "Multi-Tier Distance LOD Alpine Pine Forest",
+    "prompt": "Create a forest clearing with 15 pine trees configured using `THREE.LOD` (or `userData.xr.lod`) where close trees show detailed multi-tier branches and bark, mid-distance trees use simplified cones, and far trees cull cleanly.",
+    "expectedFeatures": ["LOD", "ConeGeometry", "CylinderGeometry", "PlaneGeometry", "Group"]
+  },
+  {
+    "id": "anim_16",
+    "category": "instancing_animation_ik",
+    "title": "Flapping Origami Paper Crane Mobile",
+    "prompt": "Model a hanging nursery mobile with crossed wooden dowels and 7 folded geometric origami paper cranes in pastel colors suspended on threads, animated so the mobile turns and the cranes gently bob and tilt their wings.",
+    "expectedFeatures": ["BufferGeometry", "ConeGeometry", "CylinderGeometry", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "anim_17",
+    "category": "instancing_animation_ik",
+    "title": "Interactive Submarine Control Console",
+    "prompt": "Build an angled steel control console with 3 analog pressure dials with rotating needles, 4 toggle switches, a red emergency pushbutton, and a throttle lever, wired with `userData.interactivity` (`onSelect`) to toggle switches and sweep needles.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "PointLight", "Group"]
+  },
+  {
+    "id": "anim_18",
+    "category": "instancing_animation_ik",
+    "title": "Foucault Pendulum Over Brass Compass Rose",
+    "prompt": "Construct a museum rotunda floor pit surrounded by a marble balustrade, an inlaid 8-point brass compass rose on the floor, a ring of small domino pegs, and a heavy brass Foucault pendulum bob suspended on a long cable.",
+    "expectedFeatures": ["CylinderGeometry", "SphereGeometry", "ConeGeometry", "TorusGeometry", "Group"]
+  },
+  {
+    "id": "anim_19",
+    "category": "instancing_animation_ik",
+    "title": "Mechanical Music Box with Pinned Brass Cylinder",
+    "prompt": "Model an open glass-topped walnut music box revealing a rotating brass cylinder studded with 60 tiny plucking pins (`InstancedMesh`), a tuned steel comb with graduated teeth, a winding key, and a spinning fly-governor.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "InstancedMesh", "MeshPhysicalMaterial", "Group"]
+  },
+  {
+    "id": "anim_20",
+    "category": "instancing_animation_ik",
+    "title": "Epicyclic Planetary Gear Train Transmission",
+    "prompt": "Create a cutaway planetary gear transmission mount showing a central bronze sun gear, three steel planet gears mounted on a rotating carrier cage, and an outer internal-tooth ring gear rotating in synchronized ratios.",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "ExtrudeGeometry", "Group", "MeshStandardMaterial"]
+  },
+  {
+    "id": "xr_01",
+    "category": "spatial_xr_sim",
+    "title": "VR Chemistry Lab Workbench with Magnetic Snap Sockets",
+    "prompt": "Create an `<xr-live>` chemistry workbench (`anchor: 'table'`) with three grabbable reagent flasks (`grab: '1-hand'`, `snapTo: { socketTag: 'burner' }`), a Bunsen burner with a `snapSocket: { tag: 'burner', radius: 0.12 }` and spark particles, and a floating spatial label.",
+    "expectedFeatures": ["CylinderGeometry", "ConeGeometry", "MeshPhysicalMaterial", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_02",
+    "category": "spatial_xr_sim",
+    "title": "Exploded-View Turbofan Jet Engine with Dimension Callouts",
+    "prompt": "Build an interactive jet engine nacelle (`grab: '2-hand'`, `scale: { min: 0.5, max: 2.5 }`, `dimensions: { unit: 'cm' }`) composed of 5 concentric sub-assemblies (intake cowling, Titanium fan stage, compressor, combustor, exhaust nozzle) configured with `userData.xr.explode` layers and leader lines.",
+    "expectedFeatures": ["CylinderGeometry", "ConeGeometry", "TorusGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_03",
+    "category": "spatial_xr_sim",
+    "title": "AR Living Room Furniture Configurator with Surface Anchors",
+    "prompt": "Construct a spatial interior layout scene where a modern L-shaped sectional sofa and rug snap to the floor (`anchor: { target: 'floor', persist: true }`, `handles: { rotateAxis: 'y' }`), a framed abstract painting anchors to the wall (`anchor: 'wall'`), and a floor lamp toggles warm lighting.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "userData.xr", "PointLight"]
+  },
+  {
+    "id": "xr_04",
+    "category": "spatial_xr_sim",
+    "title": "Physics Carnival Ball-Toss & Stacked Can Pyramid",
+    "prompt": "Model a carnival booth table (`physics: 'static'`) holding a 4-tier pyramid of 10 tin cans (`physics: { body: 'dynamic', shape: 'cylinder', mass: 0.3, restitution: 0.4 }`, `integrity: { max: 10, scoreValue: 10 }`) and 3 grabbable baseballs (`grab: '1-hand'`, `physics: { body: 'dynamic', shape: 'sphere', restitution: 0.7 }`).",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_05",
+    "category": "spatial_xr_sim",
+    "title": "Hands-Free Gaze-Dwell Surgical Anatomy Inspector",
+    "prompt": "Create a floating medical inspection rig (`follow: { mode: 'head', lazy: true, distance: 1.4 }`) with a ribcage and lungs model where each lobe has `userData.xr.gaze = { dwellMs: 1000, action: 'select' }`, `userData.xr.outline`, and `holdToAsk` prompts.",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "TorusGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_06",
+    "category": "spatial_xr_sim",
+    "title": "Warehouse Forklift Safety Drill with Steering Agents",
+    "prompt": "Build an `xr-live-sim` warehouse floor (`navigable: 'walkable'`, `collidable: true`) with pallet racks, a controllable worker character (`character: 'third-person'`), two autonomous patrol forklifts (`agent: { mode: 'patrol', speed: 2.0, waypoints: [...] }`), and 3 safety checkpoint zones (`zone`, `objective`).",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "PlaneGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_07",
+    "category": "spatial_xr_sim",
+    "title": "Spatial 3D Audio Soundstage & Synthesizer Console",
+    "prompt": "Construct a semi-circular spatial audio mixing deck with 4 glowing sound orbs orbiting the user (`orbit`, `grab: '1-hand'`), each carrying a directional `userData.xr.audioEmitter` (`preset: 'hum' | 'reactor' | 'wind' | 'chimeLoop'`, `coneInnerAngle: 60`, `refDistance: 1.2`).",
+    "expectedFeatures": ["SphereGeometry", "CylinderGeometry", "BoxGeometry", "userData.xr", "PointLight"]
+  },
+  {
+    "id": "xr_08",
+    "category": "spatial_xr_sim",
+    "title": "Magnetic Snap PC Motherboard Assembly Trainer",
+    "prompt": "Model a desktop PC motherboard on a test bench with color-coded `snapSocket` slots (`cpu_socket`, `gpu_pcie`, `ram_dimm_1`, `ram_dimm_2`) and matching grabbable CPU, GPU card, and RAM stick components configured with `snapTo` and `explode`.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "userData.xr", "MeshStandardMaterial", "Group"]
+  },
+  {
+    "id": "xr_09",
+    "category": "spatial_xr_sim",
+    "title": "Interactive Planetarium with Orbiting Moons & Hold-to-Ask",
+    "prompt": "Create a spatial solar system where planets orbit the Sun (`userData.xr.orbit = { target: 'Sun', radius: ..., speed: ... }`), can be grabbed and scaled with two hands (`grab: '2-hand'`, `scale: true`), and have `holdToAsk` voice prompts and `text` 3D labels.",
+    "expectedFeatures": ["SphereGeometry", "TorusGeometry", "PointLight", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_10",
+    "category": "spatial_xr_sim",
+    "title": "Escape-Room Mechanical Puzzle Box with Key Sockets",
+    "prompt": "Build an intricate brass-and-jade puzzle chest (`grab: '2-hand'`, `handles: true`) with two keyhole `snapSocket` receivers, two hidden grabbable keys on the table (`snapTo`), and `userData.interactivity` that opens the lid when selected.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "TorusGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_11",
+    "category": "spatial_xr_sim",
+    "title": "Architectural Campus Model on Tabletop Anchor",
+    "prompt": "Construct a 1:200 architectural scale model (`anchor: 'table'`, `handles: { rotateAxis: 'y', minScale: 0.5, maxScale: 3.0 }`, `dimensions: true`) of a sustainable campus with glass office towers, solar-roofed courtyards, walkways, and trees.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ConeGeometry", "MeshPhysicalMaterial", "userData.xr"]
+  },
+  {
+    "id": "xr_12",
+    "category": "spatial_xr_sim",
+    "title": "Drone Flight Obstacle Course with Timed Checkpoints",
+    "prompt": "Create an `xr-live-sim` aerial obstacle course featuring a controllable drone character, 5 glowing neon hoop rings (`zone: 'sphere'`, `objective: { type: 'checkpoint', order: 1..5, amount: 50 }`), and hazard laser pylons (`integrity`, `audioCues`).",
+    "expectedFeatures": ["TorusGeometry", "CylinderGeometry", "BoxGeometry", "userData.xr", "PointLight"]
+  },
+  {
+    "id": "xr_13",
+    "category": "spatial_xr_sim",
+    "title": "Museum T-Rex Skeleton Exhibit with Teleport Waypoints",
+    "prompt": "Model a natural history museum hall with a walkable floor (`navigable: 'walkable'`), velvet rope barriers (`navigable: 'blocked'`), a central stylized T-Rex fossil skeleton on a podium, and 3 spatial audio guide pedestals (`audioEmitter`, `gaze`).",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_14",
+    "category": "spatial_xr_sim",
+    "title": "Robotic Pick-and-Place Cell with IK & Physics Crates",
+    "prompt": "Build an industrial workcell with a 2-bone IK robot arm (`userData.xr.ik`) reaching for a grabbable target handle (`grab: '1-hand'`), a conveyor belt (`physics: 'static'`), and 4 dynamic shipping crates (`physics: 'dynamic'`, `snapTo: { grid: 0.1 }`).",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_15",
+    "category": "spatial_xr_sim",
+    "title": "Spatial Weather Table with Depth-Colliding Particles",
+    "prompt": "Create a tabletop terrain basin (`anchor: 'table'`, `grab: '2-hand'`) showing mountains and a valley city, topped by storm cloud meshes emitting `userData.xr.particles` (`preset: 'rain'` and `'snow'`) and a lighthouse beacon with `audioEmitter`.",
+    "expectedFeatures": ["PlaneGeometry", "ConeGeometry", "SphereGeometry", "CylinderGeometry", "userData.xr"]
+  },
+  {
+    "id": "xr_16",
+    "category": "spatial_xr_sim",
+    "title": "Multi-User Collaborative Tactical Sand-Table",
+    "prompt": "Model a shared command sand-table with topographic contour tiers and 8 grabbable unit markers (`grab: '1-hand'`, `sync: true`, `snapTo: { grid: 0.05, surface: 'floor' }`, `billboard: 'cylindrical'` status badges).",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ConeGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_17",
+    "category": "spatial_xr_sim",
+    "title": "EV Skateboard Chassis & Battery Pack Teardown",
+    "prompt": "Construct an electric vehicle skateboard chassis (`handles: true`, `dimensions: { unit: 'mm' }`) with dual front/rear drive motors, suspension arms, and a 4-layer battery module stack with `userData.xr.explode` and thermal `outline` highlights.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "TorusGeometry", "userData.xr", "Group"]
+  },
+  {
+    "id": "xr_18",
+    "category": "spatial_xr_sim",
+    "title": "Zero-Gravity Orbital Airlock Maintenance Bay",
+    "prompt": "Create a cylindrical space-station airlock bay with hatch doors, handholds, and floating zero-gravity maintenance tools (`grab: '1-hand'`, `physics: { body: 'dynamic', gravityScale: 0, linearDamping: 0.2 }`, `snapTo: { socketTag: 'toolrack' }`).",
+    "expectedFeatures": ["CylinderGeometry", "TorusGeometry", "BoxGeometry", "userData.xr", "PointLight"]
+  },
+  {
+    "id": "xr_19",
+    "category": "spatial_xr_sim",
+    "title": "Fire Hazard Response Drill with Spawners & Objectives",
+    "prompt": "Build an `xr-live-sim` server room drill with a first-person responder (`character: 'first-person'`), server racks, a flame hazard template with a `spawner` (`intervalSec: 3, maxActive: 3`), `integrity` targets, and evacuation `zone` / `objective` nodes.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "SphereGeometry", "userData.xr", "PointLight"]
+  },
+  {
+    "id": "xr_20",
+    "category": "spatial_xr_sim",
+    "title": "3D CAD Caliper & Tape Measure Inspection Bench",
+    "prompt": "Model a metrological granite surface plate holding 3 precision machined turbine blades and gear housings, each annotated with `userData.xr.dimensions = { unit: 'mm', axes: ['x', 'y', 'z'] }`, `grab: '2-hand'`, `explode`, and `lod`.",
+    "expectedFeatures": ["BoxGeometry", "CylinderGeometry", "ExtrudeGeometry", "userData.xr", "Group"]
+  }
+]
