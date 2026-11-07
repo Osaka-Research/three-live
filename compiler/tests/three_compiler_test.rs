@@ -2936,3 +2936,76 @@ fn test_lod_plugin_msft_lod_export_and_spatial_lint_no_false_overlap() {
     assert!(usdz_str.contains("bool lodEnabled = true"));
     assert!(usdz_str.contains("double lodCullDistance = 25"));
 }
+
+#[test]
+fn test_data_texture_glb_usdz_and_headless_render() {
+    let script = r#"
+        const width = 32;
+        const height = 32;
+        const data = new Uint8Array(width * height * 4);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const stripe = ((x + y) & 4) !== 0;
+                data[idx] = stripe ? 210 : 90;
+                data[idx + 1] = stripe ? 140 : 55;
+                data[idx + 2] = stripe ? 70 : 25;
+                data[idx + 3] = 255;
+            }
+        }
+        const tex = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.needsUpdate = true;
+
+        const mat = new THREE.MeshStandardMaterial({
+            map: tex,
+            roughness: 0.4,
+            metalness: 0.1
+        });
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), mat);
+        mesh.name = "TexturedBlock";
+        mesh.position.set(0, 0.6, 0);
+        scene.add(mesh);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(3, 5, 4);
+        scene.add(sun);
+        camera.position.set(2.2, 1.8, 2.5);
+        camera.lookAt(0, 0.6, 0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(script, "data_tex.js", 1.5);
+    assert!(
+        report.valid && report.diagnostics.is_empty(),
+        "Expected zero diagnostics for THREE.DataTexture, got: {:?}",
+        report.diagnostics
+    );
+
+    let glb = three_live_compiler::transcode_three_to_glb(script)
+        .expect("GLB compilation with THREE.DataTexture should succeed");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON chunk");
+    let uri = gltf["images"][0]["uri"].as_str().expect("images[0].uri present");
+    assert!(uri.starts_with("data:image/png;base64,"), "Expected inline PNG data URI, got {}", uri);
+    assert_eq!(gltf["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["index"], 0);
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("USDZ compilation with THREE.DataTexture should succeed");
+    let usdz_str = String::from_utf8_lossy(&usdz);
+    assert!(
+        !usdz_str.contains("diffuseColor = (1.0, 1.0, 1.0)"),
+        "Expected USDZ material to be tinted by DataTexture avgColor"
+    );
+
+    let sg = three_live_compiler::validate_three_script(script).expect("SceneGraph");
+    let (w, h, rgba) = three_live_compiler::render::render_scene_rgba(
+        &sg,
+        &three_live_compiler::render::RenderOptions::default(),
+    );
+    let png = three_live_compiler::render::encode_png_rgba(w, h, &rgba)
+        .expect("Headless software render with DataTexture should succeed");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 1000);
+}
