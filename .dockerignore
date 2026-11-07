@@ -1,0 +1,7 @@
+node_modules
+dist
+compiler/target
+.git
+android/.gradle
+android/build
+ios/.build
