@@ -260,6 +260,27 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   /**
+   * Registers `ThreeLiveElement` under `<model-viewer>` (or a custom tag name)
+   * if that tag is not already defined in `customElements`. Returns `true` when
+   * registered or already bound to a `ThreeLiveElement` subclass.
+   */
+  static defineModelViewer(tagName = 'model-viewer'): boolean {
+    if (typeof customElements === 'undefined') {
+      return false;
+    }
+    const existing = customElements.get(tagName);
+    if (existing != null) {
+      return (
+        existing === ThreeLiveElement ||
+        existing.prototype instanceof ThreeLiveElement
+      );
+    }
+    class ThreeLiveModelViewerElement extends ThreeLiveElement {}
+    customElements.define(tagName, ThreeLiveModelViewerElement);
+    return true;
+  }
+
+  /**
    * Registers a pluggable mesh/texture decoder (e.g. Draco, Meshopt, KTX2).
    */
   public static registerDecoder(type: string, decoder: MeshDecoder): void {
@@ -1688,4 +1709,12 @@ if (
   !customElements.get('three-live')
 ) {
   customElements.define('three-live', ThreeLiveElement);
+}
+
+/**
+ * Registers `ThreeLiveElement` under `<model-viewer>` (or a custom tag name)
+ * when that element name is not already registered.
+ */
+export function defineModelViewer(tagName = 'model-viewer'): boolean {
+  return ThreeLiveElement.defineModelViewer(tagName);
 }

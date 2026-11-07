@@ -126,6 +126,7 @@ export {
   type VariantMapping,
 } from './three-live/src/plugins/variants';
 export {
+  defineModelViewer,
   ThreeLiveElement,
   type ARLaunchOptions,
   type ARLaunchResult,

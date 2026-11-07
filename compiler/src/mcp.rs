@@ -195,9 +195,13 @@ fn read_next_mcp_message<R: BufRead>(
                     content_length = parse_content_length_header(h_trim);
                 }
             }
-            let len = content_length.ok_or_else(|| "Missing valid Content-Length header".to_string())?;
+            let len =
+                content_length.ok_or_else(|| "Missing valid Content-Length header".to_string())?;
             if len > 32 * 1024 * 1024 {
-                return Err(format!("MCP message Content-Length ({} bytes) exceeds 32 MB ceiling", len));
+                return Err(format!(
+                    "MCP message Content-Length ({} bytes) exceeds 32 MB ceiling",
+                    len
+                ));
             }
             let mut buf = vec![0u8; len];
             reader
@@ -418,10 +422,8 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                     .get("description")
                     .and_then(Value::as_str)
                     .unwrap_or("an interactive 3D scene");
-                let target = args
-                    .get("target")
-                    .and_then(Value::as_str)
-                    .unwrap_or("android, ios, and web");
+                let target =
+                    args.get("target").and_then(Value::as_str).unwrap_or("android, ios, and web");
                 let prompt_text = format!(
                     "Create a Three-Live scene for `{}` targeting `{}`.\n\n\
                      Follow this verification workflow:\n\
@@ -456,12 +458,9 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                 ))
             }
         }
-        _ => Some(jsonrpc_error_response(
-            id,
-            -32601,
-            format!("Method not found: {}", method),
-            None,
-        )),
+        _ => {
+            Some(jsonrpc_error_response(id, -32601, format!("Method not found: {}", method), None))
+        }
     }
 }
 
@@ -710,19 +709,12 @@ fn load_source_from_args(args: &Value, default_name: &str) -> Result<LoadedSourc
         let is_glb = raw_bytes.len() >= 4 && &raw_bytes[0..4] == b"glTF";
         return Ok(LoadedSource { raw_bytes, filename, is_glb });
     }
-    let path_arg = args
-        .get("inputPath")
-        .or_else(|| args.get("path"))
-        .and_then(Value::as_str);
+    let path_arg = args.get("inputPath").or_else(|| args.get("path")).and_then(Value::as_str);
     if let Some(path_str) = path_arg {
         let raw_bytes = fs::read(path_str)
             .map_err(|e| format!("Failed reading inputPath {:?}: {}", path_str, e))?;
         let is_glb = raw_bytes.len() >= 4 && &raw_bytes[0..4] == b"glTF";
-        return Ok(LoadedSource {
-            raw_bytes,
-            filename: path_str.to_string(),
-            is_glb,
-        });
+        return Ok(LoadedSource { raw_bytes, filename: path_str.to_string(), is_glb });
     }
     Err("Either `code` (string) or `inputPath` (file path) must be provided.".to_string())
 }
@@ -745,10 +737,8 @@ fn parse_vec3_opt(val: Option<&Value>) -> Option<[f32; 3]> {
 fn apply_camera_overrides(scene: &mut SceneGraph, args: &Value) {
     let pos_override = parse_vec3_opt(args.get("cameraPosition"));
     let target_override = parse_vec3_opt(args.get("cameraTarget"));
-    let fov_override = args
-        .get("cameraFov")
-        .and_then(Value::as_f64)
-        .map(|v| (v as f32).clamp(10.0, 150.0));
+    let fov_override =
+        args.get("cameraFov").and_then(Value::as_f64).map(|v| (v as f32).clamp(10.0, 150.0));
 
     if pos_override.is_none() && target_override.is_none() && fov_override.is_none() {
         return;
@@ -905,27 +895,11 @@ fn call_tool_render(args: &Value) -> Value {
         .unwrap_or(default_dim)
         .clamp(64, 2048);
     let grid = args.get("grid").and_then(Value::as_bool).unwrap_or(true);
-    let annotations = args
-        .get("annotations")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let turntable = args
-        .get("turntable")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let duration = args
-        .get("duration")
-        .and_then(Value::as_f64)
-        .unwrap_or(2.0)
-        .clamp(0.1, 60.0);
-    let trigger_select = args
-        .get("triggerSelect")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let out_path_opt = args
-        .get("outputPath")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let annotations = args.get("annotations").and_then(Value::as_bool).unwrap_or(true);
+    let turntable = args.get("turntable").and_then(Value::as_bool).unwrap_or(false);
+    let duration = args.get("duration").and_then(Value::as_f64).unwrap_or(2.0).clamp(0.1, 60.0);
+    let trigger_select = args.get("triggerSelect").and_then(Value::as_str).map(str::to_string);
+    let out_path_opt = args.get("outputPath").and_then(Value::as_str).map(str::to_string);
 
     let is_gif = out_path_opt
         .as_deref()
@@ -947,108 +921,107 @@ fn call_tool_render(args: &Value) -> Value {
         })
         .clamp(1, 60);
 
-    let (img_bytes, mime_type, final_w, final_h) =
-        if turntable || frame_count > 1 || trigger_select.is_some() {
-            let world_matrices = compute_node_world_matrices(&scene);
-            let node_aabbs = compute_node_world_aabbs(&scene, &world_matrices);
-            let mut bounds = WorldAABB::empty();
-            for aabb in node_aabbs.iter().flatten() {
-                bounds.union(aabb);
-            }
-            if !bounds.is_valid() {
-                bounds.min = [-1.0, 0.0, -1.0];
-                bounds.max = [1.0, 1.5, 1.0];
-            }
-            let center = bounds.center();
-            let radius = (bounds.diagonal() * 1.35).max(2.5);
-            let mut captured = Vec::with_capacity(frame_count);
-            let frame_view = if render_view == RenderViewMode::Quad {
-                RenderViewMode::Camera
-            } else {
-                render_view
-            };
+    let (img_bytes, mime_type, final_w, final_h) = if turntable
+        || frame_count > 1
+        || trigger_select.is_some()
+    {
+        let world_matrices = compute_node_world_matrices(&scene);
+        let node_aabbs = compute_node_world_aabbs(&scene, &world_matrices);
+        let mut bounds = WorldAABB::empty();
+        for aabb in node_aabbs.iter().flatten() {
+            bounds.union(aabb);
+        }
+        if !bounds.is_valid() {
+            bounds.min = [-1.0, 0.0, -1.0];
+            bounds.max = [1.0, 1.5, 1.0];
+        }
+        let center = bounds.center();
+        let radius = (bounds.diagonal() * 1.35).max(2.5);
+        let mut captured = Vec::with_capacity(frame_count);
+        let frame_view =
+            if render_view == RenderViewMode::Quad { RenderViewMode::Camera } else { render_view };
 
-            let temporal_keyframes = if !turntable {
-                evaluate_temporal_keyframes(
-                    &src.raw_bytes,
-                    src.is_glb,
-                    frame_count,
-                    duration,
-                    trigger_select.as_deref(),
-                )
-                .ok()
-            } else {
-                None
-            };
+        let temporal_keyframes = if !turntable {
+            evaluate_temporal_keyframes(
+                &src.raw_bytes,
+                src.is_glb,
+                frame_count,
+                duration,
+                trigger_select.as_deref(),
+            )
+            .ok()
+        } else {
+            None
+        };
 
-            for k in 0..frame_count {
-                let (t_sec, mut frame_scene) = if let Some(ref kf) = temporal_keyframes {
-                    kf.get(k).cloned().unwrap_or((0.0, scene.clone()))
+        for k in 0..frame_count {
+            let (t_sec, mut frame_scene) = if let Some(ref kf) = temporal_keyframes {
+                kf.get(k).cloned().unwrap_or((0.0, scene.clone()))
+            } else {
+                let t = if frame_count > 1 {
+                    (k as f64) * duration / ((frame_count - 1) as f64)
                 } else {
-                    let t = if frame_count > 1 {
-                        (k as f64) * duration / ((frame_count - 1) as f64)
-                    } else {
-                        0.0
-                    };
-                    (t, scene.clone())
+                    0.0
                 };
-                if turntable {
-                    let angle = (k as f32) * std::f32::consts::TAU / (frame_count as f32);
-                    frame_scene.camera = Some(CameraConfig {
-                        fov: 40.0,
-                        position: [
-                            center[0] + radius * angle.sin(),
-                            center[1] + radius * 0.45,
-                            center[2] + radius * angle.cos(),
-                        ],
-                        target: center,
-                    });
-                }
-                let label = if turntable {
-                    format!("TURNTABLE {:03} DEG", ((k * 360) / frame_count.max(1)))
-                } else {
-                    format!("T={:.2}S", t_sec)
-                };
-                let rgba = render_viewport_rgba(
-                    &frame_scene,
-                    w,
-                    h,
-                    frame_view,
-                    grid,
-                    annotations,
-                    Some(&label),
-                );
-                captured.push(rgba);
+                (t, scene.clone())
+            };
+            if turntable {
+                let angle = (k as f32) * std::f32::consts::TAU / (frame_count as f32);
+                frame_scene.camera = Some(CameraConfig {
+                    fov: 40.0,
+                    position: [
+                        center[0] + radius * angle.sin(),
+                        center[1] + radius * 0.45,
+                        center[2] + radius * angle.cos(),
+                    ],
+                    target: center,
+                });
             }
-
-            if is_gif {
-                let delay_cs = ((duration * 100.0 / (frame_count as f64)).round() as u16).max(4);
-                match encode_gif_frames(w, h, &captured, delay_cs) {
-                    Ok(bytes) => (bytes, "image/gif", w, h),
-                    Err(e) => return tool_error_result(format!("GIF encoding error: {}", e)),
-                }
+            let label = if turntable {
+                format!("TURNTABLE {:03} DEG", ((k * 360) / frame_count.max(1)))
             } else {
-                let (sw_px, sh_px, strip) = stitch_filmstrip_horizontal(w, h, &captured);
-                match encode_png_rgba(sw_px, sh_px, &strip) {
-                    Ok(bytes) => (bytes, "image/png", sw_px, sh_px),
-                    Err(e) => return tool_error_result(format!("PNG encoding error: {}", e)),
-                }
+                format!("T={:.2}S", t_sec)
+            };
+            let rgba = render_viewport_rgba(
+                &frame_scene,
+                w,
+                h,
+                frame_view,
+                grid,
+                annotations,
+                Some(&label),
+            );
+            captured.push(rgba);
+        }
+
+        if is_gif {
+            let delay_cs = ((duration * 100.0 / (frame_count as f64)).round() as u16).max(4);
+            match encode_gif_frames(w, h, &captured, delay_cs) {
+                Ok(bytes) => (bytes, "image/gif", w, h),
+                Err(e) => return tool_error_result(format!("GIF encoding error: {}", e)),
             }
         } else {
-            let opts = RenderOptions {
-                width: w,
-                height: h,
-                view: render_view,
-                show_grid: grid,
-                show_annotations: annotations,
-                label_override: None,
-            };
-            let (out_w, out_h, rgba) = render_scene_rgba(&scene, &opts);
-            match encode_png_rgba(out_w, out_h, &rgba) {
-                Ok(bytes) => (bytes, "image/png", out_w, out_h),
+            let (sw_px, sh_px, strip) = stitch_filmstrip_horizontal(w, h, &captured);
+            match encode_png_rgba(sw_px, sh_px, &strip) {
+                Ok(bytes) => (bytes, "image/png", sw_px, sh_px),
                 Err(e) => return tool_error_result(format!("PNG encoding error: {}", e)),
             }
+        }
+    } else {
+        let opts = RenderOptions {
+            width: w,
+            height: h,
+            view: render_view,
+            show_grid: grid,
+            show_annotations: annotations,
+            label_override: None,
         };
+        let (out_w, out_h, rgba) = render_scene_rgba(&scene, &opts);
+        match encode_png_rgba(out_w, out_h, &rgba) {
+            Ok(bytes) => (bytes, "image/png", out_w, out_h),
+            Err(e) => return tool_error_result(format!("PNG encoding error: {}", e)),
+        }
+    };
 
     if let Some(ref out_path) = out_path_opt {
         if let Err(e) = fs::write(out_path, &img_bytes) {
@@ -1090,10 +1063,7 @@ fn call_tool_convert(args: &Value) -> Value {
         Ok(s) => s,
         Err(e) => return tool_error_result(e),
     };
-    let out_path_opt = args
-        .get("outputPath")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let out_path_opt = args.get("outputPath").and_then(Value::as_str).map(str::to_string);
     let format_str = args
         .get("format")
         .and_then(Value::as_str)
@@ -1105,13 +1075,7 @@ fn call_tool_convert(args: &Value) -> Value {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase())
         })
-        .unwrap_or_else(|| {
-            if src.is_glb {
-                "usdz".to_string()
-            } else {
-                "glb".to_string()
-            }
-        });
+        .unwrap_or_else(|| if src.is_glb { "usdz".to_string() } else { "glb".to_string() });
 
     let target_usdz = format_str == "usdz";
     let sw = Stopwatch::start();
@@ -1190,11 +1154,7 @@ fn call_tool_sim(args: &Value) -> Value {
         Ok(s) => s,
         Err(e) => return tool_error_result(e),
     };
-    let duration = args
-        .get("duration")
-        .and_then(Value::as_f64)
-        .unwrap_or(2.0)
-        .clamp(0.0, 60.0);
+    let duration = args.get("duration").and_then(Value::as_f64).unwrap_or(2.0).clamp(0.0, 60.0);
     let parsed_actions: Vec<SimAction> = match args.get("actions") {
         Some(v) if v.is_array() => match serde_json::from_value(v.clone()) {
             Ok(a) => a,
@@ -1207,28 +1167,18 @@ fn call_tool_sim(args: &Value) -> Value {
         _ => Vec::new(),
     };
 
-    let include_filmstrip = args
-        .get("includeFilmstrip")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let output_strip_opt = args
-        .get("outputStripPath")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let include_filmstrip = args.get("includeFilmstrip").and_then(Value::as_bool).unwrap_or(false);
+    let output_strip_opt = args.get("outputStripPath").and_then(Value::as_str).map(str::to_string);
 
     let total_ticks = ((duration / SIM_DT_SEC).round() as usize).max(1);
-    let mut snap_ticks: Vec<usize> = if let Some(arr) =
-        args.get("snapshotFrames").and_then(Value::as_array)
-    {
-        arr.iter()
-            .filter_map(Value::as_u64)
-            .map(|v| v as usize)
-            .collect()
-    } else if include_filmstrip || output_strip_opt.is_some() {
-        vec![0, total_ticks / 3, (total_ticks * 2) / 3, total_ticks]
-    } else {
-        Vec::new()
-    };
+    let mut snap_ticks: Vec<usize> =
+        if let Some(arr) = args.get("snapshotFrames").and_then(Value::as_array) {
+            arr.iter().filter_map(Value::as_u64).map(|v| v as usize).collect()
+        } else if include_filmstrip || output_strip_opt.is_some() {
+            vec![0, total_ticks / 3, (total_ticks * 2) / 3, total_ticks]
+        } else {
+            Vec::new()
+        };
     snap_ticks.sort_unstable();
     snap_ticks.dedup();
 
@@ -1244,7 +1194,9 @@ fn call_tool_sim(args: &Value) -> Value {
     };
 
     let mut content_blocks = Vec::new();
-    if !snapshots.is_empty() && (include_filmstrip || output_strip_opt.is_some() || args.get("snapshotFrames").is_some()) {
+    if !snapshots.is_empty()
+        && (include_filmstrip || output_strip_opt.is_some() || args.get("snapshotFrames").is_some())
+    {
         let fw = 320u32;
         let fh = 320u32;
         let captured: Vec<Vec<u8>> = snapshots
@@ -1269,16 +1221,10 @@ fn call_tool_sim(args: &Value) -> Value {
             .map(|e| e.eq_ignore_ascii_case("gif"))
             .unwrap_or(false);
         let (img_bytes, mime_type) = if is_gif {
-            (
-                encode_gif_frames(fw, fh, &captured, 20).unwrap_or_default(),
-                "image/gif",
-            )
+            (encode_gif_frames(fw, fh, &captured, 20).unwrap_or_default(), "image/gif")
         } else {
             let (sw, sh, strip) = stitch_filmstrip_horizontal(fw, fh, &captured);
-            (
-                encode_png_rgba(sw, sh, &strip).unwrap_or_default(),
-                "image/png",
-            )
+            (encode_png_rgba(sw, sh, &strip).unwrap_or_default(), "image/png")
         };
         if let Some(ref strip_path) = output_strip_opt {
             if let Err(e) = fs::write(strip_path, &img_bytes) {

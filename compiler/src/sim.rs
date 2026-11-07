@@ -478,7 +478,8 @@ fn run_simulation_loop(
                                     triggered_events.push(ev);
                                 }
                                 let delta = first_delta.unwrap_or([0.01, 0.0, 0.0]);
-                                if (states[i].translation[0] - init_node.translation[0]).abs() < 1e-4
+                                if (states[i].translation[0] - init_node.translation[0]).abs()
+                                    < 1e-4
                                     && (states[i].translation[1] - init_node.translation[1]).abs()
                                         < 1e-4
                                     && (states[i].translation[2] - init_node.translation[2]).abs()
@@ -493,16 +494,15 @@ fn run_simulation_loop(
                     }
                 }
             }
-            let light_changed = js_scene.lights.iter().zip(initial_scene.lights.iter()).any(
-                |(l_curr, l_init)| {
+            let light_changed =
+                js_scene.lights.iter().zip(initial_scene.lights.iter()).any(|(l_curr, l_init)| {
                     (l_curr.intensity - l_init.intensity).abs() > 1e-4
                         || l_curr.direction != l_init.direction
                         || (0..3).any(|k| {
                             (l_curr.color[k] - l_init.color[k]).abs() > 1e-4
                                 || (l_curr.position[k] - l_init.position[k]).abs() > 1e-4
                         })
-                },
-            );
+                });
             if light_changed && !triggered_events.iter().any(|e| e == "lightAnim") {
                 triggered_events.push("lightAnim".to_string());
             }

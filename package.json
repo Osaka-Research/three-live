@@ -16,6 +16,8 @@
   "homepage": "https://github.com/google/three-live#readme",
   "keywords": [
     "threejs",
+    "three-js",
+    "model-viewer",
     "3d",
     "webgl2",
     "gltf",
@@ -26,6 +28,9 @@
     "usdz",
     "webxr",
     "spatial-computing",
+    "cad",
+    "csg",
+    "mcp",
     "pbr"
   ],
   "workspaces": [

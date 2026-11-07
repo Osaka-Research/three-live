@@ -36,15 +36,23 @@ limitations under the License.
 
 ![Three-Live Hero Showcase: Native Android & iOS XR, Parametric CAD & CSG, Spatial Traits & 60 Hz Physics, and AI Agent CLI](docs/assets/hero-showcase.gif)
 
-LLMs and developers excel at writing concise **Three.js** code—not hundreds of lines of platform-specific native 3D, shader, and AR boilerplate. **Three-Live** compiles standard Three.js (`THREE.Mesh`, `THREE.CSG`, `userData.xr`, `KHR_interactivity`) on-device in a sandboxed Rust VM and renders natively in **Google Filament and Jetpack XR SceneCore on Android**, **Apple RealityKit and Quick Look on iOS and visionOS**, **headless 4-up PNG contact sheets (`three-live-cli`)** for AI coding agents, and **WebGL2 / WebXR** on the Web.
+LLMs and developers excel at writing concise **Three.js** code—not hundreds of
+lines of platform-specific native 3D, shader, and AR boilerplate. **Three-Live**
+compiles standard Three.js (`THREE.Mesh`, `THREE.CSG`, `userData.xr`,
+`KHR_interactivity`) on-device in a sandboxed Rust VM and renders natively in
+**Google Filament and Jetpack XR SceneCore on Android**, **Apple RealityKit and
+Quick Look on iOS and visionOS**, **headless 4-up PNG contact sheets
+(`three-live-cli`)** for AI coding agents, and **WebGL2 / WebXR** on the Web.
 
----
+--------------------------------------------------------------------------------
 
 ## Quickstarts
 
 ### 1. Run Three.js natively on Android (Google Filament & Jetpack XR SceneCore)
 
-Compile standard Three.js code over zero-copy JNI and drive native **Google Filament** rendering, **60 Hz physics**, and **Jetpack XR SceneCore** spatial entities:
+Compile standard Three.js code over zero-copy JNI and drive native **Google
+Filament** rendering, **60 Hz physics**, and **Jetpack XR SceneCore** spatial
+entities:
 
 ```kotlin
 import com.google.threelive.FilamentHelper
@@ -75,7 +83,8 @@ XRLiveSceneCoreHelper.attachTraitsFromGlb(xrSession, entity, holder.byteBuffer)
 
 ### 2. Run Three.js natively on iOS, macOS, and visionOS (Apple RealityKit)
 
-Compile the exact same Three.js code into **Apple RealityKit** (`ARView` / `RealityView`) or `.usdz`:
+Compile the exact same Three.js code into **Apple RealityKit** (`ARView` /
+`RealityView`) or `.usdz`:
 
 ```swift
 import ThreeLiveCompiler
@@ -97,7 +106,12 @@ func loadSpatialScene(from threeJsCode: String, into arView: ARView) async throw
 
 ### 3. Verify & compile Three.js headlessly for AI agents (`three-live-cli` & MCP server)
 
-Render a 4-up orthographic/camera contact sheet (zero GPU required), run the spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb` / `.usdz`, or attach `three-live-cli mcp` as a zero-dependency **Model Context Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`, `three_live_convert`, `three_live_sim`) in Claude Code, Cursor, Gemini CLI, or Windsurf:
+Render a 4-up orthographic/camera contact sheet (zero GPU required), run the
+spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
+/ `.usdz`, or attach `three-live-cli mcp` as a zero-dependency **Model Context
+Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
+`three_live_convert`, `three_live_sim`) in Claude Code, Cursor, Gemini CLI, or
+Windsurf:
 
 ```bash
 $ npx three-live-cli render scene.js --view=quad --grid --annotations -o contact_sheet.png
@@ -110,7 +124,9 @@ $ claude mcp add three-live -- npx -y -p three-live three-live-cli mcp
 
 ### 4. Run on the Web (`<three-live>` and `<xr-live>`)
 
-On the web, `<three-live>` (`< 30 KB gz` viewer, `< 70 KB gz` with the live Three.js compiler) and `<xr-live>` (`< 82 KB gz`) render the same Three.js scenes in WebGL2 and 6DoF WebXR with 1-tap mobile AR handoff:
+On the web, `<three-live>` (`< 30 KB gz` viewer, `< 70 KB gz` with the live
+Three.js compiler) and `<xr-live>` (`< 82 KB gz`) render the same Three.js
+scenes in WebGL2 and 6DoF WebXR with 1-tap mobile AR handoff:
 
 ```js
 // Standard Three.js scene (runs identically in Android, iOS, CLI, and Web)
@@ -122,13 +138,14 @@ mesh.userData.xr = { grab: '1-hand', billboard: 'capsule' };
 scene.add(mesh);
 ```
 
----
+--------------------------------------------------------------------------------
 
 ## Install packages and bundles
 
 ### Package installation
 
-*   **1. Android (JitPack, GitHub Packages Maven, prebuilt release AAR, or source):**
+*   **1. Android (JitPack, GitHub Packages Maven, prebuilt release AAR, or
+    source):**
 
     *   **JitPack (`https://jitpack.io`, no authentication required):** Add
         `maven("https://jitpack.io")` to `settings.gradle.kts`, then add:
@@ -165,7 +182,8 @@ scene.add(mesh);
     Swift Package Manager automatically resolves the prebuilt, checksum-pinned
     `ThreeLiveCompiler.xcframework.zip` archive from GitHub Releases—no local
     Rust or Node.js toolchain is required.
-*   **3. Rust CLI (`three-live-cli`) and library crate (`Crates.io`, prebuilt binaries, or source):**
+*   **3. Rust CLI (`three-live-cli`) and library crate (`Crates.io`, prebuilt
+    binaries, or source):**
 
     *   **Crates.io (library & CLI):**
 
@@ -187,8 +205,8 @@ scene.add(mesh);
         ```bash
         npm install three-live xr-live
         ```
-    *   **Hosted ES module (`jsDelivr` or GitHub Pages CDN):**
-        Load `https://cdn.jsdelivr.net/npm/three-live/dist/three-live.min.js` or
+    *   **Hosted ES module (`jsDelivr` or GitHub Pages CDN):** Load
+        `https://cdn.jsdelivr.net/npm/three-live/dist/three-live.min.js` or
         `https://google.github.io/three-live/dist/three-live.min.js`.
     *   **Prebuilt bundle archive:** Download `three-live-web-dist.zip` from
         **[GitHub Releases](https://github.com/google/three-live/releases)**.
@@ -242,6 +260,34 @@ The following table compares the two runtime tiers across Android, iOS, and Web:
 | **Android & iOS runtime** | Google Filament (`FilamentHelper`), Apple RealityKit (`RealityKitHelper`), and `.glb`/`.usdz` export | Native Android (`Filament` + Jetpack XR `SceneCore` + `XRLiveRuntimeSession`) and native iOS/visionOS (`RealityKit` + `XRLiveRealityKitSession`) |
 | **Spatial interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`, `audioEmitter`), 15 spatial plugins, 6 `xr-live-sim` simulation plugins, 25-joint hands, and `KHR_interactivity` |
 | **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 70 KB gz`** (`three-live.min.js`) | **`< 53 KB gz`** (viewer), **`< 82 KB gz`** (`xr-live.min.js`), **`< 207 KB gz`** (`xr-live-full.min.js`) |
+<!-- mdformat on -->
+
+### HTML attribute compatibility with `<model-viewer>`
+
+On the web, `<three-live>` supports the core HTML attributes used by
+[`<model-viewer>`](https://github.com/google/model-viewer) (`src`, `poster`,
+`camera-controls`, `camera-orbit`, `camera-target`, `min-camera-orbit`,
+`max-camera-orbit`, `field-of-view`, `auto-rotate`, `auto-rotate-delay`,
+`rotation-per-second`, `ar`, `ar-modes`, `ar-scale`, `ar-placement`, `exposure`,
+`shadow-intensity`, `shadow-softness`, `tone-mapping`, `environment-image`,
+`skybox-image`, `autoplay`, `animation-name`, `variant-name`, and
+`slot="hotspot-*"`).
+
+If you have existing `<model-viewer>` HTML markup and want to add procedural
+Three.js scripts, native Android/iOS runtime targets, or CLI/MCP scene
+validation without renaming tags, call `ThreeLiveElement.defineModelViewer()`
+(or `defineModelViewer()`) to register `<three-live>` under the `<model-viewer>`
+custom element name when `@google/model-viewer` is not loaded.
+
+<!-- mdformat off(reason: preserve GFM single-line pipe tables for GitHub) -->
+| Dimension | [`<model-viewer>`](https://github.com/google/model-viewer) | `<three-live>` / `<xr-live>` |
+| :--- | :--- | :--- |
+| **Primary focus** | Displaying pre-authored `.glb` and `.gltf` 3D assets on the web and launching mobile AR (`Scene Viewer`, `WebXR`, `Quick Look`). | Compiling and running procedural Three.js scripts, parametric CAD/CSG, and `.glb` / `.usdz` / `.spz` scenes across **Android, iOS/visionOS, and Web**. |
+| **Scene inputs** | Static `.glb` and `.gltf` files. | Static `.glb`, `.usdz`, and `.spz` files, plus inline or external `THREE.Scene` scripts (`type="text/three"` or `.js`) compiled in a worker/iframe sandbox or Rust VM. |
+| **Target platforms** | Web Custom Element (`<model-viewer>`). | Native **Android** SDK (`ThreeCompiler` JNI + Google Filament / Jetpack XR), native **iOS / visionOS** SDK (`ThreeCompiler` XCFramework + RealityKit), **Rust CLI / MCP server** (`three-live-cli`), and **Web** Custom Elements (`<three-live>`, `<xr-live>`). |
+| **Post-processing & effects** | Provided via the companion `@google/model-viewer-effects` package (`<effect-composer>`, `<bloom-effect>`, `<outline-effect>`). | Built-in HTML attributes (`bloom`, `bloom-threshold`, `bloom-radius`, `outline`, `outline-selected`, `outline-color`, `tone-mapping`) with no external effect dependencies. |
+| **Interactivity & simulation** | Camera orbit/pan/zoom, animation playback, material variants, hotspots, and scene-graph material API. | Includes the above plus glTF `KHR_interactivity` behavior graphs, declarative `userData.xr` spatial traits (`grab`, `scale`, `anchor`, `snapTo`), and 60 Hz deterministic simulation plugins (`rigid-body`, `character-controller`, `navigation`, `objectives`). |
+| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 30 KB gz` (`three-live-viewer`), `< 70 KB gz` (`three-live`), `< 111 KB gz` (`three-live-full`), `< 207 KB gz` (`xr-live-full`). |
 <!-- mdformat on -->
 
 ### Modular plugins across Android, iOS, and Web
@@ -414,7 +460,7 @@ Web are feature-complete and ready for integration and evaluation.
 *   **Release notes:** See [`CHANGELOG.md`](CHANGELOG.md) for release history
     and architectural notes.
 
----
+--------------------------------------------------------------------------------
 
 ## Documentation guide
 
@@ -453,13 +499,20 @@ $ make web-demo      # Launch web playgrounds at http://localhost:8888/three/ an
 
 ## Security
 
-Untrusted client Three.js script execution is disabled by default on the web (`allow-client-scripts` required) and always runs inside an isolated QuickJS/Boa VM on Android and iOS or a sandboxed Worker / opaque-origin `<iframe>` (`connect-src 'none'`) on Web—with network and storage globals stripped, `Object.prototype` frozen, CPU instruction fuel limits, and geometry memory quotas.
+Untrusted client Three.js script execution is disabled by default on the web
+(`allow-client-scripts` required) and always runs inside an isolated QuickJS/Boa
+VM on Android and iOS or a sandboxed Worker / opaque-origin `<iframe>`
+(`connect-src 'none'`) on Web—with network and storage globals stripped,
+`Object.prototype` frozen, CPU instruction fuel limits, and geometry memory
+quotas.
 
-To report a vulnerability, please follow the instructions in [`SECURITY.md`](SECURITY.md).
+To report a vulnerability, please follow the instructions in
+[`SECURITY.md`](SECURITY.md).
 
 ## Contributing
 
-Contributions are welcome! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before submitting a pull request.
+Contributions are welcome! Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before submitting a pull request.
 
 ## License
 

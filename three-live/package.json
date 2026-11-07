@@ -14,6 +14,24 @@
   "bugs": {
     "url": "https://github.com/google/three-live/issues"
   },
+  "keywords": [
+    "threejs",
+    "three-js",
+    "model-viewer",
+    "3d",
+    "webgl2",
+    "gltf",
+    "glb",
+    "usdz",
+    "web-component",
+    "custom-elements",
+    "ar",
+    "webxr",
+    "cad",
+    "csg",
+    "mcp",
+    "pbr"
+  ],
   "files": [
     "dist"
   ],

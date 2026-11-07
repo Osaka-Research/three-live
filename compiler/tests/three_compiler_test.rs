@@ -3080,11 +3080,9 @@ fn test_mcp_server_end_to_end_jsonrpc_session() {
     assert!(guide_text.contains("Three-Live Authoring Guide"));
 
     assert_eq!(responses[7]["id"], 8);
-    let prompt_text =
-        responses[7]["result"]["messages"][0]["content"]["text"].as_str().unwrap();
+    let prompt_text = responses[7]["result"]["messages"][0]["content"]["text"].as_str().unwrap();
     assert!(prompt_text.contains("floating crystal"));
 
     assert_eq!(responses[8]["id"], 9);
     assert_eq!(responses[8]["error"]["code"], -32601);
 }
-

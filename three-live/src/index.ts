@@ -39,6 +39,7 @@ ThreeLiveElement.registerScriptRunner(authorScriptRunner);
 registerPlugin(contactShadowPlugin);
 
 export {
+  defineModelViewer,
   ThreeLiveElement,
   type ARLaunchOptions,
   type ARLaunchResult,
