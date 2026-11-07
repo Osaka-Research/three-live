@@ -563,6 +563,81 @@ fn test_transcode_glb_to_usdz() {
 
     let entries = verify_usdz_alignment(&usdz);
     assert!(entries >= 1);
+
+    // Issue #16: Verify binary GLB with embedded bufferView PNG texture (and omitted
+    // baseColorFactor, as in Khronos BoxTextured.glb) packages texture_0.png and emits
+    // UsdPrimvarReader_float2 + UsdUVTexture in transcode_glb_to_usdz.
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let mut gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON");
+    let bin_header_off = 20 + json_len;
+    let bin_len = u32::from_le_bytes([
+        glb[bin_header_off],
+        glb[bin_header_off + 1],
+        glb[bin_header_off + 2],
+        glb[bin_header_off + 3],
+    ]) as usize;
+    let orig_bin = &glb[bin_header_off + 8..bin_header_off + 8 + bin_len];
+    let fake_png: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52,
+    ];
+    let mut new_bin = Vec::with_capacity(orig_bin.len() + fake_png.len());
+    new_bin.extend_from_slice(orig_bin);
+    new_bin.extend_from_slice(fake_png);
+    while new_bin.len() % 4 != 0 {
+        new_bin.push(0);
+    }
+
+    let bvs = gltf["bufferViews"].as_array_mut().unwrap();
+    let png_bv_idx = bvs.len();
+    bvs.push(serde_json::json!({
+        "buffer": 0,
+        "byteOffset": orig_bin.len(),
+        "byteLength": fake_png.len()
+    }));
+    gltf["buffers"][0]["byteLength"] = serde_json::json!(new_bin.len());
+    gltf["images"] = serde_json::json!([{
+        "bufferView": png_bv_idx,
+        "mimeType": "image/png"
+    }]);
+    gltf["textures"] = serde_json::json!([{ "source": 0 }]);
+    gltf["materials"] = serde_json::json!([{
+        "name": "BoxTexturedMat",
+        "pbrMetallicRoughness": {
+            "baseColorTexture": { "index": 0 },
+            "metallicFactor": 0.0,
+            "roughnessFactor": 0.5
+        }
+    }]);
+
+    let mut json_bytes = serde_json::to_vec(&gltf).unwrap();
+    while json_bytes.len() % 4 != 0 {
+        json_bytes.push(b' ');
+    }
+    let total_len = 12 + 8 + json_bytes.len() + 8 + new_bin.len();
+    let mut textured_glb = Vec::with_capacity(total_len);
+    textured_glb.extend_from_slice(&0x46546C67u32.to_le_bytes());
+    textured_glb.extend_from_slice(&2u32.to_le_bytes());
+    textured_glb.extend_from_slice(&(total_len as u32).to_le_bytes());
+    textured_glb.extend_from_slice(&(json_bytes.len() as u32).to_le_bytes());
+    textured_glb.extend_from_slice(&0x4E4F534Au32.to_le_bytes());
+    textured_glb.extend_from_slice(&json_bytes);
+    textured_glb.extend_from_slice(&(new_bin.len() as u32).to_le_bytes());
+    textured_glb.extend_from_slice(&0x004E4942u32.to_le_bytes());
+    textured_glb.extend_from_slice(&new_bin);
+
+    let textured_usdz =
+        transcode_glb_to_usdz(&textured_glb).expect("Textured GLB to USDZ should succeed");
+    let tex_entries = verify_usdz_alignment(&textured_usdz);
+    assert_eq!(tex_entries, 2, "Textured GLB USDZ must contain model.usda and texture_0.png");
+    let textured_usda_str = String::from_utf8_lossy(&textured_usdz);
+    assert!(textured_usda_str.contains("UsdPrimvarReader_float2"));
+    assert!(textured_usda_str.contains("UsdUVTexture"));
+    assert!(textured_usda_str.contains("asset inputs:file = @texture_0.png@"));
+    assert!(textured_usda_str.contains(
+        "color3f inputs:diffuseColor.connect = </Root/Materials/BoxTexturedMat/DiffuseTexture.outputs:rgb>"
+    ));
 }
 
 #[test]
@@ -2994,10 +3069,18 @@ fn test_data_texture_glb_usdz_and_headless_render() {
 
     let usdz = three_live_compiler::transcode_three_to_usdz(script)
         .expect("USDZ compilation with THREE.DataTexture should succeed");
+    let entries = verify_usdz_alignment(&usdz);
+    assert!(
+        entries >= 2,
+        "Expected USDZ archive with THREE.DataTexture to package model.usda + texture_0.png, got {} entries",
+        entries
+    );
     let usdz_str = String::from_utf8_lossy(&usdz);
     assert!(
-        !usdz_str.contains("diffuseColor = (1.0, 1.0, 1.0)"),
-        "Expected USDZ material to be tinted by DataTexture avgColor"
+        usdz_str.contains("UsdUVTexture")
+            && usdz_str.contains("asset inputs:file = @texture_0.png@")
+            && usdz_str.contains("DiffuseTexture.outputs:rgb"),
+        "Expected USDZ material to wire UsdUVTexture to texture_0.png"
     );
 
     let sg = three_live_compiler::validate_three_script(script).expect("SceneGraph");

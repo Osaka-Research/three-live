@@ -872,17 +872,17 @@ function reportSizes() {
   console.log('------------------------------------------------------------------------------');
   const files = [
     {name: 'three-live-viewer.min.js', budgetKb: '30'},
-    {name: 'three-live.min.js', budgetKb: '70'},
+    {name: 'three-live.min.js', budgetKb: '72'},
     {name: 'three-live-studio.min.js', budgetKb: '29'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
-    {name: 'three-live-full.min.js', budgetKb: '111'},
-    {name: 'xr-live-viewer.min.js', budgetKb: '53'},
-    {name: 'xr-live.min.js', budgetKb: '82'},
+    {name: 'three-live-full.min.js', budgetKb: '113'},
+    {name: 'xr-live-viewer.min.js', budgetKb: '54'},
+    {name: 'xr-live.min.js', budgetKb: '84'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '63'},
     {name: 'xr-live-sim.min.js', budgetKb: '26'},
-    {name: 'xr-live-full.min.js', budgetKb: '207'},
+    {name: 'xr-live-full.min.js', budgetKb: '209'},
   ];
   const failures = [];
   for (const f of files) {

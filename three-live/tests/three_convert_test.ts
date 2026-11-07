@@ -15,6 +15,7 @@
 import {
   BoxGeometry,
   Color,
+  DataTexture,
   DirectionalLight,
   Group,
   Mesh,
@@ -491,6 +492,209 @@ async function runTests() {
       colorUSDA.includes('color3f inputs:diffuseColor = (0.0331, 0.13287, 1.0)') &&
       colorUSDA.includes('float inputs:metallic = 0'),
     'Issue #18: USDZ UsdPreviewSurface exports linear diffuseColor and default metallic = 0',
+  );
+
+  // -------------------------------------------------------------------------
+  // 16. Issue #16: glbToUSDZ & sceneToUSDZ Texture Packaging & UsdUVTexture
+  // -------------------------------------------------------------------------
+  const parseZipEntries = (
+    zipBytes: Uint8Array,
+  ): Array<{filename: string; data: Uint8Array; extraLen: number}> => {
+    const dv = new DataView(
+      zipBytes.buffer,
+      zipBytes.byteOffset,
+      zipBytes.byteLength,
+    );
+    const out: Array<{filename: string; data: Uint8Array; extraLen: number}> =
+      [];
+    let off = 0;
+    const dec = new TextDecoder();
+    while (off + 30 <= zipBytes.byteLength) {
+      const sig = dv.getUint32(off, true);
+      if (sig !== 0x04034b50) break;
+      const compSize = dv.getUint32(off + 18, true);
+      const fnLen = dv.getUint16(off + 26, true);
+      const extraLen = dv.getUint16(off + 28, true);
+      const filename = dec.decode(zipBytes.subarray(off + 30, off + 30 + fnLen));
+      const payloadStart = off + 30 + fnLen + extraLen;
+      const data = zipBytes.subarray(payloadStart, payloadStart + compSize);
+      out.push({filename, data, extraLen});
+      off = payloadStart + compSize;
+    }
+    return out;
+  };
+
+  // 16a. Construct a Khronos BoxTextured-style binary GLB with an embedded PNG
+  //      in bufferViews[3] and NO baseColorFactor on pbrMetallicRoughness.
+  const baseScene = new Scene();
+  baseScene.add(new Mesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial()));
+  const baseCanvas = sceneToCanvas3D(baseScene);
+  const fakePng = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+  ]);
+  const fakeJpg = new Uint8Array([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  ]);
+  const origBin = new Uint8Array(baseCanvas.bin);
+  const combinedBin = new Uint8Array(
+    origBin.byteLength + fakePng.byteLength + fakeJpg.byteLength,
+  );
+  combinedBin.set(origBin, 0);
+  combinedBin.set(fakePng, origBin.byteLength);
+  combinedBin.set(fakeJpg, origBin.byteLength + fakePng.byteLength);
+
+  const gltfDoc = JSON.parse(JSON.stringify(baseCanvas.gltf));
+  const pngBvIdx = gltfDoc.bufferViews.length;
+  gltfDoc.bufferViews.push({
+    buffer: 0,
+    byteOffset: origBin.byteLength,
+    byteLength: fakePng.byteLength,
+  });
+  const jpgBvIdx = gltfDoc.bufferViews.length;
+  gltfDoc.bufferViews.push({
+    buffer: 0,
+    byteOffset: origBin.byteLength + fakePng.byteLength,
+    byteLength: fakeJpg.byteLength,
+  });
+  gltfDoc.buffers[0].byteLength = combinedBin.byteLength;
+  gltfDoc.samplers = [{wrapS: 33071, wrapT: 33648}]; // CLAMP_TO_EDGE, MIRRORED_REPEAT
+  gltfDoc.images = [
+    {bufferView: pngBvIdx, mimeType: 'image/png'},
+    {bufferView: jpgBvIdx, mimeType: 'image/jpeg'},
+  ];
+  gltfDoc.textures = [
+    {sampler: 0, source: 0},
+    {source: 1},
+  ];
+  gltfDoc.materials = [
+    {
+      name: 'TexturedMat',
+      // Omit baseColorFactor on purpose (glTF 2.0 default is [1, 1, 1, 1])
+      pbrMetallicRoughness: {
+        baseColorTexture: {index: 0},
+        metallicRoughnessTexture: {index: 0},
+        metallicFactor: 0.4,
+        roughnessFactor: 0.6,
+      },
+      normalTexture: {index: 1},
+      emissiveTexture: {index: 0},
+      emissiveFactor: [0.5, 0.25, 1.0],
+      occlusionTexture: {index: 1},
+    },
+  ];
+
+  const texturedUsdz = glbToUSDZ({gltf: gltfDoc, bin: combinedBin.buffer});
+  assert(
+    verifyUSDZAlignment(texturedUsdz, 'Issue #16 textured glbToUSDZ'),
+    'Issue #16: Textured glbToUSDZ archive maintains 64-byte payload alignment across all entries',
+  );
+  const zipEntries = parseZipEntries(texturedUsdz);
+  assert(
+    zipEntries.length === 3 &&
+      zipEntries[0].filename === 'model.usda' &&
+      zipEntries[1].filename === 'texture_0.png' &&
+      zipEntries[2].filename === 'texture_1.jpg',
+    `Issue #16: glbToUSDZ packages model.usda + texture_0.png + texture_1.jpg (got ${zipEntries.map((e) => e.filename).join(', ')})`,
+  );
+  assert(
+    zipEntries.every((e) => e.extraLen === 0 || e.extraLen >= 4),
+    'Issue #16: Every USDZ ZIP entry has valid extra field length (0 or >= 4 bytes)',
+  );
+  assert(
+    zipEntries[1].data.byteLength === fakePng.byteLength &&
+      zipEntries[1].data[0] === 0x89 &&
+      zipEntries[1].data[1] === 0x50 &&
+      zipEntries[2].data.byteLength === fakeJpg.byteLength &&
+      zipEntries[2].data[0] === 0xff &&
+      zipEntries[2].data[1] === 0xd8,
+    'Issue #16: Extracted texture_0.png and texture_1.jpg match embedded GLB bufferView bytes',
+  );
+
+  const texturedUsda = new TextDecoder().decode(zipEntries[0].data);
+  assert(
+    texturedUsda.includes('uniform token info:id = "UsdPrimvarReader_float2"') &&
+      texturedUsda.includes('string inputs:varname = "st"') &&
+      texturedUsda.includes('uniform token info:id = "UsdUVTexture"') &&
+      texturedUsda.includes('asset inputs:file = @texture_0.png@') &&
+      texturedUsda.includes('asset inputs:file = @texture_1.jpg@'),
+    'Issue #16: USDA emits UsdPrimvarReader_float2 and UsdUVTexture shader nodes',
+  );
+  assert(
+    texturedUsda.includes(
+      'color3f inputs:diffuseColor.connect = </Root/Materials/TexturedMat/DiffuseTexture.outputs:rgb>',
+    ) &&
+      texturedUsda.includes(
+        'float inputs:metallic.connect = </Root/Materials/TexturedMat/MetallicRoughnessTexture.outputs:b>',
+      ) &&
+      texturedUsda.includes(
+        'float inputs:roughness.connect = </Root/Materials/TexturedMat/MetallicRoughnessTexture.outputs:g>',
+      ) &&
+      texturedUsda.includes(
+        'normal3f inputs:normal.connect = </Root/Materials/TexturedMat/NormalTexture.outputs:rgb>',
+      ) &&
+      texturedUsda.includes(
+        'color3f inputs:emissiveColor.connect = </Root/Materials/TexturedMat/EmissiveTexture.outputs:rgb>',
+      ) &&
+      texturedUsda.includes(
+        'float inputs:occlusion.connect = </Root/Materials/TexturedMat/OcclusionTexture.outputs:r>',
+      ),
+    'Issue #16: UsdPreviewSurface connects diffuseColor, metallic, roughness, normal, emissiveColor, and occlusion',
+  );
+  assert(
+    texturedUsda.includes('token inputs:wrapS = "clamp"') &&
+      texturedUsda.includes('token inputs:wrapT = "mirror"') &&
+      texturedUsda.includes('float4 inputs:scale = (2.0, 2.0, 2.0, 1.0)') &&
+      texturedUsda.includes('float4 inputs:bias = (-1.0, -1.0, -1.0, 0)'),
+    'Issue #16: UsdUVTexture preserves glTF sampler wrap modes and normal map scale/bias',
+  );
+
+  // 16b. Untextured GLB material omitting baseColorFactor defaults to (1, 1, 1) per glTF 2.0 spec
+  const defaultFactorDoc = JSON.parse(JSON.stringify(baseCanvas.gltf));
+  defaultFactorDoc.materials = [{name: 'NoFactorMat', pbrMetallicRoughness: {}}];
+  const defaultFactorUsda = generateUSDA({
+    gltf: defaultFactorDoc,
+    bin: baseCanvas.bin,
+  });
+  assert(
+    defaultFactorUsda.includes('color3f inputs:diffuseColor = (1.0, 1.0, 1.0)'),
+    'Issue #16: glTF material without baseColorFactor defaults to diffuseColor = (1.0, 1.0, 1.0)',
+  );
+
+  // 16c. sceneToUSDZ with THREE.DataTexture packages texture_0.png and connects UsdUVTexture
+  const dtScene = new Scene();
+  const dtPixels = new Uint8Array(4 * 4 * 4);
+  for (let i = 0; i < dtPixels.length; i += 4) {
+    dtPixels[i] = 240;
+    dtPixels[i + 1] = 120;
+    dtPixels[i + 2] = 30;
+    dtPixels[i + 3] = 255;
+  }
+  const dataTex = new DataTexture(dtPixels, 4, 4);
+  const dtMesh = new Mesh(
+    new BoxGeometry(1, 1, 1),
+    new MeshStandardMaterial({map: dataTex, normalMap: dataTex}),
+  );
+  dtScene.add(dtMesh);
+  const dtUsdz = sceneToUSDZ(dtScene);
+  assert(
+    verifyUSDZAlignment(dtUsdz, 'Issue #16 DataTexture sceneToUSDZ'),
+    'Issue #16: sceneToUSDZ with THREE.DataTexture maintains 64-byte alignment',
+  );
+  const dtEntries = parseZipEntries(dtUsdz);
+  assert(
+    dtEntries.length === 2 &&
+      dtEntries[0].filename === 'model.usda' &&
+      dtEntries[1].filename === 'texture_0.png' &&
+      dtEntries[1].data[0] === 0x89 &&
+      dtEntries[1].data[1] === 0x50,
+    'Issue #16: sceneToUSDZ with THREE.DataTexture embeds texture_0.png in USDZ archive',
+  );
+  const dtUsdaStr = new TextDecoder().decode(dtEntries[0].data);
+  assert(
+    dtUsdaStr.includes('DiffuseTexture.outputs:rgb') &&
+      dtUsdaStr.includes('NormalTexture.outputs:rgb'),
+    'Issue #16: sceneToUSDZ with THREE.DataTexture wires DiffuseTexture and NormalTexture shaders',
   );
 
   // Summary

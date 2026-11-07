@@ -200,6 +200,15 @@ export interface USDAMeshTimeSamples {
   scales?: Array<[number, number, number]>;
 }
 
+export interface USDAMeshTexture {
+  file: string;
+  data?: Uint8Array;
+  wrapS?: 'repeat' | 'clamp' | 'mirror';
+  wrapT?: 'repeat' | 'clamp' | 'mirror';
+  scale?: [number, number, number, number];
+  bias?: [number, number, number, number];
+}
+
 export interface USDAMeshData {
   name: string;
   positions: Float32Array;
@@ -215,6 +224,7 @@ export interface USDAMeshData {
   ior?: number;
   opacity?: number;
   emissiveColor?: [number, number, number];
+  textures?: Array<USDAMeshTexture | undefined>;
   xrTraits?: XRMeshTraits;
   timeSamples?: USDAMeshTimeSamples;
   translation?: [number, number, number];
@@ -487,9 +497,9 @@ function serializeScene(
       iridescenceIOR?: number;
       doubleSided?: boolean;
     };
-    const r = m.color?.r ?? 0.8;
-    const g = m.color?.g ?? 0.8;
-    const b = m.color?.b ?? 0.8;
+    const r = m.color?.r ?? 1.0;
+    const g = m.color?.g ?? 1.0;
+    const b = m.color?.b ?? 1.0;
     const opacity = m.opacity ?? 1.0;
     const pbr: Record<string, unknown> = {
       baseColorFactor: [r, g, b, opacity],
@@ -497,51 +507,61 @@ function serializeScene(
       roughnessFactor: m.roughness ?? 0.5,
     };
     const matExtras: Record<string, unknown> = {};
-    if (m.map) {
-      let rawUri = '';
-      if (typeof m.map === 'string') {
-        rawUri = m.map;
-      } else if (typeof (m.map as any).source === 'string') {
-        rawUri = (m.map as any).source;
-      } else if (typeof (m.map as any).image === 'string') {
-        rawUri = (m.map as any).image;
+    const addTex = (t: any): {index: number} | undefined => {
+      if (!t) return undefined;
+      const raw =
+        typeof t === 'string'
+          ? t
+          : typeof t.source === 'string'
+            ? t.source
+            : typeof t.image === 'string'
+              ? t.image
+              : '';
+      const s = raw.trim();
+      if (
+        !s ||
+        /[\x00-\x1f\x7f\\]|\.\./.test(s) ||
+        !(/^data:image\/(png|jpeg|jpg|webp|ktx2|avif)(;|,)/i.test(s) ||
+          (!s.startsWith('//') && !/^[a-z][a-z0-9+.-]*:/i.test(s)))
+      ) {
+        return undefined;
       }
-      const trimmed = rawUri.trim();
-      const safeUri =
-        trimmed &&
-        !/[\x00-\x1f\x7f\\]|\.\./.test(trimmed) &&
-        (/^data:image\/(png|jpeg|jpg|webp|ktx2|avif)(;|,)/i.test(trimmed) ||
-          (!trimmed.startsWith('//') && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)))
-          ? trimmed
-          : null;
-      if (safeUri) {
-        let texIdx = textureLookup.get(safeUri);
-        if (texIdx === undefined) {
-          const imgIdx = images.length;
-          images.push({uri: safeUri});
-          if (samplers.length === 0) {
-            samplers.push({
-              magFilter: 9729,
-              minFilter: 9987,
-              wrapS: 10497,
-              wrapT: 10497,
-            });
-          }
-          texIdx = textures.length;
-          textures.push({sampler: 0, source: imgIdx});
-          textureLookup.set(safeUri, texIdx);
+      let texIdx = textureLookup.get(s);
+      if (texIdx === undefined) {
+        const imgIdx = images.length;
+        images.push({uri: s});
+        if (samplers.length === 0) {
+          samplers.push({
+            magFilter: 9729,
+            minFilter: 9987,
+            wrapS: 10497,
+            wrapT: 10497,
+          });
         }
-        pbr.baseColorTexture = {index: texIdx};
+        texIdx = textures.length;
+        textures.push({sampler: 0, source: imgIdx});
+        textureLookup.set(s, texIdx);
       }
-      const avg = (m.map as any).avgColor;
-      if (Array.isArray(avg) && avg.length >= 3) {
-        matExtras.avgColor = [avg[0], avg[1], avg[2]];
-      }
+      return {index: texIdx};
+    };
+    const baseTex = addTex(m.map);
+    if (baseTex) pbr.baseColorTexture = baseTex;
+    const mrTex = addTex((m as any).roughnessMap || (m as any).metalnessMap);
+    if (mrTex) pbr.metallicRoughnessTexture = mrTex;
+    const avg = (m.map as any)?.avgColor;
+    if (Array.isArray(avg) && avg.length >= 3) {
+      matExtras.avgColor = [avg[0], avg[1], avg[2]];
     }
+    const normTex = addTex((m as any).normalMap);
+    const emTex = addTex((m as any).emissiveMap);
+    const aoTex = addTex((m as any).aoMap);
     const matDef: Record<string, unknown> = {
       name: m.name || '',
       pbrMetallicRoughness: pbr,
       doubleSided: m.side === 2 || Boolean(m.doubleSided),
+      ...(normTex ? {normalTexture: normTex} : {}),
+      ...(emTex ? {emissiveTexture: emTex} : {}),
+      ...(aoTex ? {occlusionTexture: aoTex} : {}),
       ...(Object.keys(matExtras).length > 0 ? {extras: matExtras} : {}),
     };
     if (
@@ -1331,10 +1351,100 @@ export function extractMeshesFromGLB(
   const materials = gltf.materials || [];
   const meshes = gltf.meshes || [];
   const nodes = gltf.nodes || [];
+  const gltfTextures = gltf.textures || [];
+  const gltfImages = gltf.images || [];
+  const gltfSamplers = gltf.samplers || [];
   const usedMatNames = new Set<string>();
   const matIdNames: string[] = materials.map((m: any, idx: number) =>
     uniqName(usedMatNames, sanitizeUsdIdentifier(m?.name, `Material_${idx}`)),
   );
+  const imgCache = new Map<number, {file: string; data: Uint8Array} | null>();
+
+  function decodeB64DataUri(uri: string): Uint8Array | null {
+    const m =
+      /^data:image\/(png|jpe?g)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/i.exec(
+        uri,
+      );
+    if (!m) return null;
+    const clean = m[2].replace(/\s+/g, '');
+    const pad = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+    const out = new Uint8Array(((clean.length * 3) >> 2) - pad);
+    const b64v = (i: number) => {
+      const c = clean.charCodeAt(i);
+      return c > 96
+        ? c - 71
+        : c > 64
+          ? c - 65
+          : c > 47
+            ? c + 4
+            : c === 43
+              ? 62
+              : c === 47
+                ? 63
+                : 0;
+    };
+    let p = 0;
+    for (let i = 0; i < clean.length; i += 4) {
+      const n =
+        (b64v(i) << 18) | (b64v(i + 1) << 12) | (b64v(i + 2) << 6) | b64v(i + 3);
+      out[p++] = (n >> 16) & 255;
+      if (p < out.length) out[p++] = (n >> 8) & 255;
+      if (p < out.length) out[p++] = n & 255;
+    }
+    return out;
+  }
+
+  function resolveTex(
+    info: any,
+    scale?: [number, number, number, number],
+    bias?: [number, number, number, number],
+  ): USDAMeshTexture | undefined {
+    const tIdx = info?.index;
+    if (typeof tIdx !== 'number') return undefined;
+    const tDef = gltfTextures[tIdx];
+    const imgIdx = tDef?.source;
+    if (typeof imgIdx !== 'number' || !gltfImages[imgIdx]) return undefined;
+    let cached = imgCache.get(imgIdx);
+    if (cached === undefined) {
+      cached = null;
+      const imgDef = gltfImages[imgIdx];
+      let bytes: Uint8Array | null = null;
+      if (typeof imgDef.bufferView === 'number') {
+        const bv = bufferViews[imgDef.bufferView];
+        const off = bv?.byteOffset || 0;
+        const len = bv?.byteLength || 0;
+        if (bv && len > 0 && off >= 0 && off + len <= binBuffer.byteLength) {
+          bytes = new Uint8Array(binBuffer, off, len);
+        }
+      } else if (typeof imgDef.uri === 'string') {
+        bytes = decodeB64DataUri(imgDef.uri);
+      }
+      if (bytes && bytes.byteLength > 0) {
+        const isJpg =
+          (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) ||
+          (!(bytes[0] === 0x89 && bytes[1] === 0x50) &&
+            /jpe?g/i.test(imgDef.mimeType || imgDef.uri || ''));
+        cached = {
+          file: `texture_${imgIdx}.${isJpg ? 'jpg' : 'png'}`,
+          data: bytes,
+        };
+      }
+      imgCache.set(imgIdx, cached);
+    }
+    if (!cached) return undefined;
+    const samp =
+      typeof tDef.sampler === 'number' ? gltfSamplers[tDef.sampler] : undefined;
+    const wrap = (w?: number): 'repeat' | 'clamp' | 'mirror' =>
+      w === 33071 ? 'clamp' : w === 33648 ? 'mirror' : 'repeat';
+    return {
+      file: cached.file,
+      data: cached.data,
+      wrapS: wrap(samp?.wrapS),
+      wrapT: wrap(samp?.wrapT),
+      ...(scale ? {scale} : {}),
+      ...(bias ? {bias} : {}),
+    };
+  }
 
   function getBufferSlice(accessorIndex: number): {
     acc: any;
@@ -1417,7 +1527,7 @@ export function extractMeshesFromGLB(
       }
 
       let materialName = 'DefaultMaterial';
-      let color: [number, number, number] = [0.8, 0.8, 0.8];
+      let color: [number, number, number] = [1, 1, 1];
       let roughness = 0.5;
       let metallic = 0.0;
       let clearcoat = 0.0;
@@ -1425,6 +1535,7 @@ export function extractMeshesFromGLB(
       let ior = 1.5;
       let opacity = 1.0;
       let emissiveColor: [number, number, number] = [0, 0, 0];
+      let textures: Array<USDAMeshTexture | undefined> | undefined;
 
       if (prim.material !== undefined && materials[prim.material]) {
         const mat = materials[prim.material];
@@ -1436,24 +1547,51 @@ export function extractMeshesFromGLB(
         ): [number, number, number] =>
           Array.isArray(a) && a.length >= 3 ? [a[0], a[1], a[2]] : fb;
         color = rgb3(pbr.baseColorFactor, [1, 1, 1]);
+        const baseOp =
+          Array.isArray(pbr.baseColorFactor) &&
+          typeof pbr.baseColorFactor[3] === 'number'
+            ? pbr.baseColorFactor[3]
+            : 1;
+        const hasColorScale =
+          color[0] !== 1 || color[1] !== 1 || color[2] !== 1 || baseOp !== 1;
+        const dt = resolveTex(
+          pbr.baseColorTexture,
+          hasColorScale ? [color[0], color[1], color[2], baseOp] : undefined,
+        );
         const avgColor = mat.extras?.avgColor;
-        if (Array.isArray(avgColor) && avgColor.length >= 3) {
+        if (!dt && Array.isArray(avgColor) && avgColor.length >= 3) {
           color = [
             color[0] * avgColor[0],
             color[1] * avgColor[1],
             color[2] * avgColor[2],
           ];
         }
-        const baseOp =
-          Array.isArray(pbr.baseColorFactor) &&
-          typeof pbr.baseColorFactor[3] === 'number'
-            ? pbr.baseColorFactor[3]
-            : 1;
         if (typeof pbr.roughnessFactor === 'number')
           roughness = pbr.roughnessFactor;
         if (typeof pbr.metallicFactor === 'number')
           metallic = pbr.metallicFactor;
+        const rf =
+          typeof pbr.roughnessFactor === 'number' ? pbr.roughnessFactor : 1;
+        const mf =
+          typeof pbr.metallicFactor === 'number' ? pbr.metallicFactor : 1;
+        const mrt = resolveTex(
+          pbr.metallicRoughnessTexture,
+          rf !== 1 || mf !== 1 ? [1, rf, mf, 1] : undefined,
+        );
         emissiveColor = rgb3(mat.emissiveFactor, [0, 0, 0]);
+        const hasEmissive =
+          emissiveColor[0] > 0 || emissiveColor[1] > 0 || emissiveColor[2] > 0;
+        const emScale: [number, number, number, number] | undefined =
+          hasEmissive &&
+          (emissiveColor[0] !== 1 ||
+            emissiveColor[1] !== 1 ||
+            emissiveColor[2] !== 1)
+            ? [emissiveColor[0], emissiveColor[1], emissiveColor[2], 1]
+            : undefined;
+        const et = resolveTex(mat.emissiveTexture, emScale);
+        const nt = resolveTex(mat.normalTexture, [2, 2, 2, 1], [-1, -1, -1, 0]);
+        const ot = resolveTex(mat.occlusionTexture);
+        if (dt || mrt || nt || et || ot) textures = [dt, mrt, nt, et, ot];
         const ext = mat.extensions || {};
         if (ext.KHR_materials_clearcoat) {
           clearcoat = ext.KHR_materials_clearcoat.clearcoatFactor ?? 0;
@@ -1482,6 +1620,7 @@ export function extractMeshesFromGLB(
         ior,
         opacity,
         emissiveColor,
+        ...(textures ? {textures} : {}),
         xrTraits: nodeXr || mesh.extras?.xr,
         ...(invisible ? {invisible: true} : {}),
       });
@@ -1854,6 +1993,7 @@ export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
       ior: number;
       opacity: number;
       emissiveColor: [number, number, number];
+      textures?: Array<USDAMeshTexture | undefined>;
     }
   >();
 
@@ -1867,7 +2007,7 @@ export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
       const matName = sanitizeUsdIdentifier(m.materialName, 'DefaultMaterial');
       if (!materialsMap.has(matName)) {
         materialsMap.set(matName, {
-          color: m.color || [0.8, 0.8, 0.8],
+          color: m.color || [1, 1, 1],
           roughness: m.roughness ?? 0.5,
           metallic: m.metallic ?? 0.0,
           clearcoat: m.clearcoat ?? 0.0,
@@ -1875,6 +2015,7 @@ export function generateUSDAFromMeshes(meshes: USDAMeshData[]): string {
           ior: m.ior ?? 1.5,
           opacity: m.opacity ?? 1.0,
           emissiveColor: m.emissiveColor || [0, 0, 0],
+          textures: m.textures,
         });
       }
     }
@@ -1923,6 +2064,15 @@ ${rootAnchorAttrs}def Scope "Materials"
   for (const [matName, matProps] of materialsMap.entries()) {
     const [r, g, b] = matProps.color;
     const [er, eg, eb] = matProps.emissiveColor;
+    const matPath = `/Root/Materials/${matName}`;
+    const [dt, mrt, nt, et, ot] = matProps.textures || [];
+    const conn = (n: string, o: string) => `.connect = <${matPath}/${n}.outputs:${o}>`;
+    const diffuseLine = dt
+      ? `color3f inputs:diffuseColor${conn('DiffuseTexture', 'rgb')}`
+      : `color3f inputs:diffuseColor = ${f3(r, g, b)}`;
+    const mrLines = mrt
+      ? `float inputs:metallic${conn('MetallicRoughnessTexture', 'b')}\nfloat inputs:roughness${conn('MetallicRoughnessTexture', 'g')}`
+      : `float inputs:metallic = ${formatNum(matProps.metallic)}\nfloat inputs:roughness = ${formatNum(matProps.roughness)}`;
     let extraInputs = '';
     if (matProps.clearcoat > 0) {
       extraInputs += `float inputs:clearcoat = ${formatNum(matProps.clearcoat)}\n`;
@@ -1934,21 +2084,57 @@ ${rootAnchorAttrs}def Scope "Materials"
     if (matProps.opacity < 1.0) {
       extraInputs += `float inputs:opacity = ${formatNum(matProps.opacity)}\n`;
     }
-    if (er > 0 || eg > 0 || eb > 0) {
+    if (et) {
+      extraInputs += `color3f inputs:emissiveColor${conn('EmissiveTexture', 'rgb')}\n`;
+    } else if (er > 0 || eg > 0 || eb > 0) {
       extraInputs += `color3f inputs:emissiveColor = ${f3(er, eg, eb)}\n`;
+    }
+    if (nt) {
+      extraInputs += `normal3f inputs:normal${conn('NormalTexture', 'rgb')}\n`;
+    }
+    if (ot) {
+      extraInputs += `float inputs:occlusion${conn('OcclusionTexture', 'r')}\n`;
+    }
+    let texShaders = '';
+    if (dt || mrt || nt || et || ot) {
+      texShaders += `def Shader "PrimvarReader"\n{\nuniform token info:id = "UsdPrimvarReader_float2"\nstring inputs:varname = "st"\nfloat2 outputs:result\n}\n`;
+      const emitTex = (
+        nodeName: string,
+        tex: USDAMeshTexture | undefined,
+        cs: 'sRGB' | 'raw',
+        outs: string,
+      ) => {
+        if (!tex) return;
+        const sc = tex.scale
+          ? `float4 inputs:scale = ${f4(tex.scale[0], tex.scale[1], tex.scale[2], tex.scale[3])}\n`
+          : '';
+        const bi = tex.bias
+          ? `float4 inputs:bias = ${f4(tex.bias[0], tex.bias[1], tex.bias[2], tex.bias[3])}\n`
+          : '';
+        texShaders += `def Shader "${nodeName}"\n{\nuniform token info:id = "UsdUVTexture"\nasset inputs:file = @${sanitizeUsdStringLiteral(tex.file)}@\nfloat2 inputs:st${conn('PrimvarReader', 'result')}\ntoken inputs:sourceColorSpace = "${cs}"\ntoken inputs:wrapS = "${tex.wrapS || 'repeat'}"\ntoken inputs:wrapT = "${tex.wrapT || 'repeat'}"\n${sc}${bi}${outs}}\n`;
+      };
+      emitTex('DiffuseTexture', dt, 'sRGB', 'float3 outputs:rgb\n');
+      emitTex(
+        'MetallicRoughnessTexture',
+        mrt,
+        'raw',
+        'float outputs:g\nfloat outputs:b\n',
+      );
+      emitTex('NormalTexture', nt, 'raw', 'float3 outputs:rgb\n');
+      emitTex('EmissiveTexture', et, 'sRGB', 'float3 outputs:rgb\n');
+      emitTex('OcclusionTexture', ot, 'raw', 'float outputs:r\n');
     }
     usda += `def Material "${matName}"
 {
 def Shader "PBRShader"
 {
 uniform token info:id = "UsdPreviewSurface"
-color3f inputs:diffuseColor = ${f3(r, g, b)}
-float inputs:metallic = ${formatNum(matProps.metallic)}
-float inputs:roughness = ${formatNum(matProps.roughness)}
+${diffuseLine}
+${mrLines}
 ${extraInputs}token outputs:surface
 }
-token outputs:surface.connect = </Root/Materials/${matName}/PBRShader.outputs:surface>
-}
+token outputs:surface${conn('PBRShader', 'surface')}
+${texShaders}}
 `;
   }
 
@@ -2292,7 +2478,8 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
 
     const localHeaderBase = 30 + filenameBytes.length;
     const rem = (currentOffset + localHeaderBase) % 64;
-    const extraPadding = rem !== 0 ? 64 - rem : 0;
+    let extraPadding = rem !== 0 ? 64 - rem : 0;
+    if (extraPadding > 0 && extraPadding < 4) extraPadding += 64;
 
     const localHeader = new Uint8Array(localHeaderBase + extraPadding);
     const view = new DataView(localHeader.buffer);
@@ -2305,6 +2492,10 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
     view.setUint16(26, filenameBytes.length, true);
     view.setUint16(28, extraPadding, true);
     localHeader.set(filenameBytes, 30);
+    if (extraPadding >= 4) {
+      view.setUint16(localHeaderBase, 0x1986, true);
+      view.setUint16(localHeaderBase + 2, extraPadding - 4, true);
+    }
 
     fileHeaders.push({
       offset: currentOffset,
@@ -2366,14 +2557,34 @@ export function buildUSDZZip(entries: ZipEntry[]): Uint8Array {
 // 7. High-Level Conversion APIs
 // =========================================================================
 
-const packUsda = (usdaText: string): Uint8Array =>
-  buildUSDZZip([{filename: 'model.usda', data: encodeUtf8(usdaText)}]);
+function packMeshesToUSDZ(meshes: USDAMeshData[]): Uint8Array {
+  const entries: ZipEntry[] = [
+    {filename: 'model.usda', data: encodeUtf8(generateUSDAFromMeshes(meshes))},
+  ];
+  const seenFiles = new Set<string>(['model.usda']);
+  const stack: USDAMeshData[] = [...meshes];
+  while (stack.length > 0) {
+    const m = stack.pop()!;
+    for (const tex of m.textures || []) {
+      if (tex?.file && tex.data?.byteLength && !seenFiles.has(tex.file)) {
+        seenFiles.add(tex.file);
+        entries.push({filename: tex.file, data: tex.data});
+      }
+    }
+    if (m.children) {
+      for (let i = m.children.length - 1; i >= 0; i--) {
+        stack.push(m.children[i]);
+      }
+    }
+  }
+  return buildUSDZZip(entries);
+}
 
 /**
  * Directly compiles a Three.js Scene into Apple USDZ format with 64-byte alignment.
  */
 export function sceneToUSDZ(scene: Scene): Uint8Array {
-  return packUsda(generateUSDA(scene));
+  return packMeshesToUSDZ(extractMeshesFromScene(scene));
 }
 
 /**
@@ -2382,9 +2593,7 @@ export function sceneToUSDZ(scene: Scene): Uint8Array {
 export function glbToUSDZ(
   glbOrBuffer: GLBData | ArrayBuffer | ArrayBufferView,
 ): Uint8Array {
-  return packUsda(
-    generateUSDAFromMeshes(extractMeshesFromGLB(toGLBData(glbOrBuffer))),
-  );
+  return packMeshesToUSDZ(extractMeshesFromGLB(toGLBData(glbOrBuffer)));
 }
 
 /**

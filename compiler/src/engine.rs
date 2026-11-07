@@ -916,7 +916,7 @@ impl ThreeEngine {
                                 .unwrap_or(JsValue::undefined());
                             let base_color = extract_f32_4(
                                 &base_color_val,
-                                [0.8, 0.8, 0.8, 1.0],
+                                [1.0, 1.0, 1.0, 1.0],
                                 &mut self.context,
                             );
 

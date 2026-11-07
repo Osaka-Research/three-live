@@ -2075,6 +2075,15 @@ export class Material {
     this.side = numberOr(params.side, 2);
     this.doubleSided = booleanOr(params.doubleSided, true);
     this.map = params.map || null;
+    for (const k of [
+      'normalMap',
+      'roughnessMap',
+      'metalnessMap',
+      'emissiveMap',
+      'aoMap',
+    ]) {
+      if (params[k]) (this as any)[k] = params[k];
+    }
 
     this.clearcoat = numberOr(params.clearcoat, 0);
     this.clearcoatRoughness = numberOr(params.clearcoatRoughness, 0);
@@ -2682,9 +2691,16 @@ export class SceneQuotaValidator {
         }
         if (obj.material) {
           const mat = obj.material as any;
-          if (mat.map) textures.add(mat.map);
-          if (mat.normalMap) textures.add(mat.normalMap);
-          if (mat.roughnessMap) textures.add(mat.roughnessMap);
+          for (const k of [
+            'map',
+            'normalMap',
+            'roughnessMap',
+            'metalnessMap',
+            'emissiveMap',
+            'aoMap',
+          ]) {
+            if (mat[k]) textures.add(mat[k]);
+          }
         }
       }
     });
