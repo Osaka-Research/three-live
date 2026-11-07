@@ -345,13 +345,18 @@ function buildRepairPrompts(promptEntry, originalCode, validationReport, arm) {
     ? `Compiled Meshes: ${validationReport.summary.meshCount} (visible in frustum: ${validationReport.summary.camera.visibleMeshCount}), Lights: ${validationReport.summary.lightCount}`
     : 'Compilation failed to produce a valid scene graph.';
 
+  const simHint =
+    validationReport.simEvaluation?.ran && !validationReport.simEvaluation.simActive
+      ? `\n- [SIM] TEMPORAL/INTERACTIVE INACTIVE: Scene is in category '${promptEntry.category}', but running 60Hz simulation for ${validationReport.simEvaluation.durationSec}s with select/explode/moveCharacter actions produced 0 moving bodies, 0 triggered events, and 0 audio cues. Add an animate(t) loop or declarative userData.xr / userData.interactivity / userData.sim traits so the scene responds dynamically.`
+      : '';
+
   const userPrompt = [
     `The Three.js script below was generated for task "${promptEntry.title}":`,
     promptEntry.prompt,
     '',
     'When compiled with `three-live-cli validate`, it produced the following diagnostics:',
     summaryText,
-    diagsText || '(No structured diagnostics, but scene had 0 meshes or failed validation)',
+    (diagsText || '(No structured diagnostics)') + simHint,
     '',
     'Original JavaScript code:',
     '```javascript',
@@ -703,10 +708,128 @@ function runCompilerValidate(binPath, scriptPath) {
 }
 
 /**
- * Evaluates a single script file and combines static symbol analysis with
- * runtime compiler diagnostics and spatial framing metrics.
+ * Categories that require temporal/interactive verification via `three-live-cli sim`.
  */
-async function evaluateSingleScript(binPath, scriptPath, promptEntry) {
+const SIM_CATEGORIES = new Set(['instancing_animation_ik', 'spatial_xr_sim']);
+
+/**
+ * Default scripted user/agent action sequence for `three-live-cli sim`.
+ */
+const DEFAULT_SIM_ACTIONS = JSON.stringify([
+  {at: 0.2, type: 'select'},
+  {at: 0.4, type: 'explode', factor: 1.0},
+  {at: 0.2, type: 'moveCharacter', dx: -0.4, dz: -1.0, duration: 1.5, jump: true},
+]);
+
+/**
+ * Runs `three-live-cli sim <scriptPath> --duration 2.0 --actions ... --json`
+ * and computes temporal & interactive simulation metrics.
+ */
+function runCompilerSim(binPath, scriptPath, durationSec = 2.0) {
+  return new Promise((resolve) => {
+    execFile(
+      binPath,
+      [
+        'sim',
+        scriptPath,
+        '--duration',
+        String(durationSec),
+        '--actions',
+        DEFAULT_SIM_ACTIONS,
+        '--json',
+      ],
+      {encoding: 'utf8', maxBuffer: 16 * 1024 * 1024},
+      (err, rawStdout) => {
+        const stdout = (rawStdout || '').trim();
+        let simReport = null;
+        if (stdout) {
+          try {
+            simReport = JSON.parse(stdout);
+          } catch (_) {
+            const firstBrace = stdout.indexOf('{');
+            const lastBrace = stdout.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace > firstBrace) {
+              try {
+                simReport = JSON.parse(stdout.slice(firstBrace, lastBrace + 1));
+              } catch (_2) {}
+            }
+          }
+        }
+        if (!simReport || err) {
+          resolve({
+            ran: true,
+            durationSec,
+            ticksSimulated: 0,
+            movedBodies: 0,
+            totalBodies: 0,
+            triggeredEvents: [],
+            completedObjectives: [],
+            audioCuesFired: [],
+            score: 0,
+            scenarioState: 'error',
+            simActive: false,
+          });
+          return;
+        }
+        const bodies = Array.isArray(simReport.bodies) ? simReport.bodies : [];
+        let movedBodies = 0;
+        for (const b of bodies) {
+          const t0 = b.initialTranslation || [0, 0, 0];
+          const t1 = b.finalTranslation || [0, 0, 0];
+          const r0 = b.initialRotation || [0, 0, 0, 1];
+          const r1 = b.finalRotation || [0, 0, 0, 1];
+          const s0 = b.initialScale || [1, 1, 1];
+          const s1 = b.finalScale || [1, 1, 1];
+          const dt = Math.hypot(t1[0] - t0[0], t1[1] - t0[1], t1[2] - t0[2]);
+          const dr = Math.hypot(
+            r1[0] - r0[0],
+            r1[1] - r0[1],
+            r1[2] - r0[2],
+            r1[3] - r0[3],
+          );
+          const ds = Math.hypot(s1[0] - s0[0], s1[1] - s0[1], s1[2] - s0[2]);
+          if (dt > 1e-4 || dr > 1e-4 || ds > 1e-4) {
+            movedBodies++;
+          }
+        }
+        const triggeredEvents = Array.isArray(simReport.triggeredEvents)
+          ? simReport.triggeredEvents
+          : [];
+        const completedObjectives = Array.isArray(simReport.completedObjectives)
+          ? simReport.completedObjectives
+          : [];
+        const audioCuesFired = Array.isArray(simReport.audioCuesFired)
+          ? simReport.audioCuesFired
+          : [];
+        const simActive = Boolean(
+          movedBodies > 0 ||
+            triggeredEvents.length > 0 ||
+            completedObjectives.length > 0 ||
+            audioCuesFired.length > 0,
+        );
+        resolve({
+          ran: true,
+          durationSec: simReport.durationSec ?? durationSec,
+          ticksSimulated: simReport.ticksSimulated ?? 0,
+          movedBodies,
+          totalBodies: bodies.length,
+          triggeredEvents,
+          completedObjectives,
+          audioCuesFired,
+          score: simReport.score ?? 0,
+          scenarioState: simReport.scenarioState || 'running',
+          simActive,
+        });
+      },
+    );
+  });
+}
+
+/**
+ * Evaluates a single script file and combines static symbol analysis with
+ * runtime compiler diagnostics, spatial framing metrics, and 60Hz temporal/interactive simulation.
+ */
+async function evaluateSingleScript(binPath, scriptPath, promptEntry, evalOpts = {}) {
   const code = fs.readFileSync(scriptPath, 'utf8');
   const symbolAnalysis = analyzeThreeSymbols(code);
   const report = await runCompilerValidate(binPath, scriptPath);
@@ -769,9 +892,18 @@ async function evaluateSingleScript(binPath, scriptPath, promptEntry) {
     symbolAnalysis.degradedAliases.length > 0 ||
     symbolAnalysis.unsupportedClasses.length > 0;
 
+  const category = promptEntry ? promptEntry.category : 'custom';
+  const shouldRunSim =
+    compileSucceeded &&
+    evalOpts.sim !== false &&
+    (Boolean(evalOpts.simAll) || SIM_CATEGORIES.has(category));
+  const simEvaluation = shouldRunSim
+    ? await runCompilerSim(binPath, scriptPath)
+    : {ran: false, simActive: null};
+
   return {
     id: promptEntry ? promptEntry.id : path.basename(scriptPath, '.js'),
-    category: promptEntry ? promptEntry.category : 'custom',
+    category,
     title: promptEntry ? promptEntry.title : path.basename(scriptPath),
     scriptPath: path.relative(ROOT_DIR, scriptPath),
     valid: Boolean(report.valid),
@@ -797,6 +929,7 @@ async function evaluateSingleScript(binPath, scriptPath, promptEntry) {
       misclassifiedTl103,
       lexicalSceneShadowed,
     },
+    simEvaluation,
     diagnosticCodes: diagCodes,
     errorCodes,
     warningCodes,
@@ -1231,12 +1364,18 @@ function aggregateResults(arm, itemResults, repairComparison = null) {
   const avgExecutionTimeMs =
     total > 0 ? itemResults.reduce((acc, r) => acc + r.executionTimeMs, 0) / total : 0;
 
-  // Tally diagnostic codes
+  // Tally diagnostic codes and simulation stats
   const diagnosticHistogram = {};
   const droppedSymbolHistogram = {};
   const degradedAliasHistogram = {};
   const unsupportedConstantHistogram = {};
   const byCategory = {};
+  let simEvaluatedCount = 0;
+  let simActiveCount = 0;
+  let simMovedBodiesTotal = 0;
+  let simTriggeredEventsTotal = 0;
+  let simCompletedObjectivesTotal = 0;
+  let simAudioCuesTotal = 0;
 
   for (const r of itemResults) {
     if (!byCategory[r.category]) {
@@ -1246,6 +1385,8 @@ function aggregateResults(arm, itemResults, repairComparison = null) {
         cleanCompileNoDrops: 0,
         withDrops: 0,
         avgFrustumVisibilityRatio: 0,
+        simEvaluated: 0,
+        simActive: 0,
       };
     }
     const cat = byCategory[r.category];
@@ -1260,6 +1401,18 @@ function aggregateResults(arm, itemResults, repairComparison = null) {
       cat.withDrops++;
     }
     cat.avgFrustumVisibilityRatio += r.frustumVisibilityRatio;
+    if (r.simEvaluation?.ran) {
+      cat.simEvaluated++;
+      simEvaluatedCount++;
+      if (r.simEvaluation.simActive) {
+        cat.simActive++;
+        simActiveCount++;
+      }
+      simMovedBodiesTotal += r.simEvaluation.movedBodies || 0;
+      simTriggeredEventsTotal += (r.simEvaluation.triggeredEvents || []).length;
+      simCompletedObjectivesTotal += (r.simEvaluation.completedObjectives || []).length;
+      simAudioCuesTotal += (r.simEvaluation.audioCuesFired || []).length;
+    }
 
     for (const d of r.diagnostics) {
       diagnosticHistogram[d.code] = (diagnosticHistogram[d.code] || 0) + 1;
@@ -1294,6 +1447,16 @@ function aggregateResults(arm, itemResults, repairComparison = null) {
     withMisclassifiedTl103Count,
     avgFrustumVisibilityRatio: Number(avgFrustumRatio.toFixed(3)),
     avgExecutionTimeMs: Number(avgExecutionTimeMs.toFixed(2)),
+    simSummary: {
+      simEvaluatedCount,
+      simActiveCount,
+      simActiveRate:
+        simEvaluatedCount > 0 ? Number((simActiveCount / simEvaluatedCount).toFixed(4)) : 0,
+      simMovedBodiesTotal,
+      simTriggeredEventsTotal,
+      simCompletedObjectivesTotal,
+      simAudioCuesTotal,
+    },
     byCategory,
     diagnosticHistogram,
     droppedSymbolHistogram,
@@ -1306,6 +1469,14 @@ function aggregateResults(arm, itemResults, repairComparison = null) {
 
 function formatMarkdownReport(summary) {
   const pct = (n, d) => (d > 0 ? `${((n / d) * 100).toFixed(1)}% (${n}/${d})` : '0.0% (0/0)');
+  const sim = summary.simSummary || {
+    simEvaluatedCount: 0,
+    simActiveCount: 0,
+    simMovedBodiesTotal: 0,
+    simTriggeredEventsTotal: 0,
+    simCompletedObjectivesTotal: 0,
+    simAudioCuesTotal: 0,
+  };
   const lines = [
     `# \`three-live\` Three.js Codegen & Compiler Eval Report — Arm: \`${summary.arm}\``,
     '',
@@ -1313,6 +1484,7 @@ function formatMarkdownReport(summary) {
     `- **Scripts Evaluated:** ${summary.totalScripts}`,
     `- **Compile Success Rate (\`valid && meshCount > 0\`):** **${pct(summary.compileSuccessCount, summary.totalScripts)}**`,
     `- **Clean Compile Rate (0 silent drops / 0 fallbacks / 0 errors):** **${pct(summary.cleanNoDropsCount, summary.totalScripts)}**`,
+    `- **Temporal & Interactive Simulation Pass Rate (\`three-live-cli sim\`):** **${pct(sim.simActiveCount, sim.simEvaluatedCount)}** (${sim.simMovedBodiesTotal} moving bodies, ${sim.simTriggeredEventsTotal} events, ${sim.simCompletedObjectivesTotal} objectives, ${sim.simAudioCuesTotal} audio cues)`,
     `- **Scripts with Silent \`noopProxy\` Drops:** ${pct(summary.withNoopDropsCount, summary.totalScripts)}`,
     `- **Scripts with \`BoxGeometry(0.5)\` Silent Geometry Fallback:** ${pct(summary.withBoxFallbackCount, summary.totalScripts)}`,
     `- **Scripts with Degraded Primitive Aliases (\`RingGeometry\`, \`CapsuleGeometry\`, \`SpotLight\`, etc.):** ${pct(summary.withDegradedAliasesCount, summary.totalScripts)}`,
@@ -1322,13 +1494,15 @@ function formatMarkdownReport(summary) {
     '',
     '## Breakdown by Category',
     '',
-    '| Category | Scripts | Compile Success | Clean (No Drops) | Had Drops/Aliases | Mean Frustum Visibility |',
-    '| :--- | :---: | :---: | :---: | :---: | :---: |',
+    '| Category | Scripts | Compile Success | Clean (No Drops) | Had Drops/Aliases | Sim Active (`three-live-cli sim`) | Mean Frustum Visibility |',
+    '| :--- | :---: | :---: | :---: | :---: | :---: | :---: |',
   ];
 
   for (const [cat, stats] of Object.entries(summary.byCategory)) {
+    const simCell =
+      stats.simEvaluated > 0 ? pct(stats.simActive, stats.simEvaluated) : '—';
     lines.push(
-      `| \`${cat}\` | ${stats.total} | ${pct(stats.compileSucceeded, stats.total)} | ${pct(stats.cleanCompileNoDrops, stats.total)} | ${pct(stats.withDrops, stats.total)} | ${(stats.avgFrustumVisibilityRatio * 100).toFixed(1)}% |`,
+      `| \`${cat}\` | ${stats.total} | ${pct(stats.compileSucceeded, stats.total)} | ${pct(stats.cleanCompileNoDrops, stats.total)} | ${pct(stats.withDrops, stats.total)} | ${simCell} | ${(stats.avgFrustumVisibilityRatio * 100).toFixed(1)}% |`,
     );
   }
 
@@ -1341,6 +1515,7 @@ function formatMarkdownReport(summary) {
       `- **Scripts Needing Repair (Drops/Aliases or Compiler Warnings):** ${rc.repairedTotal}`,
       `- **Clean (0 Drops/Aliases) Before -> After Repair:** ${pct(rc.beforeCleanCount, summary.totalScripts)} -> **${pct(rc.afterCleanCount, summary.totalScripts)}**`,
       `- **Warning-Free Scripts (0 Error/Warning Diagnostics) Before -> After Repair:** ${pct(rc.beforeWarningFreeCount, summary.totalScripts)} -> **${pct(rc.afterWarningFreeCount, summary.totalScripts)}**`,
+      `- **Temporal & Interactive Sim Active Before -> After Repair:** ${pct(rc.beforeSimActiveCount, rc.simEvaluatedCount)} -> **${pct(rc.afterSimActiveCount, rc.simEvaluatedCount)}**`,
       `- **Compiler Error/Warning Diagnostics Before -> After Repair:** ${rc.warningsBefore} -> **${rc.warningsAfter}**`,
       `- **Total Diagnostics (including TL306/TL307 info) Before -> After Repair:** ${rc.diagnosticsBefore} -> ${rc.diagnosticsAfter}`,
     );
@@ -1386,8 +1561,8 @@ function formatMarkdownReport(summary) {
 
   lines.push('', '## Per-Script Results', '');
   lines.push(
-    '| ID | Category | Valid | Meshes (Vis) | Verts | Drops (`noopProxy`) | Box0.5 Fallbacks | Degraded Aliases | Diagnostics |',
-    '| :--- | :--- | :---: | :---: | :---: | :--- | :---: | :--- | :--- |',
+    '| ID | Category | Valid | Meshes (Vis) | Verts | Sim (`moved / ev / obj / aud`) | Drops (`noopProxy`) | Box0.5 Fallbacks | Degraded Aliases | Diagnostics |',
+    '| :--- | :--- | :---: | :---: | :---: | :---: | :--- | :---: | :--- | :--- |',
   );
   for (const item of summary.items) {
     const dropsStr =
@@ -1396,8 +1571,12 @@ function formatMarkdownReport(summary) {
       item.symbolAnalysis.degradedAliases.map((a) => `\`${a.symbol}\``).join(', ') || '—';
     const diagsStr =
       Array.from(new Set(item.diagnosticCodes)).map((c) => `\`${c}\``).join(', ') || '—';
+    const se = item.simEvaluation;
+    const simStr = se?.ran
+      ? `${se.simActive ? 'PASS' : 'INACTIVE'} (${se.movedBodies} / ${se.triggeredEvents.length} / ${se.completedObjectives.length} / ${se.audioCuesFired.length})`
+      : '—';
     lines.push(
-      `| \`${item.id}\` | \`${item.category}\` | ${item.compileSucceeded ? 'PASS' : 'FAIL'} | ${item.meshCount} (${item.visibleMeshCount}) | ${item.vertexCount} | ${dropsStr} | ${item.runtimeDrops.boxGeometryFallbackCount} | ${aliasStr} | ${diagsStr} |`,
+      `| \`${item.id}\` | \`${item.category}\` | ${item.compileSucceeded ? 'PASS' : 'FAIL'} | ${item.meshCount} (${item.visibleMeshCount}) | ${item.vertexCount} | ${simStr} | ${dropsStr} | ${item.runtimeDrops.boxGeometryFallbackCount} | ${aliasStr} | ${diagsStr} |`,
     );
   }
 
@@ -1415,6 +1594,8 @@ function parseCliArgs(argv) {
     armExplicit: false,
     generate: false,
     evaluate: true,
+    sim: true,
+    simAll: false,
     repair: false,
     render: false,
     overwrite: false,
@@ -1438,6 +1619,13 @@ function parseCliArgs(argv) {
       if (!opts.armExplicit) opts.arm = 'vanilla';
     } else if (arg === '--evaluate') {
       opts.evaluate = true;
+    } else if (arg === '--sim') {
+      opts.sim = true;
+    } else if (arg === '--no-sim') {
+      opts.sim = false;
+    } else if (arg === '--sim-all') {
+      opts.sim = true;
+      opts.simAll = true;
     } else if (arg === '--repair') {
       opts.repair = true;
     } else if (arg === '--render') {
@@ -1641,7 +1829,7 @@ async function main() {
     scriptsToEval,
     Math.max(opts.concurrency, 8),
     ({scriptPath, promptEntry}) =>
-      evaluateSingleScript(binPath, scriptPath, promptEntry),
+      evaluateSingleScript(binPath, scriptPath, promptEntry, opts),
   );
 
   // Step 3: Optional 1-turn closed-loop self-repair (`--repair`)
@@ -1654,10 +1842,11 @@ async function main() {
 
     const isActionableForRepair = (r) =>
       !r.cleanCompileNoDrops ||
+      (r.simEvaluation?.ran && !r.simEvaluation.simActive) ||
       r.diagnostics.some((d) => d.severity === 'error' || d.severity === 'warning');
     const needsRepair = itemResults.filter(isActionableForRepair);
     console.log(
-      `[evals] Running 1-turn closed-loop repair on ${needsRepair.length}/${itemResults.length} scripts with drops or compiler warnings...`,
+      `[evals] Running 1-turn closed-loop repair on ${needsRepair.length}/${itemResults.length} scripts with drops, inactive sim, or compiler warnings...`,
     );
 
     await runPool(itemResults, opts.concurrency, async (item, idx) => {
@@ -1694,6 +1883,7 @@ async function main() {
             lightCount: item.lightCount,
             camera: {visibleMeshCount: item.visibleMeshCount},
           },
+          simEvaluation: item.simEvaluation,
           diagnostics: item.diagnostics,
         },
         opts.arm,
@@ -1712,7 +1902,7 @@ async function main() {
       scriptsToEval,
       Math.max(opts.concurrency, 8),
       ({id, promptEntry}) =>
-        evaluateSingleScript(binPath, path.join(repairedDir, `${id}.js`), promptEntry),
+        evaluateSingleScript(binPath, path.join(repairedDir, `${id}.js`), promptEntry, opts),
     );
     const repairedSummary = aggregateResults(repairedArm, repairedResults);
     fs.writeFileSync(
@@ -1747,6 +1937,9 @@ async function main() {
       afterCleanCount: repairedResults.filter((r) => r.cleanCompileNoDrops).length,
       beforeWarningFreeCount: countWarnFree(itemResults),
       afterWarningFreeCount: countWarnFree(repairedResults),
+      simEvaluatedCount: itemResults.filter((r) => r.simEvaluation?.ran).length,
+      beforeSimActiveCount: itemResults.filter((r) => r.simEvaluation?.simActive).length,
+      afterSimActiveCount: repairedResults.filter((r) => r.simEvaluation?.simActive).length,
       warningsBefore: countWarns(itemResults),
       warningsAfter: countWarns(repairedResults),
       diagnosticsBefore: itemResults.reduce((acc, r) => acc + r.diagnostics.length, 0),
@@ -1788,6 +1981,12 @@ async function main() {
   console.log(
     `  Clean Compile (0 drops/warns): ${summary.cleanNoDropsCount}/${summary.totalScripts} (${(summary.cleanNoDropsRate * 100).toFixed(1)}%)`,
   );
+  if (summary.simSummary && summary.simSummary.simEvaluatedCount > 0) {
+    const ss = summary.simSummary;
+    console.log(
+      `  Temporal/Interactive Sim Pass: ${ss.simActiveCount}/${ss.simEvaluatedCount} (${(ss.simActiveRate * 100).toFixed(1)}%) [${ss.simMovedBodiesTotal} bodies, ${ss.simTriggeredEventsTotal} events, ${ss.simCompletedObjectivesTotal} obj, ${ss.simAudioCuesTotal} audio]`,
+    );
+  }
   console.log(
     `  Silent noopProxy Drops:        ${summary.withNoopDropsCount}/${summary.totalScripts}`,
   );
@@ -1814,6 +2013,11 @@ async function main() {
     console.log(
       `  1-Turn Repair Warning-Free:    ${repairComparison.beforeWarningFreeCount}/${summary.totalScripts} -> ${repairComparison.afterWarningFreeCount}/${summary.totalScripts}`,
     );
+    if (repairComparison.simEvaluatedCount > 0) {
+      console.log(
+        `  1-Turn Repair Sim Active:      ${repairComparison.beforeSimActiveCount}/${repairComparison.simEvaluatedCount} -> ${repairComparison.afterSimActiveCount}/${repairComparison.simEvaluatedCount}`,
+      );
+    }
     console.log(
       `  1-Turn Repair Warnings:        ${repairComparison.warningsBefore} -> ${repairComparison.warningsAfter}`,
     );
