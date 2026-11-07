@@ -174,7 +174,13 @@ function downloadFile(url, destPath, redirectsLeft = 5) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const invokedBin = path.basename(process.argv[1] || '', '.js');
+  const args =
+    rawArgs.length === 0 &&
+    (invokedBin === 'three-live-mcp' || !process.stdin.isTTY)
+      ? ['mcp']
+      : rawArgs;
   const info = resolvePlatformInfo();
 
   if (args.includes('--locate-only')) {

@@ -26,6 +26,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [1.3.1] - 2026-11-07 (Beta)
+
+### Added
+
+-   **Built-In Model Context Protocol (MCP) Stdio Server (`three-live-cli mcp`)**:
+    Added a zero-dependency JSON-RPC 2.0 MCP server in `compiler/src/mcp.rs`
+    supporting both newline-delimited JSON and `Content-Length` framing for
+    Claude Code, Cursor, Gemini CLI, Windsurf, and MCP Inspector (`claude mcp
+    add three-live -- npx -y -p three-live three-live-cli mcp`):
+    -   `three_live_validate` — Runs the Three.js compiler, schema checker, and
+        3D spatial/frustum/grounding/collision linter (`TL100`–`TL402`).
+    -   `three_live_render` — Renders headless 4-up orthographic/camera contact
+        sheets (`quad`), single views, or temporal/turntable animations and
+        returns native MCP `image/png` / `image/gif` base64 content blocks
+        directly into vision-capable agent context windows.
+    -   `three_live_convert` — Compiles Three.js / HTML / `.glb` to `.glb` or
+        64-byte-aligned Apple `.usdz`.
+    -   `three_live_sim` — Steps deterministic 60 Hz `KHR_interactivity` graphs,
+        `xr-live-sim` rigid-body physics, character controllers, and objectives
+        with optional keyframe filmstrips.
+    -   Exposes `three-live://docs/authoring-guide` (`resources/read`) and
+        `author_three_live_scene` (`prompts/get`), plus `server.json` (Official
+        MCP Registry), `smithery.yaml`, and `.mcp.json`.
+-   **Procedural `THREE.DataTexture` Support (`Web`, `Rust`, `GLB`, `USDZ`)**:
+    Added `THREE.DataTexture` compilation (`RGBAFormat`, `RGBFormat`,
+    `LuminanceFormat`, `RepeatWrapping` / `ClampToEdgeWrapping`), inline PNG
+    data-URI serialization in `.glb`, `avgColor` material tinting in `.usdz`,
+    and software rasterizer sampling in `three-live-cli render`.
+-   **Distance-Based Level-of-Detail (`lod` / `THREE.LOD` / `MSFT_lod`)**:
+    Added multi-tier distance switching with hysteresis, far-distance culling,
+    automatic vertex-clustering mesh decimation (`decimateGeometry`), and
+    `MSFT_lod` / `KHR_node_visibility` export across Web, Android (`LodController.kt`),
+    iOS (`LodController.swift`), and the Rust compiler.
+-   **3D Spatial Audio Emitters (`spatial-audio` / `KHR_audio_emitter`) & 60 Hz
+    Rigid-Body Physics (`rigid-body`)**: Added 8 zero-asset ambient spatial loop
+    presets, `KHR_audio_emitter` / USDZ `SpatialAudio` export, and deterministic
+    60 Hz Sequential Impulse rigid-body dynamics across Android, iOS, and Web.
+-   **Mobile-First Documentation & Animated Hero Showcase**: Redesigned
+    `README.md` to lead with native Android (Google Filament & Jetpack XR
+    SceneCore), iOS/visionOS (Apple RealityKit), and `three-live-cli` / MCP,
+    with an animated 4-stage hero showcase GIF (`docs/assets/hero-showcase.gif`).
+
+--------------------------------------------------------------------------------
+
 ## [1.3.0] - 2026-11-05 (Beta)
 
 ### Added

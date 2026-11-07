@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "three-live": {
+      "command": "npx",
+      "args": ["-y", "-p", "three-live", "three-live-cli", "mcp"]
+    }
+  }
+}
