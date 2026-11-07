@@ -869,7 +869,10 @@ export class BufferAttribute {
     }
 
     if (Array.isArray(array)) {
-      const fn = (globalThis as any).__three_live_native_f32_array__;
+      const fn =
+        typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+        ENABLE_NATIVE_HOOKS &&
+        (globalThis as any).__three_live_native_f32_array__;
       this.array =
         typeof fn === 'function' ? fn(array) : new Float32Array(array);
     } else {
@@ -935,13 +938,10 @@ export class BufferAttribute {
 
 export class Float32BufferAttribute extends BufferAttribute {
   constructor(array: any, itemSize: number) {
-    const fn = (globalThis as any).__three_live_native_f32_array__;
     super(
-      array instanceof Float32Array
+      array instanceof Float32Array || Array.isArray(array)
         ? array
-        : Array.isArray(array) && typeof fn === 'function'
-          ? fn(array)
-          : new Float32Array(array),
+        : new Float32Array(array),
       itemSize,
     );
   }
@@ -984,12 +984,19 @@ export class BufferGeometry {
     if (indices instanceof BufferAttribute) {
       this.index = indices;
     } else if (Array.isArray(indices)) {
-      const fn = (globalThis as any).__three_live_native_index_array__;
+      const fn =
+        typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+        ENABLE_NATIVE_HOOKS &&
+        (globalThis as any).__three_live_native_index_array__;
       if (typeof fn === 'function') {
         this.index = new BufferAttribute(fn(indices), 1);
       } else {
         let maxIdx = 0;
-        for (const v of indices) if (v > maxIdx) maxIdx = v;
+        for (const v of indices) {
+          if (v > maxIdx) {
+            maxIdx = v;
+          }
+        }
         this.index = new BufferAttribute(
           new (maxIdx > 65535 ? Uint32Array : Uint16Array)(indices),
           1,
@@ -1003,9 +1010,13 @@ export class BufferGeometry {
 
   public computeVertexNormals(): this {
     const pos = this.attributes.position;
-    if (!pos) return this;
-    const nativeFn = (globalThis as any)
-      .__three_live_native_compute_vertex_normals__;
+    if (!pos) {
+      return this;
+    }
+    const nativeFn =
+      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+      ENABLE_NATIVE_HOOKS &&
+      (globalThis as any).__three_live_native_compute_vertex_normals__;
     if (typeof nativeFn === 'function') {
       const normals = nativeFn(pos.array, this.index?.array);
       this.setAttribute('normal', new BufferAttribute(normals, 3));
@@ -1304,15 +1315,13 @@ export class SphereGeometry extends BufferGeometry {
     super();
     widthSegments = Math.max(3, Math.floor(widthSegments));
     heightSegments = Math.max(2, Math.floor(heightSegments));
-    const isFull =
+    if (
+      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+      ENABLE_NATIVE_HOOKS &&
       !phiStart &&
       !thetaStart &&
       Math.abs(phiLength - Math.PI * 2) < 1e-4 &&
-      Math.abs(thetaLength - Math.PI) < 1e-4;
-    if (
-      isFull &&
-      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
-      ENABLE_NATIVE_HOOKS
+      Math.abs(thetaLength - Math.PI) < 1e-4
     ) {
       const nativeFn = (globalThis as any).__three_live_native_sphere__;
       if (typeof nativeFn === 'function') {
@@ -1373,15 +1382,13 @@ export class CylinderGeometry extends BufferGeometry {
     super();
     radialSegments = Math.max(3, Math.floor(radialSegments));
     heightSegments = Math.max(1, Math.floor(Number(heightSegments) || 1));
-    const isStandard =
+    if (
+      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+      ENABLE_NATIVE_HOOKS &&
       heightSegments === 1 &&
       !openEnded &&
       !thetaStart &&
-      Math.abs(thetaLength - Math.PI * 2) < 1e-4;
-    if (
-      isStandard &&
-      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
-      ENABLE_NATIVE_HOOKS
+      Math.abs(thetaLength - Math.PI * 2) < 1e-4
     ) {
       const nativeFn = (globalThis as any).__three_live_native_cylinder__;
       if (typeof nativeFn === 'function') {
@@ -1406,6 +1413,7 @@ export class CylinderGeometry extends BufferGeometry {
     const indices: number[] = [];
     const halfHeight = height / 2;
     const slope = (radiusBottom - radiusTop) / (height || 1);
+    const stride = radialSegments + 1;
 
     for (let y = 0; y <= heightSegments; y++) {
       const v = y / heightSegments;
@@ -1420,15 +1428,11 @@ export class CylinderGeometry extends BufferGeometry {
         positions.push(radius * sinTheta, py, radius * cosTheta);
         normals.push(sinTheta / nl, slope / nl, cosTheta / nl);
         uvs.push(u, 1 - v);
-      }
-    }
-
-    const stride = radialSegments + 1;
-    for (let y = 0; y < heightSegments; y++) {
-      for (let x = 0; x < radialSegments; x++) {
-        const a = y * stride + x;
-        const b = a + stride;
-        indices.push(a, b, a + 1, b, b + 1, a + 1);
+        if (y < heightSegments && x < radialSegments) {
+          const a = y * stride + x;
+          const b = a + stride;
+          indices.push(a, b, a + 1, b, b + 1, a + 1);
+        }
       }
     }
 
@@ -1439,7 +1443,7 @@ export class CylinderGeometry extends BufferGeometry {
       positions.push(0, py, 0);
       normals.push(0, sign, 0);
       uvs.push(0.5, 0.5);
-      const rimStart = positions.length / 3;
+      const rimStart = centerIdx + 1;
       for (let x = 0; x <= radialSegments; x++) {
         const theta = thetaStart + (x / radialSegments) * thetaLength;
         const sinTheta = Math.sin(theta),
@@ -1447,13 +1451,13 @@ export class CylinderGeometry extends BufferGeometry {
         positions.push(r * sinTheta, py, r * cosTheta);
         normals.push(0, sign, 0);
         uvs.push(cosTheta * 0.5 + 0.5, 0.5 + sign * sinTheta * 0.5);
-      }
-      for (let x = 0; x < radialSegments; x++) {
-        indices.push(
-          centerIdx,
-          rimStart + x + (sign > 0 ? 0 : 1),
-          rimStart + x + (sign > 0 ? 1 : 0),
-        );
+        if (x < radialSegments) {
+          indices.push(
+            centerIdx,
+            rimStart + x + (sign > 0 ? 0 : 1),
+            rimStart + x + (sign > 0 ? 1 : 0),
+          );
+        }
       }
     };
     addCap(radiusTop, 1);
@@ -1567,6 +1571,7 @@ function buildSweptTube(
     samplePt(i / tSegs, p);
     pts.push(p);
   }
+  const stride = rSegs + 1;
   for (let i = 0; i <= tSegs; i++) {
     const u = i / tSegs,
       p1 = pts[i];
@@ -1584,16 +1589,11 @@ function buildSweptTube(
       positions.push(p1.x + rad * ux, p1.y + rad * uy, p1.z + rad * uz);
       normals.push(ux, uy, uz);
       uvs.push(u, j / rSegs);
-    }
-  }
-  const stride = rSegs + 1;
-  for (let i = 1; i <= tSegs; i++) {
-    const r1 = stride * (i - 1),
-      r2 = r1 + stride;
-    for (let j = 1; j <= rSegs; j++) {
-      const a = r1 + j - 1,
-        b = r2 + j - 1;
-      indices.push(a, b, r1 + j, b, r2 + j, r1 + j);
+      if (i > 0 && j > 0) {
+        const a = stride * (i - 1) + j - 1,
+          b = a + stride;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
     }
   }
   geo.setFromBuffers(positions, normals, uvs, indices);
@@ -1775,7 +1775,8 @@ export class LatheGeometry extends BufferGeometry {
       const u = i / segs,
         phi = phiStart + u * phiLength,
         sin = Math.sin(phi),
-        cos = Math.cos(phi);
+        cos = Math.cos(phi),
+        base = i * nPts;
       for (let j = 0; j < nPts; j++) {
         const pt = pts[j],
           rx = Number(pt?.x) || 0,
@@ -1788,14 +1789,11 @@ export class LatheGeometry extends BufferGeometry {
           nl = Math.hypot(dy, dx) || 1;
         normals.push((dy / nl) * sin, -dx / nl, (dy / nl) * cos);
         uvs.push(u, j / (nPts - 1));
-      }
-    }
-    for (let i = 0; i < segs; i++) {
-      const base = i * nPts;
-      for (let j = 0; j < nPts - 1; j++) {
-        const a = base + j,
-          b = base + nPts + j;
-        indices.push(a, b, a + 1, b, b + 1, a + 1);
+        if (i < segs && j < nPts - 1) {
+          const a = base + j,
+            b = a + nPts;
+          indices.push(a, b, a + 1, b, b + 1, a + 1);
+        }
       }
     }
     this.setFromBuffers(positions, normals, uvs, indices);
@@ -2119,40 +2117,30 @@ export class Material {
 
   constructor(params: Record<string, any> = {}) {
     this.name = params.name || '';
-    this.color = new Color(
-      params.color !== undefined ? params.color : 0xffffff,
-    );
-    this.emissive = new Color(
-      params.emissive !== undefined ? params.emissive : 0x000000,
-    );
-    this.emissiveIntensity = numberOr(params.emissiveIntensity, 1.0);
+    this.color = new Color(params.color ?? 0xffffff);
+    this.emissive = new Color(params.emissive ?? 0);
+    this.emissiveIntensity = numberOr(params.emissiveIntensity, 1);
     this.roughness = numberOr(params.roughness, 0.5);
-    this.metalness = numberOr(params.metalness, 0.0);
-    this.opacity = numberOr(params.opacity, 1.0);
+    this.metalness = numberOr(params.metalness, 0);
+    this.opacity = numberOr(params.opacity, 1);
     this.transparent = booleanOr(params.transparent, false);
     this.wireframe = booleanOr(params.wireframe, false);
     this.side = numberOr(params.side, 2);
     this.doubleSided = booleanOr(params.doubleSided, true);
     this.map = params.map || null;
 
-    this.clearcoat = numberOr(params.clearcoat, 0.0);
-    this.clearcoatRoughness = numberOr(params.clearcoatRoughness, 0.0);
-    this.sheen = numberOr(params.sheen, 0.0);
-    this.sheenColor = new Color(
-      params.sheenColor !== undefined ? params.sheenColor : 0x000000,
-    );
-    this.sheenRoughness = numberOr(params.sheenRoughness, 0.0);
-    this.transmission = numberOr(params.transmission, 0.0);
-    this.thickness = numberOr(params.thickness, 0.0);
-    this.attenuationColor = new Color(
-      params.attenuationColor !== undefined
-        ? params.attenuationColor
-        : 0xffffff,
-    );
+    this.clearcoat = numberOr(params.clearcoat, 0);
+    this.clearcoatRoughness = numberOr(params.clearcoatRoughness, 0);
+    this.sheen = numberOr(params.sheen, 0);
+    this.sheenColor = new Color(params.sheenColor ?? 0);
+    this.sheenRoughness = numberOr(params.sheenRoughness, 0);
+    this.transmission = numberOr(params.transmission, 0);
+    this.thickness = numberOr(params.thickness, 0);
+    this.attenuationColor = new Color(params.attenuationColor ?? 0xffffff);
     this.attenuationDistance = numberOr(params.attenuationDistance, Infinity);
     this.ior = numberOr(params.ior, 1.5);
-    this.dispersion = numberOr(params.dispersion, 0.0);
-    this.iridescence = numberOr(params.iridescence, 0.0);
+    this.dispersion = numberOr(params.dispersion, 0);
+    this.iridescence = numberOr(params.iridescence, 0);
     this.iridescenceIOR = numberOr(params.iridescenceIOR, 1.3);
   }
 

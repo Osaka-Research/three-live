@@ -638,10 +638,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
       if (cross > 1e-9) {
         let ear = true;
-        const minX = Math.min(a.x, b.x, c.x) - 1e-7,
-          maxX = Math.max(a.x, b.x, c.x) + 1e-7,
-          minY = Math.min(a.y, b.y, c.y) - 1e-7,
-          maxY = Math.max(a.y, b.y, c.y) + 1e-7;
+        const minX = Math.min(a.x, b.x, c.x) - 1e-7;
+        const maxX = Math.max(a.x, b.x, c.x) + 1e-7;
+        const minY = Math.min(a.y, b.y, c.y) - 1e-7;
+        const maxY = Math.max(a.y, b.y, c.y) + 1e-7;
         for (let j = 0; j < n; j++) {
           const testIdx = poly[j];
           if (
@@ -707,6 +707,20 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     return extracted;
   }
 
+  function bounds2D(verts: Vec2Like[]): [number, number, number, number] {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const v of verts) {
+      if (v.x < minX) minX = v.x;
+      if (v.y < minY) minY = v.y;
+      if (v.x > maxX) maxX = v.x;
+      if (v.y > maxY) maxY = v.y;
+    }
+    return [minX, minY, Math.max(1e-6, maxX - minX), Math.max(1e-6, maxY - minY)];
+  }
+
   class ShapeGeometry extends BufferGeometry {
     constructor(shapes: Shape | Shape[] = new Shape(), curveSegments = 12) {
       super();
@@ -726,18 +740,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
         );
         const tris = triangulatePolygonIndices(mergedIndices, allVertices);
         const baseVertex = positions.length / 3;
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        for (const v of allVertices) {
-          if (v.x < minX) minX = v.x;
-          if (v.y < minY) minY = v.y;
-          if (v.x > maxX) maxX = v.x;
-          if (v.y > maxY) maxY = v.y;
-        }
-        const spanX = Math.max(1e-6, maxX - minX);
-        const spanY = Math.max(1e-6, maxY - minY);
+        const [minX, minY, spanX, spanY] = bounds2D(allVertices);
         for (const v of allVertices) {
           positions.push(v.x, v.y, 0);
           normals.push(0, 0, 1);
@@ -867,50 +870,30 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           }
         }
 
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        for (const v of allVertices) {
-          if (v.x < minX) minX = v.x;
-          if (v.y < minY) minY = v.y;
-          if (v.x > maxX) maxX = v.x;
-          if (v.y > maxY) maxY = v.y;
-        }
-        const spanX = Math.max(1e-6, maxX - minX);
-        const spanY = Math.max(1e-6, maxY - minY);
+        const [minX, minY, spanX, spanY] = bounds2D(allVertices);
 
-        const zBack = -bevelThickness;
-        const zFront = depth + bevelThickness;
-
-        // 1. Back cap (-Z)
-        const backBase = positions.length / 3;
-        for (let i = 0; i < allVertices.length; i++) {
-          const v = allVertices[i];
-          const n2 = vertexNormals2D[i] ?? new Vector2(0, 0);
-          const vx = v.x + n2.x * bevelOffset;
-          const vy = v.y + n2.y * bevelOffset;
-          positions.push(vx, vy, zBack);
-          normals.push(0, 0, -1);
-          uvs.push((vx - minX) / spanX, (vy - minY) / spanY);
-        }
-        for (const [a, b, c] of capTris) {
-          indices.push(backBase + a, backBase + c, backBase + b);
-        }
-
-        // 2. Front cap (+Z)
-        const frontBase = positions.length / 3;
-        for (let i = 0; i < allVertices.length; i++) {
-          const v = allVertices[i];
-          const n2 = vertexNormals2D[i] ?? new Vector2(0, 0);
-          const vx = v.x + n2.x * bevelOffset;
-          const vy = v.y + n2.y * bevelOffset;
-          positions.push(vx, vy, zFront);
-          normals.push(0, 0, 1);
-          uvs.push((vx - minX) / spanX, (vy - minY) / spanY);
-        }
-        for (const [a, b, c] of capTris) {
-          indices.push(frontBase + a, frontBase + b, frontBase + c);
+        // 1. Back cap (-Z) and 2. Front cap (+Z)
+        for (const [zCap, nz] of [
+          [-bevelThickness, -1],
+          [depth + bevelThickness, 1],
+        ]) {
+          const base = positions.length / 3;
+          for (let i = 0; i < allVertices.length; i++) {
+            const v = allVertices[i];
+            const n2 = vertexNormals2D[i] ?? new Vector2(0, 0);
+            const vx = v.x + n2.x * bevelOffset;
+            const vy = v.y + n2.y * bevelOffset;
+            positions.push(vx, vy, zCap);
+            normals.push(0, 0, nz);
+            uvs.push((vx - minX) / spanX, (vy - minY) / spanY);
+          }
+          for (const [a, b, c] of capTris) {
+            indices.push(
+              base + a,
+              base + (nz < 0 ? c : b),
+              base + (nz < 0 ? b : c),
+            );
+          }
         }
 
         // 3. Z-layer profile (back bevel -> body steps -> front bevel)
@@ -968,12 +951,11 @@ export function installCadExtension(threeNs: any, reg?: any): any {
 
               const ux = p10x - p00x;
               const uy = p10y - p00y;
-              const uz = 0;
               const vx = p01x - p00x;
               const vy = p01y - p00y;
               const vz = l1.z - l0.z;
-              let nx = uy * vz - uz * vy;
-              let ny = uz * vx - ux * vz;
+              let nx = uy * vz;
+              let ny = -ux * vz;
               let nz = ux * vy - uy * vx;
               const nLen = Math.hypot(nx, ny, nz) || 1;
               nx /= nLen;

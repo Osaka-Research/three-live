@@ -974,14 +974,31 @@ function testXRLive() {
   }
 }
 
+function testEvals() {
+  const testDir = path.join(ROOT_DIR, 'evals', 'tests');
+  if (!fs.existsSync(testDir)) return;
+  console.log('--> Testing evals...');
+  const outDir = path.join(THREE_LIVE_DIR, 'dist/tests');
+  const testFiles = fs.readdirSync(testDir).filter((f) => f.endsWith('_test.ts'));
+  for (const file of testFiles) {
+    runTestFile(
+      path.join(testDir, file),
+      path.join(outDir, file.replace(/\.ts$/, '.cjs'))
+    );
+  }
+}
+
 const args = process.argv.slice(2);
 if (args.includes('--test-three-live') || args.includes('--test-core')) {
   testThreeLive();
 } else if (args.includes('--test-xr-live')) {
   testXRLive();
+} else if (args.includes('--test-evals')) {
+  testEvals();
 } else if (args.includes('--test')) {
   testThreeLive();
   testXRLive();
+  testEvals();
 } else if (args.includes('--three-live') || args.includes('--core')) {
   buildThreeLive();
 } else if (args.includes('--xr-live')) {

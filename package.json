@@ -135,6 +135,7 @@
     "build": "node scripts/build.js",
     "dev": "node scripts/build.js && python3 -m http.server 8888 --directory examples",
     "test": "node scripts/build.js --test",
+    "evals": "node evals/run_evals.ts",
     "doctor": "make doctor",
     "build:rust": "make rust",
     "build:ios": "make ios",
