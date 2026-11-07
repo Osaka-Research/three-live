@@ -638,6 +638,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
       if (cross > 1e-9) {
         let ear = true;
+        const minX = Math.min(a.x, b.x, c.x) - 1e-7,
+          maxX = Math.max(a.x, b.x, c.x) + 1e-7,
+          minY = Math.min(a.y, b.y, c.y) - 1e-7,
+          maxY = Math.max(a.y, b.y, c.y) + 1e-7;
         for (let j = 0; j < n; j++) {
           const testIdx = poly[j];
           if (
@@ -649,10 +653,14 @@ export function installCadExtension(threeNs: any, reg?: any): any {
           }
           const p = vertices[testIdx];
           if (
+            p.x >= minX &&
+            p.x <= maxX &&
+            p.y >= minY &&
+            p.y <= maxY &&
             pointInTriangle2D(p.x, p.y, a.x, a.y, b.x, b.y, c.x, c.y) &&
-            Math.hypot(p.x - a.x, p.y - a.y) >= 1e-6 &&
-            Math.hypot(p.x - b.x, p.y - b.y) >= 1e-6 &&
-            Math.hypot(p.x - c.x, p.y - c.y) >= 1e-6
+            (p.x - a.x) * (p.x - a.x) + (p.y - a.y) * (p.y - a.y) >= 1e-12 &&
+            (p.x - b.x) * (p.x - b.x) + (p.y - b.y) * (p.y - b.y) >= 1e-12 &&
+            (p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y) >= 1e-12
           ) {
             ear = false;
             break;

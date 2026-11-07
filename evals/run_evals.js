@@ -284,35 +284,47 @@ const GUIDED_SYSTEM_PROMPT = [
   'Return ONLY a single valid JavaScript code block (no HTML, no `import` statements, no external network URLs).',
   '',
   'CRITICAL `three-live` COMPILER RULES:',
-  '1. Global Scope: `THREE`, `scene`, and `camera` are pre-initialized globals. DO NOT redeclare `const scene = new THREE.Scene()` or `const camera = new THREE.PerspectiveCamera(...)` (which shadows `globalThis.scene` inside the sandbox block scope); add all objects directly to `scene` and configure `camera` in place.',
-  '2. Supported Geometries:',
+  '1. Global Scope: `THREE`, `scene`, and `camera` are pre-initialized globals. Add all objects directly to `scene` and configure `camera` in place.',
+  '2. Supported Geometries & Curves:',
   '   - Primitives: `BoxGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `CapsuleGeometry`, `PlaneGeometry`,',
   '     `CircleGeometry`, `RingGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `IcosahedronGeometry`, `OctahedronGeometry`,',
   '     `DodecahedronGeometry`, `TetrahedronGeometry`, `PolyhedronGeometry`, `EdgesGeometry`, `WireframeGeometry`,',
   '     or custom indexed `BufferGeometry` + `Float32BufferAttribute`.',
+  '   - Curves & Surfaces: `THREE.CatmullRomCurve3`, `THREE.QuadraticBezierCurve3`, `THREE.CubicBezierCurve3`, `THREE.LineCurve3`,',
+  '     `THREE.LatheGeometry(points, segments, phiStart, phiLength)`, and `THREE.TubeGeometry(path, tubularSegments, radius, radialSegments, closed)`.',
   '   - 2D/3D CAD & Text: `THREE.Path`, `THREE.Shape`, `THREE.ShapeGeometry`, `THREE.ExtrudeGeometry`,',
   '     `THREE.TextGeometry`, and `THREE.CSG.subtract(meshA, meshB)` / `THREE.CSG.union(meshA, meshB)` /',
   '     `THREE.CSG.intersect(meshA, meshB)` (limit CSG inputs to <= 24 segments so triangle count stays < 4096).',
-  '   - DO NOT USE unsupported or degraded Three.js classes: `LatheGeometry`, `TubeGeometry`,',
-  '     `CatmullRomCurve3`, `Sprite`, `CanvasTexture`, `HemisphereLight`, `RectAreaLight`.',
-  '     Instead of `LatheGeometry` or `TubeGeometry`, build stacked `CylinderGeometry`/`TorusGeometry` segments,',
-  '     segmented `Group` chains, `ExtrudeGeometry`, or explicit `BufferGeometry` vertex/index buffers.',
+  '   - DO NOT USE degraded or external Three.js classes: `Sprite`, `CanvasTexture`, `HemisphereLight`, `RectAreaLight`, `GLTFLoader`, `OrbitControls`.',
   '3. Supported Materials, Textures & Colors: `MeshStandardMaterial` and `MeshPhysicalMaterial` (`color`, `map`, `roughness`, `metalness`,',
   '   `emissive`, `emissiveIntensity`, `transmission`, `ior`, `thickness`, `attenuationColor`, `attenuationDistance`,',
   '   `clearcoat`, `clearcoatRoughness`, `iridescence`, `iridescenceIOR`, `sheen`, `sheenColor`, `sheenRoughness`,',
   '   `dispersion`, `opacity`, `transparent`), plus procedural `THREE.DataTexture(data, width, height, THREE.RGBAFormat)`.',
-  '   Use `color.setHex(...)` or `color.setRGB(r, g, b)` instead of `color.setHSL(...)`.',
-  '4. Instancing & IK & LOD: `THREE.InstancedMesh` (`setMatrixAt`, `setColorAt`), `THREE.LOD` (`addLevel`),',
-  '   `THREE.IKSolver`, or declarative `mesh.userData.xr = { ik: { root, mid, effector, target } }`.',
-  '5. Spatial & Simulation Traits:',
-  '   - Assign unique `mesh.name` to every significant mesh.',
-  '   - Spatial traits: `node.userData.xr = { grabbable: true, physics: { body: "dynamic"|"static"|"kinematic", collider: "box"|"sphere"|"hull", mass: 1.0, restitution: 0.5 }, anchor: "Floor"|"Table"|"Wall", spatialAudio: { src, refDistance }, occlusion: true }`.',
-  '   - Interactivity: `node.userData.interactivity = { onSelect: { action: "toggleRotate"|"pulseEmissive"|"moveTo", target: "<mesh.name>", axis: [0,1,0], angle: 1.57, duration: 0.6 } }`.',
-  '   - Simulation (`xr-live-sim`): `node.userData.sim = { body: "dynamic"|"static"|"kinematic", collider: "sphere"|"box", mass: 1.0, bounce: 0.7, joints: [...], behavior: { type: "orbit"|"bob"|"spin"|"pendulum"|"lookAt", ... } }`.',
-  '6. Scale, Grounding & Camera Framing ( avoids TL301–TL307 warnings ):',
+  '4. Instancing, Animation, IK & LOD:',
+  '   - `THREE.InstancedMesh` (`setMatrixAt`, `setColorAt`), `THREE.LOD` (`addLevel`), `THREE.IKSolver`, or declarative `node.userData.xr = { ik: { root, mid, effector, target, pole } }`.',
+  '   - For procedural animation, define `function animate(t) { ... }` (where `t` is elapsed time in seconds) or `requestAnimationFrame(animate)`.',
+  '5. Canonical Spatial, Interactivity & Simulation Traits (avoids TL201, TL204, TL205 warnings):',
+  '   - MANDATORY: Assign a unique `node.name = "..."` to EVERY `Mesh` and `Group` BEFORE attaching `userData.xr` or `userData.interactivity`, or referencing a node as a target.',
+  '   - ONLY use canonical `node.userData.xr` keys (never invent custom keys inside `userData.xr`; store custom state in local JS variables or `node.userData.state`):',
+  '     `grab` (`true` | `"1-hand"` | `"2-hand"` — NEVER `grabbable`), `scale` (`{ min, max }`), `billboard` (`true` | `"y"` | `"spherical"`),',
+  '     `follow` (`{ mode: "head"|"hand-left"|"hand-right", distance: 1.0, stiffness: 6 }`), `anchor` (`"Floor"` | `"Table"` | `"Wall"` | `"Ceiling"`),',
+  '     `physics` (`{ body: "dynamic"|"static"|"kinematic", collider: "box"|"sphere"|"hull"|"mesh", mass: 1.0, restitution: 0.4, friction: 0.5 }`),',
+  '     `orbit` (`{ target: [0,0,0] | "<nodeName>", radius: 0.5, speed: 1.0, height: 0 }`), `handles` (`true` | `{ rotateAxis: "y", minScale: 0.5, maxScale: 2.0 }`),',
+  '     `dimensions` (`true` | `{ unit: "m"|"cm"|"mm", axes: ["x","y","z"] }`), `snapTo` (`true` | `{ radius: 0.15, targets: ["<socketNodeName>"] }`),',
+  '     `snapSocket` (`{ id: "socket_1", radius: 0.15 }`), `gaze` (`{ dwellMs: 800, action: "select" }`),',
+  '     `explode` (`{ distance: 0.25, direction: [x,y,z] }`), `navigable` (`true`), `bloom` (`{ strength: 0.8 }`), `outline` (`{ color: "#38bdf8", thickness: 0.02 }`),',
+  '     `ik` (`{ root: "<nodeName>", mid: "<nodeName>", effector: "<nodeName>", target: "<nodeName>", pole: [0,1,0] }`), `lod` (`{ distances: [3, 8], ratios: [0.5, 0.2] }`),',
+  '     `audioEmitter` (`{ src: "ambient.ogg", refDistance: 1.5, loop: true }`), `audioCues` (`{ onHit: "hit.ogg", onZero: "break.ogg" }`),',
+  '     `character` (`{ moveSpeed: 4.0, jumpImpulse: 5.0 }`), `agent` (`{ behavior: "patrol"|"chase", speed: 2.0, waypoints: [[x,y,z], ...] }`),',
+  '     `integrity` (`{ hp: 100, maxHp: 100, armor: 0, onZero: "destroy"|"hide", scoreValue: 50 }`),',
+  '     `zone` (`{ kind: "damage"|"heal"|"goal"|"trigger", rate: 10, event: "goal_reached" }`), `spawner` (`{ template: "<nodeName>", intervalSec: 2.0, maxActive: 4 }`),',
+  '     `objective` (`{ id: "obj_1", kind: "reach"|"collect"|"survive"|"score", target: "<nodeName>", radius: 1.0 }`).',
+  '   - ONLY use canonical `node.userData.interactivity` triggers (`onSelect`, `onHoverIn`, `onHoverOut`, `onStart`, `onReceive`) and actions:',
+  '     `{ action: "interpolate"|"toggleTransform"|"setProperty"|"toggleVisibility"|"cycleMaterialColor"|"playAnimation"|"stopAnimation"|"sendEvent", target: "<nodeName>", property: "rotation"|"translation"|"scale", to: [x,y,z], duration: 0.6 }`.',
+  '6. Scale, Grounding & Camera Framing (avoids TL301–TL307 warnings):',
   '   - Use real-world meters (1 unit = 1m), Y-up (`+Y` up), lowest resting surface near `y = 0`.',
   '   - Always add `new THREE.AmbientLight(0xffffff, 0.6)` and at least one `THREE.DirectionalLight` or `THREE.PointLight`.',
-  '   - Position `camera.position.set(x, y, z)` at distance ~1.8x the scene bounding diagonal and call `camera.lookAt(0, centerY, 0)` so all meshes are inside the camera frustum.',
+  '   - Pull `camera.position.set(x, y, z)` back to distance ~2.2x the full scene bounding radius (including ground/floor planes and peripheral props) and call `camera.lookAt(0, centerY, 0)` so 100% of meshes are inside the camera frustum.',
 ].join('\n');
 
 function buildCodegenPrompts(promptEntry, arm) {
@@ -1584,6 +1596,176 @@ function formatMarkdownReport(summary) {
   return lines.join('\n');
 }
 
+/**
+ * Generates a side-by-side comparison report across two or more evaluated arms
+ * (e.g. `vanilla` vs `guided`, including their 1-turn repair results).
+ */
+function generateComparisonReport(armNames) {
+  const summaries = [];
+  for (const arm of armNames) {
+    const p = path.join(RESULTS_DIR, `summary_${arm}.json`);
+    if (!fs.existsSync(p)) {
+      throw new Error(`Missing summary file for arm "${arm}": ${p}`);
+    }
+    summaries.push(JSON.parse(fs.readFileSync(p, 'utf8')));
+  }
+
+  const countWarnFree = (s) =>
+    (s.items || []).filter(
+      (r) =>
+        r.cleanCompileNoDrops &&
+        !(r.diagnostics || []).some((d) => d.severity === 'error' || d.severity === 'warning'),
+    ).length;
+  const countActionableWarns = (s) =>
+    (s.items || []).reduce(
+      (acc, r) =>
+        acc +
+        (r.diagnostics || []).filter((d) => d.severity === 'error' || d.severity === 'warning')
+          .length,
+      0,
+    );
+
+  const pct = (n, d) => (d > 0 ? `${((n / d) * 100).toFixed(1)}% (${n}/${d})` : '0.0% (0/0)');
+
+  const headers = ['Metric', ...summaries.map((s) => `\`${s.arm}\``)];
+  const sep = [':---', ...summaries.map(() => ':---:')];
+  const rows = [
+    [
+      '**0-Shot Compile Success (`valid && meshCount > 0`)**',
+      ...summaries.map((s) => `**${pct(s.compileSuccessCount, s.totalScripts)}**`),
+    ],
+    [
+      '**0-Shot Clean Compile (0 Drops / 0 Fallbacks / 0 Aliases)**',
+      ...summaries.map((s) => `**${pct(s.cleanNoDropsCount, s.totalScripts)}**`),
+    ],
+    [
+      '**0-Shot Warning-Free Rate (0 Error/Warning Diagnostics)**',
+      ...summaries.map((s) => `**${pct(countWarnFree(s), s.totalScripts)}**`),
+    ],
+    [
+      '**0-Shot Actionable Compiler Warnings (`error` + `warning`)**',
+      ...summaries.map((s) => `${countActionableWarns(s)}`),
+    ],
+    [
+      '**1-Turn Repair Warning-Free Rate**',
+      ...summaries.map((s) =>
+        s.repairComparison
+          ? `**${pct(s.repairComparison.afterWarningFreeCount, s.totalScripts)}**`
+          : '—',
+      ),
+    ],
+    [
+      '**1-Turn Repair Actionable Warnings (`before -> after`)**',
+      ...summaries.map((s) =>
+        s.repairComparison
+          ? `${s.repairComparison.warningsBefore} -> **${s.repairComparison.warningsAfter}**`
+          : '—',
+      ),
+    ],
+    [
+      '**Temporal & Interactive Sim Pass (`three-live-cli sim`)**',
+      ...summaries.map((s) =>
+        s.simSummary?.simEvaluatedCount > 0
+          ? `**${pct(s.simSummary.simActiveCount, s.simSummary.simEvaluatedCount)}**`
+          : '—',
+      ),
+    ],
+    [
+      '**Mean Camera Frustum Visibility Ratio**',
+      ...summaries.map((s) => `${(s.avgFrustumVisibilityRatio * 100).toFixed(1)}%`),
+    ],
+    [
+      '**Mean Compiler Execution Time**',
+      ...summaries.map((s) => `${s.avgExecutionTimeMs.toFixed(1)} ms`),
+    ],
+  ];
+
+  const allDiagCodes = new Set();
+  const allCategories = new Set();
+  for (const s of summaries) {
+    for (const k of Object.keys(s.diagnosticHistogram || {})) allDiagCodes.add(k);
+    for (const k of Object.keys(s.byCategory || {})) allCategories.add(k);
+  }
+
+  const lines = [
+    `# \`three-live\` Multi-Arm Ablation & Comparison Report (${armNames.map((a) => `\`${a}\``).join(' vs. ')})`,
+    '',
+    `- **Generated:** ${new Date().toISOString()}`,
+    '',
+    '## Overall Comparison',
+    '',
+    `| ${headers.join(' | ')} |`,
+    `| ${sep.join(' | ')} |`,
+    ...rows.map((r) => `| ${r.join(' | ')} |`),
+    '',
+    '## 0-Shot Warning-Free Rate by Category',
+    '',
+    `| Category | ${summaries.map((s) => `\`${s.arm}\` 0-Shot Warn-Free`).join(' | ')} | ${summaries.map((s) => `\`${s.arm}\` Sim Active`).join(' | ')} |`,
+    `| :--- | ${summaries.map(() => ':---:').join(' | ')} | ${summaries.map(() => ':---:').join(' | ')} |`,
+  ];
+
+  for (const cat of Array.from(allCategories).sort()) {
+    const warnFreeCells = summaries.map((s) => {
+      const catItems = (s.items || []).filter((r) => r.category === cat);
+      const wf = catItems.filter(
+        (r) =>
+          r.cleanCompileNoDrops &&
+          !(r.diagnostics || []).some((d) => d.severity === 'error' || d.severity === 'warning'),
+      ).length;
+      return pct(wf, catItems.length);
+    });
+    const simCells = summaries.map((s) => {
+      const st = s.byCategory?.[cat];
+      return st && st.simEvaluated > 0 ? pct(st.simActive, st.simEvaluated) : '—';
+    });
+    lines.push(`| \`${cat}\` | ${warnFreeCells.join(' | ')} | ${simCells.join(' | ')} |`);
+  }
+
+  lines.push(
+    '',
+    '## Compiler Diagnostic Code Comparison (0-Shot Occurrences)',
+    '',
+    `| Diagnostic Code | ${summaries.map((s) => `\`${s.arm}\``).join(' | ')} |`,
+    `| :--- | ${summaries.map(() => ':---:').join(' | ')} |`,
+  );
+  for (const code of Array.from(allDiagCodes).sort()) {
+    const cells = summaries.map((s) => String(s.diagnosticHistogram?.[code] || 0));
+    lines.push(`| \`${code}\` | ${cells.join(' | ')} |`);
+  }
+  lines.push('');
+
+  const slug = armNames.join('_vs_');
+  const mdPath = path.join(RESULTS_DIR, `comparison_${slug}.md`);
+  const jsonPath = path.join(RESULTS_DIR, `comparison_${slug}.json`);
+  const mdContent = lines.join('\n');
+  fs.writeFileSync(mdPath, mdContent, 'utf8');
+  fs.writeFileSync(
+    jsonPath,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        arms: summaries.map((s) => ({
+          arm: s.arm,
+          totalScripts: s.totalScripts,
+          compileSuccessCount: s.compileSuccessCount,
+          cleanNoDropsCount: s.cleanNoDropsCount,
+          zeroShotWarningFreeCount: countWarnFree(s),
+          zeroShotActionableWarnings: countActionableWarns(s),
+          repairComparison: s.repairComparison || null,
+          simSummary: s.simSummary || null,
+          avgFrustumVisibilityRatio: s.avgFrustumVisibilityRatio,
+          avgExecutionTimeMs: s.avgExecutionTimeMs,
+          diagnosticHistogram: s.diagnosticHistogram,
+        })),
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf8',
+  );
+  return {mdPath, jsonPath, mdContent};
+}
+
 // ============================================================================
 // 7. CLI Argument Parser & Main Orchestrator
 // ============================================================================
@@ -1606,6 +1788,7 @@ function parseCliArgs(argv) {
     ids: null,
     limit: null,
     concurrency: 4,
+    compare: null,
     promptsPath: DEFAULT_PROMPTS_PATH,
     help: false,
   };
@@ -1655,6 +1838,14 @@ function parseCliArgs(argv) {
       opts.limit = parseInt(arg.slice('--limit='.length), 10);
     } else if (arg.startsWith('--concurrency=')) {
       opts.concurrency = Math.max(1, parseInt(arg.slice('--concurrency='.length), 10) || 1);
+    } else if (arg === '--compare') {
+      opts.compare = ['vanilla', 'guided'];
+    } else if (arg.startsWith('--compare=')) {
+      opts.compare = arg
+        .slice('--compare='.length)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
     } else if (arg.startsWith('--prompts=')) {
       opts.promptsPath = path.resolve(arg.slice('--prompts='.length));
     }
@@ -2025,6 +2216,10 @@ async function main() {
   console.log('====================================================================');
   console.log(`  JSON Summary:    ${path.relative(ROOT_DIR, summaryJsonPath)}`);
   console.log(`  Markdown Report: ${path.relative(ROOT_DIR, reportMdPath)}`);
+  if (opts.compare && opts.compare.length >= 2) {
+    const cmp = generateComparisonReport(opts.compare);
+    console.log(`  Comparison MD:   ${path.relative(ROOT_DIR, cmp.mdPath)}`);
+  }
   console.log('====================================================================\n');
 }
 

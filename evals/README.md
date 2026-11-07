@@ -70,8 +70,8 @@ node evals/run_evals.js --generate --arm=vanilla --cmd="llm -m gemini-2.5-pro"
 # Generate 100 vanilla scripts, evaluate, and test 1-turn self-repair from compiler warnings:
 GEMINI_API_KEY="..." node evals/run_evals.js --generate --repair --arm=vanilla
 
-# Compare against guided authoring:
-GEMINI_API_KEY="..." node evals/run_evals.js --generate --repair --arm=guided
+# Compare against guided authoring and emit evals/results/comparison_vanilla_vs_guided.md:
+GEMINI_API_KEY="..." node evals/run_evals.js --generate --repair --arm=guided --compare=vanilla,guided
 ```
 
 ---

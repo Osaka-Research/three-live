@@ -445,6 +445,10 @@ export class Quaternion {
     return new Quaternion(this._x, this._y, this._z, this._w);
   }
 
+  public identity(): this {
+    return this.set(0, 0, 0, 1);
+  }
+
   public setFromEuler(euler: Euler, update: boolean = true): this {
     const x = euler.x,
       y = euler.y,
@@ -988,45 +992,47 @@ export class BufferGeometry {
   public computeVertexNormals(): this {
     const pos = this.attributes.position;
     if (!pos) return this;
-    const count = pos.count;
-    const normals = new Float32Array(count * 3);
-
-    const vA = new Vector3(),
-      vB = new Vector3(),
-      vC = new Vector3();
-    const cb = new Vector3(),
-      ab = new Vector3();
-
-    const idx = this.index?.array;
-    const triLen = idx ? idx.length : count;
+    const count = pos.count,
+      pa = pos.array,
+      normals = new Float32Array(count * 3),
+      idx = this.index?.array,
+      triLen = idx ? idx.length : count;
     for (let i = 0; i < triLen; i += 3) {
-      const a = idx ? idx[i] : i,
-        b = idx ? idx[i + 1] : i + 1,
-        c = idx ? idx[i + 2] : i + 2;
-      vA.set(pos.getX(a), pos.getY(a), pos.getZ(a));
-      vB.set(pos.getX(b), pos.getY(b), pos.getZ(b));
-      vC.set(pos.getX(c), pos.getY(c), pos.getZ(c));
-
-      cb.subVectors(vC, vB);
-      ab.subVectors(vA, vB);
-      cb.cross(ab).normalize();
-
-      for (const vi of [a, b, c]) {
-        normals[vi * 3] += cb.x;
-        normals[vi * 3 + 1] += cb.y;
-        normals[vi * 3 + 2] += cb.z;
-      }
+      const a3 = (idx ? idx[i] : i) * 3,
+        b3 = (idx ? idx[i + 1] : i + 1) * 3,
+        c3 = (idx ? idx[i + 2] : i + 2) * 3,
+        bx = pa[b3],
+        by = pa[b3 + 1],
+        bz = pa[b3 + 2],
+        cbx = pa[c3] - bx,
+        cby = pa[c3 + 1] - by,
+        cbz = pa[c3 + 2] - bz,
+        abx = pa[a3] - bx,
+        aby = pa[a3 + 1] - by,
+        abz = pa[a3 + 2] - bz,
+        nx = cby * abz - cbz * aby,
+        ny = cbz * abx - cbx * abz,
+        nz = cbx * aby - cby * abx;
+      normals[a3] += nx;
+      normals[a3 + 1] += ny;
+      normals[a3 + 2] += nz;
+      normals[b3] += nx;
+      normals[b3 + 1] += ny;
+      normals[b3 + 2] += nz;
+      normals[c3] += nx;
+      normals[c3 + 1] += ny;
+      normals[c3 + 2] += nz;
     }
 
     // Normalize generated normals
-    for (let i = 0; i < count; i++) {
-      const x = normals[i * 3],
-        y = normals[i * 3 + 1],
-        z = normals[i * 3 + 2];
-      const len = Math.hypot(x, y, z) || 1.0;
-      normals[i * 3] = x / len;
-      normals[i * 3 + 1] = y / len;
-      normals[i * 3 + 2] = z / len;
+    for (let i = 0; i < count * 3; i += 3) {
+      const x = normals[i],
+        y = normals[i + 1],
+        z = normals[i + 2],
+        len = Math.hypot(x, y, z) || 1;
+      normals[i] = x / len;
+      normals[i + 1] = y / len;
+      normals[i + 2] = z / len;
     }
 
     this.setAttribute('normal', new BufferAttribute(normals, 3));
@@ -1489,31 +1495,31 @@ function buildSweptTube(
   const normals: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
-  const p1 = new Vector3(),
-    p2 = new Vector3(),
+  const pts: Vector3[] = [],
     T = new Vector3(),
     N = new Vector3(),
     B = new Vector3();
-
   for (let i = 0; i <= tSegs; i++) {
-    const u = i / tSegs;
-    samplePt(Math.max(0, u - 0.001), p1);
-    samplePt(Math.min(1, u + 0.001), p2);
-    T.subVectors(p2, p1).normalize();
+    const p = new Vector3();
+    samplePt(i / tSegs, p);
+    pts.push(p);
+  }
+  for (let i = 0; i <= tSegs; i++) {
+    const u = i / tSegs,
+      p1 = pts[i];
+    T.subVectors(pts[Math.min(tSegs, i + 1)], pts[Math.max(0, i - 1)]).normalize();
     if (i === 0) N.set(Math.abs(T.y) > 0.9 ? 1 : 0, Math.abs(T.y) > 0.9 ? 0 : 1, 0);
     B.crossVectors(T, N).normalize();
     N.crossVectors(B, T).normalize();
-    samplePt(u, p1);
     for (let j = 0; j <= rSegs; j++) {
-      const v = (j / rSegs) * Math.PI * 2;
-      const cx = -rad * Math.cos(v),
-        cy = rad * Math.sin(v);
-      const dx = cx * N.x + cy * B.x,
-        dy = cx * N.y + cy * B.y,
-        dz = cx * N.z + cy * B.z;
-      positions.push(p1.x + dx, p1.y + dy, p1.z + dz);
-      const l = Math.hypot(dx, dy, dz) || 1;
-      normals.push(dx / l, dy / l, dz / l);
+      const v = (j / rSegs) * Math.PI * 2,
+        nx = -Math.cos(v),
+        ny = Math.sin(v),
+        ux = nx * N.x + ny * B.x,
+        uy = nx * N.y + ny * B.y,
+        uz = nx * N.z + ny * B.z;
+      positions.push(p1.x + rad * ux, p1.y + rad * uy, p1.z + rad * uz);
+      normals.push(ux, uy, uz);
       uvs.push(u, j / rSegs);
     }
   }
@@ -1812,6 +1818,7 @@ export class DataTexture extends Texture {
   public generateMipmaps = false;
   public unpackAlignment = 1;
   public colorSpace: string;
+  private _sig = 0;
 
   constructor(
     data: ArrayBufferView | ArrayLike<number> | null = null,
@@ -1887,10 +1894,15 @@ export class DataTexture extends Texture {
       this.type === 1016 ||
       buf instanceof Float32Array ||
       buf instanceof Float64Array;
-    // Cap at 96x96 so the entire image (96 * 385 = 36,960 B) fits in a single
-    // stored-DEFLATE block (<= 65,535 B) and stays well under Boa's loop limit.
-    const dstW = Math.min(srcW, 96);
-    const dstH = Math.min(srcH, 96);
+    const dstW = Math.min(srcW, 48);
+    const dstH = Math.min(srcH, 48);
+    let sig = (this.flipY ? 257 : 1) ^ this.colorSpace.length ^ buf.length;
+    const step = Math.max(1, (buf.length >> 6) | 0);
+    for (let i = 0; i < buf.length; i += step) {
+      sig = Math.imul(sig ^ ((buf[i] * 256) | 0), 16777619) | 0;
+    }
+    if (sig === this._sig && this.source) return;
+    this._sig = sig;
     const rawLen = dstH * (1 + dstW * 4);
     const png = new Uint8Array(68 + rawLen);
     const dv = new DataView(png.buffer);

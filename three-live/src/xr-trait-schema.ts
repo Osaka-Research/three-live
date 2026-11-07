@@ -2543,7 +2543,7 @@ export function validateXRTraits(
   }
   const physObj = asRecord(r['rigidBody']) ?? asRecord(r['physics']);
   if (physObj && physObj['enabled'] !== false) {
-    checkRange('rigidBody.mass', physObj['mass'], 0.01, 1000);
+    checkRange('rigidBody.mass', physObj['mass'], 0, 1000);
     checkRange('rigidBody.restitution', physObj['restitution'], 0, 1);
     checkRange('rigidBody.friction', physObj['friction'], 0, 1);
     checkRange('rigidBody.linearDamping', physObj['linearDamping'], 0, 20);
