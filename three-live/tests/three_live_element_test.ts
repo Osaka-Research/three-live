@@ -712,6 +712,51 @@ async function runElementTests() {
     'Clicking custom [slot="ar-button"] invokes activateAR()',
   );
 
+  // Test default AR button label/tooltip on standard devices vs. desktop macOS
+  const btnAttrs = new Map<string, string>();
+  const labelSpan = {textContent: ''};
+  (instance as any).querySelector = () => null;
+  (instance as any).arButton = {
+    style: {display: 'none'},
+    _labelSpan: labelSpan,
+    setAttribute: (k: string, v: string) => btnAttrs.set(k, v),
+  };
+  const origNav = (globalThis as any).navigator;
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {userAgent: 'Mozilla/5.0 (Linux; Android 14)', maxTouchPoints: 5},
+      configurable: true,
+    });
+    instance.updateARButtonVisibility();
+    assert(
+      labelSpan.textContent === 'View in AR' &&
+        btnAttrs.get('title') === 'View in Augmented Reality',
+      'Default AR button shows "View in AR" label and tooltip on mobile/WebXR platforms',
+    );
+
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        userAgent:
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15',
+        maxTouchPoints: 0,
+      },
+      configurable: true,
+    });
+    instance.updateARButtonVisibility();
+    assert(
+      labelSpan.textContent === 'Quick Look (.usdz)' &&
+        (btnAttrs.get('title') || '').includes('macOS Quick Look'),
+      'Default AR button clarifies "Quick Look (.usdz)" download fallback on desktop macOS',
+    );
+  } finally {
+    if (origNav !== undefined) {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: origNav,
+        configurable: true,
+      });
+    }
+  }
+
   // Test updateHotspot({ name, position, normal })
   const hotspotAttrs = new Map<string, string>();
   const mockHotspotEl = {

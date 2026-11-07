@@ -400,7 +400,7 @@ limitations under the License.
       </div>
     </div>
     <div class="pills">
-      <span class="pill green" data-bundle-size="three-live.min.js">71.3 KB gz</span>
+      <span class="pill green" data-bundle-size="three-live.min.js">71.4 KB gz</span>
       <span class="pill">Zero Dependencies</span>
       <span class="pill">WebGL2 PBR</span>
       <span class="pill">Apple USDZ + WebXR</span>
@@ -1099,11 +1099,31 @@ scene.add(sat2);`
   });
 
   // Spatial & AR Handlers
-  document.getElementById("btn-ar").addEventListener("click", () => {
-    arStatus.textContent = "Launching AR mode...";
+  const btnAr = document.getElementById("btn-ar");
+  const isDesktopMac =
+    /Macintosh/i.test(navigator.userAgent || "") &&
+    !(navigator.maxTouchPoints > 1) &&
+    !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  if (isDesktopMac && btnAr) {
+    btnAr.title = "Download .usdz preview for macOS Quick Look (live camera AR requires iOS or Android)";
+    const labelNode = Array.from(btnAr.childNodes).find(
+      (n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim().length > 0
+    );
+    if (labelNode) {
+      labelNode.textContent = "\n            Quick Look (.usdz)\n          ";
+    }
+  } else if (btnAr) {
+    btnAr.title = "View in Augmented Reality";
+  }
+  btnAr.addEventListener("click", () => {
+    arStatus.textContent = isDesktopMac
+      ? "Downloading .usdz preview for macOS Quick Look..."
+      : "Launching AR mode...";
     el.activateAR().then((res) => {
       if (res && !res.success) {
-        arStatus.textContent = `AR notice: ${res.error?.message || 'AR unavailable on this device'}`;
+        arStatus.textContent = isDesktopMac
+          ? "Downloaded three_live_model.usdz for macOS Quick Look (camera AR requires iOS/Android)."
+          : `AR notice: ${res.error?.message || 'AR unavailable on this device'}`;
       } else if (res) {
         arStatus.textContent = `AR active (${res.mode})!`;
       }

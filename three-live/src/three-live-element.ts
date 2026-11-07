@@ -1176,19 +1176,11 @@ export class ThreeLiveElement extends BaseElement {
       });
 
       if (!result.success) {
-        const ua =
-          typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
-        const isDesktopMac =
-          /Macintosh/i.test(ua) &&
-          !(typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1);
-        const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
-
         const fallbackMsg =
           result.error?.message ||
           'AR requires an iOS (Quick Look) or Android (WebXR / Scene Viewer) device.';
         if (
-          isDesktopMac &&
-          !isMobile &&
+          this.isDesktopMac() &&
           typeof document !== 'undefined' &&
           this.currentModel &&
           ThreeLiveElement.arProvider.createUSDZBlob
@@ -1393,18 +1385,43 @@ export class ThreeLiveElement extends BaseElement {
     }
   }
 
+  private isDesktopMac(): boolean {
+    const ua =
+      typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+    return (
+      /Macintosh/i.test(ua) &&
+      !(typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1) &&
+      !/Android|iPhone|iPad|iPod/i.test(ua)
+    );
+  }
+
+  private syncARButtonLabel(btn: HTMLElement): void {
+    const desktopMac = this.isDesktopMac();
+    const label = desktopMac ? 'Quick Look (.usdz)' : 'View in AR';
+    const ariaAndTitle = desktopMac
+      ? 'Download .usdz preview for macOS Quick Look (live camera AR requires iOS or Android)'
+      : 'View in Augmented Reality';
+    if (typeof btn.setAttribute === 'function') {
+      btn.setAttribute('aria-label', ariaAndTitle);
+      btn.setAttribute('title', ariaAndTitle);
+    }
+    const span =
+      (btn as any)._labelSpan ||
+      (typeof btn.querySelector === 'function'
+        ? btn.querySelector('span')
+        : null);
+    if (span) {
+      span.textContent = label;
+    }
+  }
+
   private createARButton(): void {
     if (typeof document === 'undefined') return;
     if (!this.arButton) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'three-live-ar-button';
-      for (const [k, v] of [
-        ['aria-label', 'View in Augmented Reality'],
-        ['part', 'default-ar-button'],
-      ]) {
-        btn.setAttribute(k, v);
-      }
+      btn.setAttribute('part', 'default-ar-button');
 
       // Build SVG icon and label via DOM APIs instead of innerHTML so
       // `require-trusted-types-for 'script'` is never violated.
@@ -1433,8 +1450,9 @@ export class ThreeLiveElement extends BaseElement {
         btn.appendChild(svg);
       }
       const span = document.createElement('span');
-      span.textContent = 'View in AR';
+      (btn as any)._labelSpan = span;
       btn.appendChild(span);
+      this.syncARButtonLabel(btn);
 
       btn.style.cssText =
         'position:absolute;right:16px;bottom:16px;z-index:2;align-items:center;justify-content:center;padding:8px 16px;background-color:rgba(15,23,42,0.85);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:9999px;font:600 13px system-ui,-apple-system,sans-serif;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 4px 12px rgba(0,0,0,0.25);transition:transform .15s ease,background-color .15s ease;display:none';
@@ -1484,6 +1502,7 @@ export class ThreeLiveElement extends BaseElement {
         ? customBtn.dataset.tlOrigDisplay || ''
         : 'none';
     } else if (this.arButton) {
+      this.syncARButtonLabel(this.arButton);
       this.arButton.style.display = showAR ? 'flex' : 'none';
     }
   }
