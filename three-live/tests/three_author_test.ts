@@ -1559,6 +1559,88 @@ function runCadRegressionTests(
       'THREE.LOD and userData.xr.lod materialize LOD child tiers and export MSFT_lod + KHR_node_visibility',
     );
   }
+
+  // Coverage: THREE.DataTexture (RGBA, RGB, Red/Luminance, Float32Array, post-constructor needsUpdate, GLB & USDZ export).
+  {
+    const w = 16;
+    const h = 16;
+    const rgba = new Uint8Array(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      rgba[i * 4] = 180;
+      rgba[i * 4 + 1] = 90;
+      rgba[i * 4 + 2] = 40;
+      rgba[i * 4 + 3] = 255;
+    }
+    const dtex = new THREE.DataTexture(rgba, w, h, THREE.RGBAFormat);
+    dtex.needsUpdate = true;
+    assert(
+      dtex.isTexture === true &&
+        dtex.isDataTexture === true &&
+        typeof dtex.source === 'string' &&
+        dtex.source.startsWith('data:image/png;base64,') &&
+        dtex.avgColor[0] > dtex.avgColor[1] &&
+        dtex.avgColor[1] > dtex.avgColor[2],
+      'THREE.DataTexture encodes RGBA buffer into stored-DEFLATE PNG data URI and computes linear avgColor',
+    );
+
+    // Post-constructor mutation + needsUpdate = true re-bakes URI and avgColor
+    const prevUri = dtex.source;
+    for (let i = 0; i < w * h; i++) {
+      rgba[i * 4] = 20;
+      rgba[i * 4 + 1] = 200;
+      rgba[i * 4 + 2] = 220;
+    }
+    dtex.needsUpdate = true;
+    assert(
+      dtex.source !== prevUri &&
+        dtex.avgColor[2] > dtex.avgColor[0] &&
+        dtex.avgColor[1] > dtex.avgColor[0],
+      'THREE.DataTexture re-bakes PNG data URI and avgColor after pixel mutation + needsUpdate = true',
+    );
+
+    // 3-channel RGBFormat and Float32Array support
+    const f32Rgb = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0]);
+    const floatTex = new THREE.DataTexture(
+      f32Rgb,
+      2,
+      2,
+      THREE.RGBFormat,
+      THREE.FloatType,
+    );
+    assert(
+      floatTex.source.startsWith('data:image/png;base64,') &&
+        floatTex.avgColor[0] > 0.2 &&
+        floatTex.avgColor[1] > 0.2,
+      'THREE.DataTexture supports RGBFormat and FloatType Float32Array buffers',
+    );
+
+    // Scene export to Canvas3D / GLB / USDZ preserves baseColorTexture and USDZ average-color tint
+    const texScene = new Scene();
+    const texMat = new MeshStandardMaterial({
+      map: dtex,
+      roughness: 0.4,
+      metalness: 0.2,
+    });
+    texScene.add(new Mesh(new BoxGeometry(1, 1, 1), texMat));
+    const {gltf: texGltf} = texScene.toCanvas3D();
+    assert(
+      Array.isArray(texGltf.images) &&
+        texGltf.images.length === 1 &&
+        texGltf.images[0].uri === dtex.source &&
+        Array.isArray(texGltf.textures) &&
+        texGltf.textures.length === 1 &&
+        texGltf.materials[0]?.pbrMetallicRoughness?.baseColorTexture?.index ===
+          0,
+      'scene.toCanvas3D() serializes DataTexture into gltf.images, gltf.textures, and pbrMetallicRoughness.baseColorTexture',
+    );
+    const usdzBytes = texScene.toUSDZ();
+    const usdzText = new TextDecoder().decode(usdzBytes);
+    assert(
+      usdzText.includes('diffuseColor') &&
+        !usdzText.includes('diffuseColor = (1.0, 1.0, 1.0)'),
+      'scene.toUSDZ() tints untextured USDA diffuseColor using DataTexture avgColor',
+    );
+  }
 }
 
 runThreeAuthorTests();

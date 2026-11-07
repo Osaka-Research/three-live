@@ -304,11 +304,188 @@ fn shade_pbr(
     [rgb[0], rgb[1], rgb[2], alpha_u8]
 }
 
+#[derive(Clone)]
+struct DecodedTexture {
+    width: usize,
+    height: usize,
+    rgba: Vec<[u8; 4]>,
+    avg_srgb: [u8; 4],
+}
+
+impl DecodedTexture {
+    #[inline]
+    fn sample_srgb(&self, uv: [f32; 2]) -> [u8; 4] {
+        if self.width == 0 || self.height == 0 || self.rgba.is_empty() {
+            return [255, 255, 255, 255];
+        }
+        let u = if uv[0].is_finite() { uv[0].rem_euclid(1.0) } else { 0.0 };
+        let v = if uv[1].is_finite() { uv[1].rem_euclid(1.0) } else { 0.0 };
+        let x = ((u * self.width as f32) as usize).min(self.width - 1);
+        let y = ((v * self.height as f32) as usize).min(self.height - 1);
+        self.rgba[y * self.width + x]
+    }
+}
+
+fn decode_base64_str(s: &str, max_bytes: usize) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity((s.len() * 3) / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u8;
+    for b in s.bytes() {
+        let val = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            b' ' | b'\t' | b'\r' | b'\n' => continue,
+            _ => return None,
+        };
+        buf = (buf << 6) | (val as u32);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xff) as u8);
+            if out.len() > max_bytes {
+                return None;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Decodes an inline stored-DEFLATE `data:image/png;base64,...` URI (as emitted by
+/// `THREE.DataTexture`) into raw RGBA8 texels for software rasterization.
+fn decode_stored_png_data_uri(uri: &str) -> Option<DecodedTexture> {
+    let trimmed = uri.trim();
+    let b64 = trimmed.strip_prefix("data:image/png;base64,")?;
+    let png = decode_base64_str(b64, 2 * 1024 * 1024)?;
+    if png.len() < 33 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+
+    let mut pos = 8usize;
+    let mut width = 0usize;
+    let mut height = 0usize;
+    let mut color_type = 0u8;
+    let mut idat = Vec::new();
+
+    while pos + 12 <= png.len() {
+        let len = u32::from_be_bytes([png[pos], png[pos + 1], png[pos + 2], png[pos + 3]]) as usize;
+        let ctype = &png[pos + 4..pos + 8];
+        let data_start = pos + 8;
+        let data_end = data_start.checked_add(len)?;
+        if data_end + 4 > png.len() {
+            return None;
+        }
+        let data = &png[data_start..data_end];
+        if ctype == b"IHDR" {
+            if len != 13 {
+                return None;
+            }
+            width = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+            height = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+            let bit_depth = data[8];
+            color_type = data[9];
+            let interlace = data[12];
+            if width == 0
+                || height == 0
+                || width > 2048
+                || height > 2048
+                || bit_depth != 8
+                || (color_type != 6 && color_type != 2)
+                || interlace != 0
+            {
+                return None;
+            }
+        } else if ctype == b"IDAT" {
+            idat.extend_from_slice(data);
+        } else if ctype == b"IEND" {
+            break;
+        }
+        pos = data_end + 4;
+    }
+
+    if width == 0 || height == 0 || idat.len() < 6 {
+        return None;
+    }
+
+    let channels = if color_type == 6 { 4usize } else { 3usize };
+    let row_bytes = width * channels;
+    let stride = 1 + row_bytes;
+    let expected_raw = height * stride;
+    let mut raw = Vec::with_capacity(expected_raw);
+
+    let mut zpos = 2usize; // skip 2-byte zlib header
+    while zpos + 5 <= idat.len() {
+        let hdr = idat[zpos];
+        let bfinal = (hdr & 1) != 0;
+        let btype = (hdr >> 1) & 3;
+        if btype != 0 {
+            return None;
+        }
+        let len = u16::from_le_bytes([idat[zpos + 1], idat[zpos + 2]]) as usize;
+        let nlen = u16::from_le_bytes([idat[zpos + 3], idat[zpos + 4]]);
+        if (len as u16) != !nlen {
+            return None;
+        }
+        let block_start = zpos + 5;
+        let block_end = block_start.checked_add(len)?;
+        if block_end > idat.len() || raw.len() + len > expected_raw + 64 {
+            return None;
+        }
+        raw.extend_from_slice(&idat[block_start..block_end]);
+        zpos = block_end;
+        if bfinal {
+            break;
+        }
+    }
+
+    if raw.len() < expected_raw {
+        return None;
+    }
+
+    let total_pixels = width * height;
+    let mut rgba = Vec::with_capacity(total_pixels);
+    let mut sum_r = 0u64;
+    let mut sum_g = 0u64;
+    let mut sum_b = 0u64;
+    let mut sum_a = 0u64;
+
+    for y in 0..height {
+        let row_start = y * stride;
+        let filter = raw[row_start];
+        if filter != 0 {
+            return None;
+        }
+        let scan = &raw[row_start + 1..row_start + 1 + row_bytes];
+        for x in 0..width {
+            let p = x * channels;
+            let r = scan[p];
+            let g = scan[p + 1];
+            let b = scan[p + 2];
+            let a = if channels == 4 { scan[p + 3] } else { 255 };
+            rgba.push([r, g, b, a]);
+            sum_r += r as u64;
+            sum_g += g as u64;
+            sum_b += b as u64;
+            sum_a += a as u64;
+        }
+    }
+
+    let cnt = (total_pixels.max(1)) as u64;
+    let avg_srgb =
+        [(sum_r / cnt) as u8, (sum_g / cnt) as u8, (sum_b / cnt) as u8, (sum_a / cnt) as u8];
+
+    Some(DecodedTexture { width, height, rgba, avg_srgb })
+}
+
 #[derive(Clone, Copy)]
 struct ClipVertex {
     clip: [f32; 4],
     world_pos: [f32; 3],
     world_norm: [f32; 3],
+    uv: [f32; 2],
 }
 
 impl ClipVertex {
@@ -330,6 +507,7 @@ impl ClipVertex {
                 a.world_norm[1] + t * (b.world_norm[1] - a.world_norm[1]),
                 a.world_norm[2] + t * (b.world_norm[2] - a.world_norm[2]),
             ]),
+            uv: [a.uv[0] + t * (b.uv[0] - a.uv[0]), a.uv[1] + t * (b.uv[1] - a.uv[1])],
         }
     }
 }
@@ -725,6 +903,11 @@ pub fn render_viewport_rgba(
 
     // Rasterize all meshes
     let default_mat = Material3D::default();
+    let decoded_textures: Vec<Option<DecodedTexture>> = scene
+        .materials
+        .iter()
+        .map(|m| m.base_color_texture.as_deref().and_then(decode_stored_png_data_uri))
+        .collect();
     let mut clipped_tris = Vec::with_capacity(2);
 
     let node_count = if !scene.nodes.is_empty() { scene.nodes.len() } else { scene.meshes.len() };
@@ -756,6 +939,9 @@ pub fn render_viewport_rgba(
         }
         let mat =
             mesh.material_index.and_then(|mi| scene.materials.get(mi)).unwrap_or(&default_mat);
+        let tex_opt =
+            mesh.material_index.and_then(|mi| decoded_textures.get(mi)).and_then(|t| t.as_ref());
+        let has_uvs = !mesh.uvs.is_empty();
 
         let inst_count = (inst_matrices.len() / 16).max(1);
         let has_inst = inst_matrices.len() >= 16;
@@ -833,20 +1019,27 @@ pub fn render_viewport_rgba(
                     .map(|n| mat3_transform_normal(&normal_mat, n))
                     .unwrap_or(face_n);
 
+                let uv0 = mesh.uvs.get(i0).copied().unwrap_or([0.0, 0.0]);
+                let uv1 = mesh.uvs.get(i1).copied().unwrap_or([0.0, 0.0]);
+                let uv2 = mesh.uvs.get(i2).copied().unwrap_or([0.0, 0.0]);
+
                 let v0 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp0),
                     world_pos: wp0,
                     world_norm: wn0,
+                    uv: uv0,
                 };
                 let v1 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp1),
                     world_pos: wp1,
                     world_norm: wn1,
+                    uv: uv1,
                 };
                 let v2 = ClipVertex {
                     clip: mat4_transform_vec4(&vp, wp2),
                     world_pos: wp2,
                     world_norm: wn2,
+                    uv: uv2,
                 };
 
                 clipped_tris.clear();
@@ -955,7 +1148,7 @@ pub fn render_viewport_rgba(
                                     let b0 = pw0 / psum;
                                     let b1 = pw1 / psum;
                                     let b2 = pw2 / psum;
-                                    let rgba = [
+                                    let mut rgba = [
                                         (b0 * c0[0] as f32 + b1 * c1[0] as f32 + b2 * c2[0] as f32)
                                             .round() as u8,
                                         (b0 * c0[1] as f32 + b1 * c1[1] as f32 + b2 * c2[1] as f32)
@@ -964,6 +1157,27 @@ pub fn render_viewport_rgba(
                                             .round() as u8,
                                         c0[3],
                                     ];
+                                    if let Some(tex) = tex_opt {
+                                        let texel = if has_uvs {
+                                            let u = b0 * ctri[0].uv[0]
+                                                + b1 * ctri[1].uv[0]
+                                                + b2 * ctri[2].uv[0];
+                                            let v = b0 * ctri[0].uv[1]
+                                                + b1 * ctri[1].uv[1]
+                                                + b2 * ctri[2].uv[1];
+                                            tex.sample_srgb([u, v])
+                                        } else {
+                                            tex.avg_srgb
+                                        };
+                                        rgba[0] =
+                                            ((rgba[0] as u32 * texel[0] as u32 + 127) / 255) as u8;
+                                        rgba[1] =
+                                            ((rgba[1] as u32 * texel[1] as u32 + 127) / 255) as u8;
+                                        rgba[2] =
+                                            ((rgba[2] as u32 * texel[2] as u32 + 127) / 255) as u8;
+                                        rgba[3] =
+                                            ((rgba[3] as u32 * texel[3] as u32 + 127) / 255) as u8;
+                                    }
                                     ss_buf.blend_pixel(px, py, z, rgba);
                                 }
                             }

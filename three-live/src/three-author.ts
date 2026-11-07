@@ -37,6 +37,7 @@ import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
 import {installLodExtension} from './plugins/lod';
 import {
+  calculateCRC32,
   generateUSDZ,
   glbToUSDZ,
   sceneToCanvas3D,
@@ -1757,17 +1758,26 @@ export class TubeGeometry extends BufferGeometry {
 // 4. Materials & Textures
 // =========================================================================
 
+const B64_CHARS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
 export class Texture {
   public source: string | any;
   public isTexture: boolean = true;
   public wrapS: number = 10497;
   public wrapT: number = 10497;
+  public repeat: Vector2 = new Vector2(1, 1);
+  public offset: Vector2 = new Vector2(0, 0);
 
   /**
    * Optional source image descriptor, mirroring `THREE.Texture.image`. Read by
    * {@link SceneQuotaValidator} to enforce SECURITY_3D_MAX_TEXTURE_DIMENSION.
    */
-  image: {width?: number; height?: number} | null = null;
+  image: {
+    data?: ArrayLike<number> | null;
+    width?: number;
+    height?: number;
+  } | null = null;
   /** Optional explicit dimensions, used when `image` is not set. */
   width = 0;
   height = 0;
@@ -1780,6 +1790,207 @@ export class Texture {
   }
 
   public dispose(): void {}
+}
+
+/**
+ * Procedural pixel-buffer texture (`THREE.DataTexture`).
+ *
+ * Encodes raw pixel buffers (`Uint8Array`, `Uint8ClampedArray`, `Float32Array`,
+ * or numeric arrays in `RGBAFormat`, `RGBFormat`, `RGFormat`/`LuminanceAlphaFormat`,
+ * or `RedFormat`/`LuminanceFormat`/`AlphaFormat`) into an inline stored-DEFLATE
+ * `data:image/png;base64,...` URI and computes linear `avgColor` for fallback
+ * tinting on untextured targets.
+ */
+export class DataTexture extends Texture {
+  public readonly isDataTexture: boolean = true;
+  public avgColor: [number, number, number, number] = [1, 1, 1, 1];
+  public format: number;
+  public type: number;
+  public magFilter: number;
+  public minFilter: number;
+  public flipY = false;
+  public generateMipmaps = false;
+  public unpackAlignment = 1;
+  public colorSpace: string;
+
+  constructor(
+    data: ArrayBufferView | ArrayLike<number> | null = null,
+    width: number = 1,
+    height: number = 1,
+    format: number = 1023,
+    type: number = 1009,
+    _mapping?: number,
+    wrapS: number = 1001,
+    wrapT: number = 1001,
+    magFilter: number = 1003,
+    minFilter: number = 1003,
+    _anisotropy: number = 1,
+    colorSpace: string = '',
+  ) {
+    super('');
+    const w = Number(width);
+    const h = Number(height);
+    const pixelData =
+      data && typeof (data as ArrayLike<number>).length === 'number'
+        ? (data as ArrayLike<number>)
+        : null;
+    this.width = w;
+    this.height = h;
+    this.image = {data: pixelData, width: w, height: h};
+    this.format = Number(format) || 1023;
+    this.type = Number(type) || 1009;
+    this.wrapS = Number(wrapS) || 1001;
+    this.wrapT = Number(wrapT) || 1001;
+    this.magFilter = Number(magFilter) || 1003;
+    this.minFilter = Number(minFilter) || 1003;
+    this.colorSpace = colorSpace || '';
+    this._bake();
+  }
+
+  public get needsUpdate(): boolean {
+    return false;
+  }
+
+  public set needsUpdate(v: boolean) {
+    if (v) this._bake();
+  }
+
+  private _bake(): void {
+    const img = this.image;
+    const buf = img?.data;
+    const rawW = Number(img?.width ?? this.width);
+    const rawH = Number(img?.height ?? this.height);
+    if (
+      !buf ||
+      !buf.length ||
+      !(rawW > 0 && rawH > 0) ||
+      rawW > SECURITY_3D_MAX_TEXTURE_DIMENSION ||
+      rawH > SECURITY_3D_MAX_TEXTURE_DIMENSION
+    ) {
+      this.source = '';
+      return;
+    }
+    const srcW = Math.max(1, rawW | 0);
+    const srcH = Math.max(1, rawH | 0);
+    const nPx = srcW * srcH;
+    const f = this.format;
+    const ch =
+      f === 1021 || f === 1024 || f === 1028 || buf.length === nPx
+        ? 1
+        : f === 1025 || f === 1030 || buf.length === nPx * 2
+          ? 2
+          : f === 1022 || buf.length === nPx * 3
+            ? 3
+            : 4;
+    const isFloat =
+      this.type === 1015 ||
+      this.type === 1016 ||
+      buf instanceof Float32Array ||
+      buf instanceof Float64Array;
+    // Cap at 96x96 so the entire image (96 * 385 = 36,960 B) fits in a single
+    // stored-DEFLATE block (<= 65,535 B) and stays well under Boa's loop limit.
+    const dstW = Math.min(srcW, 96);
+    const dstH = Math.min(srcH, 96);
+    const rawLen = dstH * (1 + dstW * 4);
+    const png = new Uint8Array(68 + rawLen);
+    const dv = new DataView(png.buffer);
+    dv.setUint32(0, 0x89504e47);
+    dv.setUint32(4, 0x0d0a1a0a);
+    dv.setUint32(8, 13);
+    dv.setUint32(12, 0x49484452); // IHDR
+    dv.setUint32(16, dstW);
+    dv.setUint32(20, dstH);
+    png[24] = 8;
+    png[25] = 6;
+    dv.setUint32(29, calculateCRC32(png.subarray(12, 29)));
+    dv.setUint32(33, rawLen + 11);
+    dv.setUint32(37, 0x49444154); // IDAT
+    png[41] = 0x78;
+    png[42] = 0x01;
+    png[43] = 0x01;
+    dv.setUint16(44, rawLen, true);
+    dv.setUint16(46, ~rawLen & 0xffff, true);
+
+    let p = 48;
+    let s1 = 1;
+    let s2 = 0;
+    let sr = 0;
+    let sg = 0;
+    let sb = 0;
+    let sa = 0;
+    const toByte = (v: number): number => {
+      if (!Number.isFinite(v)) return 0;
+      const x = isFloat && v <= 1 ? v * 255 : v;
+      return x > 0 ? (x < 255 ? (x + 0.5) | 0 : 255) : 0;
+    };
+    for (let y = 0; y < dstH; y++) {
+      const row = ((y * srcH) / dstH) | 0;
+      const sy = this.flipY ? srcH - 1 - row : row;
+      png[p++] = 0;
+      s2 += s1;
+      for (let x = 0; x < dstW; x++) {
+        const i = (sy * srcW + (((x * srcW) / dstW) | 0)) * ch;
+        const r = f === 1021 ? 255 : toByte(buf[i] ?? 0);
+        const g =
+          ch >= 3
+            ? toByte(buf[i + 1] ?? 0)
+            : f === 1030
+              ? toByte(buf[i + 1] ?? 0)
+              : r;
+        const b = ch >= 3 ? toByte(buf[i + 2] ?? 0) : f === 1030 ? 0 : r;
+        const a =
+          ch === 4
+            ? toByte(buf[i + 3] ?? 255)
+            : f === 1021
+              ? toByte(buf[i] ?? 255)
+              : f === 1025
+                ? toByte(buf[i + 1] ?? 255)
+                : 255;
+        png[p++] = r;
+        s1 += r;
+        s2 += s1;
+        png[p++] = g;
+        s1 += g;
+        s2 += s1;
+        png[p++] = b;
+        s1 += b;
+        s2 += s1;
+        png[p++] = a;
+        s1 += a;
+        s2 += s1;
+        sr += r;
+        sg += g;
+        sb += b;
+        sa += a;
+      }
+      s1 %= 65521;
+      s2 %= 65521;
+    }
+    dv.setUint32(p, ((s2 << 16) | s1) >>> 0);
+    dv.setUint32(p + 4, calculateCRC32(png.subarray(37, p + 4)));
+    dv.setUint32(p + 12, 0x49454e44); // IEND
+    dv.setUint32(p + 16, 0xae426082);
+
+    const cnt = dstW * dstH * 255;
+    const lin = this.colorSpace === 'srgb-linear';
+    this.avgColor = [
+      lin ? sr / cnt : srgbToLinear(sr / cnt),
+      lin ? sg / cnt : srgbToLinear(sg / cnt),
+      lin ? sb / cnt : srgbToLinear(sb / cnt),
+      sa / cnt,
+    ];
+    const parts: string[] = ['data:image/png;base64,'];
+    for (let i = 0; i < png.length; i += 3) {
+      const n = (png[i] << 16) | ((png[i + 1] ?? 0) << 8) | (png[i + 2] ?? 0);
+      parts.push(
+        B64_CHARS[(n >> 18) & 63] +
+          B64_CHARS[(n >> 12) & 63] +
+          (i + 1 < png.length ? B64_CHARS[(n >> 6) & 63] : '=') +
+          (i + 2 < png.length ? B64_CHARS[n & 63] : '='),
+      );
+    }
+    this.source = parts.join('');
+  }
 }
 
 export class TextureLoader {
@@ -4680,16 +4891,35 @@ const threeExports: Record<string, any> = {
   ClampToEdgeWrapping: 1001,
   MirroredRepeatWrapping: 1002,
   NearestFilter: 1003,
+  NearestMipmapNearestFilter: 1004,
+  NearestMipmapLinearFilter: 1005,
   LinearFilter: 1006,
+  LinearMipmapNearestFilter: 1007,
+  LinearMipmapLinearFilter: 1008,
+  UnsignedByteType: 1009,
+  ByteType: 1010,
+  ShortType: 1011,
+  UnsignedShortType: 1012,
+  IntType: 1013,
+  UnsignedIntType: 1014,
+  FloatType: 1015,
+  HalfFloatType: 1016,
+  AlphaFormat: 1021,
+  RGBFormat: 1022,
+  RGBAFormat: 1023,
+  LuminanceFormat: 1024,
+  LuminanceAlphaFormat: 1025,
+  RedFormat: 1028,
+  RGFormat: 1030,
+  NoColorSpace: '',
   SRGBColorSpace: 'srgb',
   LinearSRGBColorSpace: 'srgb-linear',
-  RGBAFormat: 1023,
-  RGBFormat: 1022,
   StaticDrawUsage: 35044,
   DynamicDrawUsage: 35048,
   ACESFilmicToneMapping: 4,
   PCFSoftShadowMap: 2,
   Texture,
+  DataTexture,
   TextureLoader,
   Material,
   MeshStandardMaterial,
@@ -5004,8 +5234,14 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
         let mapUrl = '';
         if (mat.map) {
           if (typeof mat.map === 'string') mapUrl = mat.map;
-          else if ((mat.map as any).source) mapUrl = (mat.map as any).source;
-          else if ((mat.map as any).image) mapUrl = (mat.map as any).image;
+          else if (
+            typeof (mat.map as any).source === 'string' &&
+            (mat.map as any).source
+          ) {
+            mapUrl = (mat.map as any).source;
+          } else if (typeof (mat.map as any).image === 'string') {
+            mapUrl = (mat.map as any).image;
+          }
         }
         materials.push({
           name: mat.name || `Material_${materials.length}`,

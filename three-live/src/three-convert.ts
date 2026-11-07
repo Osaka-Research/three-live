@@ -457,6 +457,10 @@ function serializeScene(
   const nodeObjects: Object3D[] = [];
   const materials: any[] = [];
   const matMap = new Map<Material, number>();
+  const images: Array<{uri: string}> = [];
+  const samplers: Array<Record<string, number>> = [];
+  const textures: Array<{sampler: number; source: number}> = [];
+  const textureLookup = new Map<string, number>();
   const variantNames: string[] = [];
   const lights: LightGpu[] = [];
 
@@ -487,14 +491,58 @@ function serializeScene(
     const g = m.color?.g ?? 0.8;
     const b = m.color?.b ?? 0.8;
     const opacity = m.opacity ?? 1.0;
+    const pbr: Record<string, unknown> = {
+      baseColorFactor: [r, g, b, opacity],
+      metallicFactor: m.metalness ?? 0.0,
+      roughnessFactor: m.roughness ?? 0.5,
+    };
+    const matExtras: Record<string, unknown> = {};
+    if (m.map) {
+      let rawUri = '';
+      if (typeof m.map === 'string') {
+        rawUri = m.map;
+      } else if (typeof (m.map as any).source === 'string') {
+        rawUri = (m.map as any).source;
+      } else if (typeof (m.map as any).image === 'string') {
+        rawUri = (m.map as any).image;
+      }
+      const trimmed = rawUri.trim();
+      const safeUri =
+        trimmed &&
+        !/[\x00-\x1f\x7f\\]|\.\./.test(trimmed) &&
+        (/^data:image\/(png|jpeg|jpg|webp|ktx2|avif)(;|,)/i.test(trimmed) ||
+          (!trimmed.startsWith('//') && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed)))
+          ? trimmed
+          : null;
+      if (safeUri) {
+        let texIdx = textureLookup.get(safeUri);
+        if (texIdx === undefined) {
+          const imgIdx = images.length;
+          images.push({uri: safeUri});
+          if (samplers.length === 0) {
+            samplers.push({
+              magFilter: 9729,
+              minFilter: 9987,
+              wrapS: 10497,
+              wrapT: 10497,
+            });
+          }
+          texIdx = textures.length;
+          textures.push({sampler: 0, source: imgIdx});
+          textureLookup.set(safeUri, texIdx);
+        }
+        pbr.baseColorTexture = {index: texIdx};
+      }
+      const avg = (m.map as any).avgColor;
+      if (Array.isArray(avg) && avg.length >= 3) {
+        matExtras.avgColor = [avg[0], avg[1], avg[2]];
+      }
+    }
     const matDef: Record<string, unknown> = {
       name: m.name || '',
-      pbrMetallicRoughness: {
-        baseColorFactor: [r, g, b, opacity],
-        metallicFactor: m.metalness ?? 0.0,
-        roughnessFactor: m.roughness ?? 0.5,
-      },
+      pbrMetallicRoughness: pbr,
       doubleSided: m.side === 2 || Boolean(m.doubleSided),
+      ...(Object.keys(matExtras).length > 0 ? {extras: matExtras} : {}),
     };
     if (
       m.emissive &&
@@ -1135,6 +1183,9 @@ function serializeScene(
     nodes,
     meshes,
     materials,
+    ...(images.length > 0 ? {images} : {}),
+    ...(samplers.length > 0 ? {samplers} : {}),
+    ...(textures.length > 0 ? {textures} : {}),
     accessors,
     bufferViews,
     buffers: [{byteLength: byteOffset}],
@@ -1385,6 +1436,14 @@ export function extractMeshesFromGLB(
         ): [number, number, number] =>
           Array.isArray(a) && a.length >= 3 ? [a[0], a[1], a[2]] : fb;
         color = rgb3(pbr.baseColorFactor, [1, 1, 1]);
+        const avgColor = mat.extras?.avgColor;
+        if (Array.isArray(avgColor) && avgColor.length >= 3) {
+          color = [
+            color[0] * avgColor[0],
+            color[1] * avgColor[1],
+            color[2] * avgColor[2],
+          ];
+        }
         const baseOp =
           Array.isArray(pbr.baseColorFactor) &&
           typeof pbr.baseColorFactor[3] === 'number'
