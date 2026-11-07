@@ -2260,6 +2260,45 @@ export class Object3D {
     return this;
   }
 
+  private _syncWorld(): Float32Array {
+    const chain: Object3D[] = [];
+    for (let p: Object3D | null = this; p && chain.length < 64; p = p.parent) chain.push(p);
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const n = chain[i]!;
+      n.updateMatrix?.();
+      if (n.parent?.matrixWorld) n.matrixWorld.multiplyMatrices(n.parent.matrixWorld, n.matrix);
+      else n.matrixWorld?.copy(n.matrix);
+    }
+    return this.matrixWorld.elements;
+  }
+
+  public getWorldPosition(target: Vector3 = new Vector3()): Vector3 {
+    const e = this._syncWorld();
+    return target.set(e[12], e[13], e[14]);
+  }
+
+  public getWorldScale(target: Vector3 = new Vector3()): Vector3 {
+    const e = this._syncWorld();
+    return target.set(
+      Math.hypot(e[0], e[1], e[2]),
+      Math.hypot(e[4], e[5], e[6]),
+      Math.hypot(e[8], e[9], e[10]),
+    );
+  }
+
+  public getWorldDirection(target: Vector3 = new Vector3()): Vector3 {
+    const e = this._syncWorld();
+    return target.set(e[8], e[9], e[10]).normalize();
+  }
+
+  public getWorldQuaternion(target: Quaternion = new Quaternion()): Quaternion {
+    const chain: Object3D[] = [];
+    for (let p: Object3D | null = this; p && chain.length < 64; p = p.parent) chain.push(p);
+    target.set(0, 0, 0, 1);
+    for (let i = chain.length - 1; i >= 0; i--) target.multiply(chain[i]!.quaternion);
+    return target;
+  }
+
   public clone(recursive: boolean = true): this {
     const c: any =
       this instanceof Line
@@ -5106,6 +5145,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     delete globalRoot.__three_live_sim_time_ms__;
     delete globalRoot.__three_live_raf_cb__;
     delete globalRoot.__three_live_in_step__;
+    delete globalRoot.__three_live_interactivity_fired__;
     defaultScene = new Scene();
     defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);
     defaultCamera.position.set(0, 2, 5);
@@ -5121,8 +5161,42 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
     globalRoot.__three_live_sim_time_ms__ = elapsedSec * 1000;
     globalRoot.__three_live_in_step__ = true;
     try {
+      const fireSelect = !globalRoot.__three_live_interactivity_fired__ && elapsedSec >= 0.15;
+      if (fireSelect) globalRoot.__three_live_interactivity_fired__ = true;
+      const seenInter = new Set<object>();
+      globalRoot.scene?.traverse?.((n: any) => {
+        const inter = n?.userData?.interactivity;
+        if (!inter || typeof inter !== 'object' || seenInter.has(inter)) return;
+        seenInter.add(inter);
+        if (fireSelect) {
+          for (const fn of [inter.onSelect, inter.onClick, inter.toggle, inter.onActivate]) {
+            if (typeof fn === 'function') {
+              try {
+                fn.call(inter, n);
+              } catch {}
+              break;
+            }
+          }
+        }
+        if (typeof inter.update === 'function') {
+          try {
+            inter.update(dtSec, elapsedSec);
+          } catch {}
+        }
+      });
       if (typeof globalRoot.animate === 'function') {
-        globalRoot.animate(elapsedSec, dtSec);
+        let takesDt = Boolean(globalRoot.__three_live_animate_takes_dt__);
+        if (!takesDt) {
+          const src = String(globalRoot.animate);
+          const m = src.match(/^(?:function\s*\w*\s*\(\s*([^,)=]*)|\(\s*([^,)=]*)|([a-zA-Z_$][\w$]*)\s*=>)/);
+          const p0 = ((m?.[1] || m?.[2] || m?.[3]) ?? '').trim().toLowerCase();
+          takesDt = p0 === 'dt' || p0 === 'delta' || p0 === 'deltatime' || p0 === 'step';
+        }
+        if (takesDt) {
+          globalRoot.animate(dtSec, elapsedSec);
+        } else {
+          globalRoot.animate(elapsedSec, dtSec);
+        }
       } else if (typeof globalRoot.__three_live_raf_cb__ === 'function') {
         globalRoot.__three_live_raf_cb__(elapsedSec * 1000);
       }

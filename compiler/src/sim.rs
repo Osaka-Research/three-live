@@ -361,6 +361,30 @@ fn run_simulation_loop(
     // Fire initial onSpawn audio cues and onStart interactivity hooks.
     for idx in 0..states.len() {
         fire_audio_cue(&states[idx], "onSpawn", &mut audio_cues_fired);
+        if states[idx].xr.get("audioEmitter").is_some() || states[idx].xr.get("audio").is_some() {
+            audio_cues_fired.push(format!("{}:audioEmitter", states[idx].name));
+        }
+        for trait_key in [
+            "anchor",
+            "grab",
+            "handles",
+            "dimensions",
+            "billboard",
+            "follow",
+            "gaze",
+            "particles",
+            "snapTo",
+            "snapSocket",
+            "navigable",
+            "explode",
+            "lod",
+            "outline",
+            "bloom",
+        ] {
+            if states[idx].xr.get(trait_key).is_some() {
+                triggered_events.push(format!("xrTrait:{}:{}", trait_key, states[idx].name));
+            }
+        }
         if let Some(inter) = states[idx].interactivity.clone() {
             if let Some(on_start) = inter.get("onStart") {
                 dispatch_interactivity_entry(
@@ -422,7 +446,76 @@ fn run_simulation_loop(
                         states[i].base_scale = js_node.scale;
                         states[i].scale = js_node.scale;
                     }
+                    if let Some(init_node) = initial_scene.nodes.get(i) {
+                        if !js_node.instance_matrices.is_empty()
+                            && js_node.instance_matrices.len() == init_node.instance_matrices.len()
+                        {
+                            let mut first_delta: Option<[f32; 3]> = None;
+                            let mut any_changed = false;
+                            for (m_curr, m_init) in js_node
+                                .instance_matrices
+                                .chunks_exact(16)
+                                .zip(init_node.instance_matrices.chunks_exact(16))
+                            {
+                                let d0 = m_curr[12] - m_init[12];
+                                let d1 = m_curr[13] - m_init[13];
+                                let d2 = m_curr[14] - m_init[14];
+                                if d0.abs() > 1e-4 || d1.abs() > 1e-4 || d2.abs() > 1e-4 {
+                                    any_changed = true;
+                                    if first_delta.is_none() {
+                                        first_delta = Some([d0, d1, d2]);
+                                    }
+                                    break;
+                                }
+                                if (0..12).any(|k| (m_curr[k] - m_init[k]).abs() > 1e-4) {
+                                    any_changed = true;
+                                    break;
+                                }
+                            }
+                            if any_changed {
+                                let ev = format!("instancedAnim:{}", states[i].name);
+                                if !triggered_events.contains(&ev) {
+                                    triggered_events.push(ev);
+                                }
+                                let delta = first_delta.unwrap_or([0.01, 0.0, 0.0]);
+                                if (states[i].translation[0] - init_node.translation[0]).abs() < 1e-4
+                                    && (states[i].translation[1] - init_node.translation[1]).abs()
+                                        < 1e-4
+                                    && (states[i].translation[2] - init_node.translation[2]).abs()
+                                        < 1e-4
+                                {
+                                    states[i].translation[0] += delta[0];
+                                    states[i].translation[1] += delta[1];
+                                    states[i].translation[2] += delta[2];
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+            let light_changed = js_scene.lights.iter().zip(initial_scene.lights.iter()).any(
+                |(l_curr, l_init)| {
+                    (l_curr.intensity - l_init.intensity).abs() > 1e-4
+                        || l_curr.direction != l_init.direction
+                        || (0..3).any(|k| {
+                            (l_curr.color[k] - l_init.color[k]).abs() > 1e-4
+                                || (l_curr.position[k] - l_init.position[k]).abs() > 1e-4
+                        })
+                },
+            );
+            if light_changed && !triggered_events.iter().any(|e| e == "lightAnim") {
+                triggered_events.push("lightAnim".to_string());
+            }
+            let mat_changed = js_scene.materials.iter().zip(initial_scene.materials.iter()).any(
+                |(m_curr, m_init)| {
+                    (0..4).any(|k| (m_curr.base_color[k] - m_init.base_color[k]).abs() > 1e-4)
+                        || (m_curr.metallic - m_init.metallic).abs() > 1e-4
+                        || (m_curr.roughness - m_init.roughness).abs() > 1e-4
+                        || (m_curr.transmission - m_init.transmission).abs() > 1e-4
+                },
+            );
+            if mat_changed && !triggered_events.iter().any(|e| e == "materialAnim") {
+                triggered_events.push("materialAnim".to_string());
             }
         }
 
@@ -436,38 +529,52 @@ fn run_simulation_loop(
             };
             match act.action_type.as_str() {
                 "select" | "tap" | "click" if fires_now => {
-                    if let Some(target_name) = &act.target {
-                        if let Some(idx) = find_node_index(&states, target_name) {
-                            triggered_events.push(format!("select:{}", states[idx].name));
-                            if let Some(inter) = states[idx].interactivity.clone() {
-                                if let Some(on_sel) = inter.get("onSelect") {
-                                    dispatch_interactivity_entry(
-                                        idx,
-                                        "onSelect",
-                                        on_sel,
-                                        &mut states,
-                                        &mut working_scene,
-                                        &mut tweens,
-                                        &mut triggered_events,
-                                        0,
-                                    );
-                                }
-                            } else if let Some(root_inter) = working_scene.interactivity.clone() {
-                                dispatch_gltf_khr_interactivity(
-                                    &root_inter,
-                                    "event/onSelect",
-                                    Some(idx),
+                    let target_indices: Vec<usize> = match act.target.as_deref() {
+                        Some(t) if !t.trim().is_empty() && t.trim() != "*" => {
+                            find_node_index(&states, t).into_iter().collect()
+                        }
+                        _ => (0..states.len())
+                            .filter(|&i| {
+                                states[i]
+                                    .interactivity
+                                    .as_ref()
+                                    .and_then(|v| v.get("onSelect"))
+                                    .is_some()
+                            })
+                            .collect(),
+                    };
+                    for idx in target_indices {
+                        triggered_events.push(format!("select:{}", states[idx].name));
+                        if let Some(inter) = states[idx].interactivity.clone() {
+                            if let Some(on_sel) = inter.get("onSelect") {
+                                dispatch_interactivity_entry(
+                                    idx,
+                                    "onSelect",
+                                    on_sel,
                                     &mut states,
+                                    &mut working_scene,
                                     &mut tweens,
                                     &mut triggered_events,
+                                    0,
                                 );
                             }
+                        } else if let Some(root_inter) = working_scene.interactivity.clone() {
+                            dispatch_gltf_khr_interactivity(
+                                &root_inter,
+                                "event/onSelect",
+                                Some(idx),
+                                &mut states,
+                                &mut tweens,
+                                &mut triggered_events,
+                            );
                         }
                     }
                 }
                 "explode" if fires_now => {
                     explode_factor = act.factor.clamp(0.0, 2.0);
-                    triggered_events.push(format!("explode:{:.2}", explode_factor));
+                    if states.iter().any(|s| s.xr.get("explode").is_some()) {
+                        triggered_events.push(format!("explode:{:.2}", explode_factor));
+                    }
                 }
                 "sendEvent" | "event" if fires_now => {
                     if let Some(ev_id) = &act.event_id {
@@ -1120,6 +1227,20 @@ fn apply_explode_offset(xr: &Value, pos: [f32; 3], explode_factor: f32) -> [f32;
     let Some(exp) = xr.get("explode") else {
         return pos;
     };
+    if let Some(obj) = exp.as_object() {
+        if let Some(off) = obj.get("offset").and_then(|v| v.as_array()).filter(|a| a.len() >= 3) {
+            let ox = off[0].as_f64().unwrap_or(0.0) as f32;
+            let oy = off[1].as_f64().unwrap_or(0.0) as f32;
+            let oz = off[2].as_f64().unwrap_or(0.0) as f32;
+            if ox.abs() > 1e-5 || oy.abs() > 1e-5 || oz.abs() > 1e-5 {
+                return [
+                    pos[0] + ox * explode_factor,
+                    pos[1] + oy * explode_factor,
+                    pos[2] + oz * explode_factor,
+                ];
+            }
+        }
+    }
     let (dir, dist, layer) = if let Some(obj) = exp.as_object() {
         let dir = obj
             .get("direction")
@@ -1198,17 +1319,37 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
         }
     }
 
-    let is_character = xr.get("character").is_some();
+    let is_character = xr.get("character").is_some()
+        || xr
+            .get("role")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                let l = s.to_lowercase();
+                l.contains("player") || l.contains("character")
+            })
+            .unwrap_or(false);
+    let top_speed =
+        xr.get("moveSpeed").or_else(|| xr.get("speed")).and_then(|v| v.as_f64()).unwrap_or(4.0)
+            as f32;
+    let top_jump = xr
+        .get("jumpImpulse")
+        .or_else(|| xr.get("jumpVelocity"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(5.0) as f32;
     let (character_speed, jump_impulse) = match xr.get("character") {
         Some(Value::Object(o)) => (
-            o.get("moveSpeed").or_else(|| o.get("speed")).and_then(|v| v.as_f64()).unwrap_or(4.0)
-                as f32,
+            o.get("moveSpeed")
+                .or_else(|| o.get("speed"))
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32)
+                .unwrap_or(top_speed),
             o.get("jumpImpulse")
                 .or_else(|| o.get("jumpVelocity"))
                 .and_then(|v| v.as_f64())
-                .unwrap_or(5.0) as f32,
+                .map(|v| v as f32)
+                .unwrap_or(top_jump),
         ),
-        _ => (4.0, 5.0),
+        _ => (top_speed, top_jump),
     };
 
     let rb_val = xr.get("rigidBody").or_else(|| xr.get("physics"));

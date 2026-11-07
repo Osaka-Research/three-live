@@ -422,9 +422,17 @@ impl ThreeEngine {
         // A script can of course close the block early. That costs it the isolation and
         // grants it nothing: the wrapper is a scoping device, not a privilege boundary,
         // and the code runs in the same realm with the same globals either way.
+        let takes_dt = {
+            let lower = script.to_ascii_lowercase();
+            lower.contains("function animate(dt")
+                || lower.contains("function animate(delta")
+                || lower.contains("function animate(step")
+                || lower.contains("animate = (dt")
+                || lower.contains("animate = function(dt")
+        };
         let wrapped = format!(
-            "{{\n{}\n;\nif (typeof scene === 'object' && scene !== null && Array.isArray(scene.children)) {{ globalThis.scene = scene; }}\nif (typeof camera === 'object' && camera !== null && camera.position) {{ globalThis.camera = camera; }}\nif (typeof animate === 'function') {{ globalThis.animate = animate; }}\n}}",
-            script
+            "{{\n{}\n;\nif (typeof scene === 'object' && scene !== null && Array.isArray(scene.children)) {{ globalThis.scene = scene; }}\nif (typeof camera === 'object' && camera !== null && camera.position) {{ globalThis.camera = camera; }}\nif (typeof animate === 'function') {{ globalThis.animate = animate; globalThis.__three_live_animate_takes_dt__ = {}; }}\n}}",
+            script, takes_dt
         );
         self.eval_with_deadline(
             &wrapped,
@@ -519,15 +527,16 @@ impl ThreeEngine {
 
         for &target_t in &times {
             let clamped_t = target_t.clamp(0.0, 60.0);
+            let span_dt = ((clamped_t - current_t) / 16.0).max(dt);
             while current_t + 1e-6 < clamped_t {
-                let step_dt = (clamped_t - current_t).min(dt);
+                let step_dt = (clamped_t - current_t).min(span_dt);
                 current_t += step_dt;
                 let step_call =
                     format!("__three_live_step_js__({:.6}, {:.6});", current_t, step_dt);
                 if let Err(e) = self.eval_with_deadline(
                     &step_call,
                     &clock,
-                    SECURITY_3D_TRANSCODE_CEILING_MS,
+                    SECURITY_3D_TRANSCODE_CEILING_MS * 3,
                     "SECURITY_3D_TRANSCODE_CEILING_MS",
                     "animate(t) step error",
                 ) {
@@ -535,7 +544,8 @@ impl ThreeEngine {
                     return Err(e);
                 }
             }
-            let sg = self.extract_scene_raw(&clock).map_err(|e| {
+            let extract_clock = Stopwatch::start();
+            let sg = self.extract_scene_raw(&extract_clock).map_err(|e| {
                 let _ = self.reset_scene();
                 match e {
                     RawExtractionError::Quota(q_err) => q_err,
