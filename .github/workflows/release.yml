@@ -376,27 +376,44 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm install -g npm@latest || true
-          npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
+          else
+            npm install -g npm@latest || true
+          fi
           for ws in three-live xr-live; do
             pkg_version="$(node -p "require('./${ws}/package.json').version")"
             if npm view "${ws}@${pkg_version}" version >/dev/null 2>&1; then
               echo "::notice::${ws}@${pkg_version} is already published on npm; skipping."
               continue
             fi
-            if npm publish --workspace="${ws}" --access public --provenance; then
-              continue
-            fi
             if [ -n "${NPM_TOKEN:-}" ]; then
-              echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}; falling back to NPM_TOKEN."
-              npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
               npm publish --workspace="${ws}" --access public --provenance || npm publish --workspace="${ws}" --access public
-              npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
             else
-              echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}."
-              exit 0
+              npm publish --workspace="${ws}" --access public --provenance || {
+                echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}."
+                exit 0
+              }
             fi
           done
+
+  publish-mcp-registry:
+    name: Publish Official MCP Registry
+    runs-on: ubuntu-latest
+    needs: [publish-npm]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mcp-publisher and publish server.json via GitHub OIDC
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar -xz mcp-publisher
+          ./mcp-publisher validate server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json || echo "::notice::server.json version may already be published on the Official MCP Registry."
 
   publish-crates:
     name: Publish Crates.io

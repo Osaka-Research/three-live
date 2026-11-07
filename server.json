@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.google/three-live",
   "title": "Three-Live 3D, CAD & Spatial XR Compiler",
-  "description": "Compile, lint, simulate (60 Hz), and render headless 4-up 3D contact sheets from Three.js to GLB, USDZ, Android XR, and iOS RealityKit.",
+  "description": "Compile, lint, simulate (60 Hz), and render 3D scenes from Three.js to GLB, USDZ, Android & iOS.",
   "repository": {
     "url": "https://github.com/google/three-live",
     "source": "github"
