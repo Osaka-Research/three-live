@@ -1,9 +1,11 @@
-FROM rust:1.83-slim AS builder
-WORKDIR /app
-COPY compiler ./compiler
-RUN cargo build --release --manifest-path compiler/Cargo.toml --bin three-live-cli
-
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/compiler/target/release/three-live-cli /usr/local/bin/three-live-cli
-ENTRYPOINT ["three-live-cli", "mcp"]
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN ARCH="$(uname -m)" && \
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+      BIN="three-live-cli-linux-aarch64"; \
+    else \
+      BIN="three-live-cli-linux-x86_64"; \
+    fi && \
+    curl -fsSL "https://github.com/google/three-live/releases/download/v1.3.1/${BIN}" -o /usr/local/bin/three-live-cli && \
+    chmod +x /usr/local/bin/three-live-cli
+ENTRYPOINT ["/usr/local/bin/three-live-cli", "mcp"]
