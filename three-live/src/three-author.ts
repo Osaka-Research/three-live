@@ -99,9 +99,7 @@ export class Vector2 {
   }
 
   public copy(v: Vector2): this {
-    this.x = v.x;
-    this.y = v.y;
-    return this;
+    return this.set(v.x, v.y);
   }
 
   public add(v: Vector2): this {
@@ -154,45 +152,27 @@ export class Vector3 {
   }
 
   public copy(v: {x: number; y: number; z: number}): this {
-    this.x = v.x;
-    this.y = v.y;
-    this.z = v.z;
-    return this;
+    return this.set(v.x, v.y, v.z);
   }
 
   public add(v: Vector3): this {
-    this.x += v.x;
-    this.y += v.y;
-    this.z += v.z;
-    return this;
+    return this.addVectors(this, v);
   }
 
   public addVectors(a: Vector3, b: Vector3): this {
-    this.x = a.x + b.x;
-    this.y = a.y + b.y;
-    this.z = a.z + b.z;
-    return this;
+    return this.set(a.x + b.x, a.y + b.y, a.z + b.z);
   }
 
   public sub(v: Vector3): this {
-    this.x -= v.x;
-    this.y -= v.y;
-    this.z -= v.z;
-    return this;
+    return this.subVectors(this, v);
   }
 
   public subVectors(a: Vector3, b: Vector3): this {
-    this.x = a.x - b.x;
-    this.y = a.y - b.y;
-    this.z = a.z - b.z;
-    return this;
+    return this.set(a.x - b.x, a.y - b.y, a.z - b.z);
   }
 
   public multiplyScalar(s: number): this {
-    this.x *= s;
-    this.y *= s;
-    this.z *= s;
-    return this;
+    return this.set(this.x * s, this.y * s, this.z * s);
   }
 
   public divideScalar(s: number): this {
@@ -204,10 +184,7 @@ export class Vector3 {
   }
 
   public addScaledVector(v: Vector3, s: number): this {
-    this.x += v.x * s;
-    this.y += v.y * s;
-    this.z += v.z * s;
-    return this;
+    return this.set(this.x + v.x * s, this.y + v.y * s, this.z + v.z * s);
   }
 
   public length(): number {
@@ -216,22 +193,11 @@ export class Vector3 {
 
   public normalize(): this {
     const l = this.length();
-    if (l > 0.00001) {
-      this.x /= l;
-      this.y /= l;
-      this.z /= l;
-    }
-    return this;
+    return l > 0.00001 ? this.multiplyScalar(1 / l) : this;
   }
 
   public cross(v: Vector3): this {
-    const x = this.y * v.z - this.z * v.y;
-    const y = this.z * v.x - this.x * v.z;
-    const z = this.x * v.y - this.y * v.x;
-    this.x = x;
-    this.y = y;
-    this.z = z;
-    return this;
+    return this.crossVectors(this, v);
   }
 
   public crossVectors(a: Vector3, b: Vector3): this {
@@ -241,10 +207,7 @@ export class Vector3 {
     const bx = b.x,
       by = b.y,
       bz = b.z;
-    this.x = ay * bz - az * by;
-    this.y = az * bx - ax * bz;
-    this.z = ax * by - ay * bx;
-    return this;
+    return this.set(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx);
   }
 
   public dot(v: Vector3): number {
@@ -359,12 +322,7 @@ export class Euler {
   }
 
   public copy(e: Euler): this {
-    this._x = e.x;
-    this._y = e.y;
-    this._z = e.z;
-    this.order = e.order;
-    this._onChangeCallback?.();
-    return this;
+    return this.set(e.x, e.y, e.z, e.order);
   }
 
   public clone(): Euler {
@@ -433,12 +391,7 @@ export class Quaternion {
   }
 
   public copy(q: Quaternion): this {
-    this._x = q.x;
-    this._y = q.y;
-    this._z = q.z;
-    this._w = q.w;
-    this._onChangeCallback?.();
-    return this;
+    return this.set(q.x, q.y, q.z, q.w);
   }
 
   public clone(): Quaternion {
@@ -749,27 +702,21 @@ export class Color {
   }
 
   public lerp(c: Color, alpha: number): this {
-    const t = Number(alpha) || 0;
-    this.r += (c.r - this.r) * t;
-    this.g += (c.g - this.g) * t;
-    this.b += (c.b - this.b) * t;
-    return this;
+    return this.lerpColors(this, c, alpha);
   }
 
   public lerpColors(c1: Color, c2: Color, alpha: number): this {
     const t = Number(alpha) || 0;
-    this.r = c1.r + (c2.r - c1.r) * t;
-    this.g = c1.g + (c2.g - c1.g) * t;
-    this.b = c1.b + (c2.b - c1.b) * t;
-    return this;
+    return this.setRGB(
+      c1.r + (c2.r - c1.r) * t,
+      c1.g + (c2.g - c1.g) * t,
+      c1.b + (c2.b - c1.b) * t,
+    );
   }
 
   public multiplyScalar(s: number): this {
     const f = Number(s) || 0;
-    this.r *= f;
-    this.g *= f;
-    this.b *= f;
-    return this;
+    return this.setRGB(this.r * f, this.g * f, this.b * f);
   }
 
   public setScalar(s: number): this {
@@ -779,10 +726,11 @@ export class Color {
 
   public setHex(hex: number): this {
     const h = Math.floor(hex);
-    this.r = srgbToLinear(((h >> 16) & 255) / 255);
-    this.g = srgbToLinear(((h >> 8) & 255) / 255);
-    this.b = srgbToLinear((h & 255) / 255);
-    return this;
+    return this.setRGB(
+      srgbToLinear(((h >> 16) & 255) / 255),
+      srgbToLinear(((h >> 8) & 255) / 255),
+      srgbToLinear((h & 255) / 255),
+    );
   }
 
   public setRGB(r: number, g: number, b: number): this {
@@ -793,17 +741,19 @@ export class Color {
   }
 
   public convertSRGBToLinear(): this {
-    this.r = srgbToLinear(this.r);
-    this.g = srgbToLinear(this.g);
-    this.b = srgbToLinear(this.b);
-    return this;
+    return this.setRGB(
+      srgbToLinear(this.r),
+      srgbToLinear(this.g),
+      srgbToLinear(this.b),
+    );
   }
 
   public convertLinearToSRGB(): this {
-    this.r = linearToSrgb(this.r);
-    this.g = linearToSrgb(this.g);
-    this.b = linearToSrgb(this.b);
-    return this;
+    return this.setRGB(
+      linearToSrgb(this.r),
+      linearToSrgb(this.g),
+      linearToSrgb(this.b),
+    );
   }
 
   public getHex(): number {
@@ -817,10 +767,7 @@ export class Color {
   }
 
   public copy(c: Color): this {
-    this.r = c.r;
-    this.g = c.g;
-    this.b = c.b;
-    return this;
+    return this.setRGB(c.r, c.g, c.b);
   }
 
   public equals(c: Color): boolean {
@@ -2323,14 +2270,24 @@ export class Object3D {
     return this;
   }
 
-  private _syncWorld(): Float32Array {
+  private _chain(): Object3D[] {
     const chain: Object3D[] = [];
-    for (let p: Object3D | null = this; p && chain.length < 64; p = p.parent) chain.push(p);
+    for (let p: Object3D | null = this; p && chain.length < 64; p = p.parent) {
+      chain.push(p);
+    }
+    return chain;
+  }
+
+  private _syncWorld(): Float32Array {
+    const chain = this._chain();
     for (let i = chain.length - 1; i >= 0; i--) {
       const n = chain[i]!;
       n.updateMatrix?.();
-      if (n.parent?.matrixWorld) n.matrixWorld.multiplyMatrices(n.parent.matrixWorld, n.matrix);
-      else n.matrixWorld?.copy(n.matrix);
+      if (n.parent?.matrixWorld) {
+        n.matrixWorld.multiplyMatrices(n.parent.matrixWorld, n.matrix);
+      } else {
+        n.matrixWorld?.copy(n.matrix);
+      }
     }
     return this.matrixWorld.elements;
   }
@@ -2355,10 +2312,11 @@ export class Object3D {
   }
 
   public getWorldQuaternion(target: Quaternion = new Quaternion()): Quaternion {
-    const chain: Object3D[] = [];
-    for (let p: Object3D | null = this; p && chain.length < 64; p = p.parent) chain.push(p);
+    const chain = this._chain();
     target.set(0, 0, 0, 1);
-    for (let i = chain.length - 1; i >= 0; i--) target.multiply(chain[i]!.quaternion);
+    for (let i = chain.length - 1; i >= 0; i--) {
+      target.multiply(chain[i]!.quaternion);
+    }
     return target;
   }
 

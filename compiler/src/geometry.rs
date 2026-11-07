@@ -40,10 +40,7 @@ pub fn js_float32_array_from_slice(
     JsFloat32Array::from_array_buffer(arr_buf, context)
 }
 
-pub fn js_uint32_array_from_slice(
-    slice: &[u32],
-    context: &mut Context,
-) -> JsResult<JsUint32Array> {
+pub fn js_uint32_array_from_slice(slice: &[u32], context: &mut Context) -> JsResult<JsUint32Array> {
     let mut aligned = AlignedVec::with_capacity(64, slice.len() * 4);
     for &v in slice {
         aligned.extend_from_slice(&v.to_ne_bytes());
@@ -52,10 +49,7 @@ pub fn js_uint32_array_from_slice(
     JsUint32Array::from_array_buffer(arr_buf, context)
 }
 
-pub fn js_uint16_array_from_slice(
-    slice: &[u16],
-    context: &mut Context,
-) -> JsResult<JsUint16Array> {
+pub fn js_uint16_array_from_slice(slice: &[u16], context: &mut Context) -> JsResult<JsUint16Array> {
     let mut aligned = AlignedVec::with_capacity(64, slice.len() * 2);
     for &v in slice {
         aligned.extend_from_slice(&v.to_ne_bytes());
@@ -1453,10 +1447,7 @@ pub fn native_f32_array(
             let len = js_arr.length(context)? as usize;
             if len > SECURITY_3D_MAX_VERTICES * 16 {
                 return Err(JsNativeError::range()
-                    .with_message(format!(
-                        "BufferAttribute array length ({}) exceeds quota",
-                        len
-                    ))
+                    .with_message(format!("BufferAttribute array length ({}) exceeds quota", len))
                     .into());
             }
             let mut aligned = AlignedVec::with_capacity(64, len * 4);
@@ -1525,10 +1516,7 @@ pub fn native_compute_vertex_normals(
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    let positions = args
-        .first()
-        .and_then(|v| extract_f32_slice(v, context))
-        .unwrap_or_default();
+    let positions = args.first().and_then(|v| extract_f32_slice(v, context)).unwrap_or_default();
     let vert_count = positions.len() / 3;
     if vert_count == 0 || vert_count > SECURITY_3D_MAX_VERTICES {
         let empty = js_float32_array_from_slice(&[], context)?;
