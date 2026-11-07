@@ -376,24 +376,25 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
-          else
-            npm install -g npm@latest || true
-          fi
+          npm install -g npm@latest || true
+          npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
           for ws in three-live xr-live; do
             pkg_version="$(node -p "require('./${ws}/package.json').version")"
             if npm view "${ws}@${pkg_version}" version >/dev/null 2>&1; then
               echo "::notice::${ws}@${pkg_version} is already published on npm; skipping."
               continue
             fi
+            if npm publish --workspace="${ws}" --access public --provenance; then
+              continue
+            fi
             if [ -n "${NPM_TOKEN:-}" ]; then
+              echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}; falling back to NPM_TOKEN."
+              npm config set //registry.npmjs.org/:_authToken "${NPM_TOKEN}"
               npm publish --workspace="${ws}" --access public --provenance || npm publish --workspace="${ws}" --access public
+              npm config delete //registry.npmjs.org/:_authToken 2>/dev/null || true
             else
-              npm publish --workspace="${ws}" --access public --provenance || {
-                echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}."
-                exit 0
-              }
+              echo "::notice::npm OIDC Trusted Publishing failed for ${ws}@${pkg_version}."
+              exit 0
             fi
           done
 
