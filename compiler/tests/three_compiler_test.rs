@@ -3009,3 +3009,82 @@ fn test_data_texture_glb_usdz_and_headless_render() {
         .expect("Headless software render with DataTexture should succeed");
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 1000);
 }
+
+#[test]
+fn test_mcp_server_end_to_end_jsonrpc_session() {
+    use std::io::Cursor;
+
+    let session_input = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-agent","version":"1.0.0"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"three_live_validate","arguments":{"code":"const box = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial({ color: 0x38bdf8 })); box.name = 'HeroBox'; box.position.set(0, 0.2, 0); scene.add(box); const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(2, 4, 3); scene.add(sun);"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"three_live_render","arguments":{"source":"const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x38bdf8 })); box.name = 'HeroBox'; scene.add(box); const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(2, 4, 3); scene.add(sun);","width":128,"height":128,"view":"quad"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"three_live_convert","arguments":{"code":"const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x38bdf8 })); scene.add(box);","format":"usdz"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"three_live_sim","arguments":{"code":"const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x38bdf8 })); box.name = 'TargetCube'; box.position.set(0, 1.4, -1.5); scene.add(box);","duration":0.5}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"three-live://docs/authoring-guide"}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":8,"method":"prompts/get","params":{"name":"author_three_live_scene","arguments":{"description":"a floating crystal"}}}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":9,"method":"unknown/method"}"#,
+        "\n"
+    );
+
+    let mut reader = Cursor::new(session_input.as_bytes());
+    let mut writer = Vec::new();
+    three_live_compiler::run_mcp_io(&mut reader, &mut writer)
+        .expect("MCP stdio session should complete cleanly");
+
+    let output = String::from_utf8(writer).expect("UTF-8 MCP responses");
+    let responses: Vec<serde_json::Value> = output
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("Valid JSON-RPC response line"))
+        .collect();
+
+    // 9 requests with `id` (the notification produces no response)
+    assert_eq!(responses.len(), 9);
+    assert_eq!(responses[0]["id"], 1);
+    assert_eq!(responses[0]["result"]["serverInfo"]["name"], "three-live-mcp");
+
+    assert_eq!(responses[1]["id"], 2);
+    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 4);
+
+    assert_eq!(responses[2]["id"], 3);
+    assert_eq!(responses[2]["result"]["isError"], false);
+
+    assert_eq!(responses[3]["id"], 4);
+    let render_content = responses[3]["result"]["content"].as_array().unwrap();
+    assert_eq!(render_content.len(), 2);
+    assert_eq!(render_content[0]["type"], "image");
+    assert_eq!(render_content[0]["mimeType"], "image/png");
+    assert_eq!(render_content[1]["type"], "text");
+
+    assert_eq!(responses[4]["id"], 5);
+    let convert_text = responses[4]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(convert_text.contains("\"format\": \"usdz\""));
+
+    assert_eq!(responses[5]["id"], 6);
+    let sim_text = responses[5]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(sim_text.contains("TargetCube"));
+
+    assert_eq!(responses[6]["id"], 7);
+    let guide_text = responses[6]["result"]["contents"][0]["text"].as_str().unwrap();
+    assert!(guide_text.contains("Three-Live Authoring Guide"));
+
+    assert_eq!(responses[7]["id"], 8);
+    let prompt_text =
+        responses[7]["result"]["messages"][0]["content"]["text"].as_str().unwrap();
+    assert!(prompt_text.contains("floating crystal"));
+
+    assert_eq!(responses[8]["id"], 9);
+    assert_eq!(responses[8]["error"]["code"], -32601);
+}
+

@@ -294,11 +294,39 @@ Three.js assumptions never crash or abort a 3D/XR scene:
 
 --------------------------------------------------------------------------------
 
-## 5. Closed-Loop AI Agent Verification (`three-live-cli`)
+## 5. Closed-Loop AI Agent Verification (`three-live-cli` & MCP Server)
 
 AI coding agents can validate, visually inspect, and simulate
 `<script type="text/three">` scenes, `.html` host documents, and `.glb` files in
-under `50 ms` without launching a headless browser:
+under `50 ms` without launching a headless browser—either via CLI subcommands or
+via the built-in **Model Context Protocol (MCP)** stdio server (`three-live-cli mcp`):
+
+```bash
+# Register the MCP stdio server in Claude Code, Cursor, Gemini CLI, or Windsurf:
+claude mcp add three-live -- npx -y -p three-live three-live-cli mcp
+```
+
+Or add to `.mcp.json` / `claude_desktop_config.json` / `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "three-live": {
+      "command": "npx",
+      "args": ["-y", "-p", "three-live", "three-live-cli", "mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes 4 tools (`three_live_validate`, `three_live_render`,
+`three_live_convert`, `three_live_sim`), 1 resource
+(`three-live://docs/authoring-guide`), and 1 prompt (`author_three_live_scene`).
+Note that `three_live_render` returns MCP `image/png` content blocks directly
+into multimodal LLM context so agents can visually self-correct camera framing,
+overlap, and lighting.
+
+You can also invoke the CLI directly from shell tools:
 
 ```bash
 # 1. Structured JSON Diagnostics (TL100-TL402) + Spatial Frustum/Grounding/Lighting Linter

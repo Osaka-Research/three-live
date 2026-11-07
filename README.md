@@ -95,14 +95,17 @@ func loadSpatialScene(from threeJsCode: String, into arView: ARView) async throw
 }
 ```
 
-### 3. Verify & compile Three.js headlessly for AI agents (`three-live-cli`)
+### 3. Verify & compile Three.js headlessly for AI agents (`three-live-cli` & MCP server)
 
-Render a 4-up orthographic/camera contact sheet (zero GPU required), run the spatial linter for JSON frustum/overlap telemetry, or compile `scene.js` to `.glb` / `.usdz`:
+Render a 4-up orthographic/camera contact sheet (zero GPU required), run the spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb` / `.usdz`, or attach `three-live-cli mcp` as a zero-dependency **Model Context Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`, `three_live_convert`, `three_live_sim`) in Claude Code, Cursor, Gemini CLI, or Windsurf:
 
 ```bash
 $ npx three-live-cli render scene.js --view=quad --grid --annotations -o contact_sheet.png
 $ npx three-live-cli validate scene.js --json
 $ npx three-live-cli convert scene.js -o model.usdz
+
+# Or register the built-in MCP server for closed-loop visual + spatial AI verification:
+$ claude mcp add three-live -- npx -y -p three-live three-live-cli mcp
 ```
 
 ### 4. Run on the Web (`<three-live>` and `<xr-live>`)

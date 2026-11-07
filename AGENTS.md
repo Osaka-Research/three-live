@@ -212,10 +212,12 @@ make test-rust         # or: cd compiler && cargo test
 make test
 ```
 
-### 4.1 AI Agent Verification Loop (Closed-Loop CLI)
+### 4.1 AI Agent Verification Loop (Closed-Loop CLI & MCP Server)
 
 Whenever you author or modify a `<script type="text/three">` scene or `.html`
-demo, verify it headlessly without a browser using `three-live-cli`:
+demo, verify it headlessly without a browser using `three-live-cli` (or connect
+`three-live-cli mcp` as an MCP stdio server exposing `three_live_validate`,
+`three_live_render`, `three_live_convert`, and `three_live_sim`):
 
 ```bash
 # 1. Static + Spatial Linting (Structured JSON Diagnostics TL100-TL402 + Frustum/Grounding/Lighting)
@@ -229,6 +231,9 @@ three-live-cli render scene.js -o anim.png --frames=4 --duration=2.0 --trigger-s
 
 # 4. Headless 60Hz Scenario & KHR_interactivity Simulation
 three-live-cli sim scene.js --duration=5.0 --actions='[{"at":0.5,"type":"select","target":"crystal"}]' --json
+
+# 5. Model Context Protocol (MCP) JSON-RPC 2.0 Stdio Server
+three-live-cli mcp
 ```
 
 ---

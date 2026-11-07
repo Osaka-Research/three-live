@@ -21,7 +21,7 @@ use std::time::Instant;
 use three_live_compiler::{
     build_validation_report, compute_node_world_aabbs, compute_node_world_matrices,
     encode_gif_frames, encode_png_rgba, evaluate_temporal_keyframes, extract_and_lint_html,
-    is_html_source, read_glb, render_scene_rgba, render_viewport_rgba,
+    is_html_source, read_glb, render_scene_rgba, render_viewport_rgba, run_mcp_stdio_server,
     simulate_scenario_from_source, stitch_filmstrip_horizontal, transcode_glb_to_usdz,
     transcode_three_to_glb, transcode_three_to_usdz, validate_scene_source, CameraConfig,
     RenderOptions, RenderViewMode, SimAction, WorldAABB, SIM_DT_SEC,
@@ -178,6 +178,9 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Start a Model Context Protocol (MCP) server over stdio for AI coding agents
+    Mcp,
 }
 
 fn inspect_glb(input: &PathBuf, data: &[u8]) {
@@ -859,6 +862,13 @@ fn main() {
                         b.destroyed
                     );
                 }
+            }
+        }
+
+        Commands::Mcp => {
+            if let Err(e) = run_mcp_stdio_server() {
+                eprintln!("MCP server error: {}", e);
+                std::process::exit(1);
             }
         }
     }
