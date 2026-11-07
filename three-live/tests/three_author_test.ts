@@ -1641,6 +1641,34 @@ function runCadRegressionTests(
       'scene.toUSDZ() tints untextured USDA diffuseColor using DataTexture avgColor',
     );
   }
+
+  // Coverage: Partial-arc SphereGeometry and openEnded / partial-arc CylinderGeometry & ConeGeometry.
+  {
+    const hemi = new SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    hemi.computeBoundingBox();
+    assert(
+      allFinite(hemi) &&
+        hemi.boundingBox!.min.y >= -1e-4 &&
+        hemi.boundingBox!.max.y > 0.95,
+      'SphereGeometry honors thetaLength = Math.PI * 0.5 (upper hemisphere with y >= 0)',
+    );
+
+    const openCyl = new CylinderGeometry(1, 1, 2, 16, 2, true);
+    const closedCyl = new CylinderGeometry(1, 1, 2, 16, 1, false);
+    assert(
+      allFinite(openCyl) &&
+        allFinite(closedCyl) &&
+        openCyl.index!.count < closedCyl.index!.count + 16 * 6,
+      'CylinderGeometry honors heightSegments and openEnded = true without cap triangles',
+    );
+
+    const halfArcCone = new THREE.ConeGeometry(1, 2, 16, 1, true, 0, Math.PI);
+    halfArcCone.computeBoundingBox();
+    assert(
+      allFinite(halfArcCone) && halfArcCone.index!.count === 16 * 6,
+      'ConeGeometry forwards heightSegments, openEnded, thetaStart, and thetaLength to CylinderGeometry',
+    );
+  }
 }
 
 runThreeAuthorTests();

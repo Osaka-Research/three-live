@@ -184,10 +184,12 @@ fn shade_pbr(
     let gnd_amb = [0.16f32, 0.18, 0.22];
     let amb_scale = if lights.is_empty() { 0.85 } else { 0.45 };
     let mut lo = [0.0f32; 3];
+    let headlight = 0.28 * n_dot_v;
     for c in 0..3 {
-        let env = gnd_amb[c] + hemi_t * (sky_amb[c] - gnd_amb[c]);
+        let env = gnd_amb[c] + hemi_t * (sky_amb[c] - gnd_amb[c]) + headlight;
         // Metallic environment reflection approximation so metals aren't black
-        let spec_env = f0[c] * (1.0 - 0.5 * roughness) * (0.45 + 0.55 * hemi_t);
+        let spec_env =
+            f0[c] * (1.0 - 0.5 * roughness) * (0.45 + 0.55 * hemi_t + 0.35 * n_dot_v.powi(4));
         lo[c] = (diffuse_albedo[c] * env + spec_env) * amb_scale;
     }
 
@@ -695,9 +697,9 @@ fn compute_view_camera(
     }
     let center = bounds.center();
     let size = bounds.size();
-    let max_span = size[0].max(size[1]).max(size[2]).max(1.2);
+    let max_span = size[0].max(size[1]).max(size[2]).max(0.25);
     let half = max_span * 0.68;
-    let dist = max_span * 2.5 + 2.0;
+    let dist = max_span * 2.5 + 1.0;
 
     match mode {
         RenderViewMode::Front => {
@@ -717,7 +719,7 @@ fn compute_view_camera(
             }
             let tc = top_bounds.center();
             let ts = top_bounds.size();
-            let thalf = (ts[0].max(ts[2]).max(1.5)) * 0.68;
+            let thalf = (ts[0].max(ts[2]).max(0.6)) * 0.68;
             let tdist = max_span * 2.5 + 4.0;
             let eye = [tc[0], tc[1] + tdist, tc[2]];
             let view = mat4_look_at(eye, tc, [0.0, 0.0, -1.0]);
@@ -732,14 +734,14 @@ fn compute_view_camera(
             (view, proj, eye, true)
         }
         RenderViewMode::Iso | RenderViewMode::Quad | RenderViewMode::Camera => {
-            let iso_dist = max_span * 1.45 + 0.8;
+            let iso_dist = max_span * 1.45 + 0.15;
             let eye = [
                 center[0] + iso_dist * 0.78,
                 center[1] + iso_dist * 0.62,
                 center[2] + iso_dist * 0.78,
             ];
             let view = mat4_look_at(eye, center, [0.0, 1.0, 0.0]);
-            let proj = mat4_perspective(38.0, aspect, 0.1, iso_dist * 8.0 + 100.0);
+            let proj = mat4_perspective(38.0, aspect, 0.05, iso_dist * 8.0 + 100.0);
             (view, proj, eye, false)
         }
     }
@@ -1188,14 +1190,25 @@ pub fn render_viewport_rgba(
         }
     }
 
-    // Optional AABB wireframes
+    // Optional AABB wireframes (de-cluttered: top 6 largest nodes + overall scene AABB)
+    let mut ranked_aabbs: Vec<(usize, &WorldAABB, f32)> = Vec::new();
     if show_annotations {
         for (idx, aabb_opt) in node_aabbs.iter().enumerate() {
             if effective_vis.get(idx).copied().unwrap_or(true) {
                 if let Some(aabb) = aabb_opt {
-                    draw_aabb_wireframe(&mut ss_buf, &vp, aabb, [56, 189, 248, 200]);
+                    let diag = aabb.diagonal();
+                    if diag > 1e-4 && diag.is_finite() {
+                        ranked_aabbs.push((idx, aabb, diag));
+                    }
                 }
             }
+        }
+        ranked_aabbs.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        if ranked_aabbs.len() > 6 && scene_aabb.is_valid() {
+            draw_aabb_wireframe(&mut ss_buf, &vp, &scene_aabb, [56, 189, 248, 150]);
+        }
+        for &(_idx, aabb, _diag) in ranked_aabbs.iter().take(6) {
+            draw_aabb_wireframe(&mut ss_buf, &vp, aabb, [56, 189, 248, 200]);
         }
     }
 
@@ -1218,15 +1231,13 @@ pub fn render_viewport_rgba(
         }
     }
 
-    // Draw 2D node name labels if annotations enabled
+    // Draw non-overlapping 2D node name labels (up to 6 largest nodes) if annotations enabled
     if show_annotations {
-        for (i, aabb_opt) in node_aabbs.iter().enumerate() {
-            if !effective_vis.get(i).copied().unwrap_or(true) {
-                continue;
+        let mut placed_boxes: Vec<[i32; 4]> = vec![[0, 0, 180, 26]];
+        for &(i, aabb, _diag) in &ranked_aabbs {
+            if placed_boxes.len() >= 7 {
+                break;
             }
-            let Some(aabb) = aabb_opt else {
-                continue;
-            };
             let label_name = if !scene.nodes.is_empty() {
                 let n = &scene.nodes[i];
                 if !n.name.is_empty() {
@@ -1252,18 +1263,30 @@ pub fn render_viewport_rgba(
                     let sy = ((0.5 - ny * 0.5) * (h as f32)) as i32 - 10;
                     let truncated: String = label_name.chars().take(18).collect();
                     let text_w = (truncated.len() as i32) * 6;
-                    let lx = (sx - text_w / 2).clamp(4, (w as i32 - text_w - 6).max(4));
-                    let ly = sy.clamp(22, (h as i32 - 14).max(22));
-                    draw_label_badge(
-                        &mut out_rgba,
-                        w,
-                        h,
-                        lx as usize,
-                        ly as usize,
-                        &truncated,
-                        [56, 189, 248, 255],
-                        1,
-                    );
+                    let box_w = text_w + 8;
+                    let box_h = 15;
+                    let lx = (sx - text_w / 2).clamp(4, (w as i32 - box_w - 4).max(4));
+                    let ly = sy.clamp(24, (h as i32 - box_h - 4).max(24));
+                    let candidate = [lx - 4, ly - 3, lx + box_w + 4, ly + box_h + 3];
+                    let overlaps = placed_boxes.iter().any(|b| {
+                        candidate[0] < b[2]
+                            && candidate[2] > b[0]
+                            && candidate[1] < b[3]
+                            && candidate[3] > b[1]
+                    });
+                    if !overlaps {
+                        placed_boxes.push(candidate);
+                        draw_label_badge(
+                            &mut out_rgba,
+                            w,
+                            h,
+                            lx as usize,
+                            ly as usize,
+                            &truncated,
+                            [56, 189, 248, 255],
+                            1,
+                        );
+                    }
                 }
             }
         }
@@ -1318,7 +1341,7 @@ pub fn render_scene_rgba(scene: &SceneGraph, opts: &RenderOptions) -> (u32, u32,
             cell_h,
             RenderViewMode::Iso,
             true,
-            true,
+            opts.show_annotations,
             Some("ISO 45 DEG"),
         );
 

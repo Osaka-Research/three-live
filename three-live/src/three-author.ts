@@ -869,7 +869,9 @@ export class BufferAttribute {
     }
 
     if (Array.isArray(array)) {
-      this.array = new Float32Array(array);
+      const fn = (globalThis as any).__three_live_native_f32_array__;
+      this.array =
+        typeof fn === 'function' ? fn(array) : new Float32Array(array);
     } else {
       this.array = array;
     }
@@ -933,8 +935,13 @@ export class BufferAttribute {
 
 export class Float32BufferAttribute extends BufferAttribute {
   constructor(array: any, itemSize: number) {
+    const fn = (globalThis as any).__three_live_native_f32_array__;
     super(
-      array instanceof Float32Array ? array : new Float32Array(array),
+      array instanceof Float32Array
+        ? array
+        : Array.isArray(array) && typeof fn === 'function'
+          ? fn(array)
+          : new Float32Array(array),
       itemSize,
     );
   }
@@ -977,12 +984,17 @@ export class BufferGeometry {
     if (indices instanceof BufferAttribute) {
       this.index = indices;
     } else if (Array.isArray(indices)) {
-      let maxIdx = 0;
-      for (const v of indices) if (v > maxIdx) maxIdx = v;
-      this.index = new BufferAttribute(
-        new (maxIdx > 65535 ? Uint32Array : Uint16Array)(indices),
-        1,
-      );
+      const fn = (globalThis as any).__three_live_native_index_array__;
+      if (typeof fn === 'function') {
+        this.index = new BufferAttribute(fn(indices), 1);
+      } else {
+        let maxIdx = 0;
+        for (const v of indices) if (v > maxIdx) maxIdx = v;
+        this.index = new BufferAttribute(
+          new (maxIdx > 65535 ? Uint32Array : Uint16Array)(indices),
+          1,
+        );
+      }
     } else if (indices && indices.buffer) {
       this.index = new BufferAttribute(indices, 1);
     }
@@ -992,6 +1004,13 @@ export class BufferGeometry {
   public computeVertexNormals(): this {
     const pos = this.attributes.position;
     if (!pos) return this;
+    const nativeFn = (globalThis as any)
+      .__three_live_native_compute_vertex_normals__;
+    if (typeof nativeFn === 'function') {
+      const normals = nativeFn(pos.array, this.index?.array);
+      this.setAttribute('normal', new BufferAttribute(normals, 3));
+      return this;
+    }
     const count = pos.count,
       pa = pos.array,
       normals = new Float32Array(count * 3),
@@ -1277,11 +1296,24 @@ export class SphereGeometry extends BufferGeometry {
     radius: number = 1,
     widthSegments: number = 16,
     heightSegments: number = 12,
+    phiStart: number = 0,
+    phiLength: number = Math.PI * 2,
+    thetaStart: number = 0,
+    thetaLength: number = Math.PI,
   ) {
     super();
     widthSegments = Math.max(3, Math.floor(widthSegments));
     heightSegments = Math.max(2, Math.floor(heightSegments));
-    if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+    const isFull =
+      !phiStart &&
+      !thetaStart &&
+      Math.abs(phiLength - Math.PI * 2) < 1e-4 &&
+      Math.abs(thetaLength - Math.PI) < 1e-4;
+    if (
+      isFull &&
+      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+      ENABLE_NATIVE_HOOKS
+    ) {
       const nativeFn = (globalThis as any).__three_live_native_sphere__;
       if (typeof nativeFn === 'function') {
         const native = nativeFn(radius, widthSegments, heightSegments);
@@ -1298,13 +1330,14 @@ export class SphereGeometry extends BufferGeometry {
     const normals: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
+    const thetaEnd = Math.min(thetaStart + thetaLength, Math.PI);
 
     for (let j = 0; j <= heightSegments; j++) {
       const v = j / heightSegments;
+      const phi = thetaStart + v * thetaLength;
       for (let i = 0; i <= widthSegments; i++) {
         const u = i / widthSegments;
-        const theta = u * Math.PI * 2;
-        const phi = v * Math.PI;
+        const theta = phiStart + u * phiLength;
         const nx = -Math.cos(theta) * Math.sin(phi);
         const ny = Math.cos(phi);
         const nz = Math.sin(theta) * Math.sin(phi);
@@ -1316,8 +1349,8 @@ export class SphereGeometry extends BufferGeometry {
           const a = d - (widthSegments + 1);
           const b = a - 1;
           const c = d - 1;
-          if (j !== 1) indices.push(a, b, d);
-          if (j !== heightSegments) indices.push(b, c, d);
+          if (j !== 1 || thetaStart > 0) indices.push(a, b, d);
+          if (j !== heightSegments || thetaEnd < Math.PI) indices.push(b, c, d);
         }
       }
     }
@@ -1332,10 +1365,24 @@ export class CylinderGeometry extends BufferGeometry {
     radiusBottom: number = 1,
     height: number = 1,
     radialSegments: number = 16,
+    heightSegments: number = 1,
+    openEnded: boolean = false,
+    thetaStart: number = 0,
+    thetaLength: number = Math.PI * 2,
   ) {
     super();
     radialSegments = Math.max(3, Math.floor(radialSegments));
-    if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+    heightSegments = Math.max(1, Math.floor(Number(heightSegments) || 1));
+    const isStandard =
+      heightSegments === 1 &&
+      !openEnded &&
+      !thetaStart &&
+      Math.abs(thetaLength - Math.PI * 2) < 1e-4;
+    if (
+      isStandard &&
+      typeof ENABLE_NATIVE_HOOKS !== 'undefined' &&
+      ENABLE_NATIVE_HOOKS
+    ) {
       const nativeFn = (globalThis as any).__three_live_native_cylinder__;
       if (typeof nativeFn === 'function') {
         const native = nativeFn(
@@ -1358,32 +1405,35 @@ export class CylinderGeometry extends BufferGeometry {
     const uvs: number[] = [];
     const indices: number[] = [];
     const halfHeight = height / 2;
+    const slope = (radiusBottom - radiusTop) / (height || 1);
 
-    for (let y = 0; y <= 1; y++) {
-      const v = y;
-      const radius = y === 0 ? radiusTop : radiusBottom;
-      const py = y === 0 ? halfHeight : -halfHeight;
+    for (let y = 0; y <= heightSegments; y++) {
+      const v = y / heightSegments;
+      const radius = v * (radiusBottom - radiusTop) + radiusTop;
+      const py = halfHeight - v * height;
       for (let x = 0; x <= radialSegments; x++) {
         const u = x / radialSegments;
-        const theta = u * Math.PI * 2;
+        const theta = thetaStart + u * thetaLength;
         const sinTheta = Math.sin(theta),
-          cosTheta = Math.cos(theta);
+          cosTheta = Math.cos(theta),
+          nl = Math.hypot(sinTheta, slope, cosTheta) || 1;
         positions.push(radius * sinTheta, py, radius * cosTheta);
-        normals.push(sinTheta, 0, cosTheta);
+        normals.push(sinTheta / nl, slope / nl, cosTheta / nl);
         uvs.push(u, 1 - v);
       }
     }
 
-    for (let x = 0; x < radialSegments; x++) {
-      const a = x;
-      const b = x + radialSegments + 1;
-      const c = x + radialSegments + 2;
-      const d = x + 1;
-      indices.push(a, b, d, b, c, d);
+    const stride = radialSegments + 1;
+    for (let y = 0; y < heightSegments; y++) {
+      for (let x = 0; x < radialSegments; x++) {
+        const a = y * stride + x;
+        const b = a + stride;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
     }
 
     const addCap = (r: number, sign: number) => {
-      if (r <= 0) return;
+      if (openEnded || r <= 0) return;
       const py = sign * halfHeight;
       const centerIdx = positions.length / 3;
       positions.push(0, py, 0);
@@ -1391,7 +1441,7 @@ export class CylinderGeometry extends BufferGeometry {
       uvs.push(0.5, 0.5);
       const rimStart = positions.length / 3;
       for (let x = 0; x <= radialSegments; x++) {
-        const theta = (x / radialSegments) * Math.PI * 2;
+        const theta = thetaStart + (x / radialSegments) * thetaLength;
         const sinTheta = Math.sin(theta),
           cosTheta = Math.cos(theta);
         positions.push(r * sinTheta, py, r * cosTheta);
@@ -1418,8 +1468,21 @@ export class ConeGeometry extends CylinderGeometry {
     radius: number = 1,
     height: number = 1,
     radialSegments: number = 16,
+    heightSegments: number = 1,
+    openEnded: boolean = false,
+    thetaStart: number = 0,
+    thetaLength: number = Math.PI * 2,
   ) {
-    super(0, radius, height, radialSegments);
+    super(
+      0,
+      radius,
+      height,
+      radialSegments,
+      heightSegments,
+      openEnded,
+      thetaStart,
+      thetaLength,
+    );
   }
 }
 

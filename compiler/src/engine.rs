@@ -265,7 +265,10 @@ impl ThreeEngine {
                     '__three_live_native_box__',
                     '__three_live_native_plane__',
                     '__three_live_native_torus__',
-                    '__three_live_native_csg_boolean__'
+                    '__three_live_native_csg_boolean__',
+                    '__three_live_native_f32_array__',
+                    '__three_live_native_index_array__',
+                    '__three_live_native_compute_vertex_normals__'
                 ];
                 for (const hookName of nativeHooks) {
                     if (typeof globalThis[hookName] === 'function') {
