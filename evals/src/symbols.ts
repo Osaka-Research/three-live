@@ -129,6 +129,7 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
   'Texture',
   'DataTexture',
   'CanvasTexture',
+  'ProceduralTexture',
   'TextureLoader',
   'Material',
   'MeshStandardMaterial',

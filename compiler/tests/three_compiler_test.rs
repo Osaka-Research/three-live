@@ -4273,3 +4273,106 @@ fn test_b1_mcp_reference_errors_and_prompt() {
     );
     assert!(text.contains("silhouetteIou"));
 }
+
+// ---------------------------------------------------------------------------------------------
+// A8: Deterministic PBR material presets (`THREE.ProceduralTexture`, `userData.xr.material`)
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn test_a8_material_presets_use_native_kernels_and_export() {
+    use three_live_compiler::material_preset::{generate_material_preset, PresetParams};
+    let script = r#"
+        const plank = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 0.4),
+            new THREE.MeshStandardMaterial({
+                ...THREE.ProceduralTexture.wood({ size: 64, seed: 7, color: 0x996633 })
+            }));
+        plank.name = 'Plank';
+        plank.position.set(0, 0.1, 0);
+        scene.add(plank);
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.2),
+            new THREE.MeshStandardMaterial({ color: 0x9a3b2e }));
+        wall.name = 'Wall';
+        wall.position.set(0, 0.7, 0);
+        wall.userData.xr = { material: { preset: 'brick', size: 64 } };
+        scene.add(wall);
+        const plate = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 0.05),
+            new THREE.MeshStandardMaterial({ ...THREE.ProceduralTexture.brushedMetal({ size: 32 }) }));
+        plate.name = 'Plate';
+        plate.position.set(1.5, 0.5, 0);
+        scene.add(plate);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    "#;
+    let report = three_live_compiler::validate_and_lint_scene(script, "presets.js", 1.5);
+    assert!(
+        report.valid && report.diagnostics.is_empty(),
+        "Expected zero diagnostics for material presets, got: {:?}",
+        report.diagnostics
+    );
+    let sg = three_live_compiler::validate_three_script(script).expect("preset SceneGraph");
+    assert_eq!(sg.materials.len(), 3);
+    for m in &sg.materials {
+        for tex in [&m.base_color_texture, &m.normal_texture, &m.metallic_roughness_texture] {
+            assert!(tex.as_deref().unwrap_or("").starts_with("data:image/png;base64,"));
+        }
+    }
+
+    // The exported wood albedo is exactly the native kernel's output (Boa uses the native hook).
+    let wood_png = three_live_compiler::load_reference_bytes(
+        sg.materials[0].base_color_texture.as_deref().unwrap(),
+    )
+    .unwrap();
+    let (decoded, size) = three_live_compiler::decode_reference_image(&wood_png).unwrap();
+    assert_eq!(size, [64, 64]);
+    let expected = generate_material_preset(&PresetParams {
+        kind: 2,
+        size: 64,
+        scale: 10,
+        seed: 7,
+        color: [153.0 / 255.0, 102.0 / 255.0, 51.0 / 255.0],
+        color2: [153.0 / 255.0, 102.0 / 255.0, 51.0 / 255.0],
+        roughness: 0.6,
+        normal_strength: 1.0,
+    });
+    assert_eq!(decoded.rgba, expected.albedo, "exported wood albedo == native kernel output");
+
+    // Declarative brick bakes the mesh color as the tint and resets the factor to white;
+    // brushedMetal exports metalness through the packed texture.
+    let wall = &sg.materials[1];
+    assert!(wall.base_color[0] > 0.99 && wall.base_color[1] > 0.99);
+    assert!((sg.materials[2].metallic - 1.0).abs() < 1e-6);
+
+    // GLB and USDZ exports succeed and carry the textures.
+    let glb = transcode_three_to_glb(script).expect("preset GLB");
+    assert!(glb.len() > 8000);
+    let usdz = three_live_compiler::transcode_three_to_usdz(script).expect("preset USDZ");
+    assert!(verify_usdz_alignment(&usdz) >= 4);
+
+    // Texture quota: 6 distinct presets (18 textures) fail validation with the same TL105
+    // that export hits; dropping normal maps (12 textures) passes; repeated presets share.
+    let many = |extra: &str| {
+        format!(
+            r#"
+            ['wood', 'marble', 'brick', 'concrete', 'leather', 'rust'].forEach((p, i) => {{
+                const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5),
+                    new THREE.MeshStandardMaterial({{ ...THREE.ProceduralTexture[p]({{ size: 32{} }}) }}));
+                m.name = 'S' + i;
+                m.position.set(i * 0.7, 0.25, 0);
+                scene.add(m);
+            }});
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        "#,
+            extra
+        )
+    };
+    let over = three_live_compiler::validate_and_lint_scene(&many(""), "many.js", 1.5);
+    assert!(!over.valid, "18 textures must fail validation");
+    assert!(over
+        .diagnostics
+        .iter()
+        .any(|d| d.code == "TL105" && d.message.contains("SECURITY_3D_MAX_TEXTURES")));
+    assert!(transcode_three_to_glb(&many("")).is_err());
+    let flat = many(", normalStrength: 0");
+    let ok = three_live_compiler::validate_and_lint_scene(&flat, "flat.js", 1.5);
+    assert!(ok.valid, "12 textures pass: {:?}", ok.diagnostics);
+    assert!(transcode_three_to_glb(&flat).is_ok());
+}

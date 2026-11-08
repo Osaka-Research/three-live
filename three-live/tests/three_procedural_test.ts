@@ -1194,6 +1194,224 @@ function runProceduralTests(): void {
     );
   }
 
+  // 16. A8: Deterministic PBR material presets (THREE.ProceduralTexture)
+  const PT = (THREE as any).ProceduralTexture;
+  const PRESETS = [
+    'checkerboard',
+    'grid',
+    'wood',
+    'marble',
+    'brushedMetal',
+    'carbonFiber',
+    'concrete',
+    'brick',
+    'fabric',
+    'leather',
+    'rust',
+  ];
+  assert(
+    Boolean(PT) &&
+      Object.isFrozen(PT) &&
+      JSON.stringify(PT.presets) === JSON.stringify(PRESETS) &&
+      PRESETS.every((p) => typeof PT[p] === 'function'),
+    'THREE.ProceduralTexture exposes 11 frozen preset factories',
+  );
+
+  // Byte-identical parity with the Rust kernels (compiler/src/material_preset.rs
+  // PARITY_HASHES). Running in Node exercises the pure-JS kernels.
+  const fnv1a = (bytes: ArrayLike<number>): number => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < bytes.length; i++) {
+      h ^= bytes[i];
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h >>> 0;
+  };
+  const PARITY_HASHES = [
+    [1790197189, 3455663557, 2500509125],
+    [1478526405, 1444740549, 2500509125],
+    [1443984829, 2558384049, 135696830],
+    [3324647719, 2659050445, 2746743098],
+    [107901172, 1108293677, 658875471],
+    [1265016261, 4205602757, 4063555013],
+    [2375540222, 4017094934, 479134790],
+    [4050570107, 1948544486, 3373758917],
+    [2095234875, 3455663557, 2500509125],
+    [716167143, 2720860795, 1956285490],
+    [1433902205, 225922196, 1140331227],
+  ];
+  const PARITY_SCALES = [8, 8, 10, 3, 1, 8, 4, 8, 32, 12, 4];
+  PRESETS.forEach((name, kind) => {
+    const r = PT[name]({
+      size: 64,
+      scale: PARITY_SCALES[kind],
+      seed: 7,
+      color: 0x996633,
+      color2: 0xd9d9cc,
+      roughness: 0.5,
+      normalStrength: 1.25,
+    });
+    const got = [
+      fnv1a(r.map.image._data),
+      fnv1a(r.normalMap.image._data),
+      fnv1a(r.roughnessMap.image._data),
+    ];
+    assert(
+      JSON.stringify(got) === JSON.stringify(PARITY_HASHES[kind]) &&
+        r.roughnessMap === r.metalnessMap &&
+        r.map.flipY === false &&
+        r.map.colorSpace === 'srgb' &&
+        r.normalMap.colorSpace === 'srgb-linear',
+      `ProceduralTexture.${name} JS kernels match the Rust kernels byte-for-byte (${got.join(',')})`,
+    );
+  });
+
+  // Parameter canonicalization: odd checker/brick/fabric scales round up to even
+  // (seamless tiling), sizes clamp to 16..512, and junk input never throws.
+  const evenA = PT.checkerboard({scale: 7, size: 16, seed: 3});
+  const evenB = PT.checkerboard({scale: 8, size: 16, seed: 3});
+  const junk = PT.wood({
+    scale: NaN,
+    size: 1e9,
+    seed: -5,
+    color: 'not-a-color',
+    roughness: 9,
+    normalStrength: -1,
+  });
+  assert(
+    fnv1a(evenA.map.image._data) === fnv1a(evenB.map.image._data) &&
+      junk.map.image.width === 512 &&
+      PT.create('marble', {size: 8}).map.image.width === 16,
+    'ProceduralTexture clamps size, rounds alternating layouts to even counts, and tolerates junk options',
+  );
+  let unknownThrew = false;
+  try {
+    PT.create('unobtainium');
+  } catch (e: unknown) {
+    unknownThrew = String(e).includes('unknown preset');
+  }
+  assert(unknownThrew, 'ProceduralTexture.create rejects unknown preset names');
+
+  // Spread into MeshStandardMaterial: exports albedo, normal, and a packed
+  // metallicRoughness texture directly (no repacking), with metal factors 1.
+  const woodMat = new MeshStandardMaterial({
+    ...PT.wood({size: 64}),
+  });
+  const metalMat = new MeshStandardMaterial({...PT.brushedMetal({size: 32})});
+  const presetScene = new Scene();
+  const plank = new Mesh(new BoxGeometry(2, 0.2, 0.4), woodMat);
+  plank.name = 'Plank';
+  presetScene.add(plank);
+  const plate = new Mesh(new BoxGeometry(1, 1, 0.05), metalMat);
+  plate.name = 'Plate';
+  plate.position.set(0, 1, 0);
+  presetScene.add(plate);
+  const presetGltf = sceneToCanvas3D(presetScene).gltf;
+  const pm = presetGltf.materials;
+  assert(
+    pm.length === 2 &&
+      pm.every(
+        (m: any) =>
+          m.pbrMetallicRoughness?.baseColorTexture?.index !== undefined &&
+          m.pbrMetallicRoughness?.metallicRoughnessTexture?.index !==
+            undefined &&
+          m.normalTexture?.index !== undefined,
+      ) &&
+      woodMat.roughness === 1 &&
+      woodMat.metalness === 1,
+    'Preset materials export baseColor, normal, and metallicRoughness textures to glTF',
+  );
+  const presetGlb = sceneToGLB(presetScene);
+  const presetUsdz = sceneToUSDZ(presetScene);
+  assert(
+    presetGlb.byteLength > 4000 && presetUsdz.byteLength > 4000,
+    'Preset materials export cleanly to GLB and USDZ',
+  );
+
+  // Declarative userData.xr.material: tinted by the material color, explicit
+  // maps preserved, idempotent across repeated materialization, and unknown
+  // presets ignored.
+  const declScene = new Scene();
+  const tinted = new MeshStandardMaterial({color: 0x996633});
+  const brickWall = new Mesh(new BoxGeometry(2, 1, 0.2), tinted);
+  brickWall.name = 'Wall';
+  brickWall.userData.xr = {material: {preset: 'brick', scale: 6, size: 32}};
+  declScene.add(brickWall);
+  const keepNormal = PT.grid({size: 16}).normalMap;
+  const keepMat = new MeshStandardMaterial({normalMap: keepNormal});
+  const marbleTop = new Mesh(new BoxGeometry(1, 0.05, 1), keepMat);
+  marbleTop.name = 'Counter';
+  marbleTop.userData.xr = {material: 'marble'};
+  declScene.add(marbleTop);
+  const bogus = new Mesh(
+    new BoxGeometry(0.5, 0.5, 0.5),
+    new MeshStandardMaterial(),
+  );
+  bogus.name = 'Bogus';
+  bogus.userData.xr = {material: 'unobtainium'};
+  declScene.add(bogus);
+  declScene.updateMatrixWorld(true);
+  const firstMap = tinted.map;
+  declScene.updateMatrixWorld(true);
+  const tintCheck = PT.brick({scale: 6, size: 32, color: 0x996633});
+  assert(
+    Boolean(firstMap) &&
+      tinted.map === firstMap &&
+      fnv1a((tinted.map as any).image._data) ===
+        fnv1a(tintCheck.map.image._data) &&
+      tinted.color.getHex() === 0xffffff &&
+      keepMat.normalMap === keepNormal &&
+      Boolean(keepMat.map) &&
+      !(bogus.material as any).map,
+    'userData.xr.material bakes tinted presets once, keeps explicit maps, and ignores unknown presets',
+  );
+  // Identical options share textures; normalStrength: 0 drops the normal map.
+  const memoA = PT.leather({size: 32, seed: 4});
+  const memoB = PT.leather({size: 32, seed: 4});
+  const flat = PT.concrete({size: 32, normalStrength: 0});
+  assert(
+    memoA.map === memoB.map &&
+      memoA !== memoB &&
+      memoA.normalMap === memoB.normalMap &&
+      flat.normalMap === undefined &&
+      Boolean(flat.map && flat.roughnessMap),
+    'ProceduralTexture memoizes identical options and skips the normal map at normalStrength 0',
+  );
+
+  // A material shared by meshes with different presets is split per mesh
+  // instead of flip-flopping between presets on every traversal.
+  const sharedScene = new Scene();
+  const sharedMat = new MeshStandardMaterial({color: 0x996633});
+  const sA = new Mesh(new BoxGeometry(1, 1, 1), sharedMat);
+  sA.name = 'SharedA';
+  sA.userData.xr = {material: {preset: 'wood', size: 32}};
+  const sB = new Mesh(new BoxGeometry(1, 1, 1), sharedMat);
+  sB.name = 'SharedB';
+  sB.position.set(2, 0, 0);
+  sB.userData.xr = {material: {preset: 'marble', size: 32}};
+  sharedScene.add(sA, sB);
+  sharedScene.updateMatrixWorld(true);
+  const mapA = (sA.material as any).map;
+  const mapB = (sB.material as any).map;
+  sharedScene.updateMatrixWorld(true);
+  assert(
+    sA.material !== sB.material &&
+      mapA === (sA.material as any).map &&
+      mapB === (sB.material as any).map &&
+      mapA ===
+        PT.wood({size: 32, color: 0x996633}).map &&
+      mapB === PT.marble({size: 32, color: 0x996633}).map,
+    'Shared material with conflicting presets is copied per mesh, each tinted by the original color',
+  );
+
+  const declGltf = sceneToCanvas3D(declScene).gltf;
+  assert(
+    declGltf.materials.filter(
+      (m: any) => m.pbrMetallicRoughness?.baseColorTexture,
+    ).length === 2,
+    'Declarative preset materials export base color textures',
+  );
+
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
   if (failed > 0) {
     process.exit(1);

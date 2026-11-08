@@ -2635,6 +2635,7 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     reg.materializeDeclarativeGeometry = (node: unknown) => {
       reg._cadMaterialize?.(node);
       reg._lodMaterialize?.(node);
+      reg._procMaterialize?.(node);
     };
   }
 

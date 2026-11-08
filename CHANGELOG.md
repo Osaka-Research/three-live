@@ -26,6 +26,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Deterministic PBR material presets (`THREE.ProceduralTexture`,
+    `userData.xr.material`):** 11 seamlessly tiling presets (`wood`, `marble`,
+    `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`,
+    `carbonFiber`, `checkerboard`, `grid`) return `{ map, normalMap,
+    roughnessMap, metalnessMap }` to spread into `MeshStandardMaterial`, with
+    `color`, `color2`, `scale`, `seed`, `roughness`, `normalStrength`, and
+    `size` options. `mesh.userData.xr = { material: 'wood' }` bakes a preset
+    tinted by the mesh's material color. Identical options share textures and
+    `normalStrength: 0` skips the normal map (each preset otherwise uses 3 of
+    the 16 scene textures). Native Rust kernels (CLI, MCP,
+    Android, iOS) and the JS kernels (Web workers) are byte-identical, pinned by
+    cross-language hash tests; each preset generates in under 20 ms at
+    256 px. `three-live-procedural.min.js` budget raised to `< 28 KB gz`
+    (`three-live-full` `< 142 KB gz`, `xr-live-full` `< 242 KB gz`); core
+    bundles are unchanged.
+
 -   **Reference-driven authoring (`three_live_render` `reference`, `three-live-cli
     render --reference`):** renders the scene at a reference image's aspect
     ratio into a `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF` comparison
@@ -36,6 +52,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     types, bit depths, `tRNS`, Adam7) and JPEG (baseline/progressive, EXIF
     orientation) from local paths or `data:` URIs; remote URLs are never
     fetched. Adds the `build_from_reference` MCP prompt.
+
+### Fixed
+
+-   **`validate` / `render` now report texture-quota overflows:** scenes whose
+    materials reference more than `SECURITY_3D_MAX_TEXTURES` (16) unique images
+    get a `TL105` error up front instead of passing validation and then failing
+    `.glb` / `.usdz` export.
 
 --------------------------------------------------------------------------------
 
