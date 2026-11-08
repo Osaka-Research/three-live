@@ -314,8 +314,9 @@ Or add to `.mcp.json` / `claude_desktop_config.json` / `.cursor/mcp.json`:
 }
 ```
 
-The MCP server exposes 5 tools (`three_live_validate`, `three_live_render`,
-`three_live_convert`, `three_live_sim`, `three_live_link`), 1 resource
+The MCP server exposes 8 tools (`three_live_validate`, `three_live_render`,
+`three_live_convert`, `three_live_sim`, `three_live_link`, `three_live_gym_reset`,
+`three_live_gym_step`, `three_live_gym_close`), 1 resource
 (`three-live://docs/authoring-guide`), and 2 prompts (`author_three_live_scene`,
 `build_from_reference`). Note that `three_live_render` returns MCP `image/png`
 content blocks directly into multimodal LLM context so agents can visually
@@ -364,6 +365,46 @@ three-live-cli sim scene.js --duration=5.0 \
   --actions='[{"at":0.2,"type":"select","target":"crystal"},{"at":0.5,"type":"moveCharacter","direction":[0,0,-1],"duration":1.5,"jump":true}]' \
   --json
 ```
+
+### Closed-Loop Agent Gym (`three_live_gym_reset` / `three_live_gym_step`)
+
+`three_live_sim` runs a script you write up front. The gym lets an agent *play*
+a scene instead: act, look at the result, and decide the next action, like a
+reinforcement-learning environment. Use it to check that a level is winnable,
+tune enemy speed or jump heights, or test interactive scenes end to end.
+
+```json
+{ "name": "three_live_gym_reset",
+  "arguments": { "inputPath": "level.js", "watch": ["Hero", "Coin"] } }
+// -> { "sessionId": "gym-1", "tick": 0, "scenarioState": "running", "bodies": [...] }
+
+{ "name": "three_live_gym_step",
+  "arguments": { "sessionId": "gym-1", "ticks": 30,
+                 "actions": [{ "type": "moveCharacter", "direction": [0, 0, -1], "jump": true }] } }
+// -> { "tick": 30, "reward": 5, "events": ["objectiveComplete:Coin"],
+//      "newObjectives": ["Coin"], "done": true, "scenarioState": "victory", ... }
+```
+
+-   Each step applies `actions` (same shapes as `three_live_sim`; `at` is a
+    delay in seconds from the start of the step) and advances `ticks` 60 Hz
+    ticks (default 30, max 600). `moveCharacter` lasts the whole step unless
+    you pass `duration`.
+-   Every observation lists `bodies` (position, rotation, scale, visible,
+    grounded, health, destroyed; at most 64, use `watch` to choose), `score`,
+    `reward` (score gained this step), and the `events`, `audioCues`, and
+    `newObjectives` fired during the step.
+-   `done` turns true on `victory` (all `required: true` objectives done),
+    on `defeat` (the character is destroyed), or at the 120 s / 240-step limit.
+    Further steps fail; call `three_live_gym_reset` again.
+-   Pass `includeFrame: true` (with `view`, `width`, `height`) to get a PNG of
+    the state after the step.
+-   The reset observation lists the `events` and `audioCues` fired at `t = 0`
+    (`onSpawn`, `onStart`, trait registrations).
+-   Episodes are deterministic: the same actions always give the same
+    observations. Steps on static scenes are near-instant; scenes with
+    `animate(t)` or `requestAnimationFrame` re-run their script once per step
+    (about 0.2 s), so prefer fewer, longer steps there. Close sessions you are done with (`three_live_gym_close`);
+    beyond 16 the least recently used is evicted.
 
 ### Diagnostic Code Summary (`TL100–TL402`)
 

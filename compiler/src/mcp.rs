@@ -20,6 +20,7 @@
 //! Gemini CLI, Windsurf, Zed, Cline, and MCP Inspector).
 
 use crate::glb::read_glb;
+use crate::gym::{GymObserveOptions, GymSession, GymStepOutput};
 use crate::reference::{compare_scene_to_reference, decode_reference_image, load_reference_bytes};
 use crate::render::{
     encode_gif_frames, encode_png_rgba, encode_png_rgba_compressed, render_scene_rgba,
@@ -38,9 +39,11 @@ use crate::{
     transcode_three_to_usdz, validate_scene_source,
 };
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Default MCP protocol version advertised by the server when the client does not specify one.
 pub const DEFAULT_MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -104,6 +107,7 @@ const AUTHORING_GUIDE_MARKDOWN: &str = r#"# Three-Live Authoring Guide for AI Co
   1. Call `three_live_validate` to check for compiler errors (`TL1xx`), schema warnings (`TL2xx`), and spatial/frustum/grounding diagnostics (`TL301`–`TL308`).
   2. Call `three_live_render` (`view: "quad"`, `grid: true`, `annotations: true`) to inspect the 4-up orthographic/camera contact sheet (`CAMERA`, `FRONT +Z`, `TOP +Y FRUSTUM`, `ISO 45°`).
   3. Call `three_live_sim` to verify interactive `KHR_interactivity` and 60 Hz physics trajectories.
+  3b. Games and interactive scenes: call `three_live_gym_reset`, then `three_live_gym_step` in a loop (`actions` such as `{ "type": "moveCharacter", "direction": [1, 0, 0] }`, `ticks`) to play the scene closed-loop and read back positions, `events`, `reward`, and `done`, so you can check the level is winnable and tune it.
   4. Building from a photo, mockup, sketch, or blueprint? Call `three_live_render` with `reference` (PNG/JPEG path or data URI) and a matching `view` to get a REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF sheet plus `silhouetteIou`, `aspectError`, and `guidance` (or use the `build_from_reference` prompt).
 "#;
 
@@ -338,7 +342,7 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                         "name": "three-live-mcp",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "instructions": "Three-Live 3D, CAD & Spatial XR compiler, headless 4-up contact sheet renderer, spatial linter (TL100-TL402), and 60 Hz simulation engine. Use three_live_validate and three_live_render to verify Three.js scenes visually and spatially (pass `reference` to three_live_render to compare against a photo, sketch, or blueprint), three_live_convert to export .glb or Apple .usdz, three_live_sim to step KHR_interactivity and 60 Hz physics, and three_live_link to give the user a playground link (or QR code) that opens the scene on any phone or desktop browser."
+                    "instructions": "Three-Live 3D, CAD & Spatial XR compiler, headless 4-up contact sheet renderer, spatial linter (TL100-TL402), and 60 Hz simulation engine. Use three_live_validate and three_live_render to verify Three.js scenes visually and spatially (pass `reference` to three_live_render to compare against a photo, sketch, or blueprint), three_live_convert to export .glb or Apple .usdz, three_live_sim to step KHR_interactivity and 60 Hz physics, three_live_gym_reset / three_live_gym_step to play a scene closed-loop (act, observe positions, events, and rewards, then react), and three_live_link to give the user a playground link (or QR code) that opens the scene on any phone or desktop browser."
                 }),
             ))
         }
@@ -804,6 +808,128 @@ fn mcp_tool_definitions() -> Value {
                 "idempotentHint": true,
                 "openWorldHint": false
             }
+        },
+        {
+            "name": "three_live_gym_reset",
+            "description": "Start a closed-loop agent gym episode: compile a scene with userData.xr traits (character controllers, objectives, hit zones, agents, joints, physics) and return a `sessionId` plus the t = 0 observation (body positions, health, score, scenario state). Then call three_live_gym_step repeatedly to act, observe, and react, like a reinforcement-learning environment. The simulation is deterministic at 60 Hz.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Inline Three.js scene script or HTML document. Provide either `code` or `inputPath`."
+                    },
+                    "inputPath": {
+                        "type": "string",
+                        "description": "Path to a .js, .html, or .glb file on disk when `code` is not provided."
+                    },
+                    "watch": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Only report these node names in observations (default: all nodes, at most 64)."
+                    },
+                    "includeFrame": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Also return a rendered PNG of the observation."
+                    },
+                    "view": {
+                        "type": "string",
+                        "enum": ["camera", "front", "top", "right", "iso"],
+                        "default": "camera",
+                        "description": "Viewport for `includeFrame`."
+                    },
+                    "width": { "type": "integer", "minimum": 64, "maximum": 1024, "description": "Frame width (default 384)." },
+                    "height": { "type": "integer", "minimum": 64, "maximum": 1024, "description": "Frame height (default 288)." }
+                }
+            },
+            "annotations": {
+                "title": "Start Agent Gym Episode",
+                "readOnlyHint": true,
+                "idempotentHint": false,
+                "openWorldHint": false
+            }
+        },
+        {
+            "name": "three_live_gym_step",
+            "description": "Advance a gym episode: apply actions now (or `at` seconds into the step), simulate `ticks` 60 Hz ticks, and return the new observation with `reward` (score gained this step), `events`, `audioCues`, and `newObjectives` fired during the step, and `done` when the scenario reaches victory or defeat or the episode hits its 120 s / 240-step limit. moveCharacter actions last the whole step unless `duration` is given.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Id returned by three_live_gym_reset." },
+                    "actions": {
+                        "type": "array",
+                        "description": "Actions to apply this step (e.g. `[{\"type\": \"moveCharacter\", \"direction\": [1, 0, 0], \"jump\": true}]`).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "at": { "type": "number", "description": "Delay in seconds after the start of this step (default 0)." },
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["select", "explode", "moveCharacter", "sendEvent", "damage", "heal"]
+                                },
+                                "target": { "type": "string", "description": "Target node name." },
+                                "factor": { "type": "number", "description": "Explosion factor (0.0..1.0) for `explode`." },
+                                "direction": {
+                                    "type": "array",
+                                    "items": { "type": "number" },
+                                    "minItems": 3,
+                                    "maxItems": 3
+                                },
+                                "duration": { "type": "number", "description": "Seconds a moveCharacter lasts (default: rest of the step)." },
+                                "jump": { "type": "boolean" },
+                                "eventId": { "type": "string" },
+                                "amount": { "type": "number" }
+                            },
+                            "required": ["type"]
+                        }
+                    },
+                    "ticks": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 600,
+                        "default": 30,
+                        "description": "60 Hz ticks to advance (default 30 = 0.5 s)."
+                    },
+                    "watch": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Only report these node names (default: the reset's `watch`)."
+                    },
+                    "includeFrame": { "type": "boolean", "default": false, "description": "Also return a rendered PNG of the new state." },
+                    "view": {
+                        "type": "string",
+                        "enum": ["camera", "front", "top", "right", "iso"],
+                        "default": "camera"
+                    },
+                    "width": { "type": "integer", "minimum": 64, "maximum": 1024 },
+                    "height": { "type": "integer", "minimum": 64, "maximum": 1024 }
+                },
+                "required": ["sessionId"]
+            },
+            "annotations": {
+                "title": "Step Agent Gym Episode",
+                "readOnlyHint": true,
+                "idempotentHint": false,
+                "openWorldHint": false
+            }
+        },
+        {
+            "name": "three_live_gym_close",
+            "description": "End a gym episode and free its session (sessions are also evicted, oldest first, beyond 16).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sessionId": { "type": "string", "description": "Id returned by three_live_gym_reset." }
+                },
+                "required": ["sessionId"]
+            },
+            "annotations": {
+                "title": "Close Agent Gym Episode",
+                "readOnlyHint": true,
+                "idempotentHint": true,
+                "openWorldHint": false
+            }
         }
     ])
 }
@@ -936,6 +1062,9 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "three_live_convert" => call_tool_convert(&args),
         "three_live_sim" => call_tool_sim(&args),
         "three_live_link" => call_tool_link(&args),
+        "three_live_gym_reset" => call_tool_gym_reset(&args),
+        "three_live_gym_step" => call_tool_gym_step(&args),
+        "three_live_gym_close" => call_tool_gym_close(&args),
         _ => {
             return jsonrpc_error_response(
                 id,
@@ -1519,6 +1648,172 @@ fn call_tool_sim(args: &Value) -> Value {
     })
 }
 
+/// Most concurrent gym sessions; the least recently used is evicted beyond this.
+const GYM_MAX_SESSIONS: usize = 16;
+
+struct GymEntry {
+    session: Arc<Mutex<GymSession>>,
+    watch: Vec<String>,
+    last_used: u64,
+}
+
+#[derive(Default)]
+struct GymStore {
+    sessions: HashMap<String, GymEntry>,
+    next_id: u64,
+    clock: u64,
+}
+
+fn gym_store() -> &'static Mutex<GymStore> {
+    static STORE: OnceLock<Mutex<GymStore>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(GymStore::default()))
+}
+
+fn lock_gym_store() -> std::sync::MutexGuard<'static, GymStore> {
+    gym_store().lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn parse_gym_watch(args: &Value) -> Option<Vec<String>> {
+    args.get("watch")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+}
+
+fn parse_gym_frame(args: &Value) -> Option<(RenderViewMode, u32, u32)> {
+    if !args.get("includeFrame").and_then(Value::as_bool).unwrap_or(false) {
+        return None;
+    }
+    let view = match args.get("view").and_then(Value::as_str) {
+        None => RenderViewMode::Camera,
+        Some(v) => match parse_render_view_mode(Some(v)) {
+            RenderViewMode::Quad => RenderViewMode::Camera,
+            m => m,
+        },
+    };
+    let dim = |key: &str, default: u32| {
+        args.get(key).and_then(Value::as_u64).map(|v| v.min(1024) as u32).unwrap_or(default).max(64)
+    };
+    Some((view, dim("width", 384), dim("height", 288)))
+}
+
+fn gym_result(session_id: &str, out: GymStepOutput) -> Value {
+    let mut obs = serde_json::to_value(&out.observation).unwrap_or_else(|_| json!({}));
+    obs["sessionId"] = json!(session_id);
+    let mut content = Vec::new();
+    if let Some(png) = out.frame_png {
+        content
+            .push(json!({ "type": "image", "data": encode_base64(&png), "mimeType": "image/png" }));
+    }
+    content.push(json!({
+        "type": "text",
+        "text": serde_json::to_string_pretty(&obs).unwrap_or_else(|_| "{}".to_string())
+    }));
+    json!({ "content": content, "isError": false })
+}
+
+fn call_tool_gym_reset(args: &Value) -> Value {
+    let src = match load_source_from_args(args, "inline.js") {
+        Ok(s) => s,
+        Err(e) => return tool_error_result(e),
+    };
+    let watch = parse_gym_watch(args).unwrap_or_default();
+    let opts = GymObserveOptions { watch: watch.clone(), frame: parse_gym_frame(args) };
+    let (session, out) = match GymSession::reset(&src.raw_bytes, src.is_glb, &opts) {
+        Ok(r) => r,
+        Err(e) => return tool_error_result(format!("Simulation error: {}", e)),
+    };
+    let session_id = {
+        let mut store = lock_gym_store();
+        store.next_id += 1;
+        store.clock += 1;
+        let id = format!("gym-{}", store.next_id);
+        let last_used = store.clock;
+        while store.sessions.len() >= GYM_MAX_SESSIONS {
+            let Some(oldest) =
+                store.sessions.iter().min_by_key(|(_, e)| e.last_used).map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            store.sessions.remove(&oldest);
+        }
+        store.sessions.insert(
+            id.clone(),
+            GymEntry { session: Arc::new(Mutex::new(session)), watch, last_used },
+        );
+        id
+    };
+    gym_result(&session_id, out)
+}
+
+fn gym_session_id(args: &Value) -> Result<String, Value> {
+    args.get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| tool_error_result("`sessionId` (string) is required.".to_string()))
+}
+
+fn call_tool_gym_step(args: &Value) -> Value {
+    let session_id = match gym_session_id(args) {
+        Ok(id) => id,
+        Err(e) => return e,
+    };
+    let actions: Vec<SimAction> = match args.get("actions") {
+        Some(v) if v.is_array() => match serde_json::from_value(v.clone()) {
+            Ok(a) => a,
+            Err(e) => return tool_error_result(format!("Invalid `actions` array: {}", e)),
+        },
+        Some(v) if v.is_string() => match serde_json::from_str(v.as_str().unwrap_or("[]")) {
+            Ok(a) => a,
+            Err(e) => return tool_error_result(format!("Invalid `actions` JSON string: {}", e)),
+        },
+        Some(Value::Null) | None => Vec::new(),
+        Some(_) => return tool_error_result("`actions` must be an array.".to_string()),
+    };
+    let ticks = match args.get("ticks") {
+        None | Some(Value::Null) => 30,
+        Some(v) => match v.as_u64() {
+            Some(t) => t.min(usize::MAX as u64) as usize,
+            None => return tool_error_result("`ticks` must be a positive integer.".to_string()),
+        },
+    };
+    let (session, default_watch) = {
+        let mut store = lock_gym_store();
+        store.clock += 1;
+        let now = store.clock;
+        match store.sessions.get_mut(&session_id) {
+            Some(entry) => {
+                entry.last_used = now;
+                (entry.session.clone(), entry.watch.clone())
+            }
+            None => {
+                return tool_error_result(format!(
+                    "Unknown or expired gym session '{}'; call three_live_gym_reset.",
+                    session_id
+                ))
+            }
+        }
+    };
+    let opts = GymObserveOptions {
+        watch: parse_gym_watch(args).unwrap_or(default_watch),
+        frame: parse_gym_frame(args),
+    };
+    let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
+    match guard.step(&actions, ticks, &opts) {
+        Ok(out) => gym_result(&session_id, out),
+        Err(e) => tool_error_result(e),
+    }
+}
+
+fn call_tool_gym_close(args: &Value) -> Value {
+    let session_id = match gym_session_id(args) {
+        Ok(id) => id,
+        Err(e) => return e,
+    };
+    let closed = lock_gym_store().sessions.remove(&session_id).is_some();
+    let text = json!({ "sessionId": session_id, "closed": closed }).to_string();
+    json!({ "content": [{ "type": "text", "text": text }], "isError": false })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1561,8 +1856,118 @@ mod tests {
         assert!(handle_mcp_request(&notif).is_none());
     }
 
+    fn gym_call(id: u64, name: &str, arguments: Value) -> Value {
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        });
+        handle_mcp_request(&req).unwrap()["result"].clone()
+    }
+
+    fn gym_obs(result: &Value) -> Value {
+        let blocks = result["content"].as_array().unwrap();
+        serde_json::from_str(blocks.last().unwrap()["text"].as_str().unwrap()).unwrap()
+    }
+
     #[test]
-    fn test_mcp_tools_list_exposes_all_five_tools() {
+    fn test_mcp_gym_reset_step_close_flow() {
+        let code = r#"
+            const floor = new THREE.Mesh(new THREE.BoxGeometry(20, 0.1, 20), new THREE.MeshStandardMaterial());
+            floor.name = 'Floor'; floor.position.y = -0.05;
+            floor.userData.xr = { collidable: true };
+            scene.add(floor);
+            const hero = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1, 0.5), new THREE.MeshStandardMaterial());
+            hero.name = 'Hero'; hero.position.set(0, 0.5, 0);
+            hero.userData.xr = { character: { speed: 4 } };
+            scene.add(hero);
+            const coin = new THREE.Mesh(new THREE.SphereGeometry(0.2), new THREE.MeshStandardMaterial());
+            coin.name = 'Coin'; coin.position.set(0, 0.5, -2);
+            coin.userData.xr = { objective: { kind: 'pickup', amount: 5, radius: 0.6, required: true } };
+            scene.add(coin);
+        "#;
+        let reset = gym_call(1, "three_live_gym_reset", json!({ "code": code, "watch": ["Hero"] }));
+        assert_eq!(reset["isError"], json!(false), "{reset}");
+        let obs = gym_obs(&reset);
+        let sid = obs["sessionId"].as_str().unwrap().to_string();
+        assert_eq!(obs["tick"], json!(0));
+        assert_eq!(obs["bodies"].as_array().unwrap().len(), 1);
+
+        // Closed loop: steer toward the coin until the episode ends.
+        let mut done = false;
+        let mut total = 0;
+        for i in 0..10 {
+            let o = gym_obs(&gym_call(
+                10 + i,
+                "three_live_gym_step",
+                json!({ "sessionId": sid, "actions": [{ "type": "moveCharacter", "direction": [0, 0, -1] }], "ticks": 20 }),
+            ));
+            total += o["reward"].as_i64().unwrap();
+            if o["done"] == json!(true) {
+                assert_eq!(o["scenarioState"], "victory");
+                assert_eq!(o["newObjectives"], json!(["Coin"]));
+                done = true;
+                break;
+            }
+        }
+        assert!(done, "hero should collect the coin");
+        assert_eq!(total, 5);
+
+        let after = gym_call(30, "three_live_gym_step", json!({ "sessionId": sid }));
+        assert_eq!(after["isError"], json!(true));
+
+        let closed = gym_call(31, "three_live_gym_close", json!({ "sessionId": sid }));
+        assert!(closed["content"][0]["text"].as_str().unwrap().contains("\"closed\":true"));
+        let gone = gym_call(32, "three_live_gym_step", json!({ "sessionId": sid }));
+        assert_eq!(gone["isError"], json!(true));
+        assert!(gone["content"][0]["text"].as_str().unwrap().contains("Unknown or expired"));
+    }
+
+    #[test]
+    fn test_mcp_gym_errors_and_frames() {
+        let code = "const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());\nm.name = 'box'; m.position.y = 0.5;\nscene.add(m);\n";
+        let missing = gym_call(1, "three_live_gym_step", json!({}));
+        assert_eq!(missing["isError"], json!(true));
+        let broken =
+            gym_call(2, "three_live_gym_reset", json!({ "code": "scene.add(new THREE.Mesh(" }));
+        assert_eq!(broken["isError"], json!(true));
+
+        let reset = gym_call(
+            3,
+            "three_live_gym_reset",
+            json!({ "code": code, "includeFrame": true, "view": "iso", "width": 96, "height": 64 }),
+        );
+        assert_eq!(reset["content"][0]["type"], "image");
+        assert_eq!(reset["content"][0]["mimeType"], "image/png");
+        let sid = gym_obs(&reset)["sessionId"].as_str().unwrap().to_string();
+
+        for (args, needle) in [
+            (json!({ "sessionId": sid, "ticks": 0 }), "between 1 and 600"),
+            (json!({ "sessionId": sid, "ticks": 601 }), "between 1 and 600"),
+            (json!({ "sessionId": sid, "ticks": -3 }), "positive integer"),
+            (json!({ "sessionId": sid, "actions": [{ "type": "teleport" }] }), "teleport"),
+            (json!({ "sessionId": sid, "actions": { "type": "select" } }), "array"),
+        ] {
+            let r = gym_call(4, "three_live_gym_step", args);
+            assert_eq!(r["isError"], json!(true), "{r}");
+            assert!(r["content"][0]["text"].as_str().unwrap().contains(needle), "{r}");
+        }
+        let ok = gym_call(
+            5,
+            "three_live_gym_step",
+            json!({ "sessionId": sid, "ticks": 6, "includeFrame": true }),
+        );
+        assert_eq!(ok["isError"], json!(false), "{ok}");
+        assert_eq!(ok["content"][0]["type"], "image");
+        let o = gym_obs(&ok);
+        assert_eq!(o["tick"], json!(6), "invalid steps must not advance the episode");
+        assert_eq!(o["step"], json!(1));
+        gym_call(6, "three_live_gym_close", json!({ "sessionId": sid }));
+    }
+
+    #[test]
+    fn test_mcp_tools_list_exposes_all_tools() {
         let req = json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -1578,7 +1983,10 @@ mod tests {
                 "three_live_render",
                 "three_live_convert",
                 "three_live_sim",
-                "three_live_link"
+                "three_live_link",
+                "three_live_gym_reset",
+                "three_live_gym_step",
+                "three_live_gym_close"
             ]
         );
     }

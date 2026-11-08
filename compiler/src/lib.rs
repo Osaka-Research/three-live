@@ -19,6 +19,7 @@ pub mod engine;
 pub mod ffi;
 pub mod geometry;
 pub mod glb;
+pub mod gym;
 pub mod material_preset;
 pub mod mcp;
 pub mod reference;
