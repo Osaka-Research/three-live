@@ -113,10 +113,13 @@ Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
 `three_live_convert`, `three_live_sim`, `three_live_link`) in Gemini CLI, Google
 Antigravity, Claude Code, or any MCP client. `three-live-cli link scene.js --qr`
 prints a playground link (and a terminal QR code) that opens the scene on a
-phone, one tap from AR:
+phone, one tap from AR. Building from a photo, mockup, sketch, or blueprint? Pass
+`--reference` (or `reference` in MCP) to get a side-by-side + aligned-overlay +
+silhouette-diff sheet with IoU and proportion guidance:
 
 ```bash
 $ npx three-live-cli render scene.js --view=quad --grid --annotations -o contact_sheet.png
+$ npx three-live-cli render scene.js --reference=blueprint.png --view=front -o compare.png
 $ npx three-live-cli validate scene.js --json
 $ npx three-live-cli link scene.js --qr
 $ npx three-live-cli convert scene.js -o model.usdz

@@ -151,6 +151,12 @@ enum Commands {
         /// Optional interactive node name to trigger at t = 0
         #[arg(long)]
         trigger_select: Option<String>,
+
+        /// Reference image to match (PNG/JPEG path or data:image/... URI). Writes a
+        /// REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF sheet and prints silhouette metrics
+        /// as JSON. `--view quad` is treated as `camera`; `--height` sets the panel height.
+        #[arg(long)]
+        reference: Option<String>,
     },
 
     /// Simulate interactive KHR_interactivity, orbit/explode, and xr-live-sim scenarios at 60 Hz
@@ -565,6 +571,7 @@ fn main() {
             frames,
             duration,
             trigger_select,
+            reference,
         } => {
             let input_bytes = match fs::read(&input) {
                 Ok(b) => b,
@@ -604,6 +611,66 @@ fn main() {
             };
 
             let render_view: RenderViewMode = view.into();
+            if let Some(spec) = reference {
+                if turntable || frames.is_some_and(|f| f > 1) || trigger_select.is_some() {
+                    eprintln!(
+                        "--reference renders a single still frame; drop --turntable, --frames, \
+                         and --trigger-select"
+                    );
+                    std::process::exit(1);
+                }
+                let decoded = three_live_compiler::load_reference_bytes(&spec)
+                    .and_then(|b| three_live_compiler::decode_reference_image(&b));
+                let (reference_img, reference_size) = match decoded {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let cmp = three_live_compiler::compare_scene_to_reference(
+                    &scene,
+                    &reference_img,
+                    reference_size,
+                    render_view,
+                    height.unwrap_or(512),
+                    grid,
+                    annotations,
+                );
+                let out_path = output.unwrap_or_else(|| input.with_extension("reference.png"));
+                if !out_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+                {
+                    eprintln!(
+                        "--reference writes a PNG comparison sheet: use an -o path ending in .png"
+                    );
+                    std::process::exit(1);
+                }
+                let png = match three_live_compiler::encode_png_rgba_compressed(
+                    cmp.width, cmp.height, &cmp.rgba,
+                ) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("PNG encoding error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                if let Err(e) = fs::write(&out_path, &png) {
+                    eprintln!("Error writing {:?}: {}", out_path, e);
+                    std::process::exit(1);
+                }
+                eprintln!(
+                    "Wrote {}x{} reference comparison to {:?}",
+                    cmp.width, cmp.height, out_path
+                );
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&cmp.metrics).unwrap_or_else(|_| "{}".to_string())
+                );
+                return;
+            }
             let default_dim = if render_view == RenderViewMode::Quad { 1024 } else { 512 };
             let w = width.unwrap_or(default_dim).clamp(64, 2048);
             let h = height.unwrap_or(default_dim).clamp(64, 2048);

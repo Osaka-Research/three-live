@@ -22,6 +22,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
+## [Unreleased]
+
+### Added
+
+-   **Reference-driven authoring (`three_live_render` `reference`, `three-live-cli
+    render --reference`):** renders the scene at a reference image's aspect
+    ratio into a `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF` comparison
+    sheet (auto-aligned overlay on plain/transparent backgrounds) with
+    scale/translation-invariant `silhouetteIou`, `aspectError`,
+    `silhouetteReliable`, and actionable `guidance`, so agents can match photos,
+    mockups, sketches, and blueprints in a few turns. Accepts PNG (all color
+    types, bit depths, `tRNS`, Adam7) and JPEG (baseline/progressive, EXIF
+    orientation) from local paths or `data:` URIs; remote URLs are never
+    fetched. Adds the `build_from_reference` MCP prompt.
+
+--------------------------------------------------------------------------------
+
 ## [1.3.2] - 2026-11-08 (Beta)
 
 ### Added

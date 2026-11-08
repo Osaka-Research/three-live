@@ -229,6 +229,9 @@ three-live-cli validate scene.js --json
 # 2. Visual Verification (2x2 Orthographic + Camera Contact Sheet with 1m Grid & AABB Annotations)
 three-live-cli render scene.js -o preview.png --view=quad --grid --annotations
 
+# 2b. Reference Matching (REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF + IoU/aspect JSON)
+three-live-cli render scene.js -o compare.png --reference=photo.jpg --view=camera
+
 # 3. Temporal & Interactive Verification (4-Frame Filmstrip PNG or Animated GIF89a)
 three-live-cli render scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=crystal
 
