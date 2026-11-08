@@ -1950,6 +1950,8 @@ fn test_phase1_structured_compiler_and_schema_diagnostics() {
         const bloomPass = new THREE.UnrealBloomPass();
         const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
         scene.add(hemi);
+        const rectLight = new THREE.RectAreaLight(0xffffff, 0.5);
+        scene.add(rectLight);
         requestAnimationFrame(() => {});
 
         const vA = new THREE.Vector3(0, 0, 0).lerp(new THREE.Vector3(2, 4, 6), 0.5);
@@ -3590,4 +3592,135 @@ fn test_full_pbr_material_maps_glb_usdz_and_software_render() {
         "Expected glowing orange emissiveMap stripe pixels over dark albedo in software render, got {}",
         glowing_orange_pixels
     );
+}
+
+#[test]
+fn test_a5_hemisphere_light_and_sprite_parity() {
+    // 1. HemisphereLight: zero TL102 warnings, GLB round-trip preserves ground_color,
+    //    and software rasterizer shades upper hemisphere sky-blue and lower hemisphere warm-orange.
+    let hemi_script = r#"
+        const hemi = new THREE.HemisphereLight(0x0066ff, 0xff4400, 0.9);
+        hemi.position.set(0, 1, 0);
+        scene.add(hemi);
+
+        const sphere = new THREE.Mesh(
+            new THREE.SphereGeometry(1.0, 32, 24),
+            new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0, metalness: 0.0 })
+        );
+        sphere.position.set(0, 1.0, 0);
+        scene.add(sphere);
+
+        camera.position.set(0, 1.0, 3.0);
+        camera.lookAt(0, 1.0, 0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(hemi_script, "hemi.js", 1.5);
+    assert!(
+        report.valid && !report.diagnostics.iter().any(|d| d.code == "TL102"),
+        "HemisphereLight must not emit TL102 degraded-alias warning: {:?}",
+        report.diagnostics
+    );
+
+    let sg = three_live_compiler::validate_three_script(hemi_script).expect("Hemi SceneGraph");
+    assert_eq!(sg.lights.len(), 1);
+    assert_eq!(sg.lights[0].light_type, "hemisphere");
+    let gc = sg.lights[0].ground_color.expect("ground_color present");
+    assert!(gc[0] > gc[2] && sg.lights[0].color[2] > sg.lights[0].color[0]);
+
+    let glb = transcode_three_to_glb(hemi_script).expect("Hemi GLB");
+    let rt = three_live_compiler::glb::read_glb(&glb).expect("Hemi read_glb");
+    assert_eq!(rt.lights.len(), 1);
+    assert_eq!(rt.lights[0].light_type, "hemisphere");
+    assert!(rt.lights[0].ground_color.is_some());
+
+    let opts = three_live_compiler::render::RenderOptions {
+        width: 128,
+        height: 128,
+        view: three_live_compiler::render::RenderViewMode::Camera,
+        ..Default::default()
+    };
+    let (_w, _h, rgba) = three_live_compiler::render::render_scene_rgba(&sg, &opts);
+    // Sample upper sphere pixel (x=64, y=28) vs lower sphere pixel (x=64, y=100)
+    let top_idx = (28 * 128 + 64) * 4;
+    let bot_idx = (100 * 128 + 64) * 4;
+    let top_px = &rgba[top_idx..top_idx + 4];
+    let bot_px = &rgba[bot_idx..bot_idx + 4];
+    assert!(
+        top_px[2] > top_px[0] + 20 && top_px[2] > bot_px[2] + 30,
+        "Upper hemisphere should be sky-blue (B > R + 20 and top B > bottom B + 30), got top={:?} bot={:?}",
+        top_px,
+        bot_px
+    );
+    assert!(
+        bot_px[0] > bot_px[2] + 15 && bot_px[0] > top_px[0] + 15,
+        "Lower hemisphere should be ground-orange (R > B + 15 and bottom R > top R + 15), got top={:?} bot={:?}",
+        top_px,
+        bot_px
+    );
+
+    // 2. Sprite + SpriteMaterial: zero TL102/TL205 warnings, spherical billboard faces orthogonal cameras
+    let sprite_script = r#"
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const c = document.createElement('canvas');
+        c.width = 32; c.height = 32;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#00ff66';
+        ctx.fillRect(0, 0, 32, 32);
+        const tex = new THREE.CanvasTexture(c);
+
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: tex,
+            color: 0xffffff,
+            opacity: 0.9,
+            rotation: Math.PI / 6
+        }));
+        sprite.scale.set(1.2, 1.2, 1.2);
+        sprite.position.set(0, 0.8, 0);
+        scene.add(sprite);
+
+        camera.position.set(0, 0.8, 3.0);
+        camera.lookAt(0, 0.8, 0);
+    "#;
+
+    let sp_report = three_live_compiler::validate_and_lint_scene(sprite_script, "sprite.js", 1.5);
+    assert!(
+        sp_report.valid
+            && !sp_report.diagnostics.iter().any(|d| d.code == "TL102" || d.code == "TL205"),
+        "Sprite must not emit TL102 or TL205 warnings: {:?}",
+        sp_report.diagnostics
+    );
+
+    let sp_sg =
+        three_live_compiler::validate_three_script(sprite_script).expect("Sprite SceneGraph");
+    let sp_node = sp_sg.nodes.iter().find(|n| n.mesh.is_some()).expect("Sprite mesh node");
+    assert_eq!(
+        sp_node.xr_normalized.as_ref().and_then(|v| v["billboard"].as_str()),
+        Some("spherical")
+    );
+
+    // Because Sprite billboards spherically toward the active camera, BOTH Front (+Z) AND Right (+X)
+    // views must see broad green coverage (whereas an un-billboarded XY quad would be edge-on from +X!).
+    for view in [
+        three_live_compiler::render::RenderViewMode::Front,
+        three_live_compiler::render::RenderViewMode::Right,
+        three_live_compiler::render::RenderViewMode::Top,
+    ] {
+        let v_opts = three_live_compiler::render::RenderOptions {
+            width: 96,
+            height: 96,
+            view,
+            ..Default::default()
+        };
+        let (_vw, _vh, v_rgba) = three_live_compiler::render::render_scene_rgba(&sp_sg, &v_opts);
+        let green_px = v_rgba
+            .chunks_exact(4)
+            .filter(|px| px[1] > 150 && u16::from(px[1]) > u16::from(px[0]) + 60)
+            .count();
+        assert!(
+            green_px > 200,
+            "Expected spherical Sprite billboard to face {:?} view (>200 green px), got {}",
+            view,
+            green_px
+        );
+    }
 }

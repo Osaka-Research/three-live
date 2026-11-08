@@ -76,13 +76,18 @@ function runEvalsHarnessTests(): void {
       new THREE.LatheGeometry([], 16),
       new THREE.MeshPhysicalMaterial({ side: THREE.DoubleSide })
     );
-    const h = new THREE.HemisphereLight(0xffffff, 0x000000, 0.5);
+    const h = new THREE.HemisphereLight(0xffffff, 0x222222, 0.6);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffaa00 }));
+    const r = new THREE.RectAreaLight(0xffffff, 1.0);
   `);
   assert(
     symInfo.supported.includes('LatheGeometry') &&
       symInfo.supported.includes('DoubleSide') &&
+      symInfo.supported.includes('HemisphereLight') &&
+      symInfo.supported.includes('Sprite') &&
+      symInfo.supported.includes('SpriteMaterial') &&
       symInfo.degradedAliases.length === 1 &&
-      symInfo.degradedAliases[0].symbol === 'HemisphereLight' &&
+      symInfo.degradedAliases[0].symbol === 'RectAreaLight' &&
       symInfo.unsupportedClasses.length === 0,
     'analyzeThreeSymbols classifies native symbols, degraded aliases, and ignores comments',
   );

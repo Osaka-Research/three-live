@@ -322,6 +322,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         if (!node || typeof node !== 'object' || seen.has(node)) return;
         seen.add(node);
         reg?.materializeDeclarativeGeometry?.(node);
+        if (node.isSprite) node._bakeAuthorGeometry?.();
         const geo = node.geometry;
         if (geo && geo.attributes?.position && node.matrixWorld) {
           if (node.isInstancedMesh && typeof node.getMatrixAt === 'function') {
@@ -3744,12 +3745,150 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     };
   }
 
+  let spriteAutoId = 0;
+  const Vector2 = threeNs.Vector2;
+  const PlaneGeometry = threeNs.PlaneGeometry;
+  const Mesh = threeNs.Mesh;
+  const Material = threeNs.Material;
+
+  class SpriteMaterial extends Material {
+    // tslint:disable-next-line:no-any Heterogeneous Three.js material options.
+    rotation!: number;
+    sizeAttenuation!: boolean;
+    isSpriteMaterial!: boolean;
+    // tslint:disable-next-line:no-any Heterogeneous Three.js material options.
+    constructor(params: Record<string, any> = {}) {
+      super({
+        roughness: 0.85,
+        metalness: 0,
+        side: 2,
+        transparent: params.transparent ?? true,
+        ...params,
+      });
+      this.isSpriteMaterial = true;
+      const rot = Number(params.rotation);
+      this.rotation = Number.isFinite(rot) ? rot : 0;
+      this.sizeAttenuation = params.sizeAttenuation !== false;
+      if (params.emissive === undefined) {
+        this.emissive = this.color.clone();
+        this.emissiveIntensity = 0.35;
+        if (this.map && !this.emissiveMap) this.emissiveMap = this.map;
+      }
+    }
+
+    clone(): SpriteMaterial {
+      return new SpriteMaterial({
+        ...this,
+        emissive: this._em ? this.emissive : undefined,
+      });
+    }
+  }
+
+  class Sprite extends Mesh {
+    isSprite!: boolean;
+    // tslint:disable-next-line:no-any Dynamic Vector2 instance from threeNs.
+    center!: any;
+    _autoNamed?: boolean;
+    _noBillboard?: boolean;
+    _bakedOwner?: Sprite;
+    _bakedKey?: string;
+    // tslint:disable-next-line:no-any Material instance or options bag.
+    constructor(material?: any) {
+      super(
+        new PlaneGeometry(1, 1),
+        material instanceof Material
+          ? material
+          : new SpriteMaterial(material || {}),
+      );
+      this.isSprite = true;
+      this.center = new Vector2(0.5, 0.5);
+      this.userData = {xr: {billboard: 'spherical'}};
+    }
+
+    _cloneCustom(): Sprite {
+      const c = new Sprite(this.material);
+      c.center.copy(this.center);
+      c._autoNamed = Boolean(this._autoNamed);
+      c._noBillboard = Boolean(this._noBillboard);
+      return c;
+    }
+
+    _bakeAuthorGeometry(): void {
+      if (this._bakedOwner !== this) {
+        if (!this.name || this._autoNamed) {
+          this.name = `Sprite_${++spriteAutoId}`;
+          this._autoNamed = true;
+        }
+        this._bakedOwner = this;
+      } else if (!this.name) {
+        this.name = `Sprite_${++spriteAutoId}`;
+        this._autoNamed = true;
+      }
+      const rawBb = this.userData?.xr?.billboard;
+      if (rawBb === false || rawBb === null) {
+        this._noBillboard = true;
+        delete this.userData.xr.billboard;
+        if (Object.keys(this.userData.xr).length === 0) delete this.userData.xr;
+      } else {
+        if (typeof rawBb === 'string' || rawBb === true) {
+          this._noBillboard = false;
+        }
+        if (!this._noBillboard) {
+          if (!this.userData || typeof this.userData !== 'object') {
+            this.userData = {xr: {billboard: 'spherical'}};
+          } else if (
+            !this.userData.xr ||
+            typeof this.userData.xr !== 'object'
+          ) {
+            this.userData.xr = {billboard: 'spherical'};
+          } else if (this.userData.xr.billboard === undefined) {
+            this.userData.xr.billboard = 'spherical';
+          }
+        }
+      }
+      const cx = Number.isFinite(this.center?.x) ? this.center.x : 0.5;
+      const cy = Number.isFinite(this.center?.y) ? this.center.y : 0.5;
+      const rotRaw = Number(this.material?.rotation);
+      const rot = Number.isFinite(rotRaw) ? rotRaw : 0;
+      const key = `${cx},${cy},${rot}`;
+      if (
+        this._bakedKey !== key &&
+        (this._bakedKey !== undefined || cx !== 0.5 || cy !== 0.5 || rot !== 0)
+      ) {
+        const geo = new PlaneGeometry(1, 1);
+        const arr = geo.attributes.position?.array as Float32Array | undefined;
+        const ox = 0.5 - cx;
+        const oy = 0.5 - cy;
+        const cr = Math.cos(rot);
+        const sr = Math.sin(rot);
+        if (arr) {
+          for (let i = 0; i < arr.length; i += 3) {
+            const px = arr[i]! + ox;
+            const py = arr[i + 1]! + oy;
+            arr[i] = px * cr - py * sr;
+            arr[i + 1] = px * sr + py * cr;
+          }
+          geo.boundingBox = null;
+          geo.boundingSphere = null;
+        }
+        geo.__baked = true;
+        this._bakedKey = key;
+        this.geometry = geo;
+      }
+    }
+  }
+
+  Object.freeze(SpriteMaterial.prototype);
+  Object.freeze(Sprite.prototype);
+
   const exportsMap = {
     Box3,
     Sphere,
     CanvasTexture,
     ImprovedNoise,
     SimplexNoise,
+    SpriteMaterial,
+    Sprite,
   };
 
   if (reg && typeof reg === 'object') {

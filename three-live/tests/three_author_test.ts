@@ -272,6 +272,7 @@ function runThreeAuthorTests() {
 
   const hemi = new THREE.HemisphereLight(0xffffff, 0x333333, 0.8);
   scene.add(hemi);
+  scene.add(new THREE.RectAreaLight(0xffffff, 0.5));
 
   const shaderMat = new THREE.ShaderMaterial({
     uniforms: {color: {value: new THREE.Color(0x00ff88)}},
@@ -302,7 +303,8 @@ function runThreeAuthorTests() {
   assert(
     fallbackGlb.byteLength > 100 &&
       warnings.some((w: string) => w.includes('ShaderMaterial')) &&
-      warnings.some((w: string) => w.includes('HemisphereLight')) &&
+      warnings.some((w: string) => w.includes('RectAreaLight')) &&
+      !warnings.some((w: string) => w.includes('HemisphereLight')) &&
       !warnings.some((w: string) => w.includes('IcosahedronGeometry')) &&
       !warnings.some((w: string) => w.includes('CapsuleGeometry')) &&
       !warnings.some((w: string) => w.includes('SpotLight')),

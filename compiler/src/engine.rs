@@ -1159,9 +1159,19 @@ impl ThreeEngine {
                                 .unwrap_or(std::f64::consts::FRAC_PI_3)
                                 as f32;
 
+                            let gnd_val = light_obj
+                                .get(js_string!("ground_color"), &mut self.context)
+                                .unwrap_or(JsValue::undefined());
+                            let ground_color = if gnd_val.is_undefined() || gnd_val.is_null() {
+                                None
+                            } else {
+                                Some(extract_f32_3(&gnd_val, [0.2, 0.2, 0.2], &mut self.context))
+                            };
+
                             rust_lights.push(Light3D {
                                 light_type,
                                 color,
+                                ground_color,
                                 intensity,
                                 position,
                                 direction,

@@ -131,6 +131,7 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
   'PointsMaterial',
   'LineBasicMaterial',
   'LineDashedMaterial',
+  'SpriteMaterial',
   'ShaderMaterial',
   'RawShaderMaterial',
   // Scene Graph & Meshes
@@ -138,6 +139,7 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
   'Group',
   'Mesh',
   'InstancedMesh',
+  'Sprite',
   'Line',
   'LineLoop',
   'LineSegments',
@@ -148,6 +150,7 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
   'DirectionalLight',
   'PointLight',
   'SpotLight',
+  'HemisphereLight',
   'Camera',
   'PerspectiveCamera',
   'Scene',
@@ -177,7 +180,6 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
  * and emit a `TL102` warning.
  */
 export const DEGRADED_ALIAS_SYMBOLS = new Map<string, string>([
-  ['HemisphereLight', 'AmbientLight (loses groundColor sky/ground gradient)'],
   ['RectAreaLight', 'AmbientLight (loses rectangular area emitter)'],
 ]);
 

@@ -34,8 +34,8 @@ export const GUIDED_SYSTEM_PROMPT = [
   '     `THREE.TextGeometry`, and `THREE.CSG.subtract(meshA, meshB)` / `THREE.CSG.union(meshA, meshB)` /',
   '     `THREE.CSG.intersect(meshA, meshB)` (limit CSG inputs to <= 24 segments so triangle count stays < 4096).',
   '   - Procedural Noise & Deterministic PRNG: `THREE.ImprovedNoise` (`noise(x, y, z)`), `THREE.SimplexNoise` (`noise(x, y)`, `noise3d(x, y, z)`, `noise4d(x, y, z, w)`), and `THREE.MathUtils.seededRandom(seed?)` for terrain heightmaps and organic textures.',
-  '   - DO NOT USE degraded or external Three.js classes: `Sprite`, `HemisphereLight`, `RectAreaLight`, `GLTFLoader`, `OrbitControls`.',
-  '3. Supported Materials, Textures & Colors: `MeshStandardMaterial` and `MeshPhysicalMaterial` (`color`, `map`, `normalMap`, `normalScale`,',
+  '   - DO NOT USE degraded or external Three.js classes: `RectAreaLight`, `GLTFLoader`, `OrbitControls`.',
+  '3. Supported Materials, Textures, Sprites & Colors: `MeshStandardMaterial`, `MeshPhysicalMaterial`, and `SpriteMaterial` + `Sprite` (`color`, `map`, `normalMap`, `normalScale`,',
   '   `roughness`, `roughnessMap`, `metalness`, `metalnessMap`, `emissive`, `emissiveIntensity`, `emissiveMap`, `aoMap`, `aoMapIntensity`, `bumpMap`, `bumpScale`,',
   '   `transmission`, `ior`, `thickness`, `attenuationColor`, `attenuationDistance`, `clearcoat`, `clearcoatRoughness`, `iridescence`, `iridescenceIOR`, `sheen`, `sheenColor`, `sheenRoughness`,',
   '   `dispersion`, `opacity`, `transparent`), plus procedural `THREE.DataTexture(data, width, height, THREE.RGBAFormat)` and `THREE.CanvasTexture(canvas)` (`document.createElement("canvas").getContext("2d")`).',
@@ -62,7 +62,7 @@ export const GUIDED_SYSTEM_PROMPT = [
   '     `{ action: "interpolate"|"toggleTransform"|"setProperty"|"toggleVisibility"|"cycleMaterialColor"|"playAnimation"|"stopAnimation"|"sendEvent", target: "<nodeName>", property: "rotation"|"translation"|"scale", to: [x,y,z], duration: 0.6 }`.',
   '6. Scale, Grounding & Camera Framing (avoids TL301–TL307 warnings):',
   '   - Use real-world meters (1 unit = 1m), Y-up (`+Y` up), lowest resting surface near `y = 0`.',
-  '   - Always add `new THREE.AmbientLight(0xffffff, 0.6)` and at least one `THREE.DirectionalLight` or `THREE.PointLight`.',
+  '   - Always add `new THREE.AmbientLight(0xffffff, 0.6)` or `new THREE.HemisphereLight(skyColor, groundColor, intensity)` and at least one `THREE.DirectionalLight` or `THREE.PointLight`.',
   '   - Pull `camera.position.set(x, y, z)` back to distance ~2.2x the full scene bounding radius (including ground/floor planes and peripheral props) and call `camera.lookAt(0, centerY, 0)` so 100% of meshes are inside the camera frustum.',
 ].join('\n');
 

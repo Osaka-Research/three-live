@@ -228,17 +228,23 @@ impl Default for Material3D {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Light3D {
-    pub light_type: String, // "ambient", "directional", "point", "spot"
+    #[serde(alias = "type")]
+    pub light_type: String, // "ambient", "directional", "point", "spot", "hemisphere"
+    #[serde(default = "unit_scale")]
     pub color: [f32; 3],
+    #[serde(default, alias = "groundColor", skip_serializing_if = "Option::is_none")]
+    pub ground_color: Option<[f32; 3]>,
+    #[serde(default = "default_one")]
     pub intensity: f32,
+    #[serde(default)]
     pub position: [f32; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<[f32; 3]>,
     #[serde(default)]
     pub range: f32,
-    #[serde(default)]
+    #[serde(default, alias = "innerConeAngle")]
     pub inner_cone_angle: f32,
-    #[serde(default)]
+    #[serde(default, alias = "outerConeAngle")]
     pub outer_cone_angle: f32,
 }
 

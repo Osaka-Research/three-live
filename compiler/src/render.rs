@@ -211,6 +211,7 @@ fn shade_pbr_ext(
         Light3D {
             light_type: "directional".to_string(),
             color: [1.0, 0.98, 0.95],
+            ground_color: None,
             intensity: 1.35,
             position: [4.0, 7.0, 5.0],
             direction: None,
@@ -221,6 +222,7 @@ fn shade_pbr_ext(
         Light3D {
             light_type: "directional".to_string(),
             color: [0.55, 0.70, 0.95],
+            ground_color: None,
             intensity: 0.55,
             position: [-4.0, 3.0, -3.0],
             direction: None,
@@ -240,6 +242,20 @@ fn shade_pbr_ext(
         if lt == "ambient" {
             for c in 0..3 {
                 lo[c] += diffuse_albedo[c] * light.color[c] * (light.intensity * 0.35);
+            }
+            continue;
+        }
+        if lt == "hemisphere" {
+            let gnd = light.ground_color.unwrap_or([0.2, 0.2, 0.2]);
+            let dir = if dot3(light.position, light.position) > 1e-12 {
+                normalize3(light.position)
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            let w = (0.5 * (dot3(n, dir) + 1.0)).clamp(0.0, 1.0);
+            for c in 0..3 {
+                let irr = gnd[c] + w * (light.color[c] - gnd[c]);
+                lo[c] += diffuse_albedo[c] * irr * (light.intensity * 0.55) * ao;
             }
             continue;
         }
@@ -979,17 +995,58 @@ pub fn render_viewport_rgba(
         if !effective_vis.get(node_idx).copied().unwrap_or(true) {
             continue;
         }
-        let (mesh_idx_opt, base_world, inst_matrices, inst_colors) = if !scene.nodes.is_empty() {
+        let (mesh_idx_opt, mut base_world, inst_matrices, inst_colors) = if !scene.nodes.is_empty()
+        {
             let n = &scene.nodes[node_idx];
-            (
-                n.mesh,
-                world_matrices[node_idx],
-                n.instance_matrices.as_slice(),
-                n.instance_colors.as_slice(),
-            )
+            let mut bw = world_matrices[node_idx];
+            let bb_mode = n
+                .xr_normalized
+                .as_ref()
+                .and_then(|v| v.get("billboard"))
+                .or_else(|| n.xr_traits.as_ref().and_then(|v| v.get("billboard")));
+            let bb_str = match bb_mode {
+                Some(serde_json::Value::String(s)) if !s.is_empty() && s != "false" => {
+                    Some(s.as_str())
+                }
+                Some(serde_json::Value::Bool(true)) => Some("capsule"),
+                _ => None,
+            };
+            if let Some(mode_s) = bb_str {
+                let sx = ((bw[0] * bw[0] + bw[1] * bw[1] + bw[2] * bw[2]).sqrt()).max(1e-6);
+                let sy = ((bw[4] * bw[4] + bw[5] * bw[5] + bw[6] * bw[6]).sqrt()).max(1e-6);
+                let sz = ((bw[8] * bw[8] + bw[9] * bw[9] + bw[10] * bw[10]).sqrt()).max(1e-6);
+                let y_only = mode_s == "y" || mode_s == "cylindrical" || mode_s == "capsule";
+                if y_only {
+                    let dx = eye_pos[0] - bw[12];
+                    let dz = eye_pos[2] - bw[14];
+                    let dl = (dx * dx + dz * dz).sqrt();
+                    let (bx, bz) = if dl > 1e-5 { (dx / dl, dz / dl) } else { (0.0, 1.0) };
+                    bw[0] = bz * sx;
+                    bw[1] = 0.0;
+                    bw[2] = -bx * sx;
+                    bw[4] = 0.0;
+                    bw[5] = sy;
+                    bw[6] = 0.0;
+                    bw[8] = bx * sz;
+                    bw[9] = 0.0;
+                    bw[10] = bz * sz;
+                } else {
+                    bw[0] = view[0] * sx;
+                    bw[1] = view[4] * sx;
+                    bw[2] = view[8] * sx;
+                    bw[4] = view[1] * sy;
+                    bw[5] = view[5] * sy;
+                    bw[6] = view[9] * sy;
+                    bw[8] = view[2] * sz;
+                    bw[9] = view[6] * sz;
+                    bw[10] = view[10] * sz;
+                }
+            }
+            (n.mesh, bw, n.instance_matrices.as_slice(), n.instance_colors.as_slice())
         } else {
             (Some(node_idx), world_matrices[node_idx], &[][..], &[][..])
         };
+        let _ = &mut base_world;
 
         let Some(mesh_idx) = mesh_idx_opt else {
             continue;

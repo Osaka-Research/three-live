@@ -2362,14 +2362,21 @@ export class Object3D {
 
   public clone(recursive: boolean = true): this {
     const c: any =
-      this instanceof Line
-        ? new (this.constructor as any)(
-            (this as any)._sourceGeo || (this as any).geometry,
-            (this as any).material,
-          )
-        : this instanceof Mesh
-          ? new Mesh((this as any).geometry, (this as any).material)
-          : new (this.constructor as any)();
+      typeof (this as any)._cloneCustom === 'function'
+        ? (this as any)._cloneCustom()
+        : this instanceof Line
+          ? new (this.constructor as any)(
+              (this as any)._sourceGeo || (this as any).geometry,
+              (this as any).material,
+            )
+          : this instanceof Mesh
+            ? new Mesh((this as any).geometry, (this as any).material)
+            : new (this.constructor as any)();
+    if (this instanceof Light) {
+      c.color.copy(this.color);
+      c.intensity = this.intensity;
+      if (this instanceof HemisphereLight) c.groundColor.copy(this.groundColor);
+    }
     c.name = this.name;
     c.position.copy(this.position);
     c.quaternion.copy(this.quaternion);
@@ -2535,7 +2542,7 @@ export class InstancedMesh extends Mesh {
 export class Light extends Object3D {
   public color: Color;
   public intensity: number;
-  public type: 'ambient' | 'directional' | 'point' | 'spot';
+  public type: 'ambient' | 'directional' | 'point' | 'spot' | 'hemisphere';
 
   constructor(color: any = 0xffffff, intensity: number = 1) {
     super();
@@ -3222,8 +3229,7 @@ export function getSandboxEngineSrc(): string | null {
 function resolveAllowedUrl(url: string, label: string): string {
   if (!isAllowedSandboxEngineUrl(url)) {
     throw new Error(
-      `SecurityError: Refusing to load ${label} from disallowed URL "${url}". ` +
-        'Only http:, https:, and blob: URLs are permitted.',
+      `SecurityError: Disallowed ${label} URL "${url}" (http:, https:, or blob: required).`,
     );
   }
   return new URL(url, getBaseHref()).href;
@@ -3233,28 +3239,16 @@ function resolveSandboxEngineSrc(): string {
   const src = getSandboxEngineSrc();
   if (!src) {
     throw new Error(
-      'Three-Live could not locate its own bundle URL, which the worker ' +
-        'sandbox needs in order to load the THREE runtime. Set it explicitly, ' +
-        "e.g. ThreeLiveElement.sandboxEngineSrc = new URL('three-live.min.js', " +
-        'import.meta.url).href. Refusing to execute the script, because ' +
-        'unsandboxed host-realm execution is prohibited.',
+      'SecurityError: Could not locate Three-Live bundle URL for worker sandbox; set ThreeLiveElement.sandboxEngineSrc explicitly.',
     );
   }
   return resolveAllowedUrl(src, 'sandbox engine');
 }
 
-/**
- * Overrides the URL of `three-live-sandbox.html` used in `'iframe'` sandbox
- * mode. Pass `null` to derive it automatically alongside `sandboxEngineSrc`.
- */
 export function setSandboxIframeSrc(src: string | null): void {
   getSharedRegistry().sandboxIframeSrc = src;
 }
 
-/**
- * Returns the configured or auto-derived URL of `three-live-sandbox.html`, or
- * `null` if neither `sandboxIframeSrc` nor `sandboxEngineSrc` can be located.
- */
 export function getSandboxIframeSrc(): string | null {
   const configured = getSharedRegistry().sandboxIframeSrc;
   if (configured) return configured;
@@ -3269,28 +3263,16 @@ function resolveSandboxIframeSrc(): string {
   const src = getSandboxIframeSrc();
   if (!src) {
     throw new Error(
-      'Three-Live could not locate three-live-sandbox.html for iframe ' +
-        'sandbox execution. Set ThreeLiveElement.sandboxIframeSrc ' +
-        '(or ThreeLiveElement.sandboxEngineSrc) explicitly.',
+      'SecurityError: Could not locate three-live-sandbox.html; set ThreeLiveElement.sandboxIframeSrc explicitly.',
     );
   }
   return resolveAllowedUrl(src, 'sandbox iframe');
 }
 
-/**
- * Enables or disables client-modified procedural script string compilation
- * (Use Case 1: `executeScript(code)` and inline `<script type="text/three-live">`).
- * Defaults to `false` so only server-generated script URLs (`script-src`) are
- * permitted unless explicitly opted into.
- */
 export function setAllowClientScripts(allow: boolean): void {
   getSharedRegistry().allowClientScripts = allow;
 }
 
-/**
- * Returns whether client-modified procedural script strings (Use Case 1) are
- * currently enabled. Defaults to `false`.
- */
 export function getAllowClientScripts(): boolean {
   return Boolean(getSharedRegistry().allowClientScripts);
 }
@@ -3299,72 +3281,10 @@ function resolveSandboxScriptUrl(scriptUrl: string): string {
   return resolveAllowedUrl(scriptUrl, 'procedural scene script');
 }
 
-// -------------------------------------------------------------------------
-// 7b. Worker sandbox
-// -------------------------------------------------------------------------
-
-/**
- * Capabilities revoked inside the worker (and across its prototype chain)
- * before any author code runs.
- *
- * The worker realm has no DOM, but it does inherit the page's origin, cookies
- * and network authority, so an un-neutered worker is an exfiltration primitive
- * rather than a sandbox. `importScripts` is on this list, which is why
- * revocation must happen *after* the engine bundle is loaded.
- */
-const REVOKED_WORKER_GLOBALS: readonly string[] = [
-  // Exfiltration & network transports.
-  'fetch',
-  'XMLHttpRequest',
-  'WebSocket',
-  'WebSocketStream',
-  'WebTransport',
-  'EventSource',
-  'importScripts',
-  'Request',
-  'Response',
-  'Headers',
-  'navigator', // also removes navigator.sendBeacon & navigator.storage
-  'WorkerNavigator',
-  'WorkerLocation',
-  'RTCPeerConnection',
-  'RTCDataChannel',
-  'FontFace',
-  'FontFaceSet',
-  'fonts', // self.fonts can trigger outbound font network fetches
-  'PerformanceObserver',
-  'ReportingObserver',
-  // Persistence & storage.
-  'indexedDB',
-  'IDBFactory',
-  'caches',
-  'CacheStorage',
-  'Cache',
-  'cookieStore',
-  'StorageManager',
-  'FileSystemHandle',
-  // Realm escape, IPC, and resource amplification.
-  'Worker',
-  'SharedWorker',
-  'ServiceWorker',
-  'ServiceWorkerContainer',
-  'ServiceWorkerRegistration',
-  'registration',
-  'clients',
-  'BroadcastChannel',
-  'MessageChannel',
-  'MessagePort',
-  'createImageBitmap',
-  'OffscreenCanvas',
-  'WebAssembly',
-  'WorkerGlobalScope',
-  'DedicatedWorkerGlobalScope',
-  'trustedTypes',
-  'TrustedTypePolicyFactory',
-  // High-resolution timer sources used to sharpen speculative-execution attacks.
-  'SharedArrayBuffer',
-  'Atomics',
-];
+const REVOKED_WORKER_GLOBALS: readonly string[] =
+  'fetch XMLHttpRequest WebSocket WebSocketStream WebTransport EventSource importScripts Request Response Headers navigator WorkerNavigator WorkerLocation RTCPeerConnection RTCDataChannel FontFace FontFaceSet fonts PerformanceObserver ReportingObserver indexedDB IDBFactory caches CacheStorage Cache cookieStore StorageManager FileSystemHandle Worker SharedWorker ServiceWorker ServiceWorkerContainer ServiceWorkerRegistration registration clients BroadcastChannel MessageChannel MessagePort createImageBitmap OffscreenCanvas WebAssembly WorkerGlobalScope DedicatedWorkerGlobalScope trustedTypes TrustedTypePolicyFactory SharedArrayBuffer Atomics'.split(
+    ' ',
+  );
 
 /** Options controlling the execution capabilities of a generated sandbox worker. */
 export interface SandboxWorkerSourceOptions {
@@ -3470,11 +3390,9 @@ function sandboxWorkerMain(
     nativeImportScripts(scriptUrlToLoad);
   } catch (err) {
     fail(
-      'Sandbox failed to load the Three-Live engine from "' +
+      'Sandbox failed to load "' +
         ENGINE_SRC +
-        '". It must be a same-origin (or CORS-enabled) IIFE bundle such as ' +
-        // tslint:disable-next-line:no-any
-        'three-live.min.js. Underlying error: ' +
+        '" (must be an IIFE bundle like three-live.min.js): ' +
         ((err && (err as any).message) || err),
     );
     return;
@@ -3483,11 +3401,9 @@ function sandboxWorkerMain(
   const THREE = scope.THREE;
   if (!THREE || typeof THREE.Scene !== 'function') {
     fail(
-      'Sandbox loaded "' +
+      'Sandbox "' +
         ENGINE_SRC +
-        '" but it did not install a THREE ' +
-        'namespace. Point sandboxEngineSrc at an IIFE build (three-live.min.js), ' +
-        'not an ES module build.',
+        '" did not install THREE; point sandboxEngineSrc at three-live.min.js.',
     );
     return;
   }
@@ -4084,10 +4000,8 @@ function runSandboxedJob(
 ): Promise<ScriptExecutionHandle | void> {
   if (sandbox === 'worker' && typeof Worker === 'undefined') {
     return reject(
-      'Sandboxed procedural execution requires Web Workers, but Workers are ' +
-        'unavailable in this environment. For host security, Three-Live ' +
-        'prohibits unsandboxed in-process evaluation.',
-      'Security Error: Web Workers unavailable. Script execution aborted.',
+      'SecurityError: Web Workers are unavailable for sandboxed execution.',
+      'Security Error: Web Workers unavailable.',
     );
   }
 
@@ -4097,17 +4011,14 @@ function runSandboxedJob(
       typeof document.createElement !== 'function')
   ) {
     return reject(
-      'Sandboxed iframe execution requires a DOM environment with ' +
-        'document.createElement. Refusing to evaluate in the host realm.',
+      'SecurityError: DOM unavailable for iframe sandbox execution.',
       'Security Error: DOM unavailable for iframe sandbox.',
     );
   }
 
   if (liveSandboxWorkers >= SECURITY_3D_MAX_CONCURRENT_TASKS) {
     return reject(
-      `SecurityError: ${liveSandboxWorkers} sandbox workers are already ` +
-        'running, which meets SECURITY_3D_MAX_CONCURRENT_TASKS ' +
-        `(${SECURITY_3D_MAX_CONCURRENT_TASKS}). Refusing to start another.`,
+      `SecurityError: ${liveSandboxWorkers} workers running, meeting SECURITY_3D_MAX_CONCURRENT_TASKS (${SECURITY_3D_MAX_CONCURRENT_TASKS}).`,
       'Security Error: too many concurrent sandboxed scripts.',
     );
   }
@@ -4230,20 +4141,10 @@ function validateRequestedSandboxMode(
     toast?: string,
   ) => Promise<ScriptExecutionHandle | void>,
 ): Promise<ScriptExecutionHandle | void> | null {
-  if (sandbox === 'none' || sandbox === 'unsafe-host-realm') {
-    return reject(
-      `SecurityError: sandbox="${sandbox}" is prohibited. Sandboxing is ` +
-        'mandatory for live compilation and cannot be bypassed. Use ' +
-        'sandbox="worker" (default) or sandbox="iframe".',
-      `Security Error: sandbox="${sandbox}" is not permitted.`,
-    );
-  }
-
   if (sandbox !== 'worker' && sandbox !== 'iframe') {
     return reject(
-      `SecurityError: Unsupported sandbox mode "${sandbox}". Live ` +
-        'compilation requires sandbox="worker" or sandbox="iframe".',
-      'Security Error: unsupported sandbox mode.',
+      `SecurityError: Unsupported sandbox="${sandbox}"; require "worker" or "iframe".`,
+      `Security Error: sandbox="${sandbox}" is not permitted.`,
     );
   }
   return null;
@@ -4926,16 +4827,22 @@ export class SpotLight extends PointLight {
   }
 }
 
-export class HemisphereLight extends AmbientLight {
+export class HemisphereLight extends Light {
   public groundColor: Color;
   constructor(skyColor?: any, groundColor?: any, intensity?: number) {
-    warnUnsupported('HemisphereLight', 'AmbientLight');
     super(skyColor, intensity);
+    this.type = 'hemisphere';
     this.groundColor = new Color(groundColor ?? 0x444444);
+    this.position.set(0, 1, 0);
   }
 }
 
-export const RectAreaLight = HemisphereLight;
+export class RectAreaLight extends AmbientLight {
+  constructor(color?: any, intensity?: number) {
+    warnUnsupported('RectAreaLight', 'AmbientLight');
+    super(color, intensity);
+  }
+}
 
 const threeExports: Record<string, any> = {
   Vector2,
@@ -5766,6 +5673,12 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           }
         } else if (node instanceof PointLight) {
           lightEntry.range = Math.max(0, fin(node.distance, 0));
+        } else if (node instanceof HemisphereLight) {
+          lightEntry.ground_color = [
+            node.groundColor.r,
+            node.groundColor.g,
+            node.groundColor.b,
+          ];
         }
         lights.push(lightEntry);
       }
@@ -5803,7 +5716,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
               ]
             : message.includes('Controls')
               ? [
-                   'TL106',
+                  'TL106',
                   'Remove THREE.OrbitControls; <three-live camera-controls> and <xr-live> provide built-in camera controls.',
                 ]
               : message.includes('EffectComposer') || message.includes('Pass')
@@ -5816,25 +5729,20 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                       'TL103',
                       "Load external models via <three-live src='...'> or <xr-anchor src='...'>; camera controls and post-processing are managed by the host viewer.",
                     ]
-                  : /THREE\.(?:Points|Line|Sprite)/.test(message)
+                  : /THREE\.(?:Video|Framebuffer)Texture/.test(message)
                     ? [
                         'TL102',
-                        'glTF mesh export requires triangle surface meshes (THREE.Mesh or THREE.InstancedMesh). Replace Points/Sprite with InstancedMesh + SphereGeometry, and replace Line/LineSegments with TubeGeometry or CylinderGeometry.',
+                        'Live DOM video/framebuffer textures cannot run in the headless sandbox; use THREE.CanvasTexture or THREE.DataTexture instead.',
                       ]
-                    : /THREE\.(?:Canvas|Data|Video|Framebuffer)Texture/.test(message)
+                    : message.includes('larger than')
                       ? [
-                          'TL102',
-                          'Procedural DOM/pixel textures cannot run in the headless sandbox; use MeshPhysicalMaterial PBR properties, vertex colors, or THREE.TextGeometry / userData.text.',
+                          'TL105',
+                          'Keep per-node userData.xr metadata under 15 KB.',
                         ]
-                      : message.includes('larger than')
-                        ? [
-                            'TL105',
-                            'Keep per-node userData.xr metadata under 15 KB.',
-                          ]
-                        : [
-                            'TL102',
-                            'Use supported geometries (Box, Sphere, Cylinder, Cone, Torus, TorusKnot, Plane, Lathe, Tube, Extrude, Shape, TextGeometry, CSG, or BufferGeometry) and DirectionalLight / PointLight / AmbientLight.',
-                          ];
+                      : [
+                          'TL102',
+                          'Use supported geometries (Box, Sphere, Cylinder, Cone, Torus, TorusKnot, Plane, Lathe, Tube, Extrude, Shape, TextGeometry, CSG, or BufferGeometry) and DirectionalLight / PointLight / SpotLight / AmbientLight / HemisphereLight.',
+                        ];
       pushDiag(code, message, hint);
     }
 

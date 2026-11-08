@@ -181,8 +181,9 @@ export {
 // =========================================================================
 
 export interface LightGpu {
-  type: 'ambient' | 'directional' | 'point' | 'spot';
+  type: 'ambient' | 'directional' | 'point' | 'spot' | 'hemisphere';
   color: [number, number, number];
+  groundColor?: [number, number, number];
   intensity: number;
   position?: [number, number, number];
   direction?: [number, number, number];
@@ -418,6 +419,7 @@ in vec4 vInstTint;
 uniform float uMetallic,uRoughness,uEmissive,uEnvIntensity,uExposure;
 uniform vec2 uClearcoat;
 uniform vec3 uCameraPos,uAmbientColor,uEmissiveFactor;
+uniform mat3 uHemi;
 uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap,uEmissiveTexture;
 uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap,uHasEmissiveTexture;
 uniform float uNormalScale,uOcclusionStrength;
@@ -428,104 +430,66 @@ uniform int uToneMapping,uNumDirLights,uNumPointLights,uSectionEnabled;
 uniform vec3 uDirLightDir[2],uDirLightColor[2],uPointLightPos[2],uPointLightColor[2],uPointLightSpotDir[2];
 uniform vec2 uPointLightSpotCone[2];
 out vec4 fragColor;
-
 vec2 envBRDF(float r,float n){
-vec4 c0=vec4(-1.0,-0.0275,-0.572,0.022),c1=vec4(1.0,0.0425,1.04,-0.04);
-vec4 rv=r*c0+c1;
+vec4 c0=vec4(-1.0,-0.0275,-0.572,0.022),c1=vec4(1.0,0.0425,1.04,-0.04),rv=r*c0+c1;
 float a=min(rv.x*rv.x,exp2(-9.28*n))*rv.x+rv.y;
 return vec2(-1.04,1.04)*a+rv.zw;
 }
-
 vec3 F_SchlickRoughness(vec3 F0,float r,float n){
 return F0+(max(vec3(1.0-r),F0)-F0)*pow(clamp(1.0-n,0.0,1.0),5.0);
 }
-
 vec3 getStudioRadiance(vec3 R,float r){
-vec3 kd=normalize(vec3(0.0,1.0,0.35));
+vec3 kd=normalize(vec3(0.0,1.0,0.35)),fd=normalize(vec3(-0.85,0.45,-0.35));
 float ki=pow(max(dot(R,kd),0.0),mix(96.0,1.5,r))*mix(2.4,0.5,r);
-vec3 fd=normalize(vec3(-0.85,0.45,-0.35));
 float fi=pow(max(dot(R,fd),0.0),mix(36.0,1.2,r))*mix(1.3,0.35,r);
 float ri=pow(clamp(1.0-abs(R.y),0.0,1.0),3.5)*mix(0.55,0.22,r);
-vec3 ag=mix(vec3(0.06,0.06,0.08),vec3(0.48,0.50,0.55),R.y*0.5+0.5);
-return ag+vec3(1.0,0.98,0.94)*ki+vec3(0.85,0.92,1.0)*fi+vec3(0.65,0.72,0.85)*ri;
+return mix(vec3(0.06,0.06,0.08),vec3(0.48,0.50,0.55),R.y*0.5+0.5)+vec3(1.0,0.98,0.94)*ki+vec3(0.85,0.92,1.0)*fi+vec3(0.65,0.72,0.85)*ri;
 }
-
-vec3 perturbNormal(vec3 N,vec3 V,vec2 uv,sampler2D normalMap,float scale){
-vec3 mapNormal=texture(normalMap,uv).xyz*2.0-1.0;
-mapNormal.xy*=scale;
-vec3 dp1=dFdx(vWorldPos);
-vec3 dp2=dFdy(vWorldPos);
-vec2 duv1=dFdx(uv);
-vec2 duv2=dFdy(uv);
-vec3 dp2perp=cross(dp2,N);
-vec3 dp1perp=cross(N,dp1);
-vec3 T=dp2perp*duv1.x+dp1perp*duv2.x;
-vec3 B=dp2perp*duv1.y+dp1perp*duv2.y;
-float invmax=inversesqrt(max(dot(T,T),dot(B,B)));
-return normalize(mat3(T*invmax,B*invmax,N)*normalize(mapNormal));
+vec3 perturbNormal(vec3 N,vec3 V,vec2 uv,sampler2D m,float s){
+vec3 q=texture(m,uv).xyz*2.0-1.0;q.xy*=s;
+vec3 p1=dFdx(vWorldPos),p2=dFdy(vWorldPos),c2=cross(p2,N),c1=cross(N,p1);
+vec2 u1=dFdx(uv),u2=dFdy(uv);
+vec3 T=c2*u1.x+c1*u2.x,B=c2*u1.y+c1*u2.y;
+float k=inversesqrt(max(dot(T,T),dot(B,B)));
+return normalize(mat3(T*k,B*k,N)*normalize(q));
 }
-
 vec2 equirectangularUV(vec3 dir){
 vec3 d=normalize(dir);
-float u=atan(d.z,d.x)*0.15915494309+0.5;
-float v=asin(clamp(d.y,-1.0,1.0))*0.31830988618+0.5;
-return vec2(u,1.0-v);
+return vec2(atan(d.z,d.x)*0.15915494309+0.5,0.5-asin(clamp(d.y,-1.0,1.0))*0.31830988618);
 }
-
-vec3 neutralToneMapping(vec3 color){
-const float startCompression=0.76;
-const float desaturation=0.15;
-float x=min(color.r,min(color.g,color.b));
-float offset=x<0.08?x-6.25*x*x:0.04;
-color-=offset;
-float peak=max(color.r,max(color.g,color.b));
-if(peak<startCompression)return color;
-const float d=1.0-startCompression;
-float newPeak=1.0-d*d/(peak+d-startCompression);
-color*=newPeak/peak;
-float g=1.0-1.0/(desaturation*(peak-newPeak)+1.0);
-return mix(color,newPeak*vec3(1.0),g);
+vec3 neutralToneMapping(vec3 c){
+float x=min(c.r,min(c.g,c.b));
+c-=x<0.08?x-6.25*x*x:0.04;
+float p=max(c.r,max(c.g,c.b));
+if(p<0.76)return c;
+float n=1.0-0.0576/(p-0.52);
+c*=n/p;
+return mix(c,vec3(n),1.0-1.0/(0.15*(p-n)+1.0));
 }
-
-vec3 acesToneMapping(vec3 color){
-color*=0.6;
-return clamp((color*(2.51*color+0.03))/(color*(2.43*color+0.59)+0.14),0.0,1.0);
+vec3 acesToneMapping(vec3 c){
+c*=0.6;return clamp((c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14),0.0,1.0);
 }
-
-vec3 agxToneMapping(vec3 color){
-color=max(color,vec3(0.0));
-vec3 inset=vec3(
-0.84247906*color.r+0.0784336*color.g+0.07922375*color.b,
-0.04232824*color.r+0.87846864*color.g+0.07916613*color.b,
-0.04237565*color.r+0.0784336*color.g+0.87914297*color.b);
-vec3 ev=clamp((log2(max(inset,vec3(1e-6)))+12.47393)/16.5,0.0,1.0);
-vec3 x2=ev*ev;
-vec3 x4=x2*x2;
-vec3 s=15.5*x4*x2-40.14*x4*ev+31.96*x4-6.868*x2*ev+0.4298*x2+0.1191*ev-0.00232;
-vec3 outset=vec3(
-1.196879*s.r-0.09802088*s.g-0.09902974*s.b,
--0.05289685*s.r+1.15190313*s.g-0.09896118*s.b,
--0.05297164*s.r-0.09804345*s.g+1.15107367*s.b);
-return clamp(pow(max(outset,vec3(0.0)),vec3(2.2)),0.0,1.0);
+vec3 agxToneMapping(vec3 c){
+c=max(c,vec3(0.0));
+vec3 i=mat3(0.84247906,0.04232824,0.04237565,0.0784336,0.87846864,0.0784336,0.07922375,0.07916613,0.87914297)*c;
+vec3 e=clamp((log2(max(i,vec3(1e-6)))+12.47393)/16.5,0.0,1.0),x2=e*e,x4=x2*x2;
+vec3 s=15.5*x4*x2-40.14*x4*e+31.96*x4-6.868*x2*e+0.4298*x2+0.1191*e-0.00232;
+vec3 o=mat3(1.196879,-0.05289685,-0.05297164,-0.09802088,1.15190313,-0.09804345,-0.09902974,-0.09896118,1.15107367)*s;
+return clamp(pow(max(o,vec3(0.0)),vec3(2.2)),0.0,1.0);
 }
-
-vec3 applyToneMapping(vec3 color,int mode){
-if(mode==0)return neutralToneMapping(color);
-if(mode==1)return color/(color+vec3(1.0));
-if(mode==3)return acesToneMapping(color);
-if(mode==4)return agxToneMapping(color);
-return color;
+vec3 applyToneMapping(vec3 c,int m){
+return m==0?neutralToneMapping(c):m==1?c/(c+vec3(1.0)):m==3?acesToneMapping(c):m==4?agxToneMapping(c):c;
 }
-
-vec3 evalLight(vec3 L,vec3 V,vec3 N,vec3 base,float specExp,float specWeight){
-float NoH=max(dot(N,normalize(L+V)),0.0);
-return base*max(dot(N,L),0.0)*0.75+vec3(pow(NoH,specExp)*specWeight+uClearcoat.x*pow(NoH,mix(64.0,512.0,1.0-uClearcoat.y))*0.35);
+vec3 evalLight(vec3 L,vec3 V,vec3 N,vec3 b,float e,float w){
+float h=max(dot(N,normalize(L+V)),0.0);
+return b*max(dot(N,L),0.0)*0.75+vec3(pow(h,e)*w+uClearcoat.x*pow(h,mix(64.0,512.0,1.0-uClearcoat.y))*0.35);
 }
 
 void main(){
 if(uSectionEnabled==1&&dot(vWorldPos,uSectionPlane.xyz)>uSectionPlane.w)discard;
 vec4 base=uBaseColor;
 if(uHasTexture==1)base*=texture(uBaseColorTexture,vUV);
+if(base.a<0.004)discard;
 vec3 em=uHasEmissiveTexture==1?uEmissiveFactor*texture(uEmissiveTexture,vUV).rgb:uEmissiveFactor;
 if(length(vNormal)<1e-4&&uHasTexture==1){
 vec3 unlit=base.rgb+em+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
@@ -589,6 +553,7 @@ envDiffuse=mix(vec3(0.10,0.10,0.12),vec3(0.52,0.54,0.58),N.y*0.5+0.5);
 }
 
 vec3 kD=(vec3(1.0)-F)*(1.0-metallic);
+directLight+=kD*base.rgb*mix(uHemi[1],uHemi[0],dot(N,uHemi[2])*0.5+0.5)*occ;
 vec3 diffuseIBL=kD*base.rgb*(uAmbientColor+envDiffuse*0.5)*occ;
 vec3 color=directLight+(diffuseIBL+specularIBL)*uEnvIntensity+em+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
 if(uClearcoat.x>0.0){
@@ -726,6 +691,7 @@ const RENDER_UNIFORMS = [
   'uEnvironmentMap',
   'uHasEnvironmentMap',
   'uAmbientColor',
+  'uHemi',
   'uNumDirLights',
   'uDirLightDir',
   'uDirLightColor',
@@ -1241,6 +1207,7 @@ function buildGpuSceneUnchecked(
       lights.push({
         ...rl,
         type: rl.type || rl.light_type || 'point',
+        groundColor: rl.groundColor ?? rl.ground_color,
         innerConeAngle: rl.innerConeAngle ?? rl.inner_cone_angle,
         outerConeAngle: rl.outerConeAngle ?? rl.outer_cone_angle,
       });
@@ -2385,6 +2352,8 @@ export class ThreeView {
   ): void {
     const gl = this.gl;
     let amb = [0.28, 0.28, 0.28];
+    const hemi = [0, 0, 0, 0, 0, 0, 0, 1, 0];
+    let hasHemi = false;
     const dirDirs: number[] = [];
     const dirCols: number[] = [];
     const ptPositions: number[] = [];
@@ -2397,6 +2366,21 @@ export class ThreeView {
       const intensity = l.intensity !== undefined ? l.intensity : 1.0;
       if (l.type === 'ambient') {
         amb = [col[0] * intensity, col[1] * intensity, col[2] * intensity];
+      } else if (l.type === 'hemisphere') {
+        hasHemi = true;
+        const gc = l.groundColor || [0.2, 0.2, 0.2];
+        const s = intensity * 0.65;
+        for (let k = 0; k < 3; k++) {
+          hemi[k] += col[k] * s;
+          hemi[k + 3] += gc[k] * s;
+        }
+        const p = l.position || [0, 1, 0];
+        const pl = Math.hypot(p[0], p[1], p[2]);
+        if (pl > 1e-5) {
+          hemi[6] = p[0] / pl;
+          hemi[7] = p[1] / pl;
+          hemi[8] = p[2] / pl;
+        }
       } else if (l.type === 'directional' && dirDirs.length < 6) {
         const d = l.direction || [0.5, 1.0, 0.8];
         dirDirs.push(d[0], d[1], d[2]);
@@ -2425,12 +2409,13 @@ export class ThreeView {
       }
     }
 
-    if (dirDirs.length === 0) {
+    if (dirDirs.length === 0 && !hasHemi) {
       dirDirs.push(0.5, 1.0, 0.8);
       dirCols.push(1.0, 1.0, 1.0);
     }
 
     gl.uniform3fv(u.uAmbientColor, amb);
+    if (u.uHemi) gl.uniformMatrix3fv(u.uHemi, false, hemi);
     gl.uniform1i(u.uNumDirLights, dirDirs.length / 3);
     if (dirDirs.length > 0) {
       gl.uniform3fv(u.uDirLightDir, dirDirs);
@@ -4004,6 +3989,38 @@ export class ThreeView {
           this.modelMatrix.set(mesh.transform);
         } else {
           mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);
+          const bb =
+            !xrOverride &&
+            (mesh.extras?.xr?.billboard ?? (mesh as any).userData?.xr?.billboard);
+          if (bb) {
+            const m = this.modelMatrix,
+              sx = Math.hypot(m[0], m[1], m[2]) || 1,
+              sy = Math.hypot(m[4], m[5], m[6]) || 1,
+              sz = Math.hypot(m[8], m[9], m[10]) || 1,
+              yOnly = bb === 'y' || bb === 'cylindrical' || bb === 'capsule',
+              dx = eyeX - m[12],
+              dz = eyeZ - m[14],
+              dl = Math.hypot(dx, dz),
+              bx = dl > 1e-5 ? dx / dl : 0,
+              bz = dl > 1e-5 ? dz / dl : 1;
+            m.set(
+              yOnly
+                ? [bz * sx, 0, -bx * sx, 0, 0, sy, 0, 0, bx * sz, 0, bz * sz]
+                : [
+                    activeView[0] * sx,
+                    activeView[4] * sx,
+                    activeView[8] * sx,
+                    0,
+                    activeView[1] * sy,
+                    activeView[5] * sy,
+                    activeView[9] * sy,
+                    0,
+                    activeView[2] * sz,
+                    activeView[6] * sz,
+                    activeView[10] * sz,
+                  ],
+            );
+          }
         }
         mat4Multiply(this.mvpMatrix, vp, this.modelMatrix);
         mat3NormalFromMat4(mesh.normalMatrix, this.modelMatrix);

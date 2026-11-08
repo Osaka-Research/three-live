@@ -784,6 +784,131 @@ function runProceduralTests(): void {
     'sceneToUSDZ wires Roughness, Metallic, Normal, Emissive, and Occlusion UsdUVTexture channels',
   );
 
+  // =========================================================================
+  // 14. A5: True HemisphereLight(skyColor, groundColor, intensity) & Sprite
+  // =========================================================================
+  clearAuthorWarnings();
+  const hemiScene = new Scene();
+  const hemi = new THREE.HemisphereLight(0x2288ff, 0xff5511, 1.4);
+  hemi.position.set(0, 5, 0);
+  const hemiClone = hemi.clone();
+  assert(
+    getAuthorWarnings().length === 0 &&
+      hemi.type === 'hemisphere' &&
+      hemiClone.type === 'hemisphere' &&
+      Math.abs(hemiClone.groundColor.r - hemi.groundColor.r) < 1e-6 &&
+      Math.abs(hemiClone.intensity - 1.4) < 1e-6,
+    'HemisphereLight emits zero degraded-alias warnings and clone() preserves groundColor + intensity',
+  );
+  hemiScene.add(hemi);
+
+  const badgeCanvas: any = document.createElement('canvas');
+  badgeCanvas.width = 16;
+  badgeCanvas.height = 16;
+  const bCtx = badgeCanvas.getContext('2d')!;
+  bCtx.fillStyle = '#00e5ff';
+  bCtx.fillRect(0, 0, 16, 16);
+  const badgeTex = new THREE.CanvasTexture(badgeCanvas);
+  const spriteMat = new THREE.SpriteMaterial({
+    map: badgeTex,
+    color: 0xffffff,
+    opacity: 0.85,
+    rotation: Math.PI / 2,
+  });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.center.set(0, 0);
+  sprite.scale.set(0.6, 0.3, 1);
+  sprite.position.set(0, 1.5, 0);
+  hemiScene.add(sprite);
+
+  const spriteOptOut = new THREE.Sprite({color: 0xffaa00});
+  spriteOptOut.userData.xr = {billboard: false};
+  spriteOptOut.position.set(1, 1.5, 0);
+  hemiScene.add(spriteOptOut);
+
+  const hemiC3d = sceneToCanvas3D(hemiScene);
+  const spriteClone = sprite.clone();
+  hemiScene.add(spriteClone);
+  const hemiC3d2 = sceneToCanvas3D(hemiScene);
+  assert(
+    getAuthorWarnings().length === 0,
+    'Sprite and SpriteMaterial emit zero degraded-alias or unsupported warnings',
+  );
+  const exportedHemi = (hemiC3d.lights || []).find(
+    (l: any) => l.type === 'hemisphere',
+  ) as any;
+  const assetHemi = (hemiC3d.gltf.asset?.extras?.lights || []).find(
+    (l: any) => l.type === 'hemisphere',
+  );
+  assert(
+    Boolean(exportedHemi) &&
+      Array.isArray(exportedHemi.groundColor) &&
+      exportedHemi.groundColor[0] > exportedHemi.groundColor[2] &&
+      exportedHemi.color[2] > exportedHemi.color[0] &&
+      Boolean(assetHemi?.groundColor),
+    'sceneToCanvas3D preserves HemisphereLight sky color and groundColor in lights and gltf.asset.extras.lights',
+  );
+  assert(
+    hemiC3d.gltf.materials[0]?.alphaMode === 'BLEND',
+    'SpriteMaterial with transparency exports alphaMode: "BLEND" in glTF material',
+  );
+  const spriteNode0 = hemiC3d.gltf.nodes.find((n: any) => n.name === sprite.name);
+  const optOutNode = hemiC3d.gltf.nodes.find(
+    (n: any) => n.name === spriteOptOut.name,
+  );
+  assert(
+    spriteNode0?.extras?.xr?.billboard === 'spherical' &&
+      optOutNode?.extras?.xr?.billboard === undefined &&
+      sprite.name !== spriteClone.name &&
+      hemiC3d2.gltf.nodes.filter((n: any) => n.mesh !== undefined).length === 3,
+    'Sprite defaults to spherical billboard, supports billboard:false opt-out, and assigns distinct auto-names on clone()',
+  );
+  // Verify center=(0,0) + rotation=PI/2 transformed vertices into x in [-1,0], y in [0,1]
+  sprite.geometry.computeBoundingBox();
+  const sbb = sprite.geometry.boundingBox!;
+  assert(
+    Math.abs(sbb.min.x - -1) < 1e-5 &&
+      Math.abs(sbb.max.x - 0) < 1e-5 &&
+      Math.abs(sbb.min.y - 0) < 1e-5 &&
+      Math.abs(sbb.max.y - 1) < 1e-5,
+    'Sprite._bakeAuthorGeometry shifts pivot by center=(0,0) and rotates quad by SpriteMaterial.rotation',
+  );
+
+  const hemiUsdzText = new TextDecoder().decode(sceneToUSDZ(hemiScene));
+  assert(
+    hemiUsdzText.includes('string billboard = "spherical"'),
+    'sceneToUSDZ exports spherical billboard trait on Sprite nodes',
+  );
+
+  assert(
+    Object.isFrozen(THREE.Sprite.prototype) &&
+      Object.isFrozen(THREE.SpriteMaterial.prototype),
+    'Sprite.prototype and SpriteMaterial.prototype are frozen against sandbox pollution',
+  );
+  const spriteMatClone = spriteMat.clone();
+  assert(
+    spriteMatClone.isSpriteMaterial &&
+      Math.abs(spriteMatClone.rotation - Math.PI / 2) < 1e-6 &&
+      Math.abs(spriteMatClone.opacity - 0.85) < 1e-6,
+    'SpriteMaterial.clone() preserves rotation, opacity, and isSpriteMaterial',
+  );
+  const preBakeSprite = new THREE.Sprite();
+  preBakeSprite.center.set(0, 0);
+  const preBakeBox = new THREE.Box3().setFromObject(preBakeSprite);
+  assert(
+    Math.abs(preBakeBox.min.x) < 1e-5 && Math.abs(preBakeBox.max.x - 1) < 1e-5,
+    'Box3.setFromObject(sprite) bakes Sprite.center pivot offset before measuring bounds',
+  );
+
+  // RectAreaLight still emits degraded-alias warning
+  clearAuthorWarnings();
+  const _rect = new THREE.RectAreaLight(0xffffff, 1);
+  assert(
+    Boolean(_rect) &&
+      getAuthorWarnings().some((w) => w.includes('RectAreaLight')),
+    'RectAreaLight continues to emit degraded-alias warning',
+  );
+
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
   if (failed > 0) {
     process.exit(1);

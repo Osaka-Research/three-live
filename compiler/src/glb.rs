@@ -395,6 +395,9 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             "pbrMetallicRoughness": pbr,
             "doubleSided": mat.double_sided,
         });
+        if sanitize_finite(mat.base_color[3], 1.0) < 1.0 - 1e-4 {
+            mat_json["alphaMode"] = json!("BLEND");
+        }
 
         if let Some(norm_idx) = norm_idx_opt {
             let ns = sanitize_finite(mat.normal_scale, 1.0).max(0.0);
@@ -1043,6 +1046,9 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
         "scene": 0,
         "scenes": [scene_obj],
     });
+    if !scene.lights.is_empty() {
+        gltf_json["asset"]["extras"] = json!({ "lights": scene.lights });
+    }
 
     {
         let root = gltf_json
@@ -1515,10 +1521,13 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
         }
     }
 
+    let lights: Vec<crate::scene::Light3D> =
+        serde_json::from_value(gltf["asset"]["extras"]["lights"].clone()).unwrap_or_default();
+
     Ok(SceneGraph {
         meshes,
         materials,
-        lights: Vec::new(),
+        lights,
         camera: None,
         interactivity: gltf["extensions"]["KHR_interactivity"]
             .as_object()

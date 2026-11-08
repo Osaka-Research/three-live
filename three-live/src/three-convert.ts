@@ -579,6 +579,7 @@ function serializeScene(
       name: m.name || '',
       pbrMetallicRoughness: pbr,
       doubleSided: m.side === 2 || Boolean(m.doubleSided),
+      ...(opacity < 1 || m.transparent ? {alphaMode: 'BLEND'} : {}),
       ...(normTex ? {normalTexture: normTex} : {}),
       ...(emTex ? {emissiveTexture: emTex} : {}),
       ...(aoTex ? {occlusionTexture: aoTex} : {}),
@@ -724,7 +725,15 @@ function serializeScene(
             }
           : node.type === 'point'
             ? {range: Math.max(0, finUsd((node as any).distance, 0))}
-            : {}),
+            : node.type === 'hemisphere' && (node as any).groundColor
+              ? {
+                  groundColor: [
+                    (node as any).groundColor.r,
+                    (node as any).groundColor.g,
+                    (node as any).groundColor.b,
+                  ],
+                }
+              : {}),
       });
     }
   });
@@ -1213,6 +1222,7 @@ function serializeScene(
       generator: 'ThreeLiveConvert',
       extras: {
         environmentIntensity: scene.environmentIntensity,
+        ...(lights.length > 0 ? {lights} : {}),
       },
     },
     scenes: [{nodes: rootNodeIndices}],
