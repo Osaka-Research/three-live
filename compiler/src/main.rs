@@ -14,10 +14,14 @@
 
 //! Standalone CLI for Three.js / GLB / USDZ compilation and inspection.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
-use std::path::PathBuf;
+use std::io::{BufRead, Write};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+use three_live_compiler::gym::{
+    GymEpisodeFile, GymObserveOptions, GymRecordedStep, GymSession, GymStepOutput,
+};
 use three_live_compiler::{
     build_validation_report, compute_node_world_aabbs, compute_node_world_matrices,
     encode_gif_frames, encode_png_rgba, evaluate_temporal_keyframes, extract_and_lint_html,
@@ -206,6 +210,242 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Play a scene closed-loop, step by step, like a reinforcement-learning environment
+    /// (the CLI form of the three_live_gym_* MCP tools)
+    Gym {
+        #[command(subcommand)]
+        command: GymCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum GymCommands {
+    /// Start an episode, save it to a session file, and print the t = 0 observation as JSON
+    Reset {
+        /// Input file path (.js, .html, or .glb)
+        input: PathBuf,
+
+        /// Session file to create (holds the scene and every step, so each call can resume)
+        #[arg(long)]
+        session: PathBuf,
+
+        /// Only report these node names (comma-separated; default all, at most 64)
+        #[arg(long, value_delimiter = ',')]
+        watch: Vec<String>,
+
+        #[command(flatten)]
+        frame: GymFrameArgs,
+    },
+
+    /// Apply actions, advance the simulation, print the observation as JSON, and record the
+    /// step in the session file
+    Step {
+        /// Session file from `gym reset`
+        #[arg(long)]
+        session: PathBuf,
+
+        /// JSON array of actions; `at` is a delay in seconds from the start of this step
+        /// (e.g. '[{"type":"moveCharacter","direction":[1,0,0],"jump":true}]')
+        #[arg(long, default_value = "[]")]
+        actions: String,
+
+        /// 60 Hz ticks to advance (1..600)
+        #[arg(long, default_value_t = 30)]
+        ticks: usize,
+
+        /// Override the session's watch list for this observation (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        watch: Option<Vec<String>>,
+
+        #[command(flatten)]
+        frame: GymFrameArgs,
+    },
+
+    /// Interactive mode: print the t = 0 observation, then read one JSON step per stdin line
+    /// ({"actions": [...], "ticks": 30, "watch": [...], "frame": "out.png"}) and print one
+    /// observation (or {"error": ...}) per line
+    Play {
+        /// Input file path (.js, .html, or .glb)
+        input: PathBuf,
+
+        /// Only report these node names (comma-separated; default all, at most 64)
+        #[arg(long, value_delimiter = ',')]
+        watch: Vec<String>,
+
+        /// Viewport for per-step "frame" renders
+        #[arg(long, value_enum, default_value_t = CliViewMode::Camera)]
+        view: CliViewMode,
+
+        /// Frame width in pixels
+        #[arg(long, default_value_t = 384)]
+        width: u32,
+
+        /// Frame height in pixels
+        #[arg(long, default_value_t = 288)]
+        height: u32,
+    },
+}
+
+#[derive(Args)]
+struct GymFrameArgs {
+    /// Also render the observation to this PNG file
+    #[arg(long)]
+    frame: Option<PathBuf>,
+
+    /// Viewport for --frame
+    #[arg(long, value_enum, default_value_t = CliViewMode::Camera)]
+    view: CliViewMode,
+
+    /// Frame width in pixels
+    #[arg(long, default_value_t = 384)]
+    width: u32,
+
+    /// Frame height in pixels
+    #[arg(long, default_value_t = 288)]
+    height: u32,
+}
+
+impl GymFrameArgs {
+    fn options(&self, watch: Vec<String>) -> GymObserveOptions {
+        GymObserveOptions {
+            watch,
+            frame: self.frame.as_ref().map(|_| gym_frame_spec(self.view, self.width, self.height)),
+        }
+    }
+}
+
+fn gym_frame_spec(view: CliViewMode, width: u32, height: u32) -> (RenderViewMode, u32, u32) {
+    (view.into(), width.clamp(64, 2048), height.clamp(64, 2048))
+}
+
+fn gym_fail(message: impl std::fmt::Display) -> ! {
+    eprintln!("{}", message);
+    std::process::exit(1);
+}
+
+/// Writes `out`'s frame (if any) to `frame_path` and returns the observation as JSON.
+fn gym_output_json(
+    out: GymStepOutput,
+    frame_path: Option<&Path>,
+) -> Result<serde_json::Value, String> {
+    let mut value = serde_json::to_value(&out.observation).map_err(|e| e.to_string())?;
+    if let (Some(png), Some(path)) = (out.frame_png, frame_path) {
+        fs::write(path, &png).map_err(|e| format!("Error writing frame {:?}: {}", path, e))?;
+        value["frame"] = serde_json::json!(path.to_string_lossy());
+    }
+    Ok(value)
+}
+
+/// Saves the session file atomically (write a sibling temp file, then rename).
+fn gym_save_session(path: &Path, file: &GymEpisodeFile) -> Result<(), String> {
+    let text = serde_json::to_string(file).map_err(|e| e.to_string())?;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    fs::write(&tmp, text).map_err(|e| format!("Error writing session {:?}: {}", tmp, e))?;
+    fs::rename(&tmp, path).map_err(|e| format!("Error saving session {:?}: {}", path, e))
+}
+
+fn gym_read_input(input: &Path) -> (Vec<u8>, bool) {
+    let bytes = fs::read(input)
+        .unwrap_or_else(|e| gym_fail(format!("Error reading input file {:?}: {}", input, e)));
+    let is_glb = bytes.len() >= 4 && &bytes[0..4] == b"glTF";
+    (bytes, is_glb)
+}
+
+fn run_gym(command: GymCommands) {
+    match command {
+        GymCommands::Reset { input, session, watch, frame } => {
+            let (bytes, is_glb) = gym_read_input(&input);
+            let file = GymEpisodeFile::new(
+                &bytes,
+                is_glb,
+                Some(input.to_string_lossy().to_string()),
+                watch.clone(),
+            )
+            .unwrap_or_else(|e| gym_fail(e));
+            let (_, out) = GymSession::reset(&bytes, is_glb, &frame.options(watch))
+                .unwrap_or_else(|e| gym_fail(format!("Simulation error: {}", e)));
+            let value =
+                gym_output_json(out, frame.frame.as_deref()).unwrap_or_else(|e| gym_fail(e));
+            gym_save_session(&session, &file).unwrap_or_else(|e| gym_fail(e));
+            println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+        }
+        GymCommands::Step { session, actions, ticks, watch, frame } => {
+            let text = fs::read_to_string(&session).unwrap_or_else(|e| {
+                gym_fail(format!(
+                    "Error reading session {:?}: {} (create one with `three-live-cli gym reset`)",
+                    session, e
+                ))
+            });
+            let mut file = GymEpisodeFile::from_json(&text).unwrap_or_else(|e| gym_fail(e));
+            let actions: Vec<SimAction> = serde_json::from_str(&actions)
+                .unwrap_or_else(|e| gym_fail(format!("Error parsing --actions JSON: {}", e)));
+            let watch = watch.unwrap_or_else(|| file.watch.clone());
+            let quiet = GymObserveOptions { watch: watch.clone(), frame: None };
+            let (mut sim, _) = file.replay(&quiet).unwrap_or_else(|e| gym_fail(e));
+            let out =
+                sim.step(&actions, ticks, &frame.options(watch)).unwrap_or_else(|e| gym_fail(e));
+            let value =
+                gym_output_json(out, frame.frame.as_deref()).unwrap_or_else(|e| gym_fail(e));
+            file.steps.push(GymRecordedStep { actions, ticks });
+            gym_save_session(&session, &file).unwrap_or_else(|e| gym_fail(e));
+            println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+        }
+        GymCommands::Play { input, watch, view, width, height } => {
+            let (bytes, is_glb) = gym_read_input(&input);
+            let base = GymObserveOptions { watch: watch.clone(), frame: None };
+            let (mut sim, out) = GymSession::reset(&bytes, is_glb, &base)
+                .unwrap_or_else(|e| gym_fail(format!("Simulation error: {}", e)));
+            let stdout = std::io::stdout();
+            let mut w = stdout.lock();
+            let emit = |w: &mut std::io::StdoutLock<'_>, v: serde_json::Value| {
+                let _ = writeln!(w, "{}", v);
+                let _ = w.flush();
+            };
+            emit(&mut w, gym_output_json(out, None).unwrap_or_else(|e| gym_fail(e)));
+            for line in std::io::stdin().lock().lines() {
+                let Ok(line) = line else { break };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let result = (|| -> Result<serde_json::Value, String> {
+                    let req: serde_json::Value =
+                        serde_json::from_str(&line).map_err(|e| format!("Invalid JSON: {}", e))?;
+                    let actions: Vec<SimAction> = match req.get("actions") {
+                        None | Some(serde_json::Value::Null) => Vec::new(),
+                        Some(v) => serde_json::from_value(v.clone())
+                            .map_err(|e| format!("Invalid `actions`: {}", e))?,
+                    };
+                    let ticks = match req.get("ticks") {
+                        None | Some(serde_json::Value::Null) => 30,
+                        Some(v) => v
+                            .as_u64()
+                            .ok_or_else(|| "`ticks` must be a positive integer.".to_string())?
+                            as usize,
+                    };
+                    let watch = match req.get("watch").and_then(|v| v.as_array()) {
+                        Some(a) => {
+                            a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
+                        }
+                        None => watch.clone(),
+                    };
+                    let frame_path = req.get("frame").and_then(|v| v.as_str()).map(PathBuf::from);
+                    let opts = GymObserveOptions {
+                        watch,
+                        frame: frame_path.as_ref().map(|_| gym_frame_spec(view, width, height)),
+                    };
+                    let out = sim.step(&actions, ticks, &opts)?;
+                    gym_output_json(out, frame_path.as_deref())
+                })();
+                match result {
+                    Ok(v) => emit(&mut w, v),
+                    Err(e) => emit(&mut w, serde_json::json!({ "error": e })),
+                }
+            }
+        }
+    }
 }
 
 fn inspect_glb(input: &PathBuf, data: &[u8]) {
@@ -951,6 +1191,7 @@ fn main() {
             }
         }
 
+        Commands::Gym { command } => run_gym(command),
         Commands::Mcp => {
             if let Err(e) = run_mcp_stdio_server() {
                 eprintln!("MCP server error: {}", e);

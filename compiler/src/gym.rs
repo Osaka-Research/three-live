@@ -21,7 +21,7 @@
 
 use crate::render::{encode_png_rgba_compressed, render_viewport_rgba, RenderViewMode};
 use crate::sim::{SimAction, SimStepper, SimulationReport, SIM_DT_SEC};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Longest episode: 120 s of simulated time (the simulator's cap).
 pub const GYM_MAX_TICKS: usize = 7200;
@@ -68,15 +68,17 @@ pub struct GymSession {
 #[serde(rename_all = "camelCase")]
 pub struct GymBody {
     pub name: String,
-    pub position: [f32; 3],
-    pub rotation: [f32; 4],
-    pub scale: [f32; 3],
+    /// Meters, rounded to 0.1 mm.
+    pub position: [f64; 3],
+    /// Quaternion `[x, y, z, w]`, rounded to 1e-5.
+    pub rotation: [f64; 4],
+    pub scale: [f64; 3],
     pub visible: bool,
     pub grounded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub health: Option<f32>,
+    pub health: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_health: Option<f32>,
+    pub max_health: Option<f64>,
     pub destroyed: bool,
 }
 
@@ -127,6 +129,17 @@ pub struct GymStepOutput {
     pub frame_png: Option<Vec<u8>>,
 }
 
+/// Rounds an `f32` simulation value for JSON so observations read `-1.3333` rather than
+/// `-1.3333336114883423` (the `f32` widened to `f64`).
+fn round_to(v: f32, scale: f64) -> f64 {
+    let r = (v as f64 * scale).round() / scale;
+    if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
+}
+
 fn bodies_from(report: &SimulationReport, watch: &[String]) -> (Vec<GymBody>, bool, Vec<String>) {
     let mut out = Vec::new();
     let mut truncated = false;
@@ -140,13 +153,13 @@ fn bodies_from(report: &SimulationReport, watch: &[String]) -> (Vec<GymBody>, bo
         }
         out.push(GymBody {
             name: b.name.clone(),
-            position: b.final_translation,
-            rotation: b.final_rotation,
-            scale: b.final_scale,
+            position: b.final_translation.map(|v| round_to(v, 1e4)),
+            rotation: b.final_rotation.map(|v| round_to(v, 1e5)),
+            scale: b.final_scale.map(|v| round_to(v, 1e4)),
             visible: b.visible,
             grounded: b.grounded,
-            health: b.health,
-            max_health: b.max_health,
+            health: b.health.map(|v| round_to(v, 1e3)),
+            max_health: b.max_health.map(|v| round_to(v, 1e3)),
             destroyed: b.destroyed,
         });
     }
@@ -209,7 +222,8 @@ impl GymSession {
     ) -> Result<GymStepOutput, String> {
         if self.done {
             return Err(
-                "This episode has ended; call three_live_gym_reset to start a new one.".to_string()
+                "This episode has ended; start a new one (three_live_gym_reset or `three-live-cli gym reset`)."
+                    .to_string()
             );
         }
         if ticks == 0 || ticks > GYM_MAX_TICKS_PER_STEP {
@@ -301,6 +315,102 @@ impl GymSession {
     }
 }
 
+/// Version of the `three-live-cli gym` episode file format.
+pub const GYM_EPISODE_VERSION: u32 = 1;
+/// Largest scene an episode file may embed.
+const GYM_EPISODE_MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
+
+/// One recorded step of an episode file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GymRecordedStep {
+    #[serde(default)]
+    pub actions: Vec<SimAction>,
+    pub ticks: usize,
+}
+
+/// A self-contained, replayable episode (`three-live-cli gym reset` / `gym step --session`).
+///
+/// It embeds the scene and every step taken so far, so each CLI call can rebuild the episode
+/// deterministically without a long-running process, even if the scene file changes on disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GymEpisodeFile {
+    pub version: u32,
+    /// The scene script text, or base64 for `.glb`.
+    pub source: String,
+    pub is_glb: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    /// Default `watch` list for observations.
+    #[serde(default)]
+    pub watch: Vec<String>,
+    #[serde(default)]
+    pub steps: Vec<GymRecordedStep>,
+}
+
+impl GymEpisodeFile {
+    /// A new episode for `source` with no steps.
+    pub fn new(
+        source: &[u8],
+        is_glb: bool,
+        source_path: Option<String>,
+        watch: Vec<String>,
+    ) -> Result<Self, String> {
+        let source = if is_glb {
+            crate::mcp::encode_base64(source)
+        } else {
+            String::from_utf8(source.to_vec())
+                .map_err(|_| "Scene source is not valid UTF-8.".to_string())?
+        };
+        Ok(GymEpisodeFile {
+            version: GYM_EPISODE_VERSION,
+            source,
+            is_glb,
+            source_path,
+            watch,
+            steps: Vec::new(),
+        })
+    }
+
+    /// Parses an episode file, checking its version.
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        let file: GymEpisodeFile =
+            serde_json::from_str(text).map_err(|e| format!("Invalid gym session file: {}", e))?;
+        if file.version != GYM_EPISODE_VERSION {
+            return Err(format!(
+                "Unsupported gym session file version {} (expected {}); run `gym reset` again.",
+                file.version, GYM_EPISODE_VERSION
+            ));
+        }
+        Ok(file)
+    }
+
+    /// The embedded scene bytes.
+    pub fn source_bytes(&self) -> Result<Vec<u8>, String> {
+        if self.is_glb {
+            crate::render::decode_base64_str(&self.source, GYM_EPISODE_MAX_SOURCE_BYTES)
+                .ok_or_else(|| "Gym session file has an invalid base64 GLB source.".to_string())
+        } else {
+            Ok(self.source.as_bytes().to_vec())
+        }
+    }
+
+    /// Rebuilds the episode by replaying every recorded step. `opts` applies to the returned
+    /// (latest) observation; replayed steps are not rendered.
+    pub fn replay(&self, opts: &GymObserveOptions) -> Result<(GymSession, GymStepOutput), String> {
+        let quiet = GymObserveOptions { watch: opts.watch.clone(), frame: None };
+        let first = if self.steps.is_empty() { opts } else { &quiet };
+        let (mut session, mut out) = GymSession::reset(&self.source_bytes()?, self.is_glb, first)?;
+        for (i, step) in self.steps.iter().enumerate() {
+            let o = if i + 1 == self.steps.len() { opts } else { &quiet };
+            out = session
+                .step(&step.actions, step.ticks, o)
+                .map_err(|e| format!("Replaying recorded step {} failed: {}", i + 1, e))?;
+        }
+        Ok((session, out))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,7 +466,7 @@ mod tests {
             simulate_scenario_from_source(&src, false, 1.5, &timeline, &[0, 30, 60, 90]).unwrap();
         let one_shot = report.bodies.iter().find(|b| b.name == "Hero").unwrap().final_translation;
         let stepped = o3.observation.bodies.iter().find(|b| b.name == "Hero").unwrap().position;
-        assert_eq!(one_shot, stepped);
+        assert_eq!(one_shot.map(|v| round_to(v, 1e4)), stepped);
     }
 
     #[test]
@@ -466,12 +576,49 @@ mod tests {
         let opts = GymObserveOptions::default();
         let (mut s, _) = GymSession::reset(src.as_bytes(), false, &opts).unwrap();
         assert!(s.sim.is_time_varying());
-        for expected in [0.5f32, 1.0, 1.5] {
+        for expected in [0.5f64, 1.0, 1.5] {
             let o = s.step(&[], 30, &opts).unwrap().observation;
             let x = o.bodies.iter().find(|b| b.name == "Slider").unwrap().position[0];
             assert!((x - expected).abs() < 0.02, "x = {} at {}", x, expected);
         }
         let (still, _) = GymSession::reset(COLLECT.as_bytes(), false, &opts).unwrap();
         assert!(!still.sim.is_time_varying());
+    }
+
+    #[test]
+    fn episode_files_replay_to_the_same_observation() {
+        let opts = GymObserveOptions { watch: vec!["Hero".to_string()], frame: None };
+        let mut file = GymEpisodeFile::new(
+            COLLECT.as_bytes(),
+            false,
+            Some("collect.js".into()),
+            opts.watch.clone(),
+        )
+        .unwrap();
+        let (mut live, _) = GymSession::reset(COLLECT.as_bytes(), false, &opts).unwrap();
+        let mut last = None;
+        for ticks in [10, 25, 7] {
+            let actions = vec![act(r#"{"type":"moveCharacter","direction":[1,0,0],"at":0.05}"#)];
+            last = Some(live.step(&actions, ticks, &opts).unwrap().observation);
+            file.steps.push(GymRecordedStep { actions, ticks });
+        }
+        // Round-trip through JSON, as the CLI does between calls.
+        let text = serde_json::to_string(&file).unwrap();
+        let loaded = GymEpisodeFile::from_json(&text).unwrap();
+        let (session, out) = loaded.replay(&opts).unwrap();
+        let last = last.unwrap();
+        assert_eq!(session.tick(), 42);
+        assert_eq!(out.observation.bodies[0].position, last.bodies[0].position);
+        assert_eq!(out.observation.score, last.score);
+        assert_eq!(out.observation.step, 3);
+
+        let mut bad = file.clone();
+        bad.version = 99;
+        assert!(GymEpisodeFile::from_json(&serde_json::to_string(&bad).unwrap())
+            .unwrap_err()
+            .contains("version"));
+        assert!(GymEpisodeFile::from_json("{").is_err());
+        let glb = GymEpisodeFile::new(b"glTF\x02\x00\x00\x00", true, None, vec![]).unwrap();
+        assert_eq!(glb.source_bytes().unwrap(), b"glTF\x02\x00\x00\x00");
     }
 }

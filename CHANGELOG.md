@@ -26,6 +26,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **`three-live-cli gym` (closed-loop agent gym without MCP):**
+    `gym reset scene.js --session ep.json` and
+    `gym step --session ep.json --actions '[...]' --ticks 30` play a scene one
+    command per step for shell-tool agents (the session file embeds the scene
+    and every step and is replayed deterministically on each call);
+    `gym play scene.js` is a JSON-lines stdin/stdout loop for scripts and RL
+    harnesses. Both accept `--watch` and `--frame out.png`. Observation
+    positions are now rounded to 0.1 mm (rotations to 1e-5) in both the CLI
+    and the MCP tools.
+
 -   **Closed-loop agent gym (`three_live_gym_reset`, `three_live_gym_step`,
     `three_live_gym_close` MCP tools):** Agents can play a scene step by step
     instead of scripting it up front. Each step applies actions, advances the

@@ -239,7 +239,11 @@ three-live-cli render scene.js -o anim.png --frames=4 --duration=2.0 --trigger-s
 # 4. Headless 60Hz Scenario & KHR_interactivity Simulation
 three-live-cli sim scene.js --duration=5.0 --actions='[{"at":0.5,"type":"select","target":"crystal"}]' --json
 
-# 5. Model Context Protocol (MCP) JSON-RPC 2.0 Stdio Server
+# 5. Closed-Loop Agent Gym (act, observe, react; one command per step)
+three-live-cli gym reset level.js --session ep.json --watch Hero
+three-live-cli gym step --session ep.json --ticks 30 --actions='[{"type":"moveCharacter","direction":[1,0,0]}]'
+
+# 6. Model Context Protocol (MCP) JSON-RPC 2.0 Stdio Server
 three-live-cli mcp
 ```
 

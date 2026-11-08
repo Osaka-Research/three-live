@@ -112,8 +112,10 @@ spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
 Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
 `three_live_convert`, `three_live_sim`, `three_live_link`, and the closed-loop
 `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close` agent
-gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. `three-live-cli link scene.js --qr`
-prints a playground link (and a terminal QR code) that opens the scene on a
+gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. Not
+using MCP? `three-live-cli gym reset level.js --session ep.json` and
+`three-live-cli gym step --session ep.json --actions '[...]'` play a level one
+command per step. `three-live-cli link scene.js --qr` prints a playground link (and a terminal QR code) that opens the scene on a
 phone, one tap from AR. Building from a photo, mockup, sketch, or blueprint? Pass
 `--reference` (or `reference` in MCP) to get a side-by-side + aligned-overlay +
 silhouette-diff sheet with IoU and proportion guidance:

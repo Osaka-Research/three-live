@@ -166,4 +166,8 @@ Always verify authored `.js`, `.html`, or `.glb` scenes headlessly using
     `silhouetteReliable` is true, otherwise compare the aligned OVERLAY panel.
 4.  **Simulate Interactivity & Temporal Motion:** `three-live-cli render
     scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=<node>` or
-    `three-live-cli sim scene.js --duration=5.0 --actions='[...]' --json`.
+    `three-live-cli sim scene.js --duration=5.0 --actions='[...]' --json`. For
+    games, play the level closed-loop with `three-live-cli gym reset scene.js
+    --session ep.json` and `three-live-cli gym step --session ep.json
+    --actions='[...]'` (or the `three_live_gym_*` MCP tools) to check it is
+    winnable.

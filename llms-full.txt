@@ -403,8 +403,24 @@ tune enemy speed or jump heights, or test interactive scenes end to end.
 -   Episodes are deterministic: the same actions always give the same
     observations. Steps on static scenes are near-instant; scenes with
     `animate(t)` or `requestAnimationFrame` re-run their script once per step
-    (about 0.2 s), so prefer fewer, longer steps there. Close sessions you are done with (`three_live_gym_close`);
-    beyond 16 the least recently used is evicted.
+    (about 0.2 s), so prefer fewer, longer steps there. Close sessions you
+    are done with (`three_live_gym_close`); beyond 16 the least recently used
+    is evicted.
+
+Without MCP, use `three-live-cli gym`. One command per step suits shell-tool
+agents; the session file holds the scene and every step, and each call replays
+it deterministically:
+
+```bash
+three-live-cli gym reset level.js --session ep.json --watch Hero,Coin
+three-live-cli gym step --session ep.json --ticks 30 \
+  --actions '[{"type":"moveCharacter","direction":[0,0,-1]}]' --frame step.png
+```
+
+For scripts and RL harnesses, `three-live-cli gym play level.js` prints the
+`t = 0` observation, then reads one JSON step per stdin line
+(`{"actions": [...], "ticks": 30, "frame": "f.png"}`) and prints one
+observation (or `{"error": ...}`) per line, keeping state in memory.
 
 ### Diagnostic Code Summary (`TL100–TL402`)
 
