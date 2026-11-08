@@ -219,8 +219,9 @@ make test
 Whenever you author or modify a `<script type="text/three">` scene or `.html`
 demo, verify it headlessly without a browser using `three-live-cli` (or connect
 `three-live-cli mcp` as an MCP stdio server exposing `three_live_validate`,
-`three_live_render`, `three_live_convert`, `three_live_sim`, and
-`three_live_link`):
+`three_live_render`, `three_live_convert`, `three_live_sim`, `three_live_link`,
+and the `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close`
+closed-loop agent gym):
 
 ```bash
 # 1. Static + Spatial Linting (Structured JSON Diagnostics TL100-TL402 + Frustum/Grounding/Lighting)

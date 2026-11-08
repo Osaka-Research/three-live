@@ -26,6 +26,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Closed-loop agent gym (`three_live_gym_reset`, `three_live_gym_step`,
+    `three_live_gym_close` MCP tools):** Agents can play a scene step by step
+    instead of scripting it up front. Each step applies actions, advances the
+    deterministic 60 Hz simulation by `ticks`, and returns body states,
+    `reward` (score delta), the `events`, `audioCues`, and `newObjectives`
+    fired during the step, `done`, and an optional rendered frame. State
+    carries over between steps (a new resumable `SimStepper` in the compiler),
+    so a step on a static scene takes well under a millisecond; scenes with
+    `animate(t)` / `requestAnimationFrame` hooks are re-sampled once per step.
+
 -   **Bring-your-own-LLM scene editing (`three-live-ai.min.js`, `< 5 KB gz`):**
     `el.editScene(instruction, { selection, maxRepairs, dryRun, signal })`
     sends the current scene script and selected mesh to any LLM, compiles the

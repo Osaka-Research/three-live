@@ -244,18 +244,7 @@ pub fn simulate_scenario_from_source(
     let duration_sec = duration_sec.clamp(0.0, 120.0);
     let total_ticks = ((duration_sec / SIM_DT_SEC).round() as usize).max(1);
 
-    let initial_scene = if is_glb {
-        read_glb(source_bytes)?
-    } else {
-        let raw_text = std::str::from_utf8(source_bytes)
-            .map_err(|e| format!("Invalid UTF-8 in source: {}", e))?;
-        let (script, html_diags) = crate::extract_script_from_source(raw_text);
-        if html_diags.iter().any(|d| d.severity == "error") {
-            return Err(html_diags[0].message.clone());
-        }
-        let mut engine = ThreeEngine::new()?;
-        engine.execute(&script)?
-    };
+    let initial_scene = compile_sim_scene(source_bytes, is_glb)?;
 
     // Pre-sample procedural JS `animate(t)` / `requestAnimationFrame` at snapshot ticks
     // (plus final tick) if source is JS/HTML.
@@ -291,6 +280,119 @@ pub fn simulate_scenario_from_source(
         actions,
         snapshot_ticks,
     ))
+}
+
+/// Compiles a `.glb` or Three.js script / HTML source into the scene a simulation starts from.
+fn compile_sim_scene(source_bytes: &[u8], is_glb: bool) -> Result<SceneGraph, String> {
+    if is_glb {
+        return read_glb(source_bytes);
+    }
+    let raw_text =
+        std::str::from_utf8(source_bytes).map_err(|e| format!("Invalid UTF-8 in source: {}", e))?;
+    let (script, html_diags) = crate::extract_script_from_source(raw_text);
+    if html_diags.iter().any(|d| d.severity == "error") {
+        return Err(html_diags[0].message.clone());
+    }
+    let mut engine = ThreeEngine::new()?;
+    engine.execute(&script)
+}
+
+/// A 60 Hz simulation advanced step by step, with actions added as it runs (the agent gym).
+///
+/// State carries over between steps, so a step costs only its own ticks. Scenes whose
+/// procedural `animate(t)` / `requestAnimationFrame` / interactivity hooks change them over time
+/// are sampled once per step, at the step's last tick (`three_live_sim` samples its snapshot
+/// ticks the same way).
+#[derive(Debug, Clone)]
+pub struct SimStepper {
+    initial_scene: SceneGraph,
+    /// Script to re-sample for time-varying scenes (`None` for static scenes and `.glb`).
+    script: Option<String>,
+    /// The latest procedural sample, keyed by tick.
+    js_sample: Vec<(usize, SceneGraph)>,
+    state: SimLoopState,
+}
+
+impl SimStepper {
+    /// Compiles `source_bytes` and prepares the tick-0 state (runs `onStart` hooks).
+    pub fn new(source_bytes: &[u8], is_glb: bool) -> Result<Self, String> {
+        let initial_scene = compile_sim_scene(source_bytes, is_glb)?;
+        let mut script = None;
+        let mut js_sample = Vec::new();
+        if !is_glb {
+            let raw_text = std::str::from_utf8(source_bytes).unwrap_or("");
+            let (src, _) = crate::extract_script_from_source(raw_text);
+            let mut engine = ThreeEngine::new()?;
+            if let Ok((mut graphs, time_varying)) = engine.execute_time_series_probed(&src, &[0.0])
+            {
+                if let Some(g) = graphs.pop() {
+                    js_sample.push((0, g));
+                }
+                if time_varying {
+                    script = Some(src);
+                }
+            }
+        }
+        let state = init_sim_loop(&initial_scene, &js_sample, &[]);
+        Ok(SimStepper { initial_scene, script, js_sample, state })
+    }
+
+    /// Last simulated tick.
+    pub fn tick(&self) -> usize {
+        self.state.tick
+    }
+
+    /// True when the scene changes over time on its own (`animate`, `requestAnimationFrame`, or
+    /// interactivity function hooks).
+    pub fn is_time_varying(&self) -> bool {
+        self.script.is_some()
+    }
+
+    /// Simulates up to `to_tick` (at most 7200). `actions` is the whole timeline so far, with
+    /// absolute `at` times; actions scheduled at or before the current tick never fire again.
+    pub fn advance(&mut self, to_tick: usize, actions: &[SimAction]) {
+        let to_tick = to_tick.min(7200);
+        if to_tick <= self.state.tick {
+            return;
+        }
+        if let Some(script) = self.script.as_deref() {
+            let t = to_tick as f64 * SIM_DT_SEC;
+            let sampled = ThreeEngine::new()
+                .and_then(|mut engine| engine.execute_time_series(script, &[t]))
+                .ok()
+                .and_then(|mut graphs| graphs.pop());
+            match sampled {
+                Some(g) => self.js_sample = vec![(to_tick, g)],
+                // A failing `animate` (e.g. a timeout) freezes procedural motion, as in
+                // `simulate_scenario_from_source`.
+                None => self.script = None,
+            }
+        }
+        advance_sim_loop(
+            &mut self.state,
+            &self.initial_scene,
+            &self.js_sample,
+            to_tick,
+            actions,
+            &[],
+        );
+    }
+
+    /// Report for everything simulated so far.
+    pub fn report(&self) -> SimulationReport {
+        sim_loop_report(&self.state, self.state.tick as f64 * SIM_DT_SEC)
+    }
+
+    /// The scene as it looks at the current tick (for rendering).
+    pub fn snapshot(&self) -> SceneGraph {
+        build_snapshot_scene(
+            &self.state.working_scene,
+            &self.state.states,
+            &self.js_sample,
+            self.state.tick,
+            self.state.explode_factor,
+        )
+    }
 }
 
 /// Convenience helper for `three-live-cli render --frames=N --duration=T [--trigger-select=...]`:
@@ -342,6 +444,23 @@ pub fn evaluate_temporal_keyframes(
     Ok(keyframes)
 }
 
+/// Mutable state of an in-progress 60 Hz simulation, so it can be advanced in steps.
+#[derive(Debug, Clone, Default)]
+struct SimLoopState {
+    working_scene: SceneGraph,
+    states: Vec<NodeSimState>,
+    objectives: Vec<ObjectiveState>,
+    tweens: Vec<ActiveTween>,
+    triggered_events: Vec<String>,
+    audio_cues_fired: Vec<String>,
+    score: i64,
+    explode_factor: f32,
+    scenario_state: String,
+    snapshots: Vec<(f64, SceneGraph)>,
+    /// Last simulated tick.
+    tick: usize,
+}
+
 fn run_simulation_loop(
     initial_scene: &SceneGraph,
     js_time_series: &[(usize, SceneGraph)],
@@ -350,6 +469,18 @@ fn run_simulation_loop(
     actions: &[SimAction],
     snapshot_ticks: &[usize],
 ) -> (SimulationReport, Vec<(f64, SceneGraph)>) {
+    let mut st = init_sim_loop(initial_scene, js_time_series, snapshot_ticks);
+    advance_sim_loop(&mut st, initial_scene, js_time_series, total_ticks, actions, snapshot_ticks);
+    let report = sim_loop_report(&st, duration_sec);
+    (report, st.snapshots)
+}
+
+/// Builds the tick-0 state: node states, objectives, and `onSpawn` / `onStart` hooks.
+fn init_sim_loop(
+    initial_scene: &SceneGraph,
+    js_time_series: &[(usize, SceneGraph)],
+    snapshot_ticks: &[usize],
+) -> SimLoopState {
     let mut working_scene = initial_scene.clone();
     if working_scene.nodes.is_empty() && !working_scene.meshes.is_empty() {
         for (i, m) in working_scene.meshes.iter().enumerate() {
@@ -376,13 +507,13 @@ fn run_simulation_loop(
     let mut states: Vec<NodeSimState> =
         working_scene.nodes.iter().map(|n| build_node_sim_state(n, &working_scene)).collect();
 
-    let mut objectives = extract_objectives(&states);
+    let objectives = extract_objectives(&states);
     let mut tweens: Vec<ActiveTween> = Vec::new();
     let mut triggered_events: Vec<String> = Vec::new();
     let mut audio_cues_fired: Vec<String> = Vec::new();
-    let mut score: i64 = 0;
-    let mut explode_factor: f32 = 0.0;
-    let mut scenario_state = "running".to_string();
+    let score: i64 = 0;
+    let explode_factor: f32 = 0.0;
+    let scenario_state = "running".to_string();
 
     // Fire initial onSpawn audio cues and onStart interactivity hooks.
     for idx in 0..states.len() {
@@ -450,7 +581,44 @@ fn run_simulation_loop(
         snapshots.push((0.0, snap));
     }
 
-    for tick in 1..=total_ticks {
+    SimLoopState {
+        working_scene,
+        states,
+        objectives,
+        tweens,
+        triggered_events,
+        audio_cues_fired,
+        score,
+        explode_factor,
+        scenario_state,
+        snapshots,
+        tick: 0,
+    }
+}
+
+/// Simulates ticks `st.tick + 1 ..= to_tick`. `actions` may hold the whole timeline: only actions
+/// scheduled inside each tick's `(t_prev, t_curr]` window fire.
+fn advance_sim_loop(
+    st: &mut SimLoopState,
+    initial_scene: &SceneGraph,
+    js_time_series: &[(usize, SceneGraph)],
+    to_tick: usize,
+    actions: &[SimAction],
+    snapshot_ticks: &[usize],
+) {
+    let start_tick = st.tick;
+    let mut working_scene = std::mem::take(&mut st.working_scene);
+    let mut states = std::mem::take(&mut st.states);
+    let mut objectives = std::mem::take(&mut st.objectives);
+    let mut tweens = std::mem::take(&mut st.tweens);
+    let mut triggered_events = std::mem::take(&mut st.triggered_events);
+    let mut audio_cues_fired = std::mem::take(&mut st.audio_cues_fired);
+    let mut score = st.score;
+    let mut explode_factor = st.explode_factor;
+    let mut scenario_state = std::mem::take(&mut st.scenario_state);
+    let mut snapshots = std::mem::take(&mut st.snapshots);
+
+    for tick in (start_tick + 1)..=to_tick {
         let t_prev = ((tick - 1) as f64) / 60.0;
         let t_curr = (tick as f64) / 60.0;
 
@@ -1175,7 +1343,24 @@ fn run_simulation_loop(
         }
     }
 
-    let bodies = states
+    st.working_scene = working_scene;
+    st.states = states;
+    st.objectives = objectives;
+    st.tweens = tweens;
+    st.triggered_events = triggered_events;
+    st.audio_cues_fired = audio_cues_fired;
+    st.score = score;
+    st.explode_factor = explode_factor;
+    st.scenario_state = scenario_state;
+    st.snapshots = snapshots;
+    st.tick = st.tick.max(to_tick);
+}
+
+fn sim_loop_report(st: &SimLoopState, duration_sec: f64) -> SimulationReport {
+    let working_scene = &st.working_scene;
+    let explode_factor = st.explode_factor;
+    let bodies = st
+        .states
         .iter()
         .enumerate()
         .map(|(i, s)| SimNodeReport {
@@ -1204,21 +1389,19 @@ fn run_simulation_loop(
         .collect();
 
     let completed_objectives =
-        objectives.into_iter().filter(|o| o.completed).map(|o| o.id).collect();
+        st.objectives.iter().filter(|o| o.completed).map(|o| o.id.clone()).collect();
 
-    let report = SimulationReport {
+    SimulationReport {
         duration_sec,
-        ticks_simulated: total_ticks,
+        ticks_simulated: st.tick,
         explode_factor,
-        score,
-        scenario_state,
+        score: st.score,
+        scenario_state: st.scenario_state.clone(),
         completed_objectives,
-        triggered_events,
-        audio_cues_fired,
+        triggered_events: st.triggered_events.clone(),
+        audio_cues_fired: st.audio_cues_fired.clone(),
         bodies,
-    };
-
-    (report, snapshots)
+    }
 }
 
 fn build_snapshot_scene(

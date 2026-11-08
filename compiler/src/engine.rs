@@ -45,6 +45,24 @@ enum RawExtractionError {
     Format(String),
 }
 
+/// True when the evaluated scene has hooks that `__three_live_step_js__` advances over time.
+const TIME_VARYING_PROBE_JS: &str = "(function () {\
+    var g = globalThis;\
+    if (typeof g.animate === 'function' || typeof g.__three_live_raf_cb__ === 'function') return true;\
+    var found = false;\
+    if (g.scene && typeof g.scene.traverse === 'function') {\
+        g.scene.traverse(function (n) {\
+            var i = n && n.userData && n.userData.interactivity;\
+            if (!found && i && typeof i === 'object') {\
+                found = ['onSelect', 'onClick', 'toggle', 'onActivate', 'update'].some(function (k) {\
+                    return typeof i[k] === 'function';\
+                });\
+            }\
+        });\
+    }\
+    return found;\
+})()";
+
 pub struct ThreeEngine {
     context: Context,
     /// Set when the execution deadline forced us to abandon a running future, which
@@ -542,6 +560,18 @@ impl ThreeEngine {
         script: &str,
         sample_times_sec: &[f64],
     ) -> Result<Vec<SceneGraph>, String> {
+        self.execute_time_series_probed(script, sample_times_sec).map(|(graphs, _)| graphs)
+    }
+
+    /// Like [`ThreeEngine::execute_time_series`], but also reports whether the scene can change
+    /// over time on its own: it defines `animate`, registers a `requestAnimationFrame` /
+    /// `setAnimationLoop` callback, or has `userData.interactivity` function handlers (the same
+    /// hooks `__three_live_step_js__` drives). When `false`, every sample equals the `t = 0` one.
+    pub fn execute_time_series_probed(
+        &mut self,
+        script: &str,
+        sample_times_sec: &[f64],
+    ) -> Result<(Vec<SceneGraph>, bool), String> {
         if self.poisoned {
             return Err("SecurityError: JS engine is poisoned after a prior timeout".to_string());
         }
@@ -558,6 +588,19 @@ impl ThreeEngine {
             let _ = self.reset_scene();
             return Err(e);
         }
+        let time_varying = match self.eval_with_deadline(
+            TIME_VARYING_PROBE_JS,
+            &clock,
+            SECURITY_3D_TRANSCODE_CEILING_MS * 3,
+            "SECURITY_3D_TRANSCODE_CEILING_MS",
+            "animation probe error",
+        ) {
+            Ok(v) => v.to_boolean(),
+            Err(e) => {
+                let _ = self.reset_scene();
+                return Err(e);
+            }
+        };
 
         let times: Vec<f64> =
             if sample_times_sec.is_empty() { vec![0.0] } else { sample_times_sec.to_vec() };
@@ -598,7 +641,7 @@ impl ThreeEngine {
         }
 
         let _ = self.reset_scene();
-        Ok(results)
+        Ok((results, time_varying))
     }
 
     /// Directly compiles a Three.js scene script into an Apple 64-byte aligned USDZ archive.
