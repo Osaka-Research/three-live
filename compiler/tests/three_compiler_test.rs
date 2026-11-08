@@ -3592,6 +3592,22 @@ fn test_full_pbr_material_maps_glb_usdz_and_software_render() {
         "Expected glowing orange emissiveMap stripe pixels over dark albedo in software render, got {}",
         glowing_orange_pixels
     );
+
+    // An un-bakeable bumpMap (remote URL height map) is dropped rather than exported as a
+    // tangent-space normal_texture.
+    let url_bump_script = r#"
+        scene.add(new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshStandardMaterial({ bumpMap: 'https://example.com/height.png', bumpScale: 3 })
+        ));
+    "#;
+    let url_sg =
+        three_live_compiler::validate_three_script(url_bump_script).expect("URL bump SceneGraph");
+    assert!(
+        url_sg.materials[0].normal_texture.is_none(),
+        "Un-bakeable bumpMap must not become a normal_texture, got {:?}",
+        url_sg.materials[0].normal_texture
+    );
 }
 
 #[test]

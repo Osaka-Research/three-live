@@ -861,8 +861,10 @@ fn encode_rgba_png_data_uri_impl(
     let idat_len = 2 + num_blocks * 5 + raw_len + 4;
 
     let mut raw = Vec::with_capacity(raw_len);
-    let mut s1: u32 = 1;
-    let mut s2: u32 = 0;
+    // u64 accumulators: a 2048-px row adds up to ~1.8e10 to `s2` before the
+    // per-row modulo, which would overflow (and panic in debug) as u32.
+    let mut s1: u64 = 1;
+    let mut s2: u64 = 0;
     let mut sum_lin_r = 0.0f64;
     let mut sum_lin_g = 0.0f64;
     let mut sum_lin_b = 0.0f64;
@@ -917,13 +919,13 @@ fn encode_rgba_png_data_uri_impl(
                 }
             };
             raw.extend_from_slice(&[r, g, b, a]);
-            s1 += r as u32;
+            s1 += r as u64;
             s2 += s1;
-            s1 += g as u32;
+            s1 += g as u64;
             s2 += s1;
-            s1 += b as u32;
+            s1 += b as u64;
             s2 += s1;
-            s1 += a as u32;
+            s1 += a as u64;
             s2 += s1;
             if is_linear {
                 sum_lin_r += (r as f64) / 255.0;
@@ -973,7 +975,7 @@ fn encode_rgba_png_data_uri_impl(
             break;
         }
     }
-    let adler = (s2 << 16) | s1;
+    let adler = ((s2 << 16) | s1) as u32;
     png.extend_from_slice(&adler.to_be_bytes());
     let idat_crc = calculate_crc32(&png[idat_type_start..]);
     png.extend_from_slice(&idat_crc.to_be_bytes());
@@ -1217,6 +1219,51 @@ mod tests {
         let test_bytes = b"123456789";
         let crc = calculate_crc32(test_bytes);
         assert_eq!(crc, 0xcbf43926);
+    }
+
+    #[test]
+    fn test_encode_rgba_png_adler32_valid_at_max_width() {
+        // All-0xff 2048x2 RGBA rows maximize the Adler-32 accumulators.
+        let (w, h) = (2048usize, 2usize);
+        let src = vec![0xffu8; w * h * 4];
+        let (uri, avg) = encode_rgba_png_data_uri_impl(&src, w, h, false, true, 2048).unwrap();
+        assert!((avg[3] - 1.0).abs() < 1e-9);
+
+        let b64 = uri.strip_prefix("data:image/png;base64,").unwrap().trim_end_matches('=');
+        let mut lut = [0u8; 128];
+        for (i, &c) in B64_ALPHABET.iter().enumerate() {
+            lut[c as usize] = i as u8;
+        }
+        let (mut png, mut buf, mut bits) = (Vec::new(), 0u32, 0u32);
+        for c in b64.bytes() {
+            buf = (buf << 6) | lut[c as usize] as u32;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                png.push((buf >> bits) as u8);
+            }
+        }
+
+        // Walk the stored-DEFLATE blocks inside IDAT (after the 2-byte zlib header).
+        let mut p = 43usize;
+        let mut raw = Vec::new();
+        loop {
+            let is_final = png[p] & 1 == 1;
+            let len = u16::from_le_bytes([png[p + 1], png[p + 2]]) as usize;
+            raw.extend_from_slice(&png[p + 5..p + 5 + len]);
+            p += 5 + len;
+            if is_final {
+                break;
+            }
+        }
+        assert_eq!(raw.len(), h * (1 + w * 4));
+        let (mut a, mut b) = (1u64, 0u64);
+        for &byte in &raw {
+            a = (a + byte as u64) % 65521;
+            b = (b + a) % 65521;
+        }
+        let stored = u32::from_be_bytes([png[p], png[p + 1], png[p + 2], png[p + 3]]);
+        assert_eq!(stored, ((b << 16) | a) as u32);
     }
 
     #[test]

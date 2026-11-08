@@ -5287,7 +5287,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           | {mrUri?: string; normUri?: string; normScale?: number}
           | undefined;
         const mrUri = pk?.mrUri || tUri(mat.roughnessMap || mat.metalnessMap);
-        const normUri = pk?.normUri || tUri(mat.normalMap || mat.bumpMap);
+        const normUri = pk?.normUri || tUri(mat.normalMap);
         const rawNs = mat.normalScale as unknown;
         const nsRaw =
           typeof rawNs === 'number'
@@ -5297,13 +5297,11 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
                   Number((rawNs as Vector2).y ?? 1)) *
                 0.5
               : 1;
-        const normScale =
-          pk?.normScale ??
-          (!mat.normalMap && mat.bumpMap
-            ? Math.abs(Number.isFinite(mat.bumpScale) ? mat.bumpScale : 1)
-            : Number.isFinite(nsRaw)
-              ? Math.max(0, nsRaw)
-              : 1);
+        const normScale = pk?.normUri
+          ? (pk.normScale ?? 1)
+          : Number.isFinite(nsRaw)
+            ? Math.max(0, nsRaw)
+            : 1;
         const aoUri = tUri(mat.aoMap);
         const aoRaw = Number(mat.aoMapIntensity);
         const aoStrength = Number.isFinite(aoRaw)

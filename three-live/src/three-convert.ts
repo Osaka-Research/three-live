@@ -577,18 +577,16 @@ function serializeScene(
       matExtras.avgColor = [avg[0], avg[1], avg[2]];
     }
     const normTex: Record<string, unknown> | undefined = addTex(
-      pk?.normUri || (m as any).normalMap || (m as any).bumpMap,
+      pk?.normUri || (m as any).normalMap,
     );
     const rawNs = (m as any).normalScale;
-    const ns =
-      pk?.normScale ??
-      (!(m as any).normalMap && (m as any).bumpMap
-        ? Math.abs(finUsd((m as any).bumpScale, 1))
-        : typeof rawNs === 'number'
+    const ns = pk?.normUri
+      ? (pk.normScale ?? 1)
+      : typeof rawNs === 'number'
           ? Math.max(0, finUsd(rawNs, 1))
           : rawNs
-            ? Math.max(0, (finUsd(rawNs.x, 1) + finUsd(rawNs.y, 1)) * 0.5)
-            : 1);
+          ? Math.max(0, (finUsd(rawNs.x, 1) + finUsd(rawNs.y, 1)) * 0.5)
+          : 1;
     if (normTex && ns !== 1) normTex.scale = ns;
     const emTex = addTex((m as any).emissiveMap);
     const aoTex: Record<string, unknown> | undefined = addTex((m as any).aoMap);
