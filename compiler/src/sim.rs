@@ -2468,7 +2468,7 @@ fn parse_joint_sim_state(xr: &Value) -> Option<JointSimState> {
         .map(|v| (v as f32).clamp(0.0, 1000.0))
         .unwrap_or(default_damping);
     let rest_length = obj
-        .and_then(|o| o.get("restLength").or_else(|| o.get("length")))
+        .and_then(|o| o.get("restLength"))
         .and_then(|v| v.as_f64())
         .map(|v| (v as f32).clamp(0.0, 100.0))
         .unwrap_or(0.0);
@@ -2479,11 +2479,7 @@ fn parse_joint_sim_state(xr: &Value) -> Option<JointSimState> {
         .unwrap_or(0.0);
     let default_motor_force = if motor_speed != 0.0 { 50.0 } else { 0.0 };
     let motor_max_force = obj
-        .and_then(|o| {
-            o.get("motorMaxForce")
-                .or_else(|| o.get("maxMotorForce"))
-                .or_else(|| o.get("motorForce"))
-        })
+        .and_then(|o| o.get("motorMaxForce").or_else(|| o.get("maxMotorForce")))
         .and_then(|v| v.as_f64())
         .map(|v| (v as f32).clamp(0.0, 10000.0))
         .unwrap_or(default_motor_force);

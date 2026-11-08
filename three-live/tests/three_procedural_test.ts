@@ -752,6 +752,27 @@ function runProceduralTests(): void {
     'Explicit emissive: 0x000000 preserves zero emissiveFactor and Vector2 normalScale serializes to glTF normalTexture.scale',
   );
 
+  // An un-bakeable bumpMap (remote URL height map) must never be emitted as a
+  // tangent-space glTF normalTexture (a grayscale height map is not a normal map).
+  const urlBumpScene = new Scene();
+  urlBumpScene.add(
+    new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshStandardMaterial({
+        bumpMap: 'https://example.com/height.png',
+        bumpScale: 3,
+      }),
+    ),
+  );
+  const urlBumpGltf = sceneToCanvas3D(urlBumpScene).gltf;
+  assert(
+    urlBumpGltf.materials[0].normalTexture === undefined &&
+      !(urlBumpGltf.images ?? []).some(
+        (img: {uri?: string}) => img.uri === 'https://example.com/height.png',
+      ),
+    'Un-bakeable bumpMap URL is dropped instead of being exported as a glTF normalTexture',
+  );
+
   // SceneQuotaValidator enforces texture dimension limits on bumpMap
   const bumpOnlyScene = new Scene();
   bumpOnlyScene.add(

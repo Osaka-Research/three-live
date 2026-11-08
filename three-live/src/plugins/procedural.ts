@@ -478,6 +478,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     const instMat = new Matrix4();
     const worldMat = new Matrix4();
     const seen = new Set<unknown>();
+    // tslint:disable-next-line:no-any Per-geometry local AABB cache.
+    const localBoxes = new Map<any, Box3>();
+
 
     // tslint:disable-next-line:no-any Dynamic BufferGeometry / Matrix4.
     const expandGeo = (geo: any, m: any) => {
@@ -489,7 +492,11 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
           targetBox.expandByPoint(v);
         }
       } else {
-        const localBox = new Box3().setFromBufferAttribute(pos);
+        let localBox = localBoxes.get(geo);
+        if (!localBox) {
+          localBox = new Box3().setFromBufferAttribute(pos);
+          localBoxes.set(geo, localBox);
+        }
         if (!localBox.isEmpty()) {
           targetBox.union(scratchBox.copy(localBox).applyMatrix4(m));
         }
