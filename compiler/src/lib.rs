@@ -20,6 +20,7 @@ pub mod ffi;
 pub mod geometry;
 pub mod glb;
 pub mod mcp;
+pub mod reference;
 pub mod render;
 pub mod scene;
 pub mod scene_link;
@@ -41,6 +42,10 @@ pub use engine::{classify_script_error, ThreeEngine};
 pub use geometry::*;
 pub use glb::{read_glb, write_glb};
 pub use mcp::*;
+pub use reference::{
+    compare_scene_to_reference, decode_reference_image, load_reference_bytes, ReferenceComparison,
+    ReferenceImage, ReferenceMetrics,
+};
 pub use render::*;
 pub use scene::{CameraConfig, Diagnostic, SceneGraph};
 pub use sim::*;

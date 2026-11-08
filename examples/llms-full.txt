@@ -315,10 +315,36 @@ Or add to `.mcp.json` / `claude_desktop_config.json` / `.cursor/mcp.json`:
 
 The MCP server exposes 5 tools (`three_live_validate`, `three_live_render`,
 `three_live_convert`, `three_live_sim`, `three_live_link`), 1 resource
-(`three-live://docs/authoring-guide`), and 1 prompt (`author_three_live_scene`).
-Note that `three_live_render` returns MCP `image/png` content blocks directly
-into multimodal LLM context so agents can visually self-correct camera framing,
-overlap, and lighting.
+(`three-live://docs/authoring-guide`), and 2 prompts (`author_three_live_scene`,
+`build_from_reference`). Note that `three_live_render` returns MCP `image/png`
+content blocks directly into multimodal LLM context so agents can visually
+self-correct camera framing, overlap, and lighting.
+
+### Reference-Driven Authoring (`reference`)
+
+When the user supplies a photo, product shot, design mockup, sketch, or CAD
+blueprint, pass it to `three_live_render` as `reference` (a local PNG/JPEG path
+or a `data:image/...;base64,` URI; remote URLs are never fetched):
+
+```json
+{ "name": "three_live_render",
+  "arguments": { "inputPath": "lamp.js", "reference": "lamp_photo.jpg", "view": "camera" } }
+```
+
+-   The scene renders at the reference's aspect ratio into a **REFERENCE |
+    RENDER | OVERLAY | SILHOUETTE DIFF** sheet. On plain or transparent
+    backgrounds the OVERLAY is auto-aligned for position and scale, and the DIFF
+    panel marks render-only areas orange and reference-only areas cyan.
+-   The JSON `reference` block reports `silhouetteIou` (scale/translation
+    invariant), `referenceAspect` / `renderAspect` / `aspectError`,
+    `silhouetteReliable`, and `guidance`. Aim for `silhouetteIou >= 0.85` and
+    `|aspectError| < 0.05` when `silhouetteReliable` is true; for busy photo
+    backgrounds or line-art sketches, judge by the OVERLAY panel.
+-   Use `view: "front" | "right" | "top"` for orthographic blueprints and
+    `view: "camera"` (default) for perspective photos, tuning `cameraPosition`,
+    `cameraTarget`, and `cameraFov` to match the photo's perspective.
+-   JPEG EXIF orientation is honored; PNG supports every color type, bit depth,
+    transparency, and Adam7 interlacing.
 
 You can also invoke the CLI directly from shell tools:
 

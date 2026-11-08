@@ -20,9 +20,10 @@
 //! Gemini CLI, Windsurf, Zed, Cline, and MCP Inspector).
 
 use crate::glb::read_glb;
+use crate::reference::{compare_scene_to_reference, decode_reference_image, load_reference_bytes};
 use crate::render::{
-    encode_gif_frames, encode_png_rgba, render_scene_rgba, render_viewport_rgba,
-    stitch_filmstrip_horizontal, RenderOptions, RenderViewMode,
+    encode_gif_frames, encode_png_rgba, encode_png_rgba_compressed, render_scene_rgba,
+    render_viewport_rgba, stitch_filmstrip_horizontal, RenderOptions, RenderViewMode,
 };
 use crate::scene::{CameraConfig, Diagnostic, SceneGraph};
 use crate::sim::{
@@ -103,6 +104,7 @@ const AUTHORING_GUIDE_MARKDOWN: &str = r#"# Three-Live Authoring Guide for AI Co
   1. Call `three_live_validate` to check for compiler errors (`TL1xx`), schema warnings (`TL2xx`), and spatial/frustum/grounding diagnostics (`TL301`–`TL308`).
   2. Call `three_live_render` (`view: "quad"`, `grid: true`, `annotations: true`) to inspect the 4-up orthographic/camera contact sheet (`CAMERA`, `FRONT +Z`, `TOP +Y FRUSTUM`, `ISO 45°`).
   3. Call `three_live_sim` to verify interactive `KHR_interactivity` and 60 Hz physics trajectories.
+  4. Building from a photo, mockup, sketch, or blueprint? Call `three_live_render` with `reference` (PNG/JPEG path or data URI) and a matching `view` to get a REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF sheet plus `silhouetteIou`, `aspectError`, and `guidance` (or use the `build_from_reference` prompt).
 "#;
 
 /// Wire framing detected from the incoming MCP stream.
@@ -336,7 +338,7 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                         "name": "three-live-mcp",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "instructions": "Three-Live 3D, CAD & Spatial XR compiler, headless 4-up contact sheet renderer, spatial linter (TL100-TL402), and 60 Hz simulation engine. Use three_live_validate and three_live_render to verify Three.js scenes visually and spatially, three_live_convert to export .glb or Apple .usdz, three_live_sim to step KHR_interactivity and 60 Hz physics, and three_live_link to give the user a playground link (or QR code) that opens the scene on any phone or desktop browser."
+                    "instructions": "Three-Live 3D, CAD & Spatial XR compiler, headless 4-up contact sheet renderer, spatial linter (TL100-TL402), and 60 Hz simulation engine. Use three_live_validate and three_live_render to verify Three.js scenes visually and spatially (pass `reference` to three_live_render to compare against a photo, sketch, or blueprint), three_live_convert to export .glb or Apple .usdz, three_live_sim to step KHR_interactivity and 60 Hz physics, and three_live_link to give the user a playground link (or QR code) that opens the scene on any phone or desktop browser."
                 }),
             ))
         }
@@ -410,6 +412,27 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                                 "required": false
                             }
                         ]
+                    },
+                    {
+                        "name": "build_from_reference",
+                        "description": "Build an editable, named Three.js scene that matches a reference photo, product shot, mockup, sketch, or blueprint, verifying proportions with three_live_render's reference comparison.",
+                        "arguments": [
+                            {
+                                "name": "reference",
+                                "description": "Local PNG/JPEG path (or data:image/... URI) of the reference image.",
+                                "required": true
+                            },
+                            {
+                                "name": "description",
+                                "description": "Optional notes: what the subject is, known real-world dimensions, which parts must be separate or interactive.",
+                                "required": false
+                            },
+                            {
+                                "name": "view",
+                                "description": "How the reference was captured: camera (perspective photo, default), front, right, or top (orthographic blueprint / elevation).",
+                                "required": false
+                            }
+                        ]
                     }
                 ]
             }),
@@ -438,6 +461,69 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                     id,
                     json!({
                         "description": "Three-Live scene authoring & visual verification prompt",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": {
+                                    "type": "text",
+                                    "text": prompt_text
+                                }
+                            }
+                        ]
+                    }),
+                ))
+            } else if name == "build_from_reference" {
+                let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                let reference = args.get("reference").and_then(Value::as_str).unwrap_or("");
+                if reference.trim().is_empty() {
+                    return Some(jsonrpc_error_response(
+                        id,
+                        -32602,
+                        "Missing required prompt argument: reference".to_string(),
+                        None,
+                    ));
+                }
+                let notes = args.get("description").and_then(Value::as_str).unwrap_or("");
+                let view = match args.get("view").and_then(Value::as_str).unwrap_or("camera") {
+                    v @ ("front" | "right" | "top" | "camera") => v,
+                    _ => "camera",
+                };
+                let reference_arg = if reference.len() > 512 {
+                    "<the reference image data URI>".to_string()
+                } else {
+                    format!("{:?}", reference)
+                };
+                let prompt_text = format!(
+                    "Build a Three-Live scene that matches the reference image `{}`.{}\n\n\
+                     Workflow:\n\
+                     1. Study the reference: list the distinct parts, their shapes, colors/materials, and \
+                     relative proportions. Use any known real-world dimension to set scale in meters \
+                     (otherwise estimate from typical sizes), with the subject resting on y = 0.\n\
+                     2. Write standard Three.js code that adds one named mesh or group per part to the \
+                     pre-defined `scene` global (e.g. `Lamp_Base`, `Lamp_Arm`), so every part stays editable.\n\
+                     3. Run `three_live_validate` and fix any `TL1xx`-`TL3xx` diagnostics.\n\
+                     4. Run `three_live_render` with `reference: {}` and `view: \"{}\"`. For perspective \
+                     photos, also tune `cameraPosition`, `cameraTarget`, and `cameraFov` until the RENDER \
+                     panel's perspective matches the photo; for orthographic blueprints use `front`, \
+                     `right`, or `top`. On plain backgrounds the OVERLAY panel is auto-aligned for \
+                     position and scale, so remaining mismatches are true proportion differences.\n\
+                     5. Iterate on proportions using the returned `reference` metrics: shrink geometry \
+                     where the DIFF panel is orange (render-only), extend it where it is cyan \
+                     (reference-only), and follow `guidance`. When `silhouetteReliable` is true, aim for \
+                     `silhouetteIou` >= 0.85 and |`aspectError`| < 0.05; otherwise judge by the OVERLAY panel.\n\
+                     6. Match colors and materials, then run `three_live_render` with `view: \"quad\"` \
+                     to check the other sides, and offer `three_live_link` or `three_live_convert`.\n\n\
+                     Reference Rules:\n{}",
+                    reference_arg,
+                    if notes.is_empty() { String::new() } else { format!(" Notes: {}", notes) },
+                    reference_arg,
+                    view,
+                    AUTHORING_GUIDE_MARKDOWN
+                );
+                Some(jsonrpc_success_response(
+                    id,
+                    json!({
+                        "description": "Build an editable Three.js scene from a reference image",
                         "messages": [
                             {
                                 "role": "user",
@@ -509,7 +595,7 @@ fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "three_live_render",
-            "description": "Render a Three.js script, HTML document, or .glb headlessly (zero GPU required) into a 4-up orthographic/camera contact sheet PNG (CAMERA, FRONT +Z, TOP +Y FRUSTUM, ISO 45 deg), single viewport PNG, or temporal filmstrip / 360-degree turntable GIF. Returns the base64 image directly to vision-capable agents along with spatial diagnostics.",
+            "description": "Render a Three.js script, HTML document, or .glb headlessly (zero GPU required) into a 4-up orthographic/camera contact sheet PNG (CAMERA, FRONT +Z, TOP +Y FRUSTUM, ISO 45 deg), single viewport PNG, or temporal filmstrip / 360-degree turntable GIF. Returns the base64 image directly to vision-capable agents along with spatial diagnostics. Pass `reference` (a photo, product shot, mockup, sketch, or blueprint as a PNG/JPEG path or data URI) to get a REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF comparison sheet rendered at the reference's aspect ratio, plus silhouette IoU, aspect-ratio error, and guidance for matching its proportions.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -525,7 +611,11 @@ fn mcp_tool_definitions() -> Value {
                         "type": "string",
                         "enum": ["quad", "camera", "front", "top", "right", "iso"],
                         "default": "quad",
-                        "description": "Viewport mode: `quad` (default 4-up contact sheet) or single view (`camera`, `front`, `top`, `right`, `iso`)."
+                        "description": "Viewport mode: `quad` (default 4-up contact sheet) or single view (`camera`, `front`, `top`, `right`, `iso`). With `reference`, defaults to `camera` (use `front` / `right` / `top` for orthographic blueprints)."
+                    },
+                    "reference": {
+                        "type": "string",
+                        "description": "Optional reference image to match: a local PNG/JPEG file path or a `data:image/png;base64,...` / `data:image/jpeg;base64,...` URI (remote URLs are not fetched). Renders a single still view at the reference's aspect ratio and returns a comparison sheet plus `reference` metrics (`silhouetteIou`, `aspectError`, `guidance`). `height` sets the panel height (default 512, reduced as needed to keep the sheet at most 2560 px wide); `grid` and `annotations` default to false. Cannot be combined with `turntable`, `frames` > 1, or `triggerSelect`."
                     },
                     "grid": {
                         "type": "boolean",
@@ -954,6 +1044,10 @@ fn call_tool_render(args: &Value) -> Value {
         return tool_error_result(format!("Scene failed to compile for rendering:\n{}", diag_json));
     };
 
+    if let Some(reference_spec) = args.get("reference").filter(|v| !v.is_null()) {
+        return call_tool_render_reference(&scene, &validation, reference_spec, args);
+    }
+
     let render_view = parse_render_view_mode(args.get("view").and_then(Value::as_str));
     let default_dim = if render_view == RenderViewMode::Quad { 1024 } else { 512 };
     let w = args
@@ -1122,6 +1216,103 @@ fn call_tool_render(args: &Value) -> Value {
                 "type": "image",
                 "data": b64,
                 "mimeType": mime_type
+            },
+            {
+                "type": "text",
+                "text": serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string())
+            }
+        ],
+        "isError": false
+    })
+}
+
+fn call_tool_render_reference(
+    scene: &SceneGraph,
+    validation: &crate::spatial_lint::ValidationReport,
+    reference_spec: &Value,
+    args: &Value,
+) -> Value {
+    let Some(spec) = reference_spec.as_str() else {
+        return tool_error_result(
+            "`reference` must be a string (PNG/JPEG file path or data:image/... URI).".to_string(),
+        );
+    };
+    let multi_frame = args.get("turntable").and_then(Value::as_bool).unwrap_or(false)
+        || args.get("frames").and_then(Value::as_u64).is_some_and(|f| f > 1)
+        || args.get("triggerSelect").and_then(Value::as_str).is_some();
+    if multi_frame {
+        return tool_error_result(
+            "`reference` renders a single still frame: drop `turntable`, `frames` > 1, and \
+             `triggerSelect` (or render those separately)."
+                .to_string(),
+        );
+    }
+    let bytes = match load_reference_bytes(spec) {
+        Ok(b) => b,
+        Err(e) => return tool_error_result(e),
+    };
+    let (reference, reference_size) = match decode_reference_image(&bytes) {
+        Ok(r) => r,
+        Err(e) => return tool_error_result(e),
+    };
+    let view = match args.get("view").and_then(Value::as_str) {
+        None => RenderViewMode::Camera,
+        Some(v) => match parse_render_view_mode(Some(v)) {
+            RenderViewMode::Quad => RenderViewMode::Camera,
+            m => m,
+        },
+    };
+    let panel_h =
+        args.get("height").and_then(Value::as_u64).map(|v| v.min(4096) as u32).unwrap_or(512);
+    let grid = args.get("grid").and_then(Value::as_bool).unwrap_or(false);
+    let annotations = args.get("annotations").and_then(Value::as_bool).unwrap_or(false);
+    let cmp = compare_scene_to_reference(
+        scene,
+        &reference,
+        reference_size,
+        view,
+        panel_h,
+        grid,
+        annotations,
+    );
+    let png = match encode_png_rgba_compressed(cmp.width, cmp.height, &cmp.rgba) {
+        Ok(b) => b,
+        Err(e) => return tool_error_result(format!("PNG encoding error: {}", e)),
+    };
+    let out_path_opt = args.get("outputPath").and_then(Value::as_str).map(str::to_string);
+    if let Some(ref out_path) = out_path_opt {
+        let is_png = Path::new(out_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+        if !is_png {
+            return tool_error_result(
+                "Reference comparison sheets are PNG images: use an `outputPath` ending in .png."
+                    .to_string(),
+            );
+        }
+        if let Err(e) = fs::write(out_path, &png) {
+            return tool_error_result(format!("Failed writing outputPath {:?}: {}", out_path, e));
+        }
+    }
+    let meta = json!({
+        "valid": validation.valid,
+        "width": cmp.width,
+        "height": cmp.height,
+        "frames": 1,
+        "mimeType": "image/png",
+        "byteLength": png.len(),
+        "outputPath": out_path_opt,
+        "reference": cmp.metrics,
+        "summary": validation.summary,
+        "diagnostics": validation.diagnostics,
+    });
+    json!({
+        "content": [
+            {
+                "type": "image",
+                "data": encode_base64(&png),
+                "mimeType": "image/png"
             },
             {
                 "type": "text",

@@ -159,6 +159,11 @@ Always verify authored `.js`, `.html`, or `.glb` scenes headlessly using
     preview.png --view=quad --grid --annotations` — inspect perspective camera
     framing (`CAMERA`), front/right elevation (`FRONT`, `RIGHT`), and top-down
     layout (`TOP`) with `1 m` gridlines and AABB labels.
-3.  **Simulate Interactivity & Temporal Motion:** `three-live-cli render
+3.  **Match a Reference (when given a photo, mockup, sketch, or blueprint):**
+    `three-live-cli render scene.js -o compare.png --reference=ref.jpg
+    --view=camera` (or `--view=front|right|top` for blueprints) — iterate until
+    `silhouetteIou >= 0.85` and `|aspectError| < 0.05` when
+    `silhouetteReliable` is true, otherwise compare the aligned OVERLAY panel.
+4.  **Simulate Interactivity & Temporal Motion:** `three-live-cli render
     scene.js -o anim.png --frames=4 --duration=2.0 --trigger-select=<node>` or
     `three-live-cli sim scene.js --duration=5.0 --actions='[...]' --json`.

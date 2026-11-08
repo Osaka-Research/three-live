@@ -4050,3 +4050,226 @@ fn test_a7_mechanical_joints_glb_usdz_lint_and_sim() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// B1: Reference-driven authoring (`three_live_render` `reference` + `three-live-cli --reference`)
+// ---------------------------------------------------------------------------------------------
+
+const REF_BLUEPRINT_ADAM7: &[u8] = include_bytes!("fixtures/reference/blueprint_2to1_adam7.png");
+const REF_CUTOUT_PALETTE: &[u8] = include_bytes!("fixtures/reference/cutout_palette.png");
+const REF_SQUARE_BASELINE: &[u8] = include_bytes!("fixtures/reference/square_baseline.jpg");
+const REF_SQUARE_PROGRESSIVE: &[u8] = include_bytes!("fixtures/reference/square_progressive.jpg");
+const REF_RECT_2TO1_JPG: &[u8] = include_bytes!("fixtures/reference/oriented_6.jpg");
+
+fn ref_px(img: &three_live_compiler::ReferenceImage, x: u32, y: u32) -> [u8; 4] {
+    let o = ((y * img.width + x) * 4) as usize;
+    [img.rgba[o], img.rgba[o + 1], img.rgba[o + 2], img.rgba[o + 3]]
+}
+
+fn ref_data_uri(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{};base64,{}", mime, three_live_compiler::encode_base64(bytes))
+}
+
+#[test]
+fn test_b1_reference_decoder_handles_real_encoder_output() {
+    use three_live_compiler::decode_reference_image;
+
+    // ImageMagick Adam7-interlaced RGB PNG (dark 2:1-ish rectangle on white).
+    let (img, size) = decode_reference_image(REF_BLUEPRINT_ADAM7).expect("adam7 png");
+    assert_eq!(size, [400, 200]);
+    assert_eq!((img.width, img.height), (400, 200));
+    assert_eq!(ref_px(&img, 2, 2), [255, 255, 255, 255]);
+    let c = ref_px(&img, 200, 100);
+    assert!(c[0] < 60 && c[1] < 60 && c[2] < 80, "center {:?}", c);
+
+    // Indexed (palette) PNG with tRNS transparency.
+    let (img, _) = decode_reference_image(REF_CUTOUT_PALETTE).expect("palette png");
+    assert_eq!(ref_px(&img, 1, 1)[3], 0);
+    let c = ref_px(&img, 32, 16);
+    assert!(c[3] == 255 && c[0] > 200 && c[1] < 100, "center {:?}", c);
+
+    // Baseline and progressive JPEG.
+    for bytes in [REF_SQUARE_BASELINE, REF_SQUARE_PROGRESSIVE] {
+        let (img, size) = decode_reference_image(bytes).expect("jpeg");
+        assert_eq!(size, [300, 300]);
+        assert!(ref_px(&img, 5, 5)[0] > 240);
+        assert!(ref_px(&img, 150, 150)[0] < 90);
+    }
+
+    // EXIF Orientation = 6 (rotate 90 CW) inserted as an APP1 segment after SOI.
+    let tiff: [u8; 26] =
+        [b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0];
+    let mut app1 = vec![0xFF, 0xE1];
+    app1.extend_from_slice(&((2 + 6 + tiff.len()) as u16).to_be_bytes());
+    app1.extend_from_slice(b"Exif\0\0");
+    app1.extend_from_slice(&tiff);
+    let mut rotated = REF_RECT_2TO1_JPG[..2].to_vec();
+    rotated.extend_from_slice(&app1);
+    rotated.extend_from_slice(&REF_RECT_2TO1_JPG[2..]);
+    let (plain, _) = decode_reference_image(REF_RECT_2TO1_JPG).expect("plain jpeg");
+    assert_eq!((plain.width, plain.height), (200, 100));
+    let (img, size) = decode_reference_image(&rotated).expect("exif jpeg");
+    assert_eq!(size, [100, 200], "EXIF orientation 6 swaps width and height");
+    // The black block at the top-left of the landscape image lands at the top-right.
+    assert!(ref_px(&img, 75, 20)[0] < 60, "{:?}", ref_px(&img, 75, 20));
+    assert!(ref_px(&img, 20, 20)[0] > 200, "{:?}", ref_px(&img, 20, 20));
+}
+
+fn render_with_reference(code: &str, reference: &str, view: &str) -> serde_json::Value {
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {
+            "name": "three_live_render",
+            "arguments": { "code": code, "reference": reference, "view": view }
+        }
+    });
+    three_live_compiler::handle_mcp_request(&req).expect("response")["result"].clone()
+}
+
+fn ref_meta(result: &serde_json::Value) -> serde_json::Value {
+    let text = result["content"][1]["text"].as_str().expect("meta text");
+    serde_json::from_str(text).expect("meta json")
+}
+
+const PANEL_SCENE_WIDE: &str = r#"
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1, 0.4),
+        new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
+    panel.name = 'Panel';
+    panel.position.y = 0.5;
+    scene.add(panel);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+"#;
+
+#[test]
+fn test_b1_mcp_reference_comparison_metrics_and_sheet() {
+    let uri = ref_data_uri("image/png", REF_BLUEPRINT_ADAM7);
+
+    // Matching proportions: high IoU, small aspect error, 4-panel sheet at the reference aspect.
+    let res = render_with_reference(PANEL_SCENE_WIDE, &uri, "front");
+    assert_eq!(res["isError"], false, "{}", res);
+    assert_eq!(res["content"][0]["type"], "image");
+    assert!(res["content"][0]["data"].as_str().unwrap().starts_with("iVBORw0KGgo"));
+    let meta = ref_meta(&res);
+    let r = &meta["reference"];
+    assert_eq!(r["view"], "front");
+    assert_eq!(r["silhouetteReliable"], true);
+    assert_eq!(r["referenceSegmentation"], "background");
+    assert!(r["silhouetteIou"].as_f64().unwrap() > 0.9, "{}", r);
+    assert!(r["aspectError"].as_f64().unwrap().abs() < 0.05, "{}", r);
+    let panel = r["panelSize"].as_array().unwrap();
+    let (pw, ph) = (panel[0].as_u64().unwrap(), panel[1].as_u64().unwrap());
+    assert_eq!(pw, (ph as f64 * 2.0).round() as u64, "panel follows the 2:1 reference aspect");
+    assert_eq!(meta["width"].as_u64().unwrap(), pw * 3 + ph + 6);
+    assert!(meta["width"].as_u64().unwrap() <= 2560);
+
+    // Wrong proportions (cube): low IoU, negative aspect error, actionable guidance.
+    let cube = PANEL_SCENE_WIDE.replace("3.2, 1, 0.4", "1, 1, 0.4");
+    let meta = ref_meta(&render_with_reference(&cube, &uri, "front"));
+    let r = &meta["reference"];
+    assert!(r["silhouetteIou"].as_f64().unwrap() < 0.6, "{}", r);
+    assert!(r["aspectError"].as_f64().unwrap() < -0.5, "{}", r);
+    let guidance = r["guidance"].to_string();
+    assert!(guidance.contains("narrower") && guidance.contains("DIFF"), "{}", guidance);
+
+    // Transparent cutout reference is segmented by alpha; JPEG reference via file path.
+    let meta = ref_meta(&render_with_reference(
+        PANEL_SCENE_WIDE,
+        &ref_data_uri("image/png", REF_CUTOUT_PALETTE),
+        "front",
+    ));
+    assert_eq!(meta["reference"]["referenceSegmentation"], "alpha");
+    assert!(meta["reference"]["silhouetteIou"].as_f64().unwrap() > 0.7);
+
+    let jpg_path = std::env::temp_dir().join(format!("tl_ref_{}.jpg", std::process::id()));
+    std::fs::write(&jpg_path, REF_SQUARE_BASELINE).unwrap();
+    let res = render_with_reference(&cube, jpg_path.to_str().unwrap(), "front");
+    let _ = std::fs::remove_file(&jpg_path);
+    let r = &ref_meta(&res)["reference"];
+    assert_eq!(r["referenceSize"], serde_json::json!([300, 300]));
+    assert!(r["silhouetteIou"].as_f64().unwrap() > 0.9, "{}", r);
+
+    // Default view with a reference is `camera`, never the quad sheet.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+        "params": { "name": "three_live_render",
+                    "arguments": { "code": PANEL_SCENE_WIDE, "reference": uri } }
+    });
+    let res = three_live_compiler::handle_mcp_request(&req).unwrap()["result"].clone();
+    assert_eq!(ref_meta(&res)["reference"]["view"], "camera");
+}
+
+#[test]
+fn test_b1_mcp_reference_errors_and_prompt() {
+    let call = |args: serde_json::Value| {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": { "name": "three_live_render", "arguments": args }
+        });
+        three_live_compiler::handle_mcp_request(&req).unwrap()["result"].clone()
+    };
+    let uri = ref_data_uri("image/png", REF_BLUEPRINT_ADAM7);
+    for (args, needle) in [
+        (
+            serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": uri, "turntable": true }),
+            "single still",
+        ),
+        (
+            serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": uri, "frames": 4 }),
+            "single still",
+        ),
+        (
+            serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": "https://x.test/a.png" }),
+            "network",
+        ),
+        (
+            serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": "data:image/gif;base64,R0lGODlhAQABAAAAACw=" }),
+            "GIF",
+        ),
+        (serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": 42 }), "must be a string"),
+        (
+            serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": "/no/such/ref.png" }),
+            "Failed reading",
+        ),
+        (
+            serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": uri, "outputPath": "/tmp/x.gif" }),
+            ".png",
+        ),
+    ] {
+        let res = call(args);
+        assert_eq!(res["isError"], true, "{}", res);
+        let text = res["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(needle), "expected {:?} in {:?}", needle, text);
+    }
+    // `reference: null` behaves like no reference (plain quad render).
+    let res = call(serde_json::json!({ "code": PANEL_SCENE_WIDE, "reference": null }));
+    assert_eq!(res["isError"], false);
+    assert!(ref_meta(&res).get("reference").is_none());
+
+    // Prompt discovery and argument validation.
+    let list = three_live_compiler::handle_mcp_request(
+        &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "prompts/list" }),
+    )
+    .unwrap();
+    assert!(list.to_string().contains("build_from_reference"));
+    let missing = three_live_compiler::handle_mcp_request(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "prompts/get",
+        "params": { "name": "build_from_reference", "arguments": {} }
+    }))
+    .unwrap();
+    assert!(missing.get("error").is_some());
+    let got = three_live_compiler::handle_mcp_request(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "prompts/get",
+        "params": { "name": "build_from_reference",
+                    "arguments": { "reference": "desk.jpg", "view": "front", "description": "1.2 m wide" } }
+    }))
+    .unwrap();
+    let text = got["result"]["messages"][0]["content"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("\"desk.jpg\"")
+            && text.contains("view: \"front\"")
+            && text.contains("1.2 m wide")
+    );
+    assert!(text.contains("silhouetteIou"));
+}

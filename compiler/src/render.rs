@@ -387,7 +387,7 @@ impl DecodedTexture {
     }
 }
 
-fn decode_base64_str(s: &str, max_bytes: usize) -> Option<Vec<u8>> {
+pub(crate) fn decode_base64_str(s: &str, max_bytes: usize) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity((s.len() * 3) / 4);
     let mut buf = 0u32;
     let mut bits = 0u8;
@@ -611,6 +611,9 @@ struct RasterBuffer {
     h: usize,
     color: Vec<[u8; 4]>,
     depth: Vec<f32>,
+    /// Mesh-triangle coverage (grid, frustum, and annotation lines excluded). Empty unless
+    /// a silhouette mask was requested.
+    cov: Vec<bool>,
 }
 
 impl RasterBuffer {
@@ -626,7 +629,7 @@ impl RasterBuffer {
                 *px = [r, g, b, 255];
             }
         }
-        Self { w, h, color, depth: vec![f32::INFINITY; w * h] }
+        Self { w, h, color, depth: vec![f32::INFINITY; w * h], cov: Vec::new() }
     }
 
     #[inline]
@@ -870,12 +873,66 @@ pub fn render_viewport_rgba(
     show_annotations: bool,
     header_label: Option<&str>,
 ) -> Vec<u8> {
+    render_viewport_impl(
+        scene,
+        width,
+        height,
+        mode,
+        show_grid,
+        show_annotations,
+        header_label,
+        false,
+    )
+    .0
+}
+
+/// Like [`render_viewport_rgba`], but also returns a `w x h` mesh silhouette mask (`255` where
+/// scene triangles cover at least 2 of the 4 SSAA subsamples, else `0`). Grid lines, the camera
+/// frustum, and annotation overlays never contribute to the mask. Output dimensions are
+/// `width` / `height` clamped to `32..=2048`.
+#[allow(clippy::too_many_arguments)]
+pub fn render_viewport_rgba_with_mask(
+    scene: &SceneGraph,
+    width: u32,
+    height: u32,
+    mode: RenderViewMode,
+    show_grid: bool,
+    show_annotations: bool,
+    header_label: Option<&str>,
+) -> (Vec<u8>, Vec<u8>) {
+    let (rgba, mask) = render_viewport_impl(
+        scene,
+        width,
+        height,
+        mode,
+        show_grid,
+        show_annotations,
+        header_label,
+        true,
+    );
+    (rgba, mask.unwrap_or_default())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_viewport_impl(
+    scene: &SceneGraph,
+    width: u32,
+    height: u32,
+    mode: RenderViewMode,
+    show_grid: bool,
+    show_annotations: bool,
+    header_label: Option<&str>,
+    want_mask: bool,
+) -> (Vec<u8>, Option<Vec<u8>>) {
     let w = width.clamp(32, 2048) as usize;
     let h = height.clamp(32, 2048) as usize;
     // 2x2 SSAA
     let ss_w = w * 2;
     let ss_h = h * 2;
     let mut ss_buf = RasterBuffer::new_with_studio_gradient(ss_w, ss_h);
+    if want_mask {
+        ss_buf.cov = vec![false; ss_w * ss_h];
+    }
 
     let world_matrices = compute_node_world_matrices(scene);
     let node_aabbs = compute_node_world_aabbs(scene, &world_matrices);
@@ -1448,6 +1505,12 @@ pub fn render_viewport_rgba(
                                         }
                                         out
                                     };
+                                    if !ss_buf.cov.is_empty() && rgba[3] >= 32 {
+                                        let ci = py * ss_buf.w + px;
+                                        if ci < ss_buf.cov.len() && z <= ss_buf.depth[ci] {
+                                            ss_buf.cov[ci] = true;
+                                        }
+                                    }
                                     ss_buf.blend_pixel(px, py, z, rgba);
                                 }
                             }
@@ -1481,6 +1544,25 @@ pub fn render_viewport_rgba(
     }
 
     // Downsample 2x2 SSAA -> w x h
+    let mask = if want_mask {
+        let mut m = vec![0u8; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let r0 = (y * 2) * ss_w + x * 2;
+                let r1 = r0 + ss_w;
+                let hits = ss_buf.cov[r0] as u8
+                    + ss_buf.cov[r0 + 1] as u8
+                    + ss_buf.cov[r1] as u8
+                    + ss_buf.cov[r1 + 1] as u8;
+                if hits >= 2 {
+                    m[y * w + x] = 255;
+                }
+            }
+        }
+        Some(m)
+    } else {
+        None
+    };
     let mut out_rgba = vec![0u8; w * h * 4];
     for y in 0..h {
         for x in 0..w {
@@ -1564,7 +1646,7 @@ pub fn render_viewport_rgba(
         draw_label_badge(&mut out_rgba, w, h, 8, 8, hdr, [248, 250, 252, 255], 1);
     }
 
-    out_rgba
+    (out_rgba, mask)
 }
 
 /// Renders the scene according to [`RenderOptions`] (Single View or 4-Up Quad Contact Sheet)
@@ -1763,7 +1845,7 @@ fn glyph_5x7(ch: char) -> [u8; 7] {
     }
 }
 
-fn draw_label_badge(
+pub(crate) fn draw_label_badge(
     rgba: &mut [u8],
     w: usize,
     h: usize,
@@ -1823,6 +1905,96 @@ fn draw_label_badge(
 }
 
 /// Pure-Rust PNG encoder (RGBA8, uncompressed DEFLATE store blocks + Adler32 + IEEE CRC32).
+/// Encodes an RGBA8 buffer as a zlib-compressed PNG with per-row adaptive filtering
+/// (minimum-sum-of-absolute-differences heuristic). Produces far smaller files than
+/// [`encode_png_rgba`] for large composites such as reference comparison sheets.
+pub fn encode_png_rgba_compressed(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err("PNG dimensions must be >= 1x1".to_string());
+    }
+    let w = width as usize;
+    let h = height as usize;
+    let row_bytes = w.checked_mul(4).ok_or("PNG width overflow")?;
+    let needed = row_bytes.checked_mul(h).ok_or("PNG size overflow")?;
+    if rgba.len() < needed {
+        return Err(format!(
+            "RGBA buffer too small for {}x{} PNG ({} < {})",
+            w,
+            h,
+            rgba.len(),
+            needed
+        ));
+    }
+    let mut raw = Vec::with_capacity(h * (1 + row_bytes));
+    let mut cand = vec![0u8; row_bytes];
+    let mut best = vec![0u8; row_bytes];
+    for y in 0..h {
+        let cur = &rgba[y * row_bytes..(y + 1) * row_bytes];
+        let prev = if y > 0 { Some(&rgba[(y - 1) * row_bytes..y * row_bytes]) } else { None };
+        let mut best_ft = 0u8;
+        let mut best_score = u64::MAX;
+        for ft in 0u8..5 {
+            if ft >= 2 && prev.is_none() && ft != 4 {
+                continue;
+            }
+            let mut score = 0u64;
+            for i in 0..row_bytes {
+                let a = if i >= 4 { cur[i - 4] as i16 } else { 0 };
+                let b = prev.map(|p| p[i] as i16).unwrap_or(0);
+                let c = if i >= 4 { prev.map(|p| p[i - 4] as i16).unwrap_or(0) } else { 0 };
+                let pred = match ft {
+                    0 => 0,
+                    1 => a,
+                    2 => b,
+                    3 => (a + b) / 2,
+                    _ => {
+                        let pp = a + b - c;
+                        let (pa, pb, pc) = ((pp - a).abs(), (pp - b).abs(), (pp - c).abs());
+                        if pa <= pb && pa <= pc {
+                            a
+                        } else if pb <= pc {
+                            b
+                        } else {
+                            c
+                        }
+                    }
+                };
+                let v = (cur[i] as i16 - pred) as u8;
+                cand[i] = v;
+                score += (v as i8).unsigned_abs() as u64;
+            }
+            if score < best_score {
+                best_score = score;
+                best_ft = ft;
+                best.copy_from_slice(&cand);
+            }
+        }
+        raw.push(best_ft);
+        raw.extend_from_slice(&best);
+    }
+    let zlib = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+
+    let mut png = Vec::with_capacity(64 + zlib.len());
+    png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    let write_chunk = |out: &mut Vec<u8>, chunk_type: &[u8; 4], data: &[u8]| {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let crc_start = out.len();
+        out.extend_from_slice(chunk_type);
+        out.extend_from_slice(data);
+        let crc = calculate_crc32(&out[crc_start..]);
+        out.extend_from_slice(&crc.to_be_bytes());
+    };
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    write_chunk(&mut png, b"IHDR", &ihdr);
+    write_chunk(&mut png, b"IDAT", &zlib);
+    write_chunk(&mut png, b"IEND", &[]);
+    Ok(png)
+}
+
 pub fn encode_png_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("PNG dimensions must be >= 1x1".to_string());
