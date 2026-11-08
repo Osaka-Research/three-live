@@ -32,5 +32,6 @@ if (typeof window !== 'undefined') {
 export * from './animation';
 export * from './cad';
 export * from './index';
+export * from './procedural';
 export * from './studio';
 export * from './three-author';

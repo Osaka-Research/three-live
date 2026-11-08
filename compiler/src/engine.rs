@@ -241,6 +241,13 @@ impl ThreeEngine {
                     for (const key of Object.keys(THREE)) {
                         freezeObjAndProto(THREE[key]);
                     }
+                    const authNs = globalThis.__THREE_LIVE_REGISTRY__?.authorNamespace;
+                    if (authNs && typeof authNs === 'object') {
+                        for (const key of Object.keys(authNs)) {
+                            freezeObjAndProto(authNs[key]);
+                        }
+                        try { Object.freeze(authNs); } catch (_) {}
+                    }
                     try { Object.freeze(THREE); } catch (_) {}
                     try {
                         Object.defineProperty(globalThis, 'THREE', {

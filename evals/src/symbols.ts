@@ -19,6 +19,8 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
   'Quaternion',
   'Matrix4',
   'Matrix3',
+  'Box3',
+  'Sphere',
   'Color',
   'MathUtils',
   // Buffers & Core Geometries

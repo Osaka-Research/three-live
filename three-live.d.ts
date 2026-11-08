@@ -59,6 +59,10 @@ export {
   type TextGeometryOptions,
 } from './three-live/src/plugins/cad';
 export {
+  installProceduralExtension,
+  proceduralPlugin,
+} from './three-live/src/plugins/procedural';
+export {
   ikPlugin,
   IKSolver,
   quatFromUnitVectors,

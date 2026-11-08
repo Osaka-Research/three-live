@@ -36,6 +36,7 @@ import {getSharedRegistry} from './plugin';
 import {installCadExtension} from './plugins/cad';
 import {installIKExtension} from './plugins/ik';
 import {installLodExtension} from './plugins/lod';
+import {installProceduralExtension} from './plugins/procedural';
 import {
   calculateCRC32,
   generateUSDZ,
@@ -840,10 +841,10 @@ export class BufferAttribute {
     return this.array[index * this.itemSize];
   }
   public getY(index: number): number {
-    return this.array[index * this.itemSize + 1];
+    return this.itemSize >= 2 ? this.array[index * this.itemSize + 1] : 0;
   }
   public getZ(index: number): number {
-    return this.array[index * this.itemSize + 2];
+    return this.itemSize >= 3 ? this.array[index * this.itemSize + 2] : 0;
   }
 
   public setX(index: number, x: number): this {
@@ -1064,6 +1065,7 @@ export class BufferGeometry {
 
   center(): this {
     const box = this.computeBoundingBox();
+    if (box.max.x < box.min.x) return this;
     return this.translate(
       -(box.min.x + box.max.x) * 0.5,
       -(box.min.y + box.max.y) * 0.5,
@@ -4695,7 +4697,7 @@ function buildLinePrismGeometry(
   if (segCount === 0) return outGeo;
   sourceGeo.computeBoundingBox();
   const bb = sourceGeo.boundingBox,
-    diag = bb ? bb.max.distanceTo(bb.min) || 1 : 1,
+    diag = bb && bb.max.x >= bb.min.x ? bb.max.distanceTo(bb.min) || 1 : 1,
     r =
       Math.max(0.0015, Math.min(0.025, diag * 0.003)) *
       (0.5 + 0.5 * Math.max(0.5, Math.min(6, Number(linewidth) || 1))),
@@ -5151,6 +5153,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   installCadExtension(THREE, getSharedRegistry());
   installIKExtension(THREE, getSharedRegistry());
   installLodExtension(THREE, getSharedRegistry());
+  installProceduralExtension(THREE, getSharedRegistry());
   // Only the server-extract engine needs a default scene; web builds skip it.
   let defaultScene = new Scene();
   let defaultCamera = new PerspectiveCamera(45, 1, 0.1, 1000);

@@ -501,6 +501,36 @@ function buildThreeLive() {
     outfile: path.join(tlDist, 'three-live-cad.min.js'),
   });
 
+  // 10c. three-live-procedural (ESM, CJS, IIFE min)
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/procedural.ts')],
+    bundle: true,
+    format: 'esm',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-procedural.js'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/procedural.ts')],
+    bundle: true,
+    format: 'cjs',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-procedural.cjs'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/procedural.ts')],
+    bundle: true,
+    format: 'iife',
+    globalName: 'ThreeLiveProcedural',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-procedural.min.js'),
+  });
+
   // 11. three-live-animation (ESM, CJS, IIFE min)
   buildTarget({
     entryPoints: [path.join(THREE_LIVE_DIR, 'src/animation.ts')],
@@ -542,6 +572,7 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-live-viewer.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-studio.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-cad.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-procedural.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-animation.d.ts'), rootDts);
 
   // Sync to root dist/ and examples
@@ -574,6 +605,9 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-cad.min.js'),
       path.join(DIST_DIR, 'three-live-cad.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-procedural.min.js'),
+      path.join(DIST_DIR, 'three-live-procedural.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-animation.min.js'),
       path.join(DIST_DIR, 'three-live-animation.min.js'));
@@ -875,14 +909,15 @@ function reportSizes() {
     {name: 'three-live.min.js', budgetKb: '72'},
     {name: 'three-live-studio.min.js', budgetKb: '29'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
+    {name: 'three-live-procedural.min.js', budgetKb: '15'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
-    {name: 'three-live-full.min.js', budgetKb: '113'},
+    {name: 'three-live-full.min.js', budgetKb: '128'},
     {name: 'xr-live-viewer.min.js', budgetKb: '54'},
     {name: 'xr-live.min.js', budgetKb: '84'},
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '63'},
     {name: 'xr-live-sim.min.js', budgetKb: '26'},
-    {name: 'xr-live-full.min.js', budgetKb: '209'},
+    {name: 'xr-live-full.min.js', budgetKb: '224'},
   ];
   const failures = [];
   for (const f of files) {

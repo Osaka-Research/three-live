@@ -3169,3 +3169,76 @@ fn test_mcp_server_end_to_end_jsonrpc_session() {
     assert_eq!(responses[8]["id"], 9);
     assert_eq!(responses[8]["error"]["code"], -32601);
 }
+
+#[test]
+fn test_box3_sphere_bounding_helpers_and_prototype_freeze() {
+    // 1. Authoring script using Box3.setFromObject + Sphere + InstancedMesh bounds
+    // to auto-ground a pedestal underneath a rotated assembly with zero TL102 warnings.
+    let script = r#"
+        const assembly = new THREE.Group();
+        assembly.position.set(0, 2.5, 0);
+        const partA = new THREE.Mesh(
+            new THREE.BoxGeometry(1.2, 0.8, 1.0),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        assembly.add(partA);
+
+        const bolts = new THREE.InstancedMesh(
+            new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8),
+            new THREE.MeshStandardMaterial({ color: 0x94a3b8 }),
+            2
+        );
+        bolts.setMatrixAt(0, new THREE.Matrix4().makeTranslation(-0.5, -0.5, 0));
+        bolts.setMatrixAt(1, new THREE.Matrix4().makeTranslation(0.5, -0.5, 0));
+        assembly.add(bolts);
+        scene.add(assembly);
+
+        const bounds = new THREE.Box3().setFromObject(assembly, true);
+        const size = bounds.getSize(new THREE.Vector3());
+        const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+        if (bounds.isEmpty() || sphere.isEmpty() || size.x < 1.1) {
+            throw new Error('Unexpected empty or undersized Box3/Sphere bounds');
+        }
+
+        // Ground assembly so bounds.min.y sits cleanly at y = 0.2 (top of pedestal)
+        assembly.position.y += (0.2 - bounds.min.y);
+        const pedestal = new THREE.Mesh(
+            new THREE.CylinderGeometry(sphere.radius * 0.8, sphere.radius * 0.9, 0.2, 24),
+            new THREE.MeshStandardMaterial({ color: 0x1e293b })
+        );
+        pedestal.position.y = 0.1;
+        scene.add(pedestal);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(3, 5, 4);
+        scene.add(sun);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(script, "box3.js", 1.5);
+    assert!(report.valid, "Expected valid scene, diagnostics: {:?}", report.diagnostics);
+    let has_tl102 = report.diagnostics.iter().any(|d| d.code == "TL102");
+    assert!(
+        !has_tl102,
+        "THREE.Box3 and THREE.Sphere must not emit TL102 unsupported warnings: {:?}",
+        report.diagnostics
+    );
+
+    // 2. Verify Box3.prototype is frozen against cross-invocation pollution in Boa VM
+    let pollute_attempt = r#"
+        let mutated = false;
+        try {
+            THREE.Box3.prototype.setFromObject = () => { mutated = true; };
+        } catch (_) {}
+        const b = new THREE.Box3().setFromPoints([
+            new THREE.Vector3(-1, 0, 0),
+            new THREE.Vector3(1, 2, 0),
+        ]);
+        if (mutated || b.getSize().x !== 2) {
+            throw new Error('Box3.prototype was mutated inside sandbox');
+        }
+        scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()));
+    "#;
+    let glb = transcode_three_to_glb(pollute_attempt)
+        .expect("Prototype pollution attempt should be blocked cleanly");
+    assert!(glb.starts_with(b"glTF"));
+}
