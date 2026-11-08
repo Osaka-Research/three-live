@@ -94,7 +94,7 @@ const AUTHORING_GUIDE_MARKDOWN: &str = r#"# Three-Live Authoring Guide for AI Co
   - Geometries: `BoxGeometry`, `SphereGeometry`, `CylinderGeometry`, `ConeGeometry`, `PlaneGeometry`, `TorusGeometry`, `TorusKnotGeometry`, `CapsuleGeometry`, `CircleGeometry`, `RingGeometry`, `IcosahedronGeometry`, `OctahedronGeometry`, `TetrahedronGeometry`, `DodecahedronGeometry`, `LatheGeometry`, `TubeGeometry`, `ExtrudeGeometry`, `ShapeGeometry`, `TextGeometry`, `BufferGeometry`.
   - CAD & CSG: `THREE.Shape`, `THREE.Path`, `THREE.CSG.union(a, b)`, `THREE.CSG.subtract(a, b)`, `THREE.CSG.intersect(a, b)`.
   - Materials: `MeshStandardMaterial`, `MeshPhysicalMaterial` (`clearcoat`, `transmission`, `ior`, `thickness`, `sheen`, `iridescence`, `anisotropy`), `MeshBasicMaterial`, `MeshLambertMaterial`, `MeshPhongMaterial`.
-  - Scene & Instancing: `Group`, `Object3D`, `Mesh`, `InstancedMesh`, `LOD`, `DirectionalLight`, `PointLight`, `SpotLight`, `AmbientLight`, `HemisphereLight`, `DataTexture`.
+  - Scene & Instancing: `Group`, `Object3D`, `Mesh`, `InstancedMesh`, `LOD`, `Box3`, `Sphere`, `DirectionalLight`, `PointLight`, `SpotLight`, `AmbientLight`, `HemisphereLight`, `DataTexture`, `CanvasTexture` (`document.createElement("canvas").getContext("2d")`).
 - **Spatial Traits (`mesh.userData.xr`)**:
   - Manipulation & Follow: `grab` (`"1-hand"` | `"2-hand"`), `scale` (`{ min, max }`), `billboard` (`"y"` | `"full"` | `"capsule"`), `follow` (`{ distance, speed }`), `orbit` (`{ radius, speed, axis }`), `handles` (`true`).
   - CAD & World: `dimensions` (`{ unit: "mm"|"cm"|"m"|"in" }`), `explode` (`{ layer, direction }`), `snapTo` (`{ grid, angle, socket }`), `gaze` (`{ action: "select"|"ask", dwellMs }`), `anchor` (`{ plane: "horizontal"|"vertical", persist: true }`).

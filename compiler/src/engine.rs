@@ -257,6 +257,28 @@ impl ThreeEngine {
                         });
                     } catch (_) {}
                 }
+                if (typeof globalThis.document === 'object' && globalThis.document !== null) {
+                    try {
+                        if (globalThis.document.body) Object.freeze(globalThis.document.body);
+                        if (globalThis.document.documentElement) Object.freeze(globalThis.document.documentElement);
+                        Object.freeze(globalThis.document);
+                        Object.defineProperty(globalThis, 'document', {
+                            value: globalThis.document,
+                            writable: false,
+                            configurable: false
+                        });
+                    } catch (_) {}
+                }
+                if (typeof globalThis.window === 'object' && globalThis.window !== null && globalThis.window !== globalThis) {
+                    try {
+                        Object.freeze(globalThis.window);
+                        Object.defineProperty(globalThis, 'window', {
+                            value: globalThis.window,
+                            writable: false,
+                            configurable: false
+                        });
+                    } catch (_) {}
+                }
 
                 const nativeHooks = [
                     '__three_live_native_crc32__',
@@ -266,6 +288,8 @@ impl ThreeEngine {
                     '__three_live_native_format_usda_ints__',
                     '__three_live_native_utf8_encode__',
                     '__three_live_native_utf8_decode__',
+                    '__three_live_native_encode_rgba_png__',
+                    '__three_live_native_decode_b64_image__',
                     '__three_live_native_torus_knot__',
                     '__three_live_native_sphere__',
                     '__three_live_native_cylinder__',

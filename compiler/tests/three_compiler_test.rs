@@ -3242,3 +3242,118 @@ fn test_box3_sphere_bounding_helpers_and_prototype_freeze() {
         .expect("Prototype pollution attempt should be blocked cleanly");
     assert!(glb.starts_with(b"glTF"));
 }
+
+#[test]
+fn test_canvas_texture_virtual_2d_context_glb_usdz_and_render() {
+    let script = r#"
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        // Instantiate CanvasTexture before drawing to verify reactive lazy sync
+        const tex = new THREE.CanvasTexture(canvas);
+        const ctx = canvas.getContext('2d');
+
+        // Top half (y = 0..64): bright red
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(0, 0, 128, 64);
+
+        // Bottom half (y = 64..128): bright blue
+        ctx.fillStyle = '#2563eb';
+        ctx.fillRect(0, 64, 128, 64);
+
+        // White label across top banner
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('LIVE', 64, 32);
+
+        const board = new THREE.Mesh(
+            new THREE.PlaneGeometry(2.0, 2.0),
+            new THREE.MeshBasicMaterial({ map: tex })
+        );
+        board.name = 'SignBoard';
+        board.position.set(0, 1.0, 0);
+        scene.add(board);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(0, 2, 4);
+        scene.add(sun);
+
+        camera.position.set(0, 1.0, 2.6);
+        camera.lookAt(0, 1.0, 0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(script, "canvas_tex.js", 1.5);
+    assert!(
+        report.valid && report.diagnostics.is_empty(),
+        "Expected zero diagnostics for THREE.CanvasTexture, got: {:?}",
+        report.diagnostics
+    );
+
+    let glb = transcode_three_to_glb(script)
+        .expect("GLB compilation with THREE.CanvasTexture should succeed");
+    let json_len = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+    let gltf: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("Valid GLB JSON chunk");
+    let uri = gltf["images"][0]["uri"].as_str().expect("images[0].uri present");
+    assert!(uri.starts_with("data:image/png;base64,"));
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(script)
+        .expect("USDZ compilation with THREE.CanvasTexture should succeed");
+    let entries = verify_usdz_alignment(&usdz);
+    assert!(entries >= 2, "Expected USDZ to package model.usda + texture_0.png");
+
+    // Verify right-side-up UV orientation in software rasterizer:
+    // Upper center of rendered viewport (above board center y=1.0) must be red-dominant,
+    // and lower center of rendered viewport (below board center y=1.0) must be blue-dominant!
+    let sg = three_live_compiler::validate_three_script(script).expect("SceneGraph");
+    let cam_rgba = three_live_compiler::render::render_viewport_rgba(
+        &sg,
+        128,
+        128,
+        three_live_compiler::render::RenderViewMode::Camera,
+        false,
+        false,
+        None,
+    );
+    let px = |x: usize, y: usize| -> [u8; 4] {
+        let o = (y * 128 + x) * 4;
+        [cam_rgba[o], cam_rgba[o + 1], cam_rgba[o + 2], cam_rgba[o + 3]]
+    };
+    // Sample upper board region (x=16, y=36, avoiding centered white text) and lower region (x=64, y=92)
+    let top_px = px(40, 24);
+    let bot_px = px(64, 96);
+    assert!(
+        top_px[0] > top_px[2] + 40,
+        "Top half of CanvasTexture PlaneGeometry should render red-dominant (right-side-up), got {:?}",
+        top_px
+    );
+    assert!(
+        bot_px[2] > bot_px[0] + 40,
+        "Bottom half of CanvasTexture PlaneGeometry should render blue-dominant (right-side-up), got {:?}",
+        bot_px
+    );
+
+    // Verify `document` and `VirtualCanvas.prototype` cannot be poisoned across invocations
+    let tamper_attempt = r#"
+        try { document.createElement = () => null; } catch (_) {}
+        try { globalThis.document = null; } catch (_) {}
+        const c = document.createElement('canvas');
+        c.width = 512;
+        c.height = 512;
+        try { Object.getPrototypeOf(c).getContext = () => null; } catch (_) {}
+        const ctx = c.getContext('2d');
+        if (!ctx) throw new Error('VirtualCanvas was poisoned');
+        ctx.fillStyle = 'green';
+        ctx.fillRect(0, 0, 512, 512);
+        scene.add(new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(c) })
+        ));
+    "#;
+    let glb2 = transcode_three_to_glb(tamper_attempt)
+        .expect("document / VirtualCanvas tamper attempt must be blocked and remain functional");
+    assert!(glb2.starts_with(b"glTF"));
+}

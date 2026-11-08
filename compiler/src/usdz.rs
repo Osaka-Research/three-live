@@ -820,6 +820,344 @@ pub fn native_utf8_decode(
     Ok(JsValue::from(js_string!(decoded)))
 }
 
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+#[inline]
+fn srgb_byte_to_linear(b: u8) -> f64 {
+    let c = (b as f64) / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn encode_rgba_png_data_uri_impl(
+    src: &[u8],
+    src_w: usize,
+    src_h: usize,
+    flip_y: bool,
+    is_linear: bool,
+    max_dim: usize,
+) -> Option<(String, [f64; 4])> {
+    if src_w == 0 || src_h == 0 || src_w > 2048 || src_h > 2048 {
+        return None;
+    }
+    let needed = src_w.checked_mul(src_h)?.checked_mul(4)?;
+    if src.len() < needed {
+        return None;
+    }
+    let cap_dim = max_dim.clamp(1, 2048);
+    let scale = if src_w > cap_dim || src_h > cap_dim {
+        (cap_dim as f64) / (src_w.max(src_h) as f64)
+    } else {
+        1.0
+    };
+    let dst_w = ((src_w as f64 * scale).round() as usize).max(1);
+    let dst_h = ((src_h as f64 * scale).round() as usize).max(1);
+    let stride = 1 + dst_w * 4;
+    let raw_len = dst_h * stride;
+    let num_blocks = raw_len.div_ceil(65535).max(1);
+    let idat_len = 2 + num_blocks * 5 + raw_len + 4;
+
+    let mut raw = Vec::with_capacity(raw_len);
+    let mut s1: u32 = 1;
+    let mut s2: u32 = 0;
+    let mut sum_lin_r = 0.0f64;
+    let mut sum_lin_g = 0.0f64;
+    let mut sum_lin_b = 0.0f64;
+    let mut sum_a = 0.0f64;
+    let exact_1to1 = dst_w == src_w && dst_h == src_h;
+
+    let mut srgb_lut = [0.0f64; 256];
+    if !is_linear {
+        for (i, slot) in srgb_lut.iter_mut().enumerate() {
+            *slot = srgb_byte_to_linear(i as u8);
+        }
+    }
+
+    for y in 0..dst_h {
+        raw.push(0);
+        s2 = (s2 + s1) % 65521;
+        let py = if flip_y { dst_h - 1 - y } else { y };
+        let sy0 = if exact_1to1 { py } else { (py * src_h) / dst_h };
+        let sy1 = if exact_1to1 { py + 1 } else { (((py + 1) * src_h) / dst_h).max(sy0 + 1) };
+        for x in 0..dst_w {
+            let (r, g, b, a) = if exact_1to1 {
+                let idx = (sy0 * src_w + x) * 4;
+                (src[idx], src[idx + 1], src[idx + 2], src[idx + 3])
+            } else {
+                let sx0 = (x * src_w) / dst_w;
+                let sx1 = (((x + 1) * src_w) / dst_w).max(sx0 + 1);
+                let mut rr = 0u32;
+                let mut gg = 0u32;
+                let mut bb = 0u32;
+                let mut aa = 0u32;
+                let mut cnt = 0u32;
+                for yy in sy0..sy1.min(src_h) {
+                    for xx in sx0..sx1.min(src_w) {
+                        let idx = (yy * src_w + xx) * 4;
+                        rr += src[idx] as u32;
+                        gg += src[idx + 1] as u32;
+                        bb += src[idx + 2] as u32;
+                        aa += src[idx + 3] as u32;
+                        cnt += 1;
+                    }
+                }
+                if cnt > 1 {
+                    let half = cnt / 2;
+                    (
+                        ((rr + half) / cnt) as u8,
+                        ((gg + half) / cnt) as u8,
+                        ((bb + half) / cnt) as u8,
+                        ((aa + half) / cnt) as u8,
+                    )
+                } else {
+                    (rr as u8, gg as u8, bb as u8, aa as u8)
+                }
+            };
+            raw.extend_from_slice(&[r, g, b, a]);
+            s1 += r as u32;
+            s2 += s1;
+            s1 += g as u32;
+            s2 += s1;
+            s1 += b as u32;
+            s2 += s1;
+            s1 += a as u32;
+            s2 += s1;
+            if is_linear {
+                sum_lin_r += (r as f64) / 255.0;
+                sum_lin_g += (g as f64) / 255.0;
+                sum_lin_b += (b as f64) / 255.0;
+            } else {
+                sum_lin_r += srgb_lut[r as usize];
+                sum_lin_g += srgb_lut[g as usize];
+                sum_lin_b += srgb_lut[b as usize];
+            }
+            sum_a += (a as f64) / 255.0;
+        }
+        s1 %= 65521;
+        s2 %= 65521;
+    }
+
+    let mut png = Vec::with_capacity(57 + idat_len);
+    png.extend_from_slice(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    png.extend_from_slice(&13u32.to_be_bytes());
+    png.extend_from_slice(b"IHDR");
+    png.extend_from_slice(&(dst_w as u32).to_be_bytes());
+    png.extend_from_slice(&(dst_h as u32).to_be_bytes());
+    png.extend_from_slice(&[8, 6, 0, 0, 0]);
+    let ihdr_crc = calculate_crc32(&png[12..29]);
+    png.extend_from_slice(&ihdr_crc.to_be_bytes());
+
+    png.extend_from_slice(&(idat_len as u32).to_be_bytes());
+    let idat_type_start = png.len();
+    png.extend_from_slice(b"IDAT");
+    png.extend_from_slice(&[0x78, 0x01]);
+
+    let mut roff = 0usize;
+    let mut rem = raw.len();
+    loop {
+        let blk_len = rem.min(65535);
+        let is_final = u8::from(rem - blk_len == 0);
+        png.push(is_final);
+        let len16 = blk_len as u16;
+        png.extend_from_slice(&len16.to_le_bytes());
+        png.extend_from_slice(&(!len16).to_le_bytes());
+        if blk_len > 0 {
+            png.extend_from_slice(&raw[roff..roff + blk_len]);
+            roff += blk_len;
+            rem -= blk_len;
+        }
+        if is_final == 1 {
+            break;
+        }
+    }
+    let adler = (s2 << 16) | s1;
+    png.extend_from_slice(&adler.to_be_bytes());
+    let idat_crc = calculate_crc32(&png[idat_type_start..]);
+    png.extend_from_slice(&idat_crc.to_be_bytes());
+    png.extend_from_slice(&[0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82]);
+
+    const PREFIX: &str = "data:image/png;base64,";
+    let b64_len = png.len().div_ceil(3) * 4;
+    let mut uri = String::with_capacity(PREFIX.len() + b64_len);
+    uri.push_str(PREFIX);
+    let mut chunks = png.chunks_exact(3);
+    for c in &mut chunks {
+        let n = ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32);
+        uri.push(B64_ALPHABET[((n >> 18) & 63) as usize] as char);
+        uri.push(B64_ALPHABET[((n >> 12) & 63) as usize] as char);
+        uri.push(B64_ALPHABET[((n >> 6) & 63) as usize] as char);
+        uri.push(B64_ALPHABET[(n & 63) as usize] as char);
+    }
+    let rem_bytes = chunks.remainder();
+    if !rem_bytes.is_empty() {
+        let n = ((rem_bytes[0] as u32) << 16)
+            | if rem_bytes.len() == 2 { (rem_bytes[1] as u32) << 8 } else { 0 };
+        uri.push(B64_ALPHABET[((n >> 18) & 63) as usize] as char);
+        uri.push(B64_ALPHABET[((n >> 12) & 63) as usize] as char);
+        uri.push(if rem_bytes.len() == 2 {
+            B64_ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        uri.push('=');
+    }
+
+    let n_px = (dst_w * dst_h).max(1) as f64;
+    Some((uri, [sum_lin_r / n_px, sum_lin_g / n_px, sum_lin_b / n_px, sum_a / n_px]))
+}
+
+/// Native Boa hook for encoding RGBA8 pixel buffers (`THREE.CanvasTexture`) into stored-DEFLATE
+/// `data:image/png;base64,...` URIs + linear `avgColor` in O(1) JS loop iterations.
+pub fn native_encode_rgba_png(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let Some(val) = args.first() else {
+        return Ok(JsValue::null());
+    };
+    let src_w = args.get(1).and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
+    let src_h = args.get(2).and_then(|v| v.as_number()).unwrap_or(0.0) as usize;
+    let flip_y = args.get(3).map(|v| v.to_boolean()).unwrap_or(false);
+    let is_linear = args.get(4).map(|v| v.to_boolean()).unwrap_or(false);
+    let max_dim =
+        args.get(5).and_then(|v| v.as_number()).unwrap_or(512.0).clamp(1.0, 2048.0) as usize;
+
+    let mut fast_encoded = None;
+    if let Some(obj) = val.as_object() {
+        if let Ok(typed_arr) = JsTypedArray::from_object(obj.clone()) {
+            if let Ok(buf_val) = typed_arr.buffer(context) {
+                if let Some(buf_obj) = buf_val.as_object() {
+                    if let Ok(arr_buf) = JsArrayBuffer::from_object(buf_obj.clone()) {
+                        if let Some(data) = arr_buf.data() {
+                            let offset = typed_arr.byte_offset(context).unwrap_or(0);
+                            let len = typed_arr.byte_length(context).unwrap_or(0);
+                            let end = offset.saturating_add(len).min(data.len());
+                            let start = offset.min(end);
+                            let slice = &data[start..end];
+                            check_native_input_size(slice.len(), "native_encode_rgba_png")?;
+                            fast_encoded = Some(encode_rgba_png_data_uri_impl(
+                                slice, src_w, src_h, flip_y, is_linear, max_dim,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let encoded = match fast_encoded {
+        Some(res) => res,
+        None => {
+            let bytes = extract_byte_buffer(val, context)
+                .map_err(|e| JsNativeError::typ().with_message(e))?;
+            encode_rgba_png_data_uri_impl(&bytes, src_w, src_h, flip_y, is_linear, max_dim)
+        }
+    };
+
+    let Some((uri, avg)) = encoded else {
+        return Ok(JsValue::null());
+    };
+    let arr = JsArray::from_iter(
+        [
+            JsValue::from(js_string!(uri)),
+            JsValue::new(avg[0]),
+            JsValue::new(avg[1]),
+            JsValue::new(avg[2]),
+            JsValue::new(avg[3]),
+        ],
+        context,
+    );
+    Ok(JsValue::from(arr))
+}
+
+/// Native Boa hook for decoding `data:image/(png|jpeg);base64,...` URIs during USDZ packaging
+/// in O(1) JS loop iterations.
+pub fn native_decode_b64_image(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let Some(val) = args.first() else {
+        return Ok(JsValue::null());
+    };
+    let Some(js_str) = val.as_string() else {
+        return Ok(JsValue::null());
+    };
+    check_native_input_size(js_str.len(), "native_decode_b64_image")?;
+    let s = js_str.to_std_string_escaped();
+    check_native_input_size(s.len(), "native_decode_b64_image")?;
+    let Some(comma_idx) = s.find(',') else {
+        return Ok(JsValue::null());
+    };
+    let header = s[..comma_idx].to_ascii_lowercase();
+    if !(header.starts_with("data:image/png")
+        || header.starts_with("data:image/jpeg")
+        || header.starts_with("data:image/jpg"))
+        || !header.ends_with(";base64")
+    {
+        return Ok(JsValue::null());
+    }
+    let payload = s[comma_idx + 1..].as_bytes();
+    let mut out = Vec::with_capacity((payload.len() * 3) / 4);
+    let mut quad = [0u8; 4];
+    let mut qlen = 0usize;
+    let mut pad = 0usize;
+    for (byte_idx, &b) in payload.iter().enumerate() {
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => {
+                pad += 1;
+                if pad > 2 || qlen < 2 {
+                    return Ok(JsValue::null());
+                }
+                0
+            }
+            _ => return Ok(JsValue::null()),
+        };
+        if pad > 0 && b != b'=' {
+            return Ok(JsValue::null());
+        }
+        quad[qlen] = v;
+        qlen += 1;
+        if qlen == 4 {
+            let n = ((quad[0] as u32) << 18)
+                | ((quad[1] as u32) << 12)
+                | ((quad[2] as u32) << 6)
+                | (quad[3] as u32);
+            out.push(((n >> 16) & 0xff) as u8);
+            if pad < 2 {
+                out.push(((n >> 8) & 0xff) as u8);
+            }
+            if pad == 0 {
+                out.push((n & 0xff) as u8);
+            }
+            qlen = 0;
+            if pad > 0 {
+                if payload[byte_idx + 1..].iter().any(|c| !c.is_ascii_whitespace()) {
+                    return Ok(JsValue::null());
+                }
+                break;
+            }
+        }
+    }
+    if qlen != 0 {
+        return Ok(JsValue::null());
+    }
+    check_native_input_size(out.len(), "native_decode_b64_image")?;
+    let arr = js_uint8_array_from_slice(&out, context)?;
+    Ok(JsValue::from(arr))
+}
+
 /// Registers native USDZ accelerator functions on the Boa global object.
 pub fn register_native_usdz_callables(context: &mut Context) -> JsResult<()> {
     context.register_global_builtin_callable(
@@ -856,6 +1194,16 @@ pub fn register_native_usdz_callables(context: &mut Context) -> JsResult<()> {
         js_string!("__three_live_native_utf8_decode__"),
         1,
         NativeFunction::from_fn_ptr(native_utf8_decode),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_encode_rgba_png__"),
+        6,
+        NativeFunction::from_fn_ptr(native_encode_rgba_png),
+    )?;
+    context.register_global_builtin_callable(
+        js_string!("__three_live_native_decode_b64_image__"),
+        1,
+        NativeFunction::from_fn_ptr(native_decode_b64_image),
     )?;
     Ok(())
 }

@@ -1361,6 +1361,13 @@ export function extractMeshesFromGLB(
   const imgCache = new Map<number, {file: string; data: Uint8Array} | null>();
 
   function decodeB64DataUri(uri: string): Uint8Array | null {
+    if (typeof ENABLE_NATIVE_HOOKS !== 'undefined' && ENABLE_NATIVE_HOOKS) {
+      const nativeDecode = (globalThis as any)
+        .__three_live_native_decode_b64_image__;
+      if (typeof nativeDecode === 'function') {
+        return nativeDecode(uri) ?? null;
+      }
+    }
     const m =
       /^data:image\/(png|jpe?g)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/i.exec(
         uri,
