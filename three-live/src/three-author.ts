@@ -780,6 +780,8 @@ export class Color {
   }
 }
 
+let _mathSeed = 1234567;
+
 export const MathUtils = {
   degToRad: (deg: number) => (deg * Math.PI) / 180,
   radToDeg: (rad: number) => (rad * 180) / Math.PI,
@@ -787,7 +789,19 @@ export const MathUtils = {
     Math.max(min, Math.min(max, val)),
   lerp: (x: number, y: number, t: number) => x + (y - x) * t,
   generateUUID: () => Math.random().toString(36).substring(2, 15),
+  randInt: (low: number, high: number) =>
+    low + Math.floor(Math.random() * (high - low + 1)),
   randFloat: (low: number, high: number) => low + Math.random() * (high - low),
+  randFloatSpread: (range: number) => range * (0.5 - Math.random()),
+  seededRandom: (s?: number) => {
+    if (s !== undefined) {
+      _mathSeed = Number.isFinite(s) ? s | 0 : 0;
+    }
+    let t = (_mathSeed = (_mathSeed + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  },
 };
 
 // =========================================================================
@@ -5182,6 +5196,7 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
   }
   const resetSceneFn = function (): void {
     clearAuthorWarnings();
+    _mathSeed = 1234567;
     delete globalRoot.__three_live_sim_time_ms__;
     delete globalRoot.__three_live_raf_cb__;
     delete globalRoot.__three_live_in_step__;

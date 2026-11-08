@@ -21,6 +21,8 @@ export const NATIVE_SUPPORTED_SYMBOLS = new Set<string>([
   'Matrix3',
   'Box3',
   'Sphere',
+  'ImprovedNoise',
+  'SimplexNoise',
   'Color',
   'MathUtils',
   // Buffers & Core Geometries

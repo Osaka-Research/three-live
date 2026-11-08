@@ -464,6 +464,172 @@ function runProceduralTests(): void {
     'VirtualCanvas.prototype and VirtualCanvasContext2D.prototype are frozen against prototype pollution',
   );
 
+  // 15. THREE.MathUtils.seededRandom, randInt, and randFloatSpread
+  clearAuthorWarnings();
+  const s1a = THREE.MathUtils.seededRandom(42);
+  const s1b = THREE.MathUtils.seededRandom();
+  const s1c = THREE.MathUtils.seededRandom();
+  const s2a = THREE.MathUtils.seededRandom(42);
+  const s2b = THREE.MathUtils.seededRandom();
+  const s2c = THREE.MathUtils.seededRandom();
+  assert(
+    s1a === s2a &&
+      s1b === s2b &&
+      s1c === s2c &&
+      s1a >= 0 &&
+      s1a < 1 &&
+      s1a !== s1b,
+    'THREE.MathUtils.seededRandom(seed) generates repeatable Mulberry32 sequences in [0, 1)',
+  );
+  const sOther = THREE.MathUtils.seededRandom(99);
+  assert(
+    sOther !== s1a,
+    'Different seeds produce distinct THREE.MathUtils.seededRandom values',
+  );
+  const sNanA = THREE.MathUtils.seededRandom(NaN);
+  const sNanB = THREE.MathUtils.seededRandom();
+  assert(
+    Number.isFinite(sNanA) && Number.isFinite(sNanB) && sNanA !== sNanB,
+    'Non-finite seed in seededRandom(NaN) falls back cleanly without poisoning subsequent calls',
+  );
+  const ri = THREE.MathUtils.randInt(5, 10);
+  const rfs = THREE.MathUtils.randFloatSpread(4);
+  assert(
+    Number.isInteger(ri) && ri >= 5 && ri <= 10 && rfs >= -2 && rfs <= 2,
+    'THREE.MathUtils.randInt and randFloatSpread stay within bounds',
+  );
+
+  // 16. THREE.ImprovedNoise (Ken Perlin 2002 3D gradient noise)
+  const perlin = new THREE.ImprovedNoise();
+  assert(
+    getAuthorWarnings().length === 0 &&
+      Object.isFrozen(THREE.ImprovedNoise.prototype),
+    'THREE.ImprovedNoise emits zero warnings and has frozen prototype',
+  );
+  assert(
+    perlin.noise(0, 0, 0) === 0 &&
+      perlin.noise(3, -7, 12) === 0 &&
+      perlin.noise(255, 128, -64) === 0,
+    'ImprovedNoise vanishes at integer lattice points',
+  );
+  assert(
+    perlin.noise(1.35, 2.75) === perlin.noise(1.35, 2.75, 0),
+    'ImprovedNoise.noise(x, y) defaults z to 0',
+  );
+  assert(
+    approx(
+      perlin.noise(1.35 + 256, -2.4 + 512, 0.7 - 256),
+      perlin.noise(1.35, -2.4, 0.7),
+      1e-9,
+    ),
+    'ImprovedNoise is 256-periodic along X, Y, and Z',
+  );
+  let perlinMin = Infinity;
+  let perlinMax = -Infinity;
+  let maxDelta = 0;
+  for (let i = 0; i < 200; i++) {
+    const px = i * 0.137 - 5.2;
+    const py = i * 0.219 + 1.1;
+    const pz = i * 0.083 - 2.7;
+    const v = perlin.noise(px, py, pz);
+    const vNear = perlin.noise(px + 1e-4, py - 1e-4, pz + 1e-4);
+    perlinMin = Math.min(perlinMin, v);
+    perlinMax = Math.max(perlinMax, v);
+    maxDelta = Math.max(maxDelta, Math.abs(vNear - v));
+  }
+  assert(
+    perlinMin >= -1.05 &&
+      perlinMax <= 1.05 &&
+      perlinMax - perlinMin > 0.4 &&
+      maxDelta < 1e-3,
+    'ImprovedNoise is smooth, non-degenerate, and bounded across 3D domain',
+  );
+  assert(
+    perlin.noise(NaN, 1, 2) === 0 &&
+      perlin.noise(1, Infinity, 2) === 0 &&
+      perlin.noise(1, 2, -Infinity) === 0,
+    'ImprovedNoise returns 0 safely on NaN / Infinity inputs',
+  );
+
+  // 17. THREE.SimplexNoise (2D, 3D, 4D + seeded PRNG overloads)
+  THREE.MathUtils.seededRandom(1337);
+  const simA = new THREE.SimplexNoise({
+    random: () => THREE.MathUtils.seededRandom(),
+  });
+  THREE.MathUtils.seededRandom(1337);
+  const simB = new THREE.SimplexNoise(() => THREE.MathUtils.seededRandom());
+  const simC = new THREE.SimplexNoise(99999);
+  assert(
+    Object.isFrozen(THREE.SimplexNoise.prototype) &&
+      getAuthorWarnings().length === 0,
+    'THREE.SimplexNoise emits zero warnings and has frozen prototype',
+  );
+
+  let allMatch = true;
+  let anyDiffFromOtherSeed = false;
+  let sMin = Infinity;
+  let sMax = -Infinity;
+  for (let i = 0; i < 120; i++) {
+    const x = i * 0.17 - 4.0;
+    const y = i * 0.23 + 0.5;
+    const z = i * 0.11 - 1.3;
+    const w = i * 0.07 + 2.2;
+    const n2a = simA.noise(x, y);
+    const n2b = simB.noise2D(x, y);
+    const n3a = simA.noise3d(x, y, z);
+    const n3b = simB.noise3D(x, y, z);
+    const n4a = simA.noise4d(x, y, z, w);
+    const n4b = simB.noise4D(x, y, z, w);
+    if (n2a !== n2b || n3a !== n3b || n4a !== n4b) allMatch = false;
+    if (Math.abs(n3a - simC.noise3d(x, y, z)) > 1e-4) {
+      anyDiffFromOtherSeed = true;
+    }
+    sMin = Math.min(sMin, n2a, n3a, n4a);
+    sMax = Math.max(sMax, n2a, n3a, n4a);
+  }
+  assert(
+    allMatch && anyDiffFromOtherSeed,
+    'SimplexNoise seeded via {random} and function match identically across 2D/3D/4D and differ across seeds',
+  );
+  assert(
+    sMin >= -1.05 && sMax <= 1.05 && sMax - sMin > 0.5,
+    `SimplexNoise 2D/3D/4D stays within [-1, 1] with healthy variance (min=${sMin.toFixed(3)}, max=${sMax.toFixed(3)})`,
+  );
+  const brokenRngSim = new THREE.SimplexNoise(() => NaN);
+  assert(
+    Number.isFinite(brokenRngSim.noise(1.2, 3.4)) &&
+      simA.noise(NaN, 1) === 0 &&
+      simA.noise3d(1, Infinity, 2) === 0 &&
+      simA.noise4d(1, 2, 3, -Infinity) === 0,
+    'SimplexNoise handles broken PRNGs and non-finite coordinates without producing NaN',
+  );
+
+  // 18. Terrain heightmap displacement + GLB/USDZ export integration
+  const terrainGeo = new THREE.PlaneGeometry(4, 4, 16, 16);
+  const posAttr = terrainGeo.attributes.position;
+  for (let i = 0; i < posAttr.count; i++) {
+    const vx = posAttr.getX(i);
+    const vy = posAttr.getY(i);
+    const h =
+      0.35 * simA.noise(vx * 0.6, vy * 0.6) +
+      0.15 * perlin.noise(vx * 1.4, vy * 1.4, 0.5);
+    posAttr.setZ(i, h);
+  }
+  terrainGeo.computeVertexNormals();
+  const terrainMesh = new Mesh(
+    terrainGeo,
+    new MeshStandardMaterial({color: 0x4ade80, roughness: 0.85}),
+  );
+  terrainMesh.rotation.x = -Math.PI / 2;
+  const terrainScene = new Scene();
+  terrainScene.add(terrainMesh);
+  const terrainGlb = sceneToGLB(terrainScene);
+  const terrainUsdz = sceneToUSDZ(terrainScene);
+  assert(
+    terrainGlb.byteLength > 1000 && terrainUsdz.byteLength > 1000,
+    'Procedural SimplexNoise + ImprovedNoise displaced terrain exports cleanly to GLB and USDZ',
+  );
+
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
   if (failed > 0) {
     process.exit(1);

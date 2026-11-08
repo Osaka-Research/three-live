@@ -31,7 +31,7 @@ Goal                                                                            
 Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 72 KB gz`
 Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots        | `<three-live>` | `three-live-studio.min.js`    | `< 29 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                | `<three-live>` | `three-live-cad.min.js`        | `< 10 KB gz`
-Add-on: `Box3`, `Sphere`, `CanvasTexture` + headless 2D `<canvas>` & procedural helpers                   | `<three-live>` | `three-live-procedural.min.js` | `< 22 KB gz`
+Add-on: `Box3`, `Sphere`, `CanvasTexture`, `ImprovedNoise`, `SimplexNoise` + headless 2D `<canvas>`       | `<three-live>` | `three-live-procedural.min.js` | `< 22 KB gz`
 Add-on: 64-joint skinning, morph targets, keyframe cross-fading, 2-bone/FABRIK `IKSolver`                 | `<three-live>` | `three-live-animation.min.js`  | `< 11 KB gz`
 Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK                                      | `<three-live>` | `three-live-full.min.js`       | `< 136 KB gz`
 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`               | `< 84 KB gz`

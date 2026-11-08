@@ -3357,3 +3357,107 @@ fn test_canvas_texture_virtual_2d_context_glb_usdz_and_render() {
         .expect("document / VirtualCanvas tamper attempt must be blocked and remain functional");
     assert!(glb2.starts_with(b"glTF"));
 }
+
+#[test]
+fn test_procedural_noise_and_seeded_random_determinism_glb_usdz() {
+    // 1. Warm-VM determinism when `seededRandom()` is called without an explicit seed:
+    // `resetSceneFn` must reset the internal Mulberry32 state between compilations.
+    let unseeded_script = r#"
+        const r = THREE.MathUtils.seededRandom();
+        const m = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5 + r, 0.5 + THREE.MathUtils.seededRandom(), 0.5),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        m.name = "DeterministicBox";
+        m.position.set(0, 0.6, 0);
+        scene.add(m);
+    "#;
+    let glb_run1 = transcode_three_to_glb(unseeded_script).expect("First warm-VM run");
+    let glb_run2 = transcode_three_to_glb(unseeded_script).expect("Second warm-VM run");
+    assert_eq!(
+        glb_run1, glb_run2,
+        "Warm Boa VM must reset THREE.MathUtils.seededRandom state across compilations"
+    );
+
+    // 2. End-to-end procedural terrain + texture using ImprovedNoise + SimplexNoise (2D/3D/4D)
+    let terrain_script = r#"
+        try { THREE.ImprovedNoise.prototype.noise = () => 999; } catch (_) {}
+        try { THREE.SimplexNoise.prototype.noise = () => 999; } catch (_) {}
+
+        THREE.MathUtils.seededRandom(2026);
+        const perlin = new THREE.ImprovedNoise();
+        const simplex = new THREE.SimplexNoise({
+            random: () => THREE.MathUtils.seededRandom()
+        });
+
+        const geo = new THREE.PlaneGeometry(3.0, 3.0, 24, 24);
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const y = pos.getY(i);
+            const elev =
+                0.35 * simplex.noise(x * 0.7, y * 0.7) +
+                0.15 * perlin.noise(x * 1.5, y * 1.5, 0.35) +
+                0.05 * simplex.noise4d(x, y, 0.2, 0.8);
+            pos.setZ(i, elev);
+        }
+        geo.computeVertexNormals();
+
+        const tw = 32, th = 32;
+        const pixels = new Uint8Array(tw * th * 4);
+        for (let py = 0; py < th; py++) {
+            for (let px = 0; px < tw; px++) {
+                const n = 0.5 + 0.5 * simplex.noise3d(px * 0.15, py * 0.15, 1.1);
+                const o = (py * tw + px) * 4;
+                pixels[o] = Math.round(40 + 120 * n);
+                pixels[o + 1] = Math.round(110 + 110 * n);
+                pixels[o + 2] = Math.round(50 + 40 * n);
+                pixels[o + 3] = 255;
+            }
+        }
+        const tex = new THREE.DataTexture(pixels, tw, th, THREE.RGBAFormat);
+        tex.needsUpdate = true;
+
+        const terrain = new THREE.Mesh(
+            geo,
+            new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, metalness: 0.05 })
+        );
+        terrain.name = "ProceduralTerrain";
+        terrain.rotation.x = -Math.PI / 2;
+        const bounds = new THREE.Box3().setFromObject(terrain);
+        terrain.position.set(0, -bounds.min.y, 0);
+        scene.add(terrain);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.25);
+        sun.position.set(3, 5, 4);
+        scene.add(sun);
+        camera.position.set(0, 2.8, 4.2);
+        camera.lookAt(0, 0.4, 0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(terrain_script, "terrain.js", 1.5);
+    assert!(
+        report.valid && report.diagnostics.is_empty(),
+        "Expected zero diagnostics for ImprovedNoise + SimplexNoise terrain, got: {:?}",
+        report.diagnostics
+    );
+
+    let glb_a = transcode_three_to_glb(terrain_script).expect("Terrain GLB A");
+    let glb_b = transcode_three_to_glb(terrain_script).expect("Terrain GLB B");
+    assert_eq!(glb_a, glb_b, "Seeded procedural noise terrain GLB must be deterministic");
+
+    let usdz = three_live_compiler::transcode_three_to_usdz(terrain_script).expect("Terrain USDZ");
+    let entries = verify_usdz_alignment(&usdz);
+    assert!(entries >= 2, "Expected aligned USDZ with terrain texture, got {} entries", entries);
+
+    let sg =
+        three_live_compiler::validate_three_script(terrain_script).expect("Terrain SceneGraph");
+    let (w, h, rgba) = three_live_compiler::render::render_scene_rgba(
+        &sg,
+        &three_live_compiler::render::RenderOptions::default(),
+    );
+    let png = three_live_compiler::render::encode_png_rgba(w, h, &rgba)
+        .expect("Headless render of procedural noise terrain should succeed");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 2000);
+}

@@ -33,6 +33,7 @@ export const GUIDED_SYSTEM_PROMPT = [
   '   - 2D/3D CAD & Text: `THREE.Path`, `THREE.Shape`, `THREE.ShapeGeometry`, `THREE.ExtrudeGeometry`,',
   '     `THREE.TextGeometry`, and `THREE.CSG.subtract(meshA, meshB)` / `THREE.CSG.union(meshA, meshB)` /',
   '     `THREE.CSG.intersect(meshA, meshB)` (limit CSG inputs to <= 24 segments so triangle count stays < 4096).',
+  '   - Procedural Noise & Deterministic PRNG: `THREE.ImprovedNoise` (`noise(x, y, z)`), `THREE.SimplexNoise` (`noise(x, y)`, `noise3d(x, y, z)`, `noise4d(x, y, z, w)`), and `THREE.MathUtils.seededRandom(seed?)` for terrain heightmaps and organic textures.',
   '   - DO NOT USE degraded or external Three.js classes: `Sprite`, `HemisphereLight`, `RectAreaLight`, `GLTFLoader`, `OrbitControls`.',
   '3. Supported Materials, Textures & Colors: `MeshStandardMaterial` and `MeshPhysicalMaterial` (`color`, `map`, `roughness`, `metalness`,',
   '   `emissive`, `emissiveIntensity`, `transmission`, `ior`, `thickness`, `attenuationColor`, `attenuationDistance`,',
