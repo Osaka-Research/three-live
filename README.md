@@ -144,6 +144,29 @@ mesh.userData.xr = { grab: '1-hand', billboard: 'capsule' };
 scene.add(mesh);
 ```
 
+Add `three-live-ai.min.js` (`< 5 KB gz`, opt-in) to let users reshape a scene
+with **any LLM**: every edit is compiled in the sandbox first, auto-repaired
+once on failure, and only then hot-swapped, so a bad generation never breaks the
+live scene.
+
+```html
+<three-live allow-client-scripts
+    ai-endpoint="https://your-backend.example/chat"  ai-model="gemini-2.5-flash">
+  <script type="text/three">/* your scene */</script>
+</three-live>
+<script type="module">
+  const el = document.querySelector('three-live');
+  const result = await el.editScene('make the roof red and add a chimney');
+  if (!result.applied) console.warn(result.error);  // live scene unchanged
+  // el.undoEdit() reverts; el.aiProvider = { complete: async ({messages}) => '...' } plugs in any model.
+</script>
+```
+
+`ai-endpoint` speaks the widely supported Chat Completions protocol
+(`ai-provider="ai-chat"`): your own backend proxy, Ollama or LM Studio
+(`http://localhost:...`, no account needed), vLLM, OpenRouter, or Gemini's
+compatibility endpoint. Keep API keys on your server; never put them in pages.
+
 --------------------------------------------------------------------------------
 
 ## Install packages and bundles
@@ -425,6 +448,7 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live-studio.min.js`** | **`< 29 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
 |  | **`three-live-procedural.min.js`** | **`< 28 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
+|  | **`three-live-ai.min.js`** | **`< 5 KB gz`** | Opt-in bring-your-own-LLM scene editing: `el.editScene(instruction)` with sandbox validation, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Not included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-full.min.js`** | **`< 142 KB gz`** | All-in-one 3D bundle (`three-live` + `studio` + `cad` + `procedural` + `animation`, all 16 plugins auto-registered). |
 | **`xr-live`** | **`xr-live-viewer.min.js`** | **`< 54 KB gz`** | Lean `.glb` and `.usdz` WebXR viewer + spatial traits (`grab`, `scale`, `billboard`, `anchor`), `<div slot="spatial">`, and mobile AR bridge. |

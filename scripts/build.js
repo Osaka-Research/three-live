@@ -533,6 +533,36 @@ function buildThreeLive() {
     outfile: path.join(tlDist, 'three-live-procedural.min.js'),
   });
 
+  // 10d. three-live-ai (ESM, CJS, IIFE min): opt-in bring-your-own-LLM editing
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/ai.ts')],
+    bundle: true,
+    format: 'esm',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-ai.js'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/ai.ts')],
+    bundle: true,
+    format: 'cjs',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-ai.cjs'),
+  });
+  buildTarget({
+    entryPoints: [path.join(THREE_LIVE_DIR, 'src/ai.ts')],
+    bundle: true,
+    format: 'iife',
+    globalName: 'ThreeLiveAI',
+    minify: true,
+    target: 'es2020',
+    define: {'IS_DEV': 'false'},
+    outfile: path.join(tlDist, 'three-live-ai.min.js'),
+  });
+
   // 11. three-live-animation (ESM, CJS, IIFE min)
   buildTarget({
     entryPoints: [path.join(THREE_LIVE_DIR, 'src/animation.ts')],
@@ -576,6 +606,7 @@ function buildThreeLive() {
   fs.writeFileSync(path.join(tlDist, 'three-live-cad.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-procedural.d.ts'), rootDts);
   fs.writeFileSync(path.join(tlDist, 'three-live-animation.d.ts'), rootDts);
+  fs.writeFileSync(path.join(tlDist, 'three-live-ai.d.ts'), rootDts);
 
   // Sync to root dist/ and examples
   if (!fs.existsSync(DIST_DIR)) {
@@ -613,6 +644,9 @@ function buildThreeLive() {
   fs.copyFileSync(
       path.join(tlDist, 'three-live-animation.min.js'),
       path.join(DIST_DIR, 'three-live-animation.min.js'));
+  fs.copyFileSync(
+      path.join(tlDist, 'three-live-ai.min.js'),
+      path.join(DIST_DIR, 'three-live-ai.min.js'));
   fs.copyFileSync(
       path.join(tlDist, 'three-live-full.min.js'),
       path.join(DIST_DIR, 'three-live-full.min.js'));
@@ -913,6 +947,7 @@ function reportSizes() {
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-procedural.min.js', budgetKb: '28'},
     {name: 'three-live-animation.min.js', budgetKb: '11'},
+    {name: 'three-live-ai.min.js', budgetKb: '5'},
     {name: 'three-live-full.min.js', budgetKb: '142'},
     {name: 'xr-live-viewer.min.js', budgetKb: '54'},
     {name: 'xr-live.min.js', budgetKb: '84'},

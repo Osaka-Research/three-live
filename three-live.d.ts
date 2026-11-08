@@ -147,6 +147,21 @@ export {
   type XRProfile,
   type XRSimulatorRoom,
 } from './xr-live/src/xr-live-element';
+/** Opt-in bring-your-own-LLM scene editing (`three-live/ai`, `three-live-ai.min.js`). */
+export {
+  aiPlugin,
+  createAIChatProvider,
+  editScene,
+  extractScript,
+  undoEdit,
+} from './three-live/src/plugins/ai';
+export type {
+  AIChatMessage,
+  AIChatProviderOptions,
+  EditSceneOptions,
+  EditSceneResult,
+  ThreeLiveAIProvider,
+} from './three-live/src/plugins/ai';
 /** Optional spatial plugins (`xr-live/spatial`, `xr-live-spatial.min.js`). */
 export * from './xr-live/src/plugins/index';
 /** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
@@ -239,6 +254,12 @@ export interface ThreeLiveAttributes {
    * Server-generated scripts (`script-src`) are enabled by default.
    */
   'allow-client-scripts'?: boolean | string;
+  /** `three-live-ai`: Chat Completions-compatible endpoint (your proxy or a local model) for `editScene()`. */
+  'ai-endpoint'?: string;
+  /** `three-live-ai`: model name sent to `ai-endpoint`. */
+  'ai-model'?: string;
+  /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
+  'ai-provider'?: 'ai-chat';
 
   // React 19 / JSX Event Listeners
   onload?: (e: CustomEvent<{model: GLBData}>) => void;
