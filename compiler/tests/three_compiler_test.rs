@@ -3724,3 +3724,118 @@ fn test_a5_hemisphere_light_and_sprite_parity() {
         );
     }
 }
+
+#[test]
+fn test_a6_2d_curves_and_scene_helpers_parity() {
+    let script = r#"
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+        dir.position.set(3, 5, 4);
+        scene.add(dir);
+
+        // 1. 2D CurvePath + SplineCurve + EllipseCurve hole extruded into a 3D cam plate
+        const shape = new THREE.Shape();
+        shape.moveTo(-0.6, -0.35);
+        shape.add(new THREE.LineCurve(new THREE.Vector2(-0.6, -0.35), new THREE.Vector2(0.6, -0.35)));
+        shape.splineThru([
+            new THREE.Vector2(0.75, 0.1),
+            new THREE.Vector2(0.0, 0.55),
+            new THREE.Vector2(-0.75, 0.1)
+        ]);
+        shape.closePath();
+
+        const bore = new THREE.Path();
+        bore.add(new THREE.EllipseCurve(0, 0.05, 0.18, 0.12, 0, Math.PI * 2, false, 0));
+        shape.holes.push(bore);
+
+        const camMesh = new THREE.Mesh(
+            new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, curveSegments: 16 }),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.35, roughness: 0.4 })
+        );
+        camMesh.name = 'ExtrudedSplineCam';
+        camMesh.position.set(0, 0.45, 0);
+        scene.add(camMesh);
+
+        // 2. SplineCurve -> LatheGeometry goblet
+        const profile = new THREE.SplineCurve([
+            new THREE.Vector2(0.02, 0.0),
+            new THREE.Vector2(0.22, 0.04),
+            new THREE.Vector2(0.06, 0.35),
+            new THREE.Vector2(0.26, 0.75)
+        ]);
+        const goblet = new THREE.Mesh(
+            new THREE.LatheGeometry(profile.getPoints(20), 20),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.6, roughness: 0.25 })
+        );
+        goblet.name = 'SplineGoblet';
+        goblet.position.set(-1.1, 0, 0);
+        scene.add(goblet);
+
+        // 3. Exportable Scene Helpers (GridHelper, AxesHelper, ArrowHelper, BoxHelper, Box3Helper)
+        const grid = new THREE.GridHelper(4, 8, 0x64748b, 0x334155);
+        grid.name = 'FloorGrid';
+        scene.add(grid);
+
+        const axes = new THREE.AxesHelper(1.2);
+        axes.name = 'OriginAxes';
+        axes.position.set(1.1, 0.02, 0);
+        scene.add(axes);
+
+        const arrow = new THREE.ArrowHelper(
+            new THREE.Vector3(0, 1, 0),
+            new THREE.Vector3(1.1, 0.02, 0),
+            1.1,
+            0xfacc15,
+            0.28,
+            0.16
+        );
+        arrow.name = 'ForceArrow';
+        scene.add(arrow);
+
+        const boxHelper = new THREE.BoxHelper(camMesh, 0x22c55e);
+        boxHelper.name = 'CamBoundsHelper';
+        scene.add(boxHelper);
+
+        const zoneBox = new THREE.Box3(new THREE.Vector3(-1.45, 0, -0.35), new THREE.Vector3(-0.75, 0.85, 0.35));
+        const box3Helper = new THREE.Box3Helper(zoneBox, 0xe879f9);
+        box3Helper.name = 'GobletZoneHelper';
+        scene.add(box3Helper);
+
+        camera.position.set(0, 1.6, 4.2);
+        camera.lookAt(0, 0.45, 0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(script, "a6_helpers.js", 1.5);
+    assert!(
+        report.valid && !report.diagnostics.iter().any(|d| d.code == "TL102"),
+        "A6 2D curves and scene helpers must compile with valid=true and zero TL102 warnings: {:?}",
+        report.diagnostics
+    );
+
+    let glb = transcode_three_to_glb(script).expect("A6 GLB export succeeds");
+    let usdz =
+        three_live_compiler::transcode_three_to_usdz(script).expect("A6 USDZ export succeeds");
+    assert!(glb.len() > 4000 && usdz.len() > 4000);
+
+    let sg = validate_three_script(script).expect("A6 SceneGraph");
+    assert!(
+        sg.meshes.len() >= 9,
+        "Expected meshes for cam, goblet, grid(2), axes(3), arrow(2), boxHelper, and box3Helper, got {}",
+        sg.meshes.len()
+    );
+
+    let opts = three_live_compiler::render::RenderOptions {
+        width: 160,
+        height: 120,
+        view: three_live_compiler::render::RenderViewMode::Camera,
+        ..Default::default()
+    };
+    let (_w, _h, rgba) = three_live_compiler::render::render_scene_rgba(&sg, &opts);
+    let non_bg_px =
+        rgba.chunks_exact(4).filter(|px| px[0] > 60 || px[1] > 60 || px[2] > 70).count();
+    assert!(
+        non_bg_px > 800,
+        "Expected rendered pixels from extruded curve cam, spline goblet, and scene helpers, got {}",
+        non_bg_px
+    );
+}

@@ -909,6 +909,236 @@ function runProceduralTests(): void {
     'RectAreaLight continues to emit degraded-alias warning',
   );
 
+  // =========================================================================
+  // 15. A6: 2D Curves (LineCurve, Quadratic/CubicBezierCurve, SplineCurve,
+  //         EllipseCurve, ArcCurve, CurvePath, Path.add/splineThru) &
+  //         Scene Helpers (GridHelper, AxesHelper, ArrowHelper, BoxHelper, Box3Helper)
+  // =========================================================================
+  clearAuthorWarnings();
+
+  // Vector2 polyfills
+  const v2a = new THREE.Vector2(3, 4);
+  const v2b = new THREE.Vector2(0, 0);
+  assert(
+    approx(v2a.length(), 5, 1e-6) &&
+      approx(v2a.distanceTo(v2b), 5, 1e-6) &&
+      approx(v2a.dot(new THREE.Vector2(2, 1)), 10, 1e-6) &&
+      v2a.clone().normalize().length() > 0.9999 &&
+      new THREE.Vector2(0, 0).lerp(v2a, 0.5).equals(new THREE.Vector2(1.5, 2)) &&
+      new THREE.Vector2().lerpVectors(v2b, v2a, 0.25).equals(new THREE.Vector2(0.75, 1)),
+    'Vector2.prototype provides length, normalize, distanceTo, dot, lerp, lerpVectors, and equals',
+  );
+
+  // LineCurve, QuadraticBezierCurve, CubicBezierCurve
+  const lc = new THREE.LineCurve(new THREE.Vector2(0, 0), new THREE.Vector2(10, 0));
+  const qbc = new THREE.QuadraticBezierCurve(
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(1, 2),
+    new THREE.Vector2(2, 0),
+  );
+  const cbc = new THREE.CubicBezierCurve(
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(0, 2),
+    new THREE.Vector2(2, 2),
+    new THREE.Vector2(2, 0),
+  );
+  assert(
+    approx(lc.getLength(), 10, 1e-4) &&
+      approx(lc.getPointAt(0.25).x, 2.5, 1e-5) &&
+      approx(qbc.getPoint(0.5).y, 1.0, 1e-5) &&
+      approx(cbc.getPoint(0.5).y, 1.5, 1e-5) &&
+      approx(cbc.getTangent(0.5).x, 1.0, 1e-3),
+    'LineCurve, QuadraticBezierCurve, and CubicBezierCurve evaluate points, lengths, and tangents accurately',
+  );
+
+  // SplineCurve + LatheGeometry
+  const spline2 = new THREE.SplineCurve([
+    new THREE.Vector2(0.15, 0),
+    new THREE.Vector2(0.42, 0.3),
+    new THREE.Vector2(0.25, 0.7),
+    new THREE.Vector2(0.35, 1.0),
+  ]);
+  const splineClone = spline2.clone();
+  splineClone.points[0].x = 99;
+  const vaseGeo = new THREE.LatheGeometry(spline2.getPoints(20), 16);
+  assert(
+    approx(spline2.points[0].x, 0.15, 1e-6) &&
+      vaseGeo.attributes.position.count > 100,
+    'SplineCurve.clone() deep-copies knot points and SplineCurve.getPoints() feeds LatheGeometry',
+  );
+
+  // EllipseCurve (CCW vs CW + rotation) & ArcCurve
+  const ellCcw = new THREE.EllipseCurve(1, 2, 3, 1, 0, Math.PI / 2, false, Math.PI / 2);
+  // At t=0 (angle=0), local=(3,0) rotated +90deg around (1,2) -> (1, 5)
+  const ellPt0 = ellCcw.getPoint(0);
+  const arcCw = new THREE.ArcCurve(0, 0, 2, 0, Math.PI / 2, true);
+  // Clockwise from 0 to PI/2 sweeps -3*PI/2, passing through (0, -2) at t = 1/3
+  const arcCwMid = arcCw.getPoint(1 / 3);
+  const arcClone = arcCw.clone();
+  assert(
+    approx(ellPt0.x, 1, 1e-5) &&
+      approx(ellPt0.y, 5, 1e-5) &&
+      approx(arcCwMid.x, 0, 1e-4) &&
+      approx(arcCwMid.y, -2, 1e-4) &&
+      arcClone.isArcCurve &&
+      arcClone.type === 'ArcCurve',
+    'EllipseCurve and ArcCurve handle rotation, clockwise sweep, and clone() type preservation',
+  );
+
+  // CurvePath (2D uniform arc-length spacing + 3D TubeGeometry compatibility)
+  const cp2 = new THREE.CurvePath();
+  cp2.add(new THREE.LineCurve(new THREE.Vector2(0, 0), new THREE.Vector2(2, 0)));
+  cp2.add(new THREE.LineCurve(new THREE.Vector2(2, 0), new THREE.Vector2(2, 6)));
+  // Total length = 2 + 6 = 8; midpoint at t=0.5 is at distance 4 -> (2, 2)
+  const cpMid = cp2.getPoint(0.5);
+  cp2.closePath();
+  const cp3 = new THREE.CurvePath();
+  cp3.add(new THREE.LineCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)));
+  cp3.add(new THREE.LineCurve3(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 1, 0)));
+  const tubeFromCp3 = new THREE.TubeGeometry(cp3, 12, 0.08, 6, false);
+  assert(
+    approx(cpMid.x, 2, 1e-4) &&
+      approx(cpMid.y, 2, 1e-4) &&
+      cp2.curves.length === 3 &&
+      tubeFromCp3.attributes.position.count > 40,
+    'CurvePath parameterizes multi-segment paths by arc length, closes paths, and feeds 3D TubeGeometry',
+  );
+
+  // Shape.add(curve) + Shape.splineThru(pts) -> ExtrudeGeometry
+  const camShape = new THREE.Shape();
+  camShape.moveTo(-0.5, -0.3);
+  camShape.add(
+    new THREE.LineCurve(new THREE.Vector2(-0.5, -0.3), new THREE.Vector2(0.5, -0.3)),
+  );
+  camShape.splineThru([
+    new THREE.Vector2(0.6, 0.1),
+    new THREE.Vector2(0.0, 0.5),
+    new THREE.Vector2(-0.6, 0.1),
+  ]);
+  camShape.closePath();
+  const holePath = new THREE.Path();
+  holePath.add(new THREE.ArcCurve(0, 0.05, 0.14, 0, Math.PI * 2, false));
+  camShape.holes.push(holePath);
+  const camExtrude = new THREE.ExtrudeGeometry(camShape, {depth: 0.15, curveSegments: 16});
+  assert(
+    camExtrude.attributes.position.count > 80 && (camExtrude.index?.count ?? 0) > 120,
+    'Shape.add(LineCurve), Shape.splineThru(), and ArcCurve hole triangulate cleanly in ExtrudeGeometry',
+  );
+
+  // Scene Helpers: GridHelper, AxesHelper, ArrowHelper, Box3Helper, BoxHelper
+  const helperScene = new Scene();
+  const grid = new THREE.GridHelper(6, 10000, 0xff0000, 0x444444); // divisions clamped to 256
+  grid.material.transparent = true;
+  grid.material.opacity = 0.5;
+  const gridClone = grid.clone();
+  helperScene.add(grid);
+
+  const axes = new THREE.AxesHelper(1.5).setColors(0xff1100, 0x11ff00, 0x0055ff);
+  const axesClone = axes.clone();
+  helperScene.add(axes);
+
+  // ArrowHelper including anti-parallel -Y singularity (0, -1, 0), +Y (0, 1, 0), and zero-vector fallback
+  const arrowDown = new THREE.ArrowHelper(
+    new THREE.Vector3(0, -1, 0),
+    new THREE.Vector3(0, 2, 0),
+    1.2,
+    0xffcc00,
+    0.3,
+    0.15,
+  );
+  const arrowUp = arrowDown.clone().setDirection(new THREE.Vector3(0, 1, 0)).setColor(0x00ffcc);
+  const arrowZero = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 0));
+  helperScene.add(arrowDown);
+  helperScene.add(arrowUp);
+  helperScene.add(arrowZero);
+
+  const targetMesh = new Mesh(
+    new BoxGeometry(1, 2, 1),
+    new MeshStandardMaterial({color: 0x38bdf8}),
+  );
+  targetMesh.position.set(1, 1, 0);
+  helperScene.add(targetMesh);
+
+  const boxHelper = new THREE.BoxHelper(targetMesh, 0x00ff88);
+  helperScene.add(boxHelper);
+  // Move targetMesh AFTER constructing BoxHelper without manually calling boxHelper.update():
+  // _bakeAuthorGeometry() during sceneToCanvas3D must auto-sync BoxHelper!
+  targetMesh.position.set(4, 1, -2);
+
+  const customBox3 = new THREE.Box3(
+    new THREE.Vector3(-2, 0, -1),
+    new THREE.Vector3(-1, 1.5, 0),
+  );
+  const box3Helper = new THREE.Box3Helper(customBox3, 0xff66cc);
+  const emptyBox3Helper = new THREE.Box3Helper(new THREE.Box3(), 0xffffff);
+  helperScene.add(box3Helper);
+  helperScene.add(emptyBox3Helper);
+
+  // Verify Box3.setFromObject(helperScene) does not recurse infinitely on BoxHelper
+  const fullHelperBounds = new THREE.Box3().setFromObject(helperScene);
+  const helperC3d = sceneToCanvas3D(helperScene);
+  const helperGlb = sceneToGLB(helperScene);
+  const helperUsdz = sceneToUSDZ(helperScene);
+
+  assert(
+    getAuthorWarnings().length === 0,
+    'All 2D Curves and Scene Helpers emit zero degraded-alias or unsupported warnings',
+  );
+  assert(
+    grid._divisions === 256 &&
+      gridClone.children.length === 1 &&
+      approx(grid._centerLines.material.opacity, 0.5, 1e-6) &&
+      axesClone.children.length === 2 &&
+      arrowUp.children.length === 2,
+    'GridHelper clamps divisions<=256, syncs center-line opacity, and clone() avoids duplicating internal children on Grid/Axes/Arrow',
+  );
+  // Verify arrowDown quaternion rotates +Y (0,1,0) to -Y (0,-1,0) without NaN
+  const downTip = new THREE.Vector3(0, 1, 0).applyQuaternion(arrowDown.quaternion);
+  assert(
+    approx(downTip.x, 0, 1e-5) &&
+      approx(downTip.y, -1, 1e-5) &&
+      approx(downTip.z, 0, 1e-5),
+    'ArrowHelper handles anti-parallel (0, -1, 0) direction without NaN singularity',
+  );
+  // Verify BoxHelper auto-synced to targetMesh's moved position (4, 1, -2) -> x in [3.5, 4.5]
+  const bhSrcBounds = new THREE.Box3().setFromBufferAttribute(
+    boxHelper._sourceGeo.attributes.position,
+  );
+  assert(
+    approx(bhSrcBounds.min.x, 3.5, 1e-4) &&
+      approx(bhSrcBounds.max.x, 4.5, 1e-4) &&
+      approx(bhSrcBounds.min.z, -2.5, 1e-4) &&
+      approx(bhSrcBounds.max.z, -1.5, 1e-4),
+    'BoxHelper auto-updates to moved targetMesh world bounds during scene export',
+  );
+  assert(
+    !fullHelperBounds.isEmpty() &&
+      helperC3d.gltf.meshes.length >= 8 &&
+      helperGlb.byteLength > 2000 &&
+      helperUsdz.byteLength > 2000,
+    'Scene with GridHelper, AxesHelper, ArrowHelper, BoxHelper, and Box3Helper exports cleanly to Canvas3D, GLB, and USDZ',
+  );
+
+  for (const sym of [
+    'LineCurve',
+    'QuadraticBezierCurve',
+    'CubicBezierCurve',
+    'SplineCurve',
+    'EllipseCurve',
+    'ArcCurve',
+    'CurvePath',
+    'GridHelper',
+    'AxesHelper',
+    'ArrowHelper',
+    'Box3Helper',
+    'BoxHelper',
+  ]) {
+    assert(
+      Object.isFrozen((THREE as any)[sym]?.prototype),
+      `THREE.${sym}.prototype is frozen against sandbox prototype pollution`,
+    );
+  }
+
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
   if (failed > 0) {
     process.exit(1);

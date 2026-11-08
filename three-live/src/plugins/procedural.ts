@@ -60,6 +60,26 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       return this.set(this.x + d, this.y + d, this.z + d);
     };
   }
+  if (typeof Vector3.prototype.applyQuaternion !== 'function') {
+    // tslint:disable-next-line:no-any Dynamic Quaternion instance.
+    Vector3.prototype.applyQuaternion = function (q: any): Vec3Like {
+      const x = this.x;
+      const y = this.y;
+      const z = this.z;
+      const qx = Number(q?.x) || 0;
+      const qy = Number(q?.y) || 0;
+      const qz = Number(q?.z) || 0;
+      const qw = q?.w === undefined ? 1 : Number(q.w) || 0;
+      const tx = 2 * (qy * z - qz * y);
+      const ty = 2 * (qz * x - qx * z);
+      const tz = 2 * (qx * y - qy * x);
+      return this.set(
+        x + qw * tx + (qy * tz - qz * ty),
+        y + qw * ty + (qz * tx - qx * tz),
+        z + qw * tz + (qx * ty - qy * tx),
+      );
+    };
+  }
   if (typeof Vector3.prototype.min !== 'function') {
     Vector3.prototype.min = function (v: Vec3Like): Vec3Like {
       return this.set(
@@ -322,8 +342,9 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         if (!node || typeof node !== 'object' || seen.has(node)) return;
         seen.add(node);
         reg?.materializeDeclarativeGeometry?.(node);
-        if (node.isSprite) node._bakeAuthorGeometry?.();
-        const geo = node.geometry;
+        if (node.isBoxHelper && node !== object) return;
+        if (node.isSprite || node.isBox3Helper) node._bakeAuthorGeometry?.();
+        const geo = node._sourceGeo || node.geometry;
         if (geo && geo.attributes?.position && node.matrixWorld) {
           if (node.isInstancedMesh && typeof node.getMatrixAt === 'function') {
             const cap = Math.floor(
@@ -3881,6 +3902,990 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   Object.freeze(SpriteMaterial.prototype);
   Object.freeze(Sprite.prototype);
 
+  // =========================================================================
+  // A6: 2D Curves & Exportable Scene Helpers
+  // =========================================================================
+  if (Vector2?.prototype) {
+    // tslint:disable-next-line:no-any Dynamic Vector2 prototype methods.
+    const vp: any = Vector2.prototype;
+    const def = (k: string, fn: Function) => {
+      if (typeof vp[k] !== 'function') vp[k] = fn;
+    };
+    def('length', function (this: {x: number; y: number}) {
+      return Math.hypot(this.x, this.y);
+    });
+    // tslint:disable-next-line:no-any Dynamic Vector2 instance.
+    def('normalize', function (this: any) {
+      return this.divideScalar(Math.hypot(this.x, this.y) || 1);
+    });
+    // tslint:disable-next-line:no-any Dynamic Vector2 instances.
+    def('distanceTo', function (this: any, v: any) {
+      return Math.hypot(this.x - (v?.x || 0), this.y - (v?.y || 0));
+    });
+    // tslint:disable-next-line:no-any Dynamic Vector2 instances.
+    def('dot', function (this: any, v: any) {
+      return this.x * (v?.x || 0) + this.y * (v?.y || 0);
+    });
+    // tslint:disable-next-line:no-any Dynamic Vector2 instances.
+    def('lerp', function (this: any, v: any, a: number) {
+      const t = Number(a) || 0;
+      return this.set(
+        this.x + ((v?.x || 0) - this.x) * t,
+        this.y + ((v?.y || 0) - this.y) * t,
+      );
+    });
+    // tslint:disable-next-line:no-any Dynamic Vector2 instances.
+    def('lerpVectors', function (this: any, v1: any, v2: any, a: number) {
+      const t = Number(a) || 0;
+      const x1 = v1?.x || 0;
+      const y1 = v1?.y || 0;
+      return this.set(
+        x1 + ((v2?.x || 0) - x1) * t,
+        y1 + ((v2?.y || 0) - y1) * t,
+      );
+    });
+    // tslint:disable-next-line:no-any Dynamic Vector2 instances.
+    def('equals', function (this: any, v: any) {
+      return Boolean(v) && v.x === this.x && v.y === this.y;
+    });
+  }
+
+  const finNum = (v: unknown, d = 0): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : d;
+  };
+  const clamp01 = (v: unknown): number =>
+    Math.max(0, Math.min(1, finNum(v, 0)));
+  // tslint:disable-next-line:no-any Coerce Vector2-like object to fresh Vector2.
+  const toV2 = (v: any): any => new Vector2(finNum(v?.x), finNum(v?.y));
+
+  class Curve2 {
+    type!: string;
+    arcLengthDivisions!: number;
+    _lenCache!: number[] | null;
+
+    constructor(type = 'Curve') {
+      this.type = type;
+      this.arcLengthDivisions = 200;
+      this._lenCache = null;
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 target.
+    getPoint(_t: number, target: any = new Vector2()): any {
+      return target.set(0, 0);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 target.
+    getPointAt(u: number, target?: any): any {
+      return this.getPoint(this.getUtoTMapping(u), target);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
+    getPoints(divisions = 5): any[] {
+      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 5))));
+      const pts = [];
+      for (let d = 0; d <= divs; d++) pts.push(this.getPoint(d / divs));
+      return pts;
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
+    getSpacedPoints(divisions = 5): any[] {
+      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 5))));
+      const pts = [];
+      for (let d = 0; d <= divs; d++) pts.push(this.getPointAt(d / divs));
+      return pts;
+    }
+
+    getLength(): number {
+      const lens = this.getLengths();
+      return lens[lens.length - 1] || 0;
+    }
+
+    getLengths(divisions = this.arcLengthDivisions): number[] {
+      const divs = Math.max(
+        1,
+        Math.min(2048, Math.floor(finNum(divisions, 200))),
+      );
+      if (this._lenCache && this._lenCache.length === divs + 1) {
+        return this._lenCache;
+      }
+      const cache = [0];
+      let sum = 0;
+      let prev = this.getPoint(0);
+      for (let p = 1; p <= divs; p++) {
+        const cur = this.getPoint(p / divs);
+        sum += Math.hypot(
+          finNum(cur.x) - finNum(prev.x),
+          finNum(cur.y) - finNum(prev.y),
+          finNum(cur.z) - finNum(prev.z),
+        );
+        cache.push(sum);
+        prev = cur;
+      }
+      if (divs === this.arcLengthDivisions) this._lenCache = cache;
+      return cache;
+    }
+
+    updateArcLengths(): void {
+      this._lenCache = null;
+      this.getLengths();
+    }
+
+    getUtoTMapping(u: number, distance?: number): number {
+      const arcLengths = this.getLengths();
+      const il = arcLengths.length;
+      const total = arcLengths[il - 1] || 0;
+      if (total <= 0 || il < 2) return clamp01(u);
+      const targetLen =
+        distance !== undefined && Number.isFinite(Number(distance))
+          ? Math.max(0, Math.min(total, Number(distance)))
+          : clamp01(u) * total;
+      let low = 0;
+      let high = il - 1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        const diff = arcLengths[mid]! - targetLen;
+        if (diff < 0) low = mid + 1;
+        else if (diff > 0) high = mid - 1;
+        else return mid / (il - 1);
+      }
+      const idx = Math.max(0, low - 1);
+      const before = arcLengths[idx]!;
+      const segLen = (arcLengths[idx + 1] ?? total) - before;
+      return (idx + (segLen > 1e-12 ? (targetLen - before) / segLen : 0)) / (il - 1);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 target.
+    getTangent(t: number, target?: any): any {
+      const s = clamp01(t);
+      const pt1 = this.getPoint(Math.max(0, s - 1e-4));
+      const pt2 = this.getPoint(Math.min(1, s + 1e-4));
+      const dx = finNum(pt2.x) - finNum(pt1.x);
+      const dy = finNum(pt2.y) - finNum(pt1.y);
+      if ('z' in pt1 || target?.isVector3) {
+        const dz = finNum(pt2.z) - finNum(pt1.z);
+        const l = Math.hypot(dx, dy, dz) || 1;
+        return (target || new Vector3()).set(dx / l, dy / l, dz / l);
+      }
+      const l = Math.hypot(dx, dy) || 1;
+      return (target || new Vector2()).set(dx / l, dy / l);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 target.
+    getTangentAt(u: number, target?: any): any {
+      return this.getTangent(this.getUtoTMapping(u), target);
+    }
+
+    clone(): this {
+      // tslint:disable-next-line:no-any Polymorphic curve constructor.
+      return new (this.constructor as any)().copy(this);
+    }
+
+    copy(src: this): this {
+      if (!src || typeof src !== 'object') return this;
+      // tslint:disable-next-line:no-any Generic deep copy for Curve2 subclasses.
+      const s = src as any;
+      // tslint:disable-next-line:no-any Generic deep copy for Curve2 subclasses.
+      const d = this as any;
+      for (const k of Object.keys(s)) {
+        if (k === 'type' || k.startsWith('is')) continue;
+        if (k.startsWith('_')) {
+          d[k] = null;
+          continue;
+        }
+        const val = s[k];
+        if (Array.isArray(val)) {
+          d[k] = val.map((it) =>
+            it?.clone ? it.clone() : it && typeof it === 'object' && 'x' in it ? toV2(it) : it,
+          );
+        } else if (val?.clone) {
+          d[k] = val.clone();
+        } else if (val && typeof val === 'object' && 'x' in val) {
+          d[k] = toV2(val);
+        } else {
+          d[k] = val;
+        }
+      }
+      return this;
+    }
+  }
+
+  class LineCurve extends Curve2 {
+    isLineCurve!: boolean;
+    // tslint:disable-next-line:no-any Dynamic Vector2 endpoints.
+    v1!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 endpoints.
+    v2!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 endpoints.
+    constructor(v1?: any, v2?: any) {
+      super('LineCurve');
+      this.isLineCurve = true;
+      this.v1 = toV2(v1);
+      this.v2 = toV2(v2);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2 target.
+    override getPoint(t: number, target: any = new Vector2()): any {
+      const s = finNum(t, 0);
+      const x1 = finNum(this.v1.x);
+      const y1 = finNum(this.v1.y);
+      return s === 1
+        ? target.set(finNum(this.v2.x), finNum(this.v2.y))
+        : target.set(x1 + (finNum(this.v2.x) - x1) * s, y1 + (finNum(this.v2.y) - y1) * s);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2 target.
+    override getPointAt(u: number, target: any = new Vector2()): any {
+      return this.getPoint(clamp01(u), target);
+    }
+  }
+
+  class QuadraticBezierCurve extends Curve2 {
+    isQuadraticBezierCurve!: boolean;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v0!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v1!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v2!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    constructor(v0?: any, v1?: any, v2?: any) {
+      super('QuadraticBezierCurve');
+      this.isQuadraticBezierCurve = true;
+      this.v0 = toV2(v0);
+      this.v1 = toV2(v1);
+      this.v2 = toV2(v2);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2 target.
+    override getPoint(t: number, target: any = new Vector2()): any {
+      const s = clamp01(t);
+      const m = 1 - s;
+      return target.set(
+        m * m * finNum(this.v0.x) + 2 * m * s * finNum(this.v1.x) + s * s * finNum(this.v2.x),
+        m * m * finNum(this.v0.y) + 2 * m * s * finNum(this.v1.y) + s * s * finNum(this.v2.y),
+      );
+    }
+  }
+
+  class CubicBezierCurve extends Curve2 {
+    isCubicBezierCurve!: boolean;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v0!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v1!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v2!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    v3!: any;
+    // tslint:disable-next-line:no-any Dynamic Vector2 control points.
+    constructor(v0?: any, v1?: any, v2?: any, v3?: any) {
+      super('CubicBezierCurve');
+      this.isCubicBezierCurve = true;
+      this.v0 = toV2(v0);
+      this.v1 = toV2(v1);
+      this.v2 = toV2(v2);
+      this.v3 = toV2(v3);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2 target.
+    override getPoint(t: number, target: any = new Vector2()): any {
+      const s = clamp01(t);
+      const m = 1 - s;
+      const m2 = m * m;
+      const s2 = s * s;
+      return target.set(
+        m2 * m * finNum(this.v0.x) +
+          3 * m2 * s * finNum(this.v1.x) +
+          3 * m * s2 * finNum(this.v2.x) +
+          s2 * s * finNum(this.v3.x),
+        m2 * m * finNum(this.v0.y) +
+          3 * m2 * s * finNum(this.v1.y) +
+          3 * m * s2 * finNum(this.v2.y) +
+          s2 * s * finNum(this.v3.y),
+      );
+    }
+  }
+
+  class SplineCurve extends Curve2 {
+    isSplineCurve!: boolean;
+    // tslint:disable-next-line:no-any Dynamic Vector2 knot list.
+    points!: any[];
+    // tslint:disable-next-line:no-any Dynamic Vector2 knot list.
+    constructor(points: any[] = []) {
+      super('SplineCurve');
+      this.isSplineCurve = true;
+      this.points = Array.isArray(points) ? points : [];
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2 target.
+    override getPoint(t: number, target: any = new Vector2()): any {
+      const pts = this.points;
+      const n = Array.isArray(pts) ? pts.length : 0;
+      if (n === 0) return target.set(0, 0);
+      if (n === 1) return target.set(finNum(pts[0]?.x), finNum(pts[0]?.y));
+      const p = (n - 1) * clamp01(t);
+      let k = Math.floor(p);
+      let w = p - k;
+      if (k >= n - 1) {
+        k = n - 2;
+        w = 1;
+      }
+      const p0 = pts[k === 0 ? 0 : k - 1];
+      const p1 = pts[k];
+      const p2 = pts[k + 1];
+      const p3 = pts[k > n - 3 ? n - 1 : k + 2];
+      const w2 = w * w;
+      const w3 = w2 * w;
+      const cr = (v0: number, v1: number, v2: number, v3: number) =>
+        0.5 *
+        (2 * v1 +
+          (v2 - v0) * w +
+          (2 * v0 - 5 * v1 + 4 * v2 - v3) * w2 +
+          (3 * v1 - v0 - 3 * v2 + v3) * w3);
+      return target.set(
+        cr(finNum(p0?.x), finNum(p1?.x), finNum(p2?.x), finNum(p3?.x)),
+        cr(finNum(p0?.y), finNum(p1?.y), finNum(p2?.y), finNum(p3?.y)),
+      );
+    }
+  }
+
+  class EllipseCurve extends Curve2 {
+    isEllipseCurve!: boolean;
+    aX!: number;
+    aY!: number;
+    xRadius!: number;
+    yRadius!: number;
+    aStartAngle!: number;
+    aEndAngle!: number;
+    aClockwise!: boolean;
+    aRotation!: number;
+
+    constructor(
+      aX = 0,
+      aY = 0,
+      xRadius = 1,
+      yRadius = 1,
+      aStartAngle = 0,
+      aEndAngle = Math.PI * 2,
+      aClockwise = false,
+      aRotation = 0,
+    ) {
+      super('EllipseCurve');
+      this.isEllipseCurve = true;
+      this.aX = finNum(aX, 0);
+      this.aY = finNum(aY, 0);
+      this.xRadius = finNum(xRadius, 1);
+      this.yRadius = finNum(yRadius, 1);
+      this.aStartAngle = finNum(aStartAngle, 0);
+      this.aEndAngle = finNum(aEndAngle, Math.PI * 2);
+      this.aClockwise = Boolean(aClockwise);
+      this.aRotation = finNum(aRotation, 0);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2 target.
+    override getPoint(t: number, target: any = new Vector2()): any {
+      const twoPi = Math.PI * 2;
+      const start = finNum(this.aStartAngle, 0);
+      let delta = finNum(this.aEndAngle, twoPi) - start;
+      if (Math.abs(delta) >= 1e-9) {
+        delta = ((delta % twoPi) + twoPi) % twoPi;
+        if (delta < 1e-9) delta = twoPi;
+        if (this.aClockwise) delta = delta === twoPi ? -twoPi : delta - twoPi;
+      } else {
+        delta = 0;
+      }
+      const angle = start + clamp01(t) * delta;
+      const tx = finNum(this.xRadius, 1) * Math.cos(angle);
+      const ty = finNum(this.yRadius, 1) * Math.sin(angle);
+      const rot = finNum(this.aRotation, 0);
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
+      return target.set(
+        this.aX + tx * cos - ty * sin,
+        this.aY + tx * sin + ty * cos,
+      );
+    }
+  }
+
+  class ArcCurve extends EllipseCurve {
+    isArcCurve!: boolean;
+    constructor(
+      aX = 0,
+      aY = 0,
+      aRadius = 1,
+      aStartAngle = 0,
+      aEndAngle = Math.PI * 2,
+      aClockwise = false,
+    ) {
+      super(aX, aY, aRadius, aRadius, aStartAngle, aEndAngle, aClockwise, 0);
+      this.type = 'ArcCurve';
+      this.isArcCurve = true;
+    }
+  }
+
+  class CurvePath extends Curve2 {
+    isCurvePath!: boolean;
+    // tslint:disable-next-line:no-any Heterogeneous 2D/3D sub-curves.
+    curves!: any[];
+    autoClose!: boolean;
+    _curveLens!: number[] | null;
+
+    constructor() {
+      super('CurvePath');
+      this.isCurvePath = true;
+      this.curves = [];
+      this.autoClose = false;
+      this._curveLens = null;
+    }
+
+    // tslint:disable-next-line:no-any Sub-curve instance.
+    add(curve: any): this {
+      if (curve && typeof curve.getPoint === 'function') {
+        this.curves.push(curve);
+        this._curveLens = null;
+        this._lenCache = null;
+      }
+      return this;
+    }
+
+    closePath(): this {
+      if (this.curves.length === 0) return this;
+      const s = this.curves[0].getPoint(0);
+      const e = this.curves[this.curves.length - 1].getPoint(1);
+      const is3D = Boolean(s && ('z' in s || s.isVector3));
+      if (
+        Math.hypot(
+          finNum(s?.x) - finNum(e?.x),
+          finNum(s?.y) - finNum(e?.y),
+          is3D ? finNum(s?.z) - finNum(e?.z) : 0,
+        ) > 1e-6
+      ) {
+        const L3 = threeNs.LineCurve3;
+        this.add(is3D && L3 ? new L3(e, s) : new LineCurve(e, s));
+      }
+      return this;
+    }
+
+    getCurveLengths(): number[] {
+      if (this._curveLens && this._curveLens.length === this.curves.length) {
+        return this._curveLens;
+      }
+      const lengths: number[] = [];
+      let sums = 0;
+      for (const c of this.curves) {
+        let len = 0;
+        if (typeof c?.getLength === 'function') {
+          len = finNum(c.getLength(), 0);
+        } else if (typeof c?.getPoints === 'function') {
+          const pts = c.getPoints(32);
+          for (let i = 1; i < pts.length; i++) {
+            len += Math.hypot(
+              finNum(pts[i]?.x) - finNum(pts[i - 1]?.x),
+              finNum(pts[i]?.y) - finNum(pts[i - 1]?.y),
+              finNum(pts[i]?.z) - finNum(pts[i - 1]?.z),
+            );
+          }
+        }
+        sums += len;
+        lengths.push(sums);
+      }
+      this._curveLens = lengths;
+      return lengths;
+    }
+
+    override getLength(): number {
+      const lens = this.getCurveLengths();
+      return lens[lens.length - 1] || 0;
+    }
+
+    override updateArcLengths(): void {
+      this._curveLens = null;
+      this._lenCache = null;
+      for (const c of this.curves) c?.updateArcLengths?.();
+      this.getCurveLengths();
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 target.
+    override getPoint(t: number, optionalTarget?: any): any {
+      if (this.curves.length === 0) {
+        return (optionalTarget || new Vector2()).set(0, 0);
+      }
+      const lens = this.getCurveLengths();
+      const total = lens[lens.length - 1] || 0;
+      if (total <= 1e-12) return this.curves[0].getPoint(0, optionalTarget);
+      const d = clamp01(t) * total;
+      for (let i = 0; i < lens.length; i++) {
+        if (d <= lens[i]! || i === lens.length - 1) {
+          const prev = i > 0 ? lens[i - 1]! : 0;
+          const subLen = lens[i]! - prev;
+          const u = subLen > 1e-12 ? (d - prev) / subLen : 0;
+          const c = this.curves[i];
+          return typeof c.getPointAt === 'function'
+            ? c.getPointAt(u, optionalTarget)
+            : c.getPoint(u, optionalTarget);
+        }
+      }
+      return this.curves[this.curves.length - 1].getPoint(1, optionalTarget);
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
+    override getPoints(divisions = 12): any[] {
+      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 12))));
+      const points = [];
+      // tslint:disable-next-line:no-any Previous point for deduplication.
+      let last: any = null;
+      for (const curve of this.curves) {
+        const res = curve?.isEllipseCurve
+          ? divs * 2
+          : curve?.isLineCurve || curve instanceof (threeNs.LineCurve3 || Function)
+            ? 1
+            : curve?.isSplineCurve && Array.isArray(curve.points)
+              ? divs * Math.max(1, curve.points.length)
+              : divs;
+        for (const pt of curve.getPoints(Math.min(1024, res))) {
+          if (
+            last &&
+            Math.hypot(
+              finNum(last.x) - finNum(pt.x),
+              finNum(last.y) - finNum(pt.y),
+              finNum(last.z) - finNum(pt.z),
+            ) < 1e-6
+          ) {
+            continue;
+          }
+          points.push(pt);
+          last = pt;
+        }
+      }
+      if (this.autoClose && points.length > 1) {
+        const first = points[0];
+        if (
+          Math.hypot(
+            finNum(last.x) - finNum(first.x),
+            finNum(last.y) - finNum(first.y),
+            finNum(last.z) - finNum(first.z),
+          ) > 1e-6
+        ) {
+          points.push(first.clone ? first.clone() : first);
+        }
+      }
+      return points;
+    }
+
+    // tslint:disable-next-line:no-any Dynamic Vector2/Vector3 array.
+    override getSpacedPoints(divisions = 40): any[] {
+      const divs = Math.max(1, Math.min(1024, Math.floor(finNum(divisions, 40))));
+      const pts = [];
+      for (let i = 0; i <= divs; i++) pts.push(this.getPoint(i / divs));
+      if (this.autoClose && pts.length > 0) {
+        pts.push(pts[0].clone ? pts[0].clone() : pts[0]);
+      }
+      return pts;
+    }
+  }
+
+  const BufferAttribute = threeNs.BufferAttribute;
+  const Object3D = threeNs.Object3D;
+  const Line = threeNs.Line;
+  const LineSegments = threeNs.LineSegments;
+  const LineBasicMaterial = threeNs.LineBasicMaterial;
+  const MeshBasicMaterial = threeNs.MeshBasicMaterial;
+  const ConeGeometry = threeNs.ConeGeometry;
+  const Color = threeNs.Color;
+
+  // tslint:disable-next-line:no-any Copy common Object3D state onto cloned helper.
+  const copyObjBase = (dst: any, src: any, skipKids: number, recursive: boolean) => {
+    dst.name = src.name;
+    dst.position.copy(src.position);
+    dst.quaternion.copy(src.quaternion);
+    dst.scale.copy(src.scale);
+    dst.visible = src.visible;
+    dst.castShadow = src.castShadow;
+    dst.receiveShadow = src.receiveShadow;
+    try {
+      dst.userData = JSON.parse(JSON.stringify(src.userData || {}));
+    } catch {
+      dst.userData = {...(src.userData || {})};
+    }
+    if (recursive && Array.isArray(src.children)) {
+      for (let i = skipKids; i < src.children.length; i++) {
+        dst.add(src.children[i].clone(true));
+      }
+    }
+    return dst;
+  };
+
+  // tslint:disable-next-line:no-any Segment-pair BufferGeometry builder.
+  const segPairGeo = (coords: number[]): any => {
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(new Float32Array(coords), 3));
+    g.__isSegmentPairs = true;
+    return g;
+  };
+
+  const boxWireEdges = [
+    0, 1, 1, 3, 3, 2, 2, 0, 4, 5, 5, 7, 7, 6, 6, 4, 0, 4, 1, 5, 3, 7, 2, 6,
+  ];
+  // tslint:disable-next-line:no-any 12-edge AABB wireframe BufferGeometry builder.
+  const boxWireGeo = (
+    x0: number,
+    y0: number,
+    z0: number,
+    x1: number,
+    y1: number,
+    z1: number,
+  ): any => {
+    if (
+      !Number.isFinite(x0 + y0 + z0 + x1 + y1 + z1) ||
+      x1 < x0 ||
+      y1 < y0 ||
+      z1 < z0
+    ) {
+      return new BufferGeometry();
+    }
+    const coords: number[] = [];
+    for (const c of boxWireEdges) {
+      coords.push(c & 1 ? x1 : x0, c & 2 ? y1 : y0, c & 4 ? z1 : z0);
+    }
+    return segPairGeo(coords);
+  };
+
+  class GridHelper extends LineSegments {
+    type!: string;
+    isGridHelper!: boolean;
+    _size!: number;
+    _divisions!: number;
+    // tslint:disable-next-line:no-any Optional distinct center-crosshair child LineSegments.
+    _centerLines?: any;
+    _internalKids!: number;
+
+    constructor(
+      size = 10,
+      divisions = 10,
+      // tslint:disable-next-line:no-any Color hex, string, or Color instance.
+      color1: any = 0x444444,
+      // tslint:disable-next-line:no-any Color hex, string, or Color instance.
+      color2: any = 0x888888,
+    ) {
+      const sz = Math.max(1e-4, Math.abs(finNum(size, 10)));
+      const divs = Math.max(1, Math.min(256, Math.floor(finNum(divisions, 10))));
+      const c1 = new Color(color1 ?? 0x444444);
+      const c2 = new Color(color2 ?? 0x888888);
+      const half = sz * 0.5;
+      const step = sz / divs;
+      const split = divs % 2 === 0 && c1.getHex() !== c2.getHex() ? divs >> 1 : -1;
+      const minor: number[] = [];
+      const major: number[] = [];
+      for (let i = 0, k = -half; i <= divs; i++, k += step) {
+        (i === split ? major : minor).push(
+          -half, 0, k, half, 0, k, k, 0, -half, k, 0, half,
+        );
+      }
+      super(
+        segPairGeo(minor.length ? minor : major),
+        new LineBasicMaterial({color: minor.length ? c2 : c1}),
+      );
+      this.type = 'GridHelper';
+      this.isGridHelper = true;
+      this._size = sz;
+      this._divisions = divs;
+      this._internalKids = 0;
+      if (major.length && minor.length) {
+        const cl = new LineSegments(segPairGeo(major), new LineBasicMaterial({color: c1}));
+        this._centerLines = cl;
+        this._internalKids = 1;
+        this.add(cl);
+      }
+    }
+
+    override _bakeAuthorGeometry(): void {
+      if (this._centerLines?.material && this.material) {
+        this._centerLines.material.transparent = this.material.transparent;
+        this._centerLines.material.opacity = this.material.opacity;
+      }
+      super._bakeAuthorGeometry();
+    }
+
+    override clone(recursive = true): this {
+      const c = new GridHelper(
+        this._size,
+        this._divisions,
+        this._centerLines ? this._centerLines.material.color : this.material.color,
+        this.material.color,
+      );
+      c.material.transparent = this.material.transparent;
+      c.material.opacity = this.material.opacity;
+      return copyObjBase(c, this, this._internalKids, recursive);
+    }
+
+    dispose(): void {}
+  }
+
+  class AxesHelper extends LineSegments {
+    type!: string;
+    isAxesHelper!: boolean;
+    _size!: number;
+    // tslint:disable-next-line:no-any +Y and +Z child LineSegments.
+    _yAxis!: any;
+    // tslint:disable-next-line:no-any +Y and +Z child LineSegments.
+    _zAxis!: any;
+
+    constructor(size = 1) {
+      const s = Math.max(1e-4, Math.abs(finNum(size, 1)));
+      super(segPairGeo([0, 0, 0, s, 0, 0]), new LineBasicMaterial({color: 0xff3300}));
+      this.type = 'AxesHelper';
+      this.isAxesHelper = true;
+      this._size = s;
+      this._yAxis = new LineSegments(
+        segPairGeo([0, 0, 0, 0, s, 0]),
+        new LineBasicMaterial({color: 0x33ff00}),
+      );
+      this._zAxis = new LineSegments(
+        segPairGeo([0, 0, 0, 0, 0, s]),
+        new LineBasicMaterial({color: 0x0088ff}),
+      );
+      this.add(this._yAxis);
+      this.add(this._zAxis);
+    }
+
+    // tslint:disable-next-line:no-any Color hex, string, or Color instance.
+    setColors(xColor: any, yColor: any, zColor: any): this {
+      this.material.color.set(xColor);
+      this._yAxis.material.color.set(yColor);
+      this._zAxis.material.color.set(zColor);
+      return this;
+    }
+
+    override _bakeAuthorGeometry(): void {
+      for (const ch of [this._yAxis, this._zAxis]) {
+        if (ch?.material && this.material) {
+          ch.material.transparent = this.material.transparent;
+          ch.material.opacity = this.material.opacity;
+        }
+      }
+      super._bakeAuthorGeometry();
+    }
+
+    override clone(recursive = true): this {
+      const c = new AxesHelper(this._size).setColors(
+        this.material.color,
+        this._yAxis.material.color,
+        this._zAxis.material.color,
+      );
+      c.material.transparent = this.material.transparent;
+      c.material.opacity = this.material.opacity;
+      return copyObjBase(c, this, 2, recursive);
+    }
+
+    dispose(): void {}
+  }
+
+  class ArrowHelper extends Object3D {
+    type!: string;
+    isArrowHelper!: boolean;
+    // tslint:disable-next-line:no-any Shaft Line child.
+    line!: any;
+    // tslint:disable-next-line:no-any Head Cone Mesh child.
+    cone!: any;
+
+    constructor(
+      // tslint:disable-next-line:no-any Direction Vector3.
+      dir: any = new Vector3(0, 0, 1),
+      // tslint:disable-next-line:no-any Origin Vector3.
+      origin: any = new Vector3(0, 0, 0),
+      length = 1,
+      // tslint:disable-next-line:no-any Color hex, string, or Color instance.
+      color: any = 0xffff00,
+      headLength?: number,
+      headWidth?: number,
+    ) {
+      super();
+      this.type = 'ArrowHelper';
+      this.isArrowHelper = true;
+      this.position.set(finNum(origin?.x), finNum(origin?.y), finNum(origin?.z));
+      const lg = new BufferGeometry();
+      lg.setAttribute('position', new BufferAttribute(new Float32Array([0, 0, 0, 0, 1, 0]), 3));
+      this.line = new Line(lg, new LineBasicMaterial({color}));
+      this.cone = new Mesh(
+        new ConeGeometry(0.5, 1, 8).translate(0, -0.5, 0),
+        new MeshBasicMaterial({color}),
+      );
+      this.add(this.line);
+      this.add(this.cone);
+      this.setDirection(dir).setLength(length, headLength, headWidth);
+    }
+
+    // tslint:disable-next-line:no-any Direction Vector3.
+    setDirection(dir: any): this {
+      const dx = finNum(dir?.x, 0);
+      const dy = finNum(dir?.y, 0);
+      const dz = finNum(dir?.z, 1);
+      const len = Math.hypot(dx, dy, dz);
+      const nx = len > 1e-9 ? dx / len : 0;
+      const ny = len > 1e-9 ? dy / len : 1;
+      const nz = len > 1e-9 ? dz / len : 0;
+      if (ny > 0.99999) this.quaternion.set(0, 0, 0, 1);
+      else if (ny < -0.99999) this.quaternion.set(1, 0, 0, 0);
+      else {
+        this.quaternion.setFromAxisAngle(
+          new Vector3(nz, 0, -nx).normalize(),
+          Math.acos(Math.max(-1, Math.min(1, ny))),
+        );
+      }
+      return this;
+    }
+
+    setLength(length: number, headLength?: number, headWidth?: number): this {
+      const len = Math.max(1e-4, Math.abs(finNum(length, 1)));
+      const hl =
+        headLength !== undefined && Number.isFinite(Number(headLength))
+          ? Math.max(1e-4, Math.abs(Number(headLength)))
+          : 0.2 * len;
+      const hw =
+        headWidth !== undefined && Number.isFinite(Number(headWidth))
+          ? Math.max(1e-4, Math.abs(Number(headWidth)))
+          : 0.2 * hl;
+      this.line.scale.set(1, Math.max(1e-4, len - hl), 1);
+      this.line.updateMatrix?.();
+      this.cone.scale.set(hw, hl, hw);
+      this.cone.position.set(0, len, 0);
+      this.cone.updateMatrix?.();
+      return this;
+    }
+
+    // tslint:disable-next-line:no-any Color hex, string, or Color instance.
+    setColor(color: any): this {
+      this.line.material.color.set(color);
+      this.cone.material.color.set(color);
+      return this;
+    }
+
+    override clone(recursive = true): this {
+      const c = new ArrowHelper();
+      c.line.scale.copy(this.line.scale);
+      c.cone.scale.copy(this.cone.scale);
+      c.cone.position.copy(this.cone.position);
+      c.setColor(this.cone.material.color);
+      c.line.material.transparent = this.line.material.transparent;
+      c.line.material.opacity = this.line.material.opacity;
+      c.cone.material.transparent = this.cone.material.transparent;
+      c.cone.material.opacity = this.cone.material.opacity;
+      return copyObjBase(c, this, 2, recursive);
+    }
+
+    dispose(): void {}
+  }
+
+  class Box3Helper extends LineSegments {
+    type!: string;
+    isBox3Helper!: boolean;
+    box!: Box3;
+
+    // tslint:disable-next-line:no-any Box3 + Color arguments.
+    constructor(box: Box3 = new Box3(), color: any = 0xffff00) {
+      const b = box instanceof Box3 ? box : new Box3(box?.min, box?.max);
+      super(
+        b.isEmpty()
+          ? new BufferGeometry()
+          : boxWireGeo(b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z),
+        new LineBasicMaterial({color}),
+      );
+      this.type = 'Box3Helper';
+      this.isBox3Helper = true;
+      this.box = b;
+    }
+
+    override _bakeAuthorGeometry(): void {
+      const b = this.box;
+      const g =
+        !b || b.isEmpty()
+          ? new BufferGeometry()
+          : boxWireGeo(b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z);
+      this._sourceGeo = g;
+      this.geometry = g;
+      super._bakeAuthorGeometry();
+    }
+
+    override clone(recursive = true): this {
+      const c = new Box3Helper(this.box.clone(), this.material.color);
+      c.material.transparent = this.material.transparent;
+      c.material.opacity = this.material.opacity;
+      return copyObjBase(c, this, 0, recursive);
+    }
+
+    dispose(): void {}
+  }
+
+  class BoxHelper extends LineSegments {
+    type!: string;
+    isBoxHelper!: boolean;
+    // tslint:disable-next-line:no-any Target Object3D being framed.
+    object!: any;
+
+    // tslint:disable-next-line:no-any Object3D + Color arguments.
+    constructor(object?: any, color: any = 0xffff00) {
+      super(new BufferGeometry(), new LineBasicMaterial({color}));
+      this.type = 'BoxHelper';
+      this.isBoxHelper = true;
+      this.object = object;
+      if (object) this.update();
+    }
+
+    // tslint:disable-next-line:no-any Optional updated target Object3D.
+    update(object?: any): this {
+      if (object !== undefined) this.object = object;
+      const b = new Box3();
+      if (this.object && this.object !== this) b.setFromObject(this.object);
+      const g = b.isEmpty()
+        ? new BufferGeometry()
+        : boxWireGeo(b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z);
+      this.position.set(0, 0, 0);
+      this.quaternion.set(0, 0, 0, 1);
+      this.scale.set(1, 1, 1);
+      this._sourceGeo = g;
+      this.geometry = g;
+      return this;
+    }
+
+    // tslint:disable-next-line:no-any Target Object3D.
+    setFromObject(object: any): this {
+      return this.update(object);
+    }
+
+    override _bakeAuthorGeometry(): void {
+      this.update();
+      super._bakeAuthorGeometry();
+    }
+
+    override clone(recursive = true): this {
+      const c = new BoxHelper(this.object, this.material.color);
+      c.material.transparent = this.material.transparent;
+      c.material.opacity = this.material.opacity;
+      return copyObjBase(c, this, 0, recursive);
+    }
+
+    dispose(): void {}
+  }
+
+  for (const cls of [
+    Curve2,
+    LineCurve,
+    QuadraticBezierCurve,
+    CubicBezierCurve,
+    SplineCurve,
+    EllipseCurve,
+    ArcCurve,
+    CurvePath,
+    GridHelper,
+    AxesHelper,
+    ArrowHelper,
+    Box3Helper,
+    BoxHelper,
+  ]) {
+    Object.freeze(cls.prototype);
+  }
+
   const exportsMap = {
     Box3,
     Sphere,
@@ -3889,6 +4894,18 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     SimplexNoise,
     SpriteMaterial,
     Sprite,
+    LineCurve,
+    QuadraticBezierCurve,
+    CubicBezierCurve,
+    SplineCurve,
+    EllipseCurve,
+    ArcCurve,
+    CurvePath,
+    GridHelper,
+    AxesHelper,
+    ArrowHelper,
+    Box3Helper,
+    BoxHelper,
   };
 
   if (reg && typeof reg === 'object') {

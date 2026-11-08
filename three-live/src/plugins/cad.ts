@@ -113,8 +113,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
   };
 
   interface PathSegment {
-    type: 'move' | 'line' | 'quad' | 'cubic' | 'arc';
+    type: 'move' | 'line' | 'quad' | 'cubic' | 'arc' | 'curve';
     pts: number[];
+    // tslint:disable-next-line:no-any Optional Curve2D instance added via Path.add().
+    curve?: any;
   }
 
   // tslint:disable-next-line:no-any Dynamic Vector2 instance from threeNs.
@@ -298,12 +300,38 @@ export function installCadExtension(threeNs: any, reg?: any): any {
       );
     }
 
+    // tslint:disable-next-line:no-any Curve2D instance (LineCurve, EllipseCurve, SplineCurve, etc.).
+    add(curve: any): this {
+      if (curve && typeof curve.getPoints === 'function') {
+        this.segments.push({type: 'curve', pts: [], curve});
+        const end = curve.getPoint?.(1);
+        if (end) this.currentPoint.set(Number(end.x) || 0, Number(end.y) || 0);
+      }
+      return this;
+    }
+
+    splineThru(pts: Vec2Like[]): this {
+      if (!Array.isArray(pts) || pts.length === 0) return this;
+      const Spline = threeNs.SplineCurve || reg?.authorNamespace?.SplineCurve;
+      if (Spline) {
+        return this.add(new Spline([this.currentPoint.clone(), ...pts]));
+      }
+      for (const p of pts) {
+        if (p) this.lineTo(Number(p.x) || 0, Number(p.y) || 0);
+      }
+      return this;
+    }
+
     closePath(): this {
       if (this.segments.length > 0) {
         const first = this.segments[0];
         let sx = 0;
         let sy = 0;
-        if (first.type === 'arc') {
+        if (first.type === 'curve' && first.curve?.getPoint) {
+          const st = first.curve.getPoint(0);
+          sx = Number(st?.x) || 0;
+          sy = Number(st?.y) || 0;
+        } else if (first.type === 'arc') {
           const cx = first.pts[0];
           const cy = first.pts[1];
           const rx = first.pts[2];
@@ -419,6 +447,10 @@ export function installCadExtension(threeNs: any, reg?: any): any {
             const ty = ry * Math.sin(angle);
             pushPt(cx + tx * cosR - ty * sinR, cy + tx * sinR + ty * cosR);
           }
+        } else if (seg.type === 'curve' && seg.curve?.getPoints) {
+          for (const cp of seg.curve.getPoints(divs)) {
+            if (cp) pushPt(Number(cp.x) || 0, Number(cp.y) || 0);
+          }
         }
       }
       if (pts.length > 2) {
@@ -438,7 +470,11 @@ export function installCadExtension(threeNs: any, reg?: any): any {
     clone(): this {
       const c: any = new (this.constructor as any)();
       c.currentPoint.copy(this.currentPoint);
-      c.segments = this.segments.map((s) => ({type: s.type, pts: [...s.pts]}));
+      c.segments = this.segments.map((s) => ({
+        type: s.type,
+        pts: [...s.pts],
+        ...(s.curve ? {curve: s.curve.clone ? s.curve.clone() : s.curve} : {}),
+      }));
       if (Array.isArray((this as any).holes)) {
         c.holes = (this as any).holes.map((h: Path) => h.clone());
       }
