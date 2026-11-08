@@ -18,7 +18,7 @@
  * Includes standard <xr-live> (with Three.js authoring), all xr-live-sensors (Depth, Physics,
  * Hand Gestures, Desktop Simulator, Spatial Audio, WebMCP), plus all three-live plugins
  * (three-live-studio lighting/materials/shadows/bloom/outline, three-live-cad extrude/CSG/text,
- * and three-live-animation keyframes/skinning/morph/IK),
+ * three-live-animation keyframes/skinning/morph/IK, and three-live-ai editScene),
  * the 14 xr-live-spatial plugins (head-follow, manipulation-handles, world-understanding,
  * gemini-live, spatial-paint, depth-particles, splat-loader, etc.), and the
  * xr-live-sim plugins (character-controller, steering-agents, hit-zones,

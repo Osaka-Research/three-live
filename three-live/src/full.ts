@@ -15,7 +15,8 @@
 /**
  * @fileoverview Full bundle entrypoint for three-live.
  * Includes the <three-live> custom element, ThreeView runtime, ThreeXR AR packager,
- * and ThreeAuthor imperative Three.js scene graph authoring.
+ * ThreeAuthor imperative Three.js scene graph authoring, and every optional
+ * plugin (including three-live-ai bring-your-own-LLM editing).
  */
 
 import {authorScriptRunner} from './three-author';
@@ -29,6 +30,7 @@ if (typeof window !== 'undefined') {
   (window as any).ThreeLiveBundle = ThreeLiveBundleExports;
 }
 
+export * from './ai';
 export * from './animation';
 export * from './cad';
 export * from './index';

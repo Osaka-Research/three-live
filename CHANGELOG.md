@@ -35,8 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `ai-chat` (any Chat Completions-compatible endpoint via `ai-endpoint` /
     `ai-model`, or `createAIChatProvider()`) or any custom
     `{ complete({ messages, signal }) }` object. Emits `three-live-edit-start`
-    and `three-live-edit` events. Opt-in only: core and full bundles are
-    unchanged.
+    and `three-live-edit` events. Included in `three-live-full` and
+    `xr-live-full` (budgets raised to `< 146 KB gz` and `< 246 KB gz`); core
+    bundles are unchanged.
 
 -   **Deterministic PBR material presets (`THREE.ProceduralTexture`,
     `userData.xr.material`):** 11 seamlessly tiling presets (`wood`, `marble`,
