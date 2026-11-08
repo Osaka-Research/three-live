@@ -19,6 +19,7 @@ pub mod engine;
 pub mod ffi;
 pub mod geometry;
 pub mod glb;
+pub mod material_preset;
 pub mod mcp;
 pub mod reference;
 pub mod render;
@@ -589,6 +590,7 @@ pub fn validate_scene_source(
         let combined = scripts.join("\n;\n");
         match validate_three_script(&combined) {
             Ok(mut scene) => {
+                push_texture_quota_diagnostic(&mut scene);
                 let mut all_diags = html_diags;
                 all_diags.append(&mut scene.diagnostics);
                 scene.diagnostics = all_diags.clone();
@@ -601,7 +603,8 @@ pub fn validate_scene_source(
         }
     } else {
         match validate_three_script(source) {
-            Ok(scene) => {
+            Ok(mut scene) => {
+                push_texture_quota_diagnostic(&mut scene);
                 let diags = scene.diagnostics.clone();
                 (Some(scene), diags)
             }
@@ -610,6 +613,46 @@ pub fn validate_scene_source(
                 (None, vec![diag])
             }
         }
+    }
+}
+
+/// Flags scenes whose materials reference more unique texture images than
+/// `SECURITY_3D_MAX_TEXTURES`, so `validate` / `render` report the same quota failure that
+/// `.glb` / `.usdz` export would hit (identical images are shared, matching the GLB writer).
+fn push_texture_quota_diagnostic(scene: &mut SceneGraph) {
+    let mut uris = std::collections::HashSet::new();
+    for m in &scene.materials {
+        for t in [
+            &m.base_color_texture,
+            &m.metallic_roughness_texture,
+            &m.normal_texture,
+            &m.emissive_texture,
+            &m.occlusion_texture,
+        ] {
+            if let Some(u) = t.as_deref().filter(|u| !u.is_empty()) {
+                uris.insert(u);
+            }
+        }
+    }
+    if uris.len() > constants::SECURITY_3D_MAX_TEXTURES {
+        let n = uris.len();
+        scene.diagnostics.push(Diagnostic {
+            code: "TL105".to_string(),
+            severity: "error".to_string(),
+            message: format!(
+                "Scene uses {} unique textures, exceeding SECURITY_3D_MAX_TEXTURES ({}); .glb and \
+                 .usdz export will fail.",
+                n,
+                constants::SECURITY_3D_MAX_TEXTURES
+            ),
+            hint: Some(
+                "Share textures between materials. Each THREE.ProceduralTexture preset adds up to 3 \
+                 textures: reuse one preset result across meshes, pass normalStrength: 0 to skip \
+                 its normal map, or use fewer distinct presets."
+                    .to_string(),
+            ),
+            ..Default::default()
+        });
     }
 }
 

@@ -21,6 +21,7 @@
 
 use crate::constants::*;
 use crate::geometry::register_native_geometry_callables;
+use crate::material_preset::register_native_material_callables;
 use crate::scene::{CameraConfig, Diagnostic, Light3D, Material3D, Mesh3D, SceneGraph, SceneNode};
 use crate::time::Stopwatch;
 use crate::usdz::register_native_usdz_callables;
@@ -88,6 +89,10 @@ impl ThreeEngine {
         // 2.1. Register native USDZ accelerators
         register_native_usdz_callables(&mut context)
             .map_err(|e| format!("Failed to register native USDZ callables: {}", e))?;
+
+        // 2.1b. Register native material preset kernels (`THREE.ProceduralTexture.*`)
+        register_native_material_callables(&mut context)
+            .map_err(|e| format!("Failed to register native material callables: {}", e))?;
 
         // 2.2. Initialize standard Web encoding polyfills backed by native Rust UTF-8 hooks
         let polyfills = r#"
@@ -299,7 +304,8 @@ impl ThreeEngine {
                     '__three_live_native_csg_boolean__',
                     '__three_live_native_f32_array__',
                     '__three_live_native_index_array__',
-                    '__three_live_native_compute_vertex_normals__'
+                    '__three_live_native_compute_vertex_normals__',
+                    '__three_live_native_material_preset__'
                 ];
                 for (const hookName of nativeHooks) {
                     if (typeof globalThis[hookName] === 'function') {

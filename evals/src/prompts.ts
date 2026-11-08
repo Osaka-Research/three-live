@@ -41,6 +41,7 @@ export const GUIDED_SYSTEM_PROMPT = [
   '   `roughness`, `roughnessMap`, `metalness`, `metalnessMap`, `emissive`, `emissiveIntensity`, `emissiveMap`, `aoMap`, `aoMapIntensity`, `bumpMap`, `bumpScale`,',
   '   `transmission`, `ior`, `thickness`, `attenuationColor`, `attenuationDistance`, `clearcoat`, `clearcoatRoughness`, `iridescence`, `iridescenceIOR`, `sheen`, `sheenColor`, `sheenRoughness`,',
   '   `dispersion`, `opacity`, `transparent`), plus procedural `THREE.DataTexture(data, width, height, THREE.RGBAFormat)` and `THREE.CanvasTexture(canvas)` (`document.createElement("canvas").getContext("2d")`).',
+  "   - Seamless PBR material presets: spread `THREE.ProceduralTexture.<preset>({ color, scale, seed, roughness, normalStrength, size })` into `MeshStandardMaterial` (presets: `wood`, `marble`, `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`, `carbonFiber`, `checkerboard`, `grid`), or set `mesh.userData.xr = { material: 'wood' }` to bake a preset tinted by the material color.",
   '4. Instancing, Animation, IK & LOD:',
   '   - `THREE.InstancedMesh` (`setMatrixAt`, `setColorAt`), `THREE.LOD` (`addLevel`), `THREE.IKSolver`, or declarative `node.userData.xr = { ik: { root, mid, effector, target, pole } }`.',
   '   - For procedural animation, define `function animate(t) { ... }` (where `t` is elapsed time in seconds) or `requestAnimationFrame(animate)`.',

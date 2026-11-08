@@ -4909,6 +4909,487 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     Object.freeze(cls.prototype);
   }
 
+  // =========================================================================
+  // A8: Deterministic PBR material presets (`THREE.ProceduralTexture.*`)
+  // Byte-identical mirror of `compiler/src/material_preset.rs` (integer hashing
+  // and IEEE `+ - * / floor sqrt` only, same operation order). The Boa engine
+  // uses the native kernels; Web workers run these.
+  // =========================================================================
+  const PRESET_NAMES = [
+    'checkerboard',
+    'grid',
+    'wood',
+    'marble',
+    'brushedMetal',
+    'carbonFiber',
+    'concrete',
+    'brick',
+    'fabric',
+    'leather',
+    'rust',
+  ];
+  // [scale, color, color2, roughness] per preset.
+  const PRESET_DEFAULTS: number[][] = [
+    [8, 0x334155, 0xe2e8f0, 0.6],
+    [8, 0xf8fafc, 0x64748b, 0.7],
+    [10, 0x8b5a2b, 0, 0.6],
+    [3, 0xf1f5f9, 0x475569, 0.25],
+    [1, 0xb8bcc2, 0, 0.32],
+    [8, 0x1f2328, 0, 0.35],
+    [4, 0x9ca3af, 0, 0.9],
+    [8, 0x9a3b2e, 0xc8c2b8, 0.85],
+    [32, 0x3b5b8c, 0, 0.9],
+    [12, 0x5a3a28, 0, 0.6],
+    [4, 0x8b3a1a, 0x8a9099, 0.9],
+  ];
+  const pHash = (ix: number, iy: number, seed: number): number => {
+    let h =
+      Math.imul(ix, 0x27d4eb2d) ^
+      Math.imul(iy, 0x165667b1) ^
+      Math.imul(seed, 0x9e3779b9);
+    h ^= h >>> 15;
+    h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0xc2b2ae35);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
+  const pRnd = (ix: number, iy: number, seed: number): number =>
+    pHash(ix, iy, seed) / 4294967296;
+  const pMod = (a: number, p: number): number => ((a % p) + p) % p;
+  const pVal = (
+    x: number,
+    y: number,
+    px: number,
+    py: number,
+    seed: number,
+  ): number => {
+    const xf0 = Math.floor(x);
+    const yf0 = Math.floor(y);
+    const fx = x - xf0;
+    const fy = y - yf0;
+    const x0 = pMod(xf0, px);
+    const y0 = pMod(yf0, py);
+    const x1 = (x0 + 1) % px;
+    const y1 = (y0 + 1) % py;
+    const u = fx * fx * (3 - 2 * fx);
+    const v = fy * fy * (3 - 2 * fy);
+    const a = pRnd(x0, y0, seed);
+    const b = pRnd(x1, y0, seed);
+    const c = pRnd(x0, y1, seed);
+    const d = pRnd(x1, y1, seed);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  };
+  const pFbm = (
+    u: number,
+    v: number,
+    px: number,
+    py: number,
+    oct: number,
+    seed: number,
+  ): number => {
+    let sum = 0;
+    let amp = 0.5;
+    let norm = 0;
+    let f = 1;
+    for (let o = 0; o < oct; o++) {
+      const pfx = px * f;
+      const pfy = py * f;
+      sum += amp * pVal(u * pfx, v * pfy, pfx, pfy, (seed + o) >>> 0);
+      norm += amp;
+      amp *= 0.5;
+      f *= 2;
+    }
+    return sum / norm;
+  };
+  const pFrac = (x: number): number => x - Math.floor(x);
+  const pTri = (x: number): number => Math.abs(pFrac(x) * 2 - 1);
+  const pSmooth = (e0: number, e1: number, x: number): number => {
+    let t = (x - e0) / (e1 - e0);
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    return t * t * (3 - 2 * t);
+  };
+  const pMix = (a: number, b: number, t: number): number => a + (b - a) * t;
+  const pByte = (v: number): number =>
+    v <= 0 ? 0 : v >= 1 ? 255 : Math.floor(v * 255 + 0.5);
+
+  // Returns [r, g, b, height, roughness, metalness] for one texel.
+  const pShade = (
+    kind: number,
+    N: number,
+    S: number,
+    seed: number,
+    c: number[],
+    c2: number[],
+    rough: number,
+    u: number,
+    v: number,
+    xi: number,
+    yi: number,
+  ): number[] => {
+    const k = (m: number) => [c[0] * m, c[1] * m, c[2] * m];
+    const mixC = (a: number[], b: number[], t: number) => [
+      pMix(a[0], b[0], t),
+      pMix(a[1], b[1], t),
+      pMix(a[2], b[2], t),
+    ];
+    if (kind === 0) {
+      const odd =
+        pMod(Math.floor(u * S) + Math.floor(v * S), 2) === 1 ? c2 : c;
+      return [odd[0], odd[1], odd[2], 0.5, rough, 0];
+    }
+    if (kind === 1) {
+      const fu = pFrac(u * S);
+      const fv = pFrac(v * S);
+      const lw = Math.max(0.035, S / N);
+      const line = 1 - pSmooth(lw * 0.5, lw, Math.min(fu, 1 - fu, fv, 1 - fv));
+      return [...mixC(c, c2, line), 0.3 + 0.4 * line, rough, 0];
+    }
+    if (kind === 2) {
+      const n = pFbm(u, v, 4, 4, 4, seed);
+      const ring = pTri(v * S + n * 1.5);
+      const grain = pFbm(u, v, 2, 96, 2, (seed + 7) >>> 0);
+      const w = ring * 0.7 + grain * 0.3;
+      return [...k(pMix(0.55, 1, w)), w, rough + (1 - w) * 0.15, 0];
+    }
+    if (kind === 3) {
+      const n = pFbm(u, v, 3, 3, 5, seed);
+      const v1 = pTri((u + v) * S + n * 2.5);
+      const v2 = v1 * v1;
+      const v4 = v2 * v2;
+      const vein = v4 * v4;
+      const cloud = 0.92 + 0.08 * n;
+      const m = mixC(c, c2, vein * 0.85);
+      return [
+        m[0] * cloud,
+        m[1] * cloud,
+        m[2] * cloud,
+        0.5 - vein * 0.2,
+        rough + vein * 0.1,
+        0,
+      ];
+    }
+    if (kind === 4) {
+      const n = pFbm(u, v, 2, 192 * S, 2, seed);
+      const fine = pRnd(xi, yi, (seed + 3) >>> 0);
+      return [
+        ...k(0.85 + 0.12 * n + 0.03 * fine),
+        0.35 + n * 0.3,
+        rough + (n - 0.5) * 0.12,
+        1,
+      ];
+    }
+    if (kind === 5) {
+      const g = S * 2;
+      const gu = u * g;
+      const gv = v * g;
+      const fu = gu - Math.floor(gu);
+      const fv = gv - Math.floor(gv);
+      const hz = pMod(Math.floor(gu) + Math.floor(gv), 2) === 0;
+      const q = hz ? fv * 2 - 1 : fu * 2 - 1;
+      const bump = 1 - q * q;
+      const sheen = 0.08 * (hz ? pTri(fv * 8) : pTri(fu * 8));
+      const m = 0.6 + 0.4 * bump;
+      return [
+        c[0] * m + sheen,
+        c[1] * m + sheen,
+        c[2] * m + sheen,
+        bump * 0.8,
+        rough + 0.1 * (1 - bump),
+        0,
+      ];
+    }
+    if (kind === 6) {
+      const n = pFbm(u, v, S, S, 5, seed);
+      const sp = pRnd(xi, yi, (seed + 31) >>> 0);
+      const s16 = S * 16;
+      const pit = pSmooth(
+        0.82,
+        0.9,
+        pVal(u * s16, v * s16, s16, s16, (seed + 17) >>> 0),
+      );
+      return [
+        ...k((0.82 + 0.25 * n + 0.06 * (sp - 0.5)) * (1 - 0.35 * pit)),
+        0.5 + 0.25 * (n - 0.5) - 0.3 * pit,
+        rough - 0.05 * n,
+        0,
+      ];
+    }
+    if (kind === 7) {
+      const half = Math.floor(S / 2);
+      const gv = v * S;
+      const row = Math.floor(gv);
+      const fv = gv - row;
+      const bu = u * half + (pMod(row, 2) === 1 ? 0.5 : 0);
+      const bi = Math.floor(bu);
+      const fu = bu - bi;
+      const d = Math.min(Math.min(fu, 1 - fu) * 2, Math.min(fv, 1 - fv));
+      const mw = Math.max(0.06, (1.5 * S) / N);
+      const mortar = 1 - pSmooth(mw * 0.5, mw, d);
+      const vr = pRnd(pMod(bi, half), pMod(row, S), seed);
+      const n = pFbm(u, v, S, S, 3, (seed + 5) >>> 0);
+      const bm = 0.8 + 0.25 * vr + 0.15 * (n - 0.5);
+      const mm = 0.9 + 0.1 * n;
+      return [
+        pMix(c[0] * bm, c2[0] * mm, mortar),
+        pMix(c[1] * bm, c2[1] * mm, mortar),
+        pMix(c[2] * bm, c2[2] * mm, mortar),
+        (1 - mortar) * (0.75 + 0.1 * n) + mortar * 0.2,
+        pMix(rough, 0.95, mortar),
+        0,
+      ];
+    }
+    if (kind === 8) {
+      const gu = u * S;
+      const gv = v * S;
+      const qu = (gu - Math.floor(gu)) * 2 - 1;
+      const qv = (gv - Math.floor(gv)) * 2 - 1;
+      const h =
+        pMod(Math.floor(gu) + Math.floor(gv), 2) === 0
+          ? 1 - qu * qu
+          : 1 - qv * qv;
+      const n = pFbm(u, v, 4, 4, 2, seed);
+      return [...k((0.75 + 0.25 * h) * (0.95 + 0.1 * (n - 0.5))), h, rough, 0];
+    }
+    if (kind === 9) {
+      const gu = u * S;
+      const gv = v * S;
+      const cx = Math.floor(gu);
+      const cy = Math.floor(gv);
+      let f1 = 1e9;
+      let f2 = 1e9;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          const wx = pMod(nx, S);
+          const wy = pMod(ny, S);
+          const fx = nx + pRnd(wx, wy, seed) - gu;
+          const fy = ny + pRnd(wx, wy, (seed + 1) >>> 0) - gv;
+          const d = fx * fx + fy * fy;
+          if (d < f1) {
+            f2 = f1;
+            f1 = d;
+          } else if (d < f2) {
+            f2 = d;
+          }
+        }
+      }
+      const crease = 1 - pSmooth(0, 0.12, Math.sqrt(f2) - Math.sqrt(f1));
+      const n = pFbm(u, v, 4, 4, 3, (seed + 3) >>> 0);
+      return [
+        ...k((0.85 + 0.2 * (n - 0.5)) * (1 - 0.3 * crease)),
+        0.6 - 0.4 * crease + 0.1 * (n - 0.5),
+        rough + 0.15 * crease,
+        0,
+      ];
+    }
+    const n = pFbm(u, v, S, S, 5, seed);
+    const patch = pSmooth(0.45, 0.6, n);
+    const detail = pFbm(u, v, S * 8, S * 8, 3, (seed + 9) >>> 0);
+    const mm = 0.9 + 0.1 * detail;
+    const rm = 0.7 + 0.5 * detail;
+    return [
+      pMix(c2[0] * mm, c[0] * rm, patch),
+      pMix(c2[1] * mm, c[1] * rm, patch),
+      pMix(c2[2] * mm, c[2] * rm, patch),
+      0.4 + 0.4 * patch * detail + 0.1 * patch,
+      pMix(0.35, rough, patch),
+      1 - patch,
+    ];
+  };
+
+  // Generates [albedo, normal, orm] RGBA8 buffers from canonical params.
+  const presetPixels = (
+    kind: number,
+    N: number,
+    S: number,
+    seed: number,
+    c: number[],
+    c2: number[],
+    rough: number,
+    ns: number,
+  ): Uint8Array[] => {
+    const nat = (globalThis as Record<string, unknown>)[
+      '__three_live_native_material_preset__'
+    ];
+    if (typeof nat === 'function') {
+      const res = nat(kind, N, S, seed, ...c, ...c2, rough, ns);
+      if (Array.isArray(res) && res.length === 3) return res as Uint8Array[];
+    }
+    const albedo = new Uint8Array(N * N * 4);
+    const normal = new Uint8Array(N * N * 4);
+    const orm = new Uint8Array(N * N * 4);
+    const height = new Float64Array(N * N);
+    for (let y = 0; y < N; y++) {
+      const v = (y + 0.5) / N;
+      for (let x = 0; x < N; x++) {
+        const t = pShade(kind, N, S, seed, c, c2, rough, (x + 0.5) / N, v, x, y);
+        const o = (y * N + x) * 4;
+        albedo[o] = pByte(t[0]);
+        albedo[o + 1] = pByte(t[1]);
+        albedo[o + 2] = pByte(t[2]);
+        albedo[o + 3] = 255;
+        orm[o] = 255;
+        orm[o + 1] = pByte(t[4]);
+        orm[o + 2] = pByte(t[5]);
+        orm[o + 3] = 255;
+        height[y * N + x] = t[3];
+      }
+    }
+    const sc = ns * N * 0.0625;
+    for (let y = 0; y < N; y++) {
+      const yu = (y + N - 1) % N;
+      const yd = (y + 1) % N;
+      for (let x = 0; x < N; x++) {
+        const nx = -(height[y * N + ((x + 1) % N)] - height[y * N + ((x + N - 1) % N)]) * sc;
+        const ny = (height[yd * N + x] - height[yu * N + x]) * sc;
+        const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
+        const o = (y * N + x) * 4;
+        normal[o] = pByte(nx * inv * 0.5 + 0.5);
+        normal[o + 1] = pByte(ny * inv * 0.5 + 0.5);
+        normal[o + 2] = pByte(inv * 0.5 + 0.5);
+        normal[o + 3] = 255;
+      }
+    }
+    return [albedo, normal, orm];
+  };
+
+  const presetRgb = (val: unknown, def: number): number[] => {
+    let hex = def;
+    try {
+      if (val !== undefined && val !== null) hex = new Color(val).getHex();
+    } catch {}
+    return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+  };
+
+  // tslint:disable-next-line:no-any Cached preset texture sets.
+  const presetMemo = new Map<string, any>();
+  // tslint:disable-next-line:no-any Material preset options bag.
+  const makePreset = (name: string, opts: any = {}): any => {
+    const kind = PRESET_NAMES.indexOf(name);
+    if (kind < 0) {
+      throw new TypeError(
+        `THREE.ProceduralTexture: unknown preset '${name}' (use ${PRESET_NAMES.join(', ')})`,
+      );
+    }
+    const o = opts && typeof opts === 'object' ? opts : {};
+    const d = PRESET_DEFAULTS[kind];
+    let S = Math.max(1, Math.min(256, Math.round(finNum(o.scale, d[0]))));
+    // Alternating layouts only tile with an even cell count.
+    if ((kind === 0 || kind === 7 || kind === 8) && S % 2 === 1) S++;
+    const N = Math.max(16, Math.min(512, Math.round(finNum(o.size, 256))));
+    const seed = Math.round(Math.abs(finNum(o.seed, 1))) >>> 0;
+    const c = presetRgb(o.color, d[1]);
+    const c2 = presetRgb(o.color2, d[2] || d[1]);
+    const rough = clamp01(finNum(o.roughness, d[3]));
+    const ns = Math.max(0, Math.min(8, finNum(o.normalStrength, 1)));
+    // Identical options share textures (scene texture quotas count objects).
+    const memoKey = [kind, N, S, seed, ...c, ...c2, rough, ns].join(',');
+    const hit = presetMemo.get(memoKey);
+    if (hit) return {...hit};
+    const [albedo, normal, orm] = presetPixels(kind, N, S, seed, c, c2, rough, ns);
+    const tex = (bytes: Uint8Array, cs: string) => {
+      const vc = new VirtualCanvas(N, N);
+      vc._data.set(bytes);
+      vc._ver++;
+      const t = new CanvasTexture(vc);
+      t.flipY = false;
+      t.colorSpace = cs;
+      t.name = `${name}_${cs === 'srgb' ? 'albedo' : bytes === normal ? 'normal' : 'orm'}`;
+      return t;
+    };
+    const ormTex = tex(orm, 'srgb-linear');
+    // tslint:disable-next-line:no-any Spreadable MeshStandardMaterial params.
+    const out: any = {map: tex(albedo, 'srgb')};
+    // normalStrength: 0 skips the normal map (one texture fewer per preset).
+    if (ns > 0) out.normalMap = tex(normal, 'srgb-linear');
+    out.roughnessMap = ormTex;
+    out.metalnessMap = ormTex;
+    if (presetMemo.size >= 64) presetMemo.clear();
+    presetMemo.set(memoKey, out);
+    return {...out};
+  };
+
+  const ProceduralTexture: Record<string, unknown> = {
+    presets: Object.freeze(PRESET_NAMES.slice()),
+    // tslint:disable-next-line:no-any Material preset options bag.
+    create: (name: string, opts?: any) => makePreset(String(name), opts),
+  };
+  for (const nm of PRESET_NAMES) {
+    // tslint:disable-next-line:no-any Material preset options bag.
+    ProceduralTexture[nm] = (opts?: any) => makePreset(nm, opts);
+  }
+  Object.freeze(ProceduralTexture);
+
+  // Declarative `mesh.userData.xr.material = 'wood' | { preset, ...opts }`:
+  // bakes the preset into the mesh's material (tinted by its color unless
+  // `color` is given) without overriding maps the author set explicitly.
+  const presetWarned = new Set<string>();
+  // tslint:disable-next-line:no-any Dynamic Object3D node.
+  const materializePreset = (node: any): void => {
+    const spec = node?.userData?.xr?.material;
+    let mat = node?.material;
+    if (spec == null || !mat || typeof mat !== 'object' || Array.isArray(mat)) {
+      return;
+    }
+    const o =
+      typeof spec === 'string'
+        ? {preset: spec}
+        : typeof spec === 'object'
+          ? spec
+          : null;
+    const name = String(o?.preset ?? o?.type ?? '');
+    if (!o || PRESET_NAMES.indexOf(name) < 0) {
+      if (!presetWarned.has(name)) {
+        presetWarned.add(name);
+        console.warn(
+          `[three-live] userData.xr.material: unknown preset '${name}' (use ${PRESET_NAMES.join(', ')}).`,
+        );
+      }
+      return;
+    }
+    if (mat._presetTint === undefined) {
+      mat._presetTint = mat.color?.getHex?.() ?? 0xffffff;
+    }
+    let key = '';
+    try {
+      key = JSON.stringify([o, mat._presetTint]);
+    } catch {
+      key = name;
+    }
+    if (mat._presetKey === key) return;
+    if (mat._presetOwner && mat._presetOwner !== node) {
+      // A material shared by meshes with different presets: give this mesh its
+      // own copy instead of flip-flopping the shared one.
+      const copy = Object.assign(Object.create(Object.getPrototypeOf(mat)), mat);
+      copy.color = new Color(mat._presetTint);
+      for (const f of ['_presetKey', '_presetMaps', '_presetOwner']) copy[f] = undefined;
+      for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) {
+        if (mat._presetMaps?.[slot] && copy[slot] === mat._presetMaps[slot]) copy[slot] = null;
+      }
+      node.material = mat = copy;
+    }
+    const r = makePreset(name, {
+      ...o,
+      color: o.color ?? (mat._presetTint === 0xffffff ? undefined : mat._presetTint),
+    });
+    const owned: Record<string, unknown> = mat._presetMaps || {};
+    for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) {
+      if (!mat[slot] || mat[slot] === owned[slot]) {
+        mat[slot] = r[slot] ?? null;
+        owned[slot] = r[slot] ?? null;
+      }
+    }
+    if (owned['map'] === mat.map) mat.color?.set?.(0xffffff);
+    if (owned['roughnessMap'] === mat.roughnessMap) mat.roughness = 1;
+    if (owned['metalnessMap'] === mat.metalnessMap) mat.metalness = 1;
+    mat._presetMaps = owned;
+    mat._presetKey = key;
+    mat._presetOwner = node;
+  };
+
   const exportsMap = {
     Box3,
     Sphere,
@@ -4929,6 +5410,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     ArrowHelper,
     Box3Helper,
     BoxHelper,
+    ProceduralTexture,
   };
 
   if (reg && typeof reg === 'object') {
@@ -4937,6 +5419,12 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
     Object.assign(reg.authorNamespace, exportsMap);
     reg.createCanvas = createCanvas;
+    reg._procMaterialize = materializePreset;
+    reg.materializeDeclarativeGeometry = (node: unknown) => {
+      reg._cadMaterialize?.(node);
+      reg._lodMaterialize?.(node);
+      reg._procMaterialize?.(node);
+    };
   }
 
   return exportsMap;

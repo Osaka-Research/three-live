@@ -1827,6 +1827,7 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'rigidBody',
   'joint',
   'collidable',
+  'material',
   'traits',
   'schemaVersion',
 ]);

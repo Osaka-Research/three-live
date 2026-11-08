@@ -751,6 +751,7 @@ export function installLodExtension(threeNs?: any, reg?: any): any {
     reg.materializeDeclarativeGeometry = (node: any) => {
       reg._cadMaterialize?.(node);
       reg._lodMaterialize?.(node);
+      reg._procMaterialize?.(node);
     };
   }
 
