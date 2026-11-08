@@ -150,6 +150,8 @@ limitations under the License.
     }
 
     .viewer-card {
+      display: flex;
+      flex-direction: column;
       background: var(--bg-secondary);
       border-radius: 16px;
       border: 1px solid var(--border-color);
@@ -160,7 +162,8 @@ limitations under the License.
 
     three-live {
       width: 100%;
-      height: 520px;
+      flex: 1;
+      min-height: 520px;
       display: block;
       background: radial-gradient(circle at 50% 35%, #1e293b 0%, #090d16 100%);
     }
@@ -313,6 +316,142 @@ limitations under the License.
       min-height: 16px;
     }
 
+    /* Shared-link banner, "Run on phone" dialog, mobile AR bar, and native outputs panel. */
+    .link-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.08);
+      font-size: 13px;
+    }
+    .link-banner.visible { display: flex; }
+    .link-banner.error {
+      border-color: rgba(244, 63, 94, 0.45);
+      background: rgba(244, 63, 94, 0.08);
+    }
+    .link-banner button { padding: 4px 10px; font-size: 12px; }
+
+    dialog.phone-dialog {
+      /* The page's global reset zeroes margins; auto margins re-center the modal. */
+      margin: auto;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px;
+      max-width: 360px;
+      width: calc(100% - 32px);
+    }
+    dialog.phone-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+    .phone-dialog h2 { font-size: 16px; margin-bottom: 8px; }
+    .phone-dialog p, .phone-dialog li { font-size: 12.5px; color: var(--text-secondary); line-height: 1.45; }
+    .phone-dialog ul { margin: 8px 0 12px 18px; }
+    .qr-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 240px;
+      margin: 12px 0;
+      padding: 12px;
+      background: #fff;
+      border-radius: 12px;
+      color: #0f172a;
+      font-size: 12.5px;
+      text-align: center;
+    }
+
+    .mobile-ar-bar {
+      display: none;
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      gap: 8px;
+      padding: 10px;
+      margin: 0 -10px -12px;
+      background: rgba(9, 13, 22, 0.94);
+      border-top: 1px solid var(--border-color);
+      backdrop-filter: blur(8px);
+    }
+    body.is-phone .mobile-ar-bar { display: flex; }
+    body.is-phone #btn-phone { display: none; }
+    .mobile-ar-bar button { flex: 1; justify-content: center; padding: 12px; font-size: 14px; }
+    .mobile-ar-note { font-size: 11px; color: var(--text-secondary); }
+
+    .compile-badge {
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--accent-emerald);
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .compile-badge.failed {
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.1);
+      color: #fb7185;
+    }
+
+    .panel-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .panel-tabs button {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      padding: 8px 12px;
+      color: var(--text-secondary);
+    }
+    .panel-tabs button:hover { background: rgba(255, 255, 255, 0.05); }
+    .panel-tabs button[aria-selected="true"] {
+      color: var(--accent-blue);
+      border-bottom-color: var(--accent-blue);
+    }
+    .tab-panel { display: flex; flex-direction: column; gap: 10px; }
+    .tab-panel[hidden] { display: none; }
+    .tab-note { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+
+    .outputs-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .output-stat {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .output-stat .label { font-size: 11px; color: var(--text-secondary); }
+    .output-stat .value { font-size: 15px; font-weight: 700; font-family: monospace; color: var(--accent-blue); }
+    .snippet-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .snippet-tabs button { padding: 5px 10px; font-size: 12px; }
+    .snippet-tabs button[aria-selected="true"] { border-color: var(--accent-blue); color: var(--accent-blue); }
+    pre.snippet {
+      max-height: 240px;
+      overflow: auto;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11.5px;
+      color: #e2e8f0;
+      white-space: pre;
+    }
+    .outputs-note { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+    .outputs-note code { color: #a5f3fc; }
+
     @media (max-width: 640px) {
       body {
         padding: 12px 10px;
@@ -352,6 +491,8 @@ limitations under the License.
         gap: 12px;
       }
       three-live {
+        flex: none;
+        min-height: 0;
         height: clamp(270px, 43dvh, 360px);
       }
       .viewer-toolbar {
@@ -407,6 +548,12 @@ limitations under the License.
     </div>
   </header>
 
+  <!-- Shown when the page opened a scene from a shared link (#p= or #s=). -->
+  <div class="link-banner" id="link-banner" role="status">
+    <span id="link-banner-text"></span>
+    <button id="btn-view-source" type="button">View source</button>
+  </div>
+
   <!-- Main 3D Viewport & Side Panel -->
   <div class="main-grid">
     <!-- Viewport Container -->
@@ -443,73 +590,76 @@ limitations under the License.
           <button id="btn-crystal">Emerald Crystal</button>
           <button id="btn-orbital">Orbital Spheres</button>
           <button id="btn-spheres">🏠 XR Living Room</button>
+          <button id="btn-pagoda" title="Generated by an AI agent and checked with three_live_validate">🏯 AI Pagoda</button>
+          <button id="btn-forklift" title="Generated by an AI agent and checked with three_live_validate">🚜 AI Forklift Drill</button>
         </div>
       </div>
 
-      <!-- Camera & Interaction -->
+      <!-- Camera, mesh inspector, and spatial & AR controls share one tabbed card. -->
       <div class="card">
-        <div class="card-title">Camera, Tone Mapping &amp; FX</div>
-        <div class="btn-row">
-          <button id="btn-reset">Reset</button>
-          <button id="btn-top">Top</button>
-          <button id="btn-front">Front</button>
-          <button id="btn-spin">Toggle Spin</button>
+        <div class="panel-tabs" role="tablist" aria-label="Viewer controls">
+          <button type="button" role="tab" id="tab-camera" aria-controls="panel-camera" aria-selected="true">Camera</button>
+          <button type="button" role="tab" id="tab-mesh" aria-controls="panel-mesh" aria-selected="false">Mesh</button>
+          <button type="button" role="tab" id="tab-ar" aria-controls="panel-ar" aria-selected="false">Spatial &amp; AR</button>
         </div>
-        <div class="btn-row" style="margin-top: 4px; align-items: center;">
-          <button id="btn-bloom" title="Toggle HDR Emissive Bloom">✨ HDR Bloom</button>
-          <button id="btn-outline" title="Toggle Selection Silhouette Outline">🟦 Outline</button>
-          <select id="select-tonemap" aria-label="Tone Mapping Mode" style="background: rgba(255,255,255,0.06); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 600;">
-            <option value="neutral" selected>Tone: PBR Neutral</option>
-            <option value="aces">Tone: ACES Filmic</option>
-            <option value="agx">Tone: AgX Filmic</option>
-            <option value="reinhard">Tone: Reinhard</option>
-            <option value="none">Tone: Linear (None)</option>
-          </select>
-        </div>
-        <div class="slider-group" style="margin-top: 6px;">
-          <div class="slider-label">
-            <span>Studio Environment Intensity</span>
-            <span id="env-val">1.2x</span>
+        <div class="tab-panel" role="tabpanel" id="panel-camera" aria-labelledby="tab-camera">
+          <div class="btn-row">
+            <button id="btn-reset">Reset</button>
+            <button id="btn-top">Top</button>
+            <button id="btn-front">Front</button>
+            <button id="btn-spin">Toggle Spin</button>
           </div>
-          <input type="range" id="slider-env" min="0" max="3" step="0.1" value="1.2">
+          <div class="btn-row" style="margin-top: 4px; align-items: center;">
+            <button id="btn-bloom" title="Toggle HDR Emissive Bloom">✨ HDR Bloom</button>
+            <button id="btn-outline" title="Toggle Selection Silhouette Outline">🟦 Outline</button>
+            <select id="select-tonemap" aria-label="Tone Mapping Mode" style="background: rgba(255,255,255,0.06); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 600;">
+              <option value="neutral" selected>Tone: PBR Neutral</option>
+              <option value="aces">Tone: ACES Filmic</option>
+              <option value="agx">Tone: AgX Filmic</option>
+              <option value="reinhard">Tone: Reinhard</option>
+              <option value="none">Tone: Linear (None)</option>
+            </select>
+          </div>
+          <div class="slider-group" style="margin-top: 6px;">
+            <div class="slider-label">
+              <span>Studio Environment Intensity</span>
+              <span id="env-val">1.2x</span>
+            </div>
+            <input type="range" id="slider-env" min="0" max="3" step="0.1" value="1.2">
+          </div>
         </div>
-      </div>
-
-      <!-- Mesh Color-ID Inspector -->
-      <div class="card">
-        <div class="card-title">Mesh Inspector</div>
-        <table class="inspector-table">
-          <tr>
-            <td class="label">Selected Mesh</td>
-            <td class="val" id="insp-name">None</td>
-          </tr>
-          <tr>
-            <td class="label">Hit Coordinates</td>
-            <td class="val" id="insp-pos">--</td>
-          </tr>
-          <tr>
-            <td class="label">Surface Normal</td>
-            <td class="val" id="insp-norm">--</td>
-          </tr>
-          <tr>
-            <td class="label">Distance</td>
-            <td class="val" id="insp-dist">--</td>
-          </tr>
-        </table>
-      </div>
-
-      <!-- Spatial & AR Actions -->
-      <div class="card">
-        <div class="card-title">Spatial & AR (zero server)</div>
-        <div class="btn-row">
-          <button id="btn-ar" class="primary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-            </svg>
-            Launch AR
-          </button>
-          <button id="btn-dl-usdz">Save .usdz</button>
-          <button id="btn-dl-glb">Save .glb</button>
+        <div class="tab-panel" role="tabpanel" id="panel-mesh" aria-labelledby="tab-mesh" hidden>
+          <table class="inspector-table">
+            <tr>
+              <td class="label">Selected Mesh</td>
+              <td class="val" id="insp-name">None</td>
+            </tr>
+            <tr>
+              <td class="label">Hit Coordinates</td>
+              <td class="val" id="insp-pos">--</td>
+            </tr>
+            <tr>
+              <td class="label">Surface Normal</td>
+              <td class="val" id="insp-norm">--</td>
+            </tr>
+            <tr>
+              <td class="label">Distance</td>
+              <td class="val" id="insp-dist">--</td>
+            </tr>
+          </table>
+        </div>
+        <div class="tab-panel" role="tabpanel" id="panel-ar" aria-labelledby="tab-ar" hidden>
+          <div class="btn-row">
+            <button id="btn-ar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              </svg>
+              Launch AR
+            </button>
+            <button id="btn-dl-usdz">Save .usdz</button>
+            <button id="btn-dl-glb">Save .glb</button>
+          </div>
+          <p class="tab-note">AR runs on-device with no server: AR Quick Look on iPhone and iPad, WebXR on Android.</p>
         </div>
         <div class="status-msg" id="ar-status"></div>
       </div>
@@ -519,8 +669,12 @@ limitations under the License.
   <!-- Live Procedural Three.js Code Transcoder -->
   <div class="card" style="margin-top: 4px;">
     <div class="card-title">
-      <span>Three.js code to compile live on-device</span>
-      <button id="btn-compile" class="primary" style="padding: 4px 10px; font-size: 12px;">Compile & View</button>
+      <span>Three.js code to compile live on-device <span class="compile-badge" id="compile-time" role="status" hidden></span></span>
+      <span class="btn-row">
+        <button id="btn-share" style="padding: 4px 10px; font-size: 12px;" title="Copy a link that opens this scene">🔗 Share</button>
+        <button id="btn-phone" style="padding: 4px 10px; font-size: 12px;" title="Show a QR code that opens this scene on your phone">📱 Run on phone</button>
+        <button id="btn-compile" class="primary" style="padding: 4px 10px; font-size: 12px;">Compile &amp; View</button>
+      </span>
     </div>
     <textarea id="code-editor" spellcheck="false">// 1. Central Core
 const core = new THREE.Mesh(
@@ -581,7 +735,51 @@ base.position.set(0, -1.6, 0);
 scene.add(base);
 </textarea>
   </div>
+
+  <!-- Native outputs: what the same compiler produces for each platform. -->
+  <div class="card" id="outputs-card">
+    <div class="card-title"><span>Native outputs</span></div>
+    <div class="outputs-grid">
+      <div class="output-stat"><div class="label">Meshes</div><div class="value" id="out-meshes">–</div></div>
+      <div class="output-stat"><div class="label">GLB (Android, web)</div><div class="value" id="out-glb">–</div></div>
+      <div class="output-stat"><div class="label">USDZ (iOS, visionOS)</div><div class="value" id="out-usdz">–</div></div>
+    </div>
+    <div class="snippet-tabs" role="tablist">
+      <button type="button" role="tab" data-snippet="android" aria-selected="true">Android (Kotlin)</button>
+      <button type="button" role="tab" data-snippet="ios" aria-selected="false">iOS (Swift)</button>
+      <button type="button" role="tab" data-snippet="web" aria-selected="false">Web</button>
+    </div>
+    <pre class="snippet" id="snippet-code"></pre>
+    <div class="btn-row"><button type="button" id="btn-copy-snippet" style="padding: 4px 10px; font-size: 12px;">Copy snippet</button></div>
+    <p class="outputs-note">
+      The same Rust compiler runs on-device in the
+      <a href="https://github.com/google/three-live/tree/main/mobile" target="_blank" rel="noopener" style="color: var(--accent-blue);">Android and iOS samples</a>.
+      Spatial checks (camera framing, overlaps, grounding) and 4-up renders run in the CLI and MCP server:
+      <code>npx -y -p three-live three-live-cli validate scene.js</code>, or
+      <code>gemini mcp add three-live -- npx -y -p three-live three-live-cli mcp</code>.
+    </p>
+  </div>
+
+  <div class="mobile-ar-bar" id="mobile-ar-bar">
+    <button type="button" class="primary" id="btn-mobile-ar">📱 View in AR</button>
+    <button type="button" id="btn-mobile-source">&lt;/&gt; Source</button>
+  </div>
+  <div class="mobile-ar-note" id="mobile-ar-note" hidden></div>
 </div>
+
+<dialog class="phone-dialog" id="phone-dialog">
+  <h2>Open this scene on your phone</h2>
+  <p>Scan with your phone's camera. The scene opens in this playground, one tap from AR.</p>
+  <div class="qr-box" id="qr-box">Loading…</div>
+  <ul>
+    <li><strong>iPhone and iPad:</strong> View in AR opens AR Quick Look, rendered by RealityKit.</li>
+    <li><strong>Android:</strong> View in AR starts WebXR in Chrome on ARCore phones.</li>
+  </ul>
+  <div class="btn-row">
+    <button type="button" id="btn-dialog-copy">Copy link</button>
+    <button type="button" class="primary" id="btn-dialog-close">Done</button>
+  </div>
+</dialog>
 
 <script>
   const ThreeLiveLib = Object.assign({}, window.THREE || {}, window.ThreeLive || {}, window.ThreeLiveBundle || {});
@@ -886,7 +1084,12 @@ scene.add(sat1);
 const sat2 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.055), satMat);
 sat2.name = "SensorArray_B";
 sat2.position.set(-0.23, 0.14, 0.14);
-scene.add(sat2);`
+scene.add(sat2);`,
+
+    // AI-generated eval scenes (evals/ cad_19 and xr_06), checked with three_live_validate.
+    pagoda: "// Traditional Five-Story Timber Japanese Pagoda (3.2m tall) on Stone Platform (y = 0)\nconst ambientLight = new THREE.AmbientLight(0xffffff, 0.65);\nambientLight.name = \"ambient_light\";\nscene.add(ambientLight);\n\nconst sunLight = new THREE.DirectionalLight(0xfff4dc, 1.4);\nsunLight.name = \"sun_directional_light\";\nsunLight.position.set(3.8, 5.5, 4.2);\nscene.add(sunLight);\n\nconst fillLight = new THREE.DirectionalLight(0xcfe2ff, 0.6);\nfillLight.name = \"fill_directional_light\";\nfillLight.position.set(-3.2, 2.8, -2.8);\nscene.add(fillLight);\n\nconst pagodaGroup = new THREE.Group();\npagodaGroup.name = \"five_story_japanese_pagoda\";\nscene.add(pagodaGroup);\n\n// Materials\nconst stoneFoundationMat = new THREE.MeshStandardMaterial({\n  color: 0x9c9992,\n  metalness: 0.06,\n  roughness: 0.78\n});\n\nconst vermilionTimberMat = new THREE.MeshStandardMaterial({\n  color: 0xb8291e,\n  metalness: 0.1,\n  roughness: 0.42\n});\n\nconst whitePlasterMat = new THREE.MeshStandardMaterial({\n  color: 0xf4EFE6,\n  metalness: 0.04,\n  roughness: 0.65\n});\n\nconst darkTileRoofMat = new THREE.MeshStandardMaterial({\n  color: 0x2b3036,\n  metalness: 0.35,\n  roughness: 0.48\n});\n\nconst bronzeSorinMat = new THREE.MeshStandardMaterial({\n  color: 0x9e7d3b,\n  metalness: 0.88,\n  roughness: 0.25\n});\n\n// 1. Stone Foundation Platform (Kidan) on y = 0 with Front Stone Steps\nconst foundationLower = new THREE.Mesh(\n  new THREE.BoxGeometry(1.52, 0.14, 1.52),\n  stoneFoundationMat\n);\nfoundationLower.name = \"stone_foundation_lower_plinth\";\nfoundationLower.position.set(0, 0.07, 0);\npagodaGroup.add(foundationLower);\n\nconst foundationUpper = new THREE.Mesh(\n  new THREE.BoxGeometry(1.36, 0.14, 1.36),\n  stoneFoundationMat\n);\nfoundationUpper.name = \"stone_foundation_upper_deck\";\nfoundationUpper.position.set(0, 0.21, 0);\npagodaGroup.add(foundationUpper);\n\n// Front entry staircase on +Z face\nfor (let st = 0; st < 4; st++) {\n  const stepBlock = new THREE.Mesh(\n    new THREE.BoxGeometry(0.42, 0.065, 0.24 - st * 0.045),\n    stoneFoundationMat\n  );\n  stepBlock.name = `foundation_entry_step_${st + 1}`;\n  stepBlock.position.set(0, 0.0325 + st * 0.065, 0.76 + (3 - st) * 0.03);\n  pagodaGroup.add(stepBlock);\n}\n\n// Central heart pillar (Shinbashira) running through the entire pagoda\nconst shinbashira = new THREE.Mesh(\n  new THREE.CylinderGeometry(0.065, 0.095, 2.45, 16),\n  vermilionTimberMat\n);\nshinbashira.name = \"central_shinbashira_pillar\";\nshinbashira.position.set(0, 1.5, 0);\npagodaGroup.add(shinbashira);\n\n// 2. Five Stacked Timber Tiers with Sweeping Upturned Eaves, Corner Rafters & Red Perimeter Railings\nconst baseTierY = 0.28;\nconst tierHeight = 0.44;\n\nfor (let t = 0; t < 5; t++) {\n  const scaleFactor = 1.0 - t * 0.11; // Progressive architectural taper from tier 1 to 5\n  const coreWidth = 0.78 * scaleFactor;\n  const roofWidth = 1.28 * scaleFactor;\n  const yBottom = baseTierY + t * tierHeight;\n\n  const tierGroup = new THREE.Group();\n  tierGroup.name = `pagoda_story_tier_${t + 1}`;\n  tierGroup.position.set(0, yBottom, 0);\n  pagodaGroup.add(tierGroup);\n\n  // White plaster & timber core walls\n  const wallBox = new THREE.Mesh(\n    new THREE.BoxGeometry(coreWidth, 0.28, coreWidth),\n    whitePlasterMat\n  );\n  wallBox.name = `tier_${t + 1}_plaster_wall_core`;\n  wallBox.position.set(0, 0.14, 0);\n  tierGroup.add(wallBox);\n\n  // Four corner vermilion timber columns\n  const colOffset = coreWidth * 0.49;\n  for (const cx of [-colOffset, colOffset]) {\n    for (const cz of [-colOffset, colOffset]) {\n      const pillar = new THREE.Mesh(\n        new THREE.CylinderGeometry(0.024 * scaleFactor, 0.026 * scaleFactor, 0.3, 12),\n        vermilionTimberMat\n      );\n      pillar.name = `tier_${t + 1}_corner_column_${cx < 0 ? \"W\" : \"E\"}${cz < 0 ? \"N\" : \"S\"}`;\n      pillar.position.set(cx, 0.15, cz);\n      tierGroup.add(pillar);\n    }\n  }\n\n  // Red perimeter balcony deck & railings (Kouran)\n  const balconyDeck = new THREE.Mesh(\n    new THREE.BoxGeometry(coreWidth * 1.22, 0.028, coreWidth * 1.22),\n    vermilionTimberMat\n  );\n  balconyDeck.name = `tier_${t + 1}_balcony_walkway`;\n  balconyDeck.position.set(0, 0.02, 0);\n  tierGroup.add(balconyDeck);\n\n  const railDist = coreWidth * 0.58;\n  for (let sideIdx = 0; sideIdx < 4; sideIdx++) {\n    const railBar = new THREE.Mesh(\n      new THREE.BoxGeometry(coreWidth * 1.18, 0.018, 0.018),\n      vermilionTimberMat\n    );\n    railBar.name = `tier_${t + 1}_perimeter_railing_${sideIdx + 1}`;\n    const ang = (sideIdx * Math.PI) / 2;\n    railBar.position.set(Math.sin(ang) * railDist, 0.068, Math.cos(ang) * railDist);\n    railBar.rotation.y = ang;\n    tierGroup.add(railBar);\n  }\n\n  // Sweeping Pagoda Roof: 4-sided pyramidal ConeGeometry + upturned corner eaves rafters\n  const roofConeRadius = roofWidth * 0.72;\n  const mainRoofCone = new THREE.Mesh(\n    new THREE.ConeGeometry(roofConeRadius, 0.22, 4),\n    darkTileRoofMat\n  );\n  mainRoofCone.name = `tier_${t + 1}_tiled_roof_slope`;\n  mainRoofCone.rotation.y = Math.PI / 4;\n  mainRoofCone.position.set(0, 0.36, 0);\n  tierGroup.add(mainRoofCone);\n\n  const lowerEaveSkirt = new THREE.Mesh(\n    new THREE.CylinderGeometry(roofConeRadius * 0.75, roofConeRadius * 1.06, 0.075, 4),\n    darkTileRoofMat\n  );\n  lowerEaveSkirt.name = `tier_${t + 1}_upturned_eave_skirt`;\n  lowerEaveSkirt.rotation.y = Math.PI / 4;\n  lowerEaveSkirt.position.set(0, 0.26, 0);\n  tierGroup.add(lowerEaveSkirt);\n\n  // Four diagonal corner rafters & upturned ridge finials\n  for (let c = 0; c < 4; c++) {\n    const cornerAng = (c * Math.PI) / 2 + Math.PI / 4;\n    const rafterBeam = new THREE.Mesh(\n      new THREE.BoxGeometry(0.026 * scaleFactor, 0.024 * scaleFactor, roofConeRadius * 0.98),\n      vermilionTimberMat\n    );\n    rafterBeam.name = `tier_${t + 1}_corner_rafter_${c + 1}`;\n    rafterBeam.position.set(\n      Math.sin(cornerAng) * (roofConeRadius * 0.46),\n      0.245,\n      Math.cos(cornerAng) * (roofConeRadius * 0.46)\n    );\n    rafterBeam.rotation.y = cornerAng;\n    rafterBeam.rotation.x = 0.16;\n    tierGroup.add(rafterBeam);\n  }\n}\n\n// 3. Tall Bronze Finial Spire (Sorin) with Nine Rings (Kurin) on the Apex (y = 2.48m to y = 3.22m)\nconst sorinBaseY = baseTierY + 5 * tierHeight;\nconst sorinGroup = new THREE.Group();\nsorinGroup.name = \"bronze_sorin_finial_spire\";\nsorinGroup.position.set(0, sorinBaseY, 0);\npagodaGroup.add(sorinGroup);\n\nconst dewBasin = new THREE.Mesh(\n  new THREE.BoxGeometry(0.18, 0.05, 0.18),\n  bronzeSorinMat\n);\ndewBasin.name = \"roban_dew_basin\";\ndewBasin.position.set(0, 0.025, 0);\nsorinGroup.add(dewBasin);\n\nconst invertedBowl = new THREE.Mesh(\n  new THREE.CylinderGeometry(0.07, 0.085, 0.05, 20),\n  bronzeSorinMat\n);\ninvertedBowl.name = \"fukubachi_inverted_bowl\";\ninvertedBowl.position.set(0, 0.075, 0);\nsorinGroup.add(invertedBowl);\n\nconst spireShaft = new THREE.Mesh(\n  new THREE.CylinderGeometry(0.016, 0.028, 0.64, 16),\n  bronzeSorinMat\n);\nspireShaft.name = \"sorin_central_bronze_shaft\";\nspireShaft.position.set(0, 0.4, 0);\nsorinGroup.add(spireShaft);\n\n// Nine sacred bronze rings (Kurin) stacked along the spire\nfor (let r = 0; r < 9; r++) {\n  const ringRadius = 0.062 - r * 0.0022;\n  const kurinRing = new THREE.Mesh(\n    new THREE.TorusGeometry(ringRadius, 0.006, 10, 24),\n    bronzeSorinMat\n  );\n  kurinRing.name = `sorin_kurin_ring_${r + 1}`;\n  kurinRing.rotation.x = Math.PI / 2;\n  kurinRing.position.set(0, 0.14 + r * 0.044, 0);\n  sorinGroup.add(kurinRing);\n}\n\n// Water flame ornament & sacred jewel (Hoju) at the very top (y = 3.2m)\nconst sacredJewel = new THREE.Mesh(\n  new THREE.ConeGeometry(0.036, 0.09, 16),\n  bronzeSorinMat\n);\nsacredJewel.name = \"hoju_sacred_apex_jewel\";\nsacredJewel.position.set(0, 0.72, 0);\nsorinGroup.add(sacredJewel);\n\n// Frame camera at ~2.2x bounding radius\ncamera.position.set(2.85, 2.15, 3.25);\ncamera.lookAt(0, 1.55, 0);\n",
+
+    forklift: "// Warehouse Forklift Safety Drill with Steering Agents (xr_06)\nscene.background = new THREE.Color(0x0f172a);\n\nconst ambientLight = new THREE.AmbientLight(0xffffff, 0.65);\nambientLight.name = \"AmbientLight\";\nscene.add(ambientLight);\n\nconst highBayLight = new THREE.DirectionalLight(0xf8fafc, 1.15);\nhighBayLight.name = \"WarehouseHighBayLight\";\nhighBayLight.position.set(4.0, 6.5, 4.0);\nscene.add(highBayLight);\n\n// Materials\nconst concreteFloorMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.85, metalness: 0.05 });\nconst safetyLineMat = new THREE.MeshStandardMaterial({\n  color: 0xfacc15,\n  emissive: 0xca8a04,\n  emissiveIntensity: 0.35,\n  roughness: 0.5\n});\nconst rackBlueMat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, metalness: 0.6, roughness: 0.4 });\nconst rackBeamOrangeMat = new THREE.MeshStandardMaterial({ color: 0xea580c, metalness: 0.5, roughness: 0.4 });\nconst cardboardMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.85 });\nconst forkliftYellowMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.45, roughness: 0.3 });\nconst darkSteelMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8, roughness: 0.35 });\nconst checkpointGreenMat = new THREE.MeshStandardMaterial({\n  color: 0x10b981,\n  emissive: 0x059669,\n  emissiveIntensity: 0.85,\n  transparent: true,\n  opacity: 0.78\n});\n\n// Walkable Warehouse Floor (PlaneGeometry + Static Slab at y = 0)\nconst warehouseFloor = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 4.6), concreteFloorMat);\nwarehouseFloor.name = \"WarehouseWalkableFloor\";\nwarehouseFloor.rotation.x = -Math.PI / 2;\nwarehouseFloor.position.set(0, 0, 0);\nwarehouseFloor.userData.xr = {\n  navigable: true,\n  anchor: \"Floor\",\n  physics: { body: \"static\", collider: \"box\", mass: 0, restitution: 0.1, friction: 0.9 }\n};\nscene.add(warehouseFloor);\n\n// Safety Walkway Lane Striping\n[-1.45, 1.45].forEach((zLane, idx) => {\n  const laneStripe = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.008, 0.06), safetyLineMat);\n  laneStripe.name = `SafetyAisleStripe_${idx + 1}`;\n  laneStripe.position.set(0, 0.004, zLane);\n  scene.add(laneStripe);\n});\n\n// Helper to build Industrial Pallet Racks\nfunction createPalletRack(id, xPos, zPos) {\n  const rack = new THREE.Group();\n  rack.name = `WarehousePalletRack_${id}`;\n  rack.position.set(xPos, 0, zPos);\n  rack.userData.xr = {\n    physics: { body: \"static\", collider: \"box\", mass: 0, restitution: 0.1, friction: 0.8 }\n  };\n\n  const uprightOffsets = [\n    [-0.75, -0.28],\n    [0.75, -0.28],\n    [-0.75, 0.28],\n    [0.75, 0.28]\n  ];\n  uprightOffsets.forEach((pt, idx) => {\n    const post = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.75, 0.06), rackBlueMat);\n    post.name = `RackUpright_${id}_${idx + 1}`;\n    post.position.set(pt[0], 0.875, pt[1]);\n    rack.add(post);\n  });\n\n  [0.55, 1.15, 1.68].forEach((shelfY, tierIdx) => {\n    const beamFront = new THREE.Mesh(new THREE.BoxGeometry(1.56, 0.06, 0.04), rackBeamOrangeMat);\n    beamFront.name = `RackBeamFront_${id}_${tierIdx + 1}`;\n    beamFront.position.set(0, shelfY, 0.28);\n    rack.add(beamFront);\n\n    const beamBack = new THREE.Mesh(new THREE.BoxGeometry(1.56, 0.06, 0.04), rackBeamOrangeMat);\n    beamBack.name = `RackBeamBack_${id}_${tierIdx + 1}`;\n    beamBack.position.set(0, shelfY, -0.28);\n    rack.add(beamBack);\n\n    if (tierIdx < 2) {\n      [-0.4, 0.4].forEach((boxX, bIdx) => {\n        const crate = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.42, 0.48), cardboardMat);\n        crate.name = `PalletCrate_${id}_${tierIdx + 1}_${bIdx + 1}`;\n        crate.position.set(boxX, shelfY + 0.24, 0);\n        rack.add(crate);\n      });\n    }\n  });\n\n  scene.add(rack);\n}\n\ncreatePalletRack(\"NorthWest\", -1.25, -1.75);\ncreatePalletRack(\"NorthEast\", 1.25, -1.75);\n\n// Controllable Warehouse Worker Character (Third-Person)\nconst workerCharacter = new THREE.Group();\nworkerCharacter.name = \"WarehouseWorkerCharacter\";\nworkerCharacter.position.set(-2.1, 0, 1.65);\nworkerCharacter.userData.xr = {\n  character: { moveSpeed: 4.0, jumpImpulse: 5.0 },\n  physics: { body: \"kinematic\", collider: \"hull\", mass: 75, restitution: 0.1, friction: 0.7 }\n};\nscene.add(workerCharacter);\n\nconst workerTorso = new THREE.Mesh(\n  new THREE.CylinderGeometry(0.16, 0.14, 0.72, 16),\n  new THREE.MeshStandardMaterial({ color: 0x84cc16, roughness: 0.4 })\n);\nworkerTorso.name = \"WorkerHiVisVestTorso\";\nworkerTorso.position.y = 0.62;\nworkerCharacter.add(workerTorso);\n\nconst workerHead = new THREE.Mesh(\n  new THREE.CylinderGeometry(0.11, 0.11, 0.22, 16),\n  new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.5 })\n);\nworkerHead.name = \"WorkerHead\";\nworkerHead.position.y = 1.12;\nworkerCharacter.add(workerHead);\n\nconst safetyHardhat = new THREE.Mesh(\n  new THREE.CylinderGeometry(0.13, 0.15, 0.10, 16),\n  safetyLineMat\n);\nsafetyHardhat.name = \"WorkerSafetyHardhat\";\nsafetyHardhat.position.y = 1.25;\nworkerCharacter.add(safetyHardhat);\n\n// Helper to build Autonomous Patrol Forklifts\nfunction createPatrolForklift(id, startPos, waypoints) {\n  const forklift = new THREE.Group();\n  forklift.name = `AutonomousPatrolForklift_${id}`;\n  forklift.position.set(startPos[0], 0, startPos[2]);\n  forklift.userData.xr = {\n    agent: { behavior: \"patrol\", speed: 2.0, waypoints: waypoints },\n    physics: { body: \"kinematic\", collider: \"box\", mass: 850, restitution: 0.2, friction: 0.8 },\n    audioEmitter: { src: \"forklift_warning.ogg\", refDistance: 2.0, loop: true }\n  };\n\n  const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.48, 0.68), forkliftYellowMat);\n  chassis.name = `ForkliftChassis_${id}`;\n  chassis.position.set(0, 0.34, 0);\n  forklift.add(chassis);\n\n  const cabCage = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.62, 0.62), darkSteelMat);\n  cabCage.name = `ForkliftRollCage_${id}`;\n  cabCage.position.set(-0.1, 0.88, 0);\n  forklift.add(cabCage);\n\n  const mast = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.25, 0.48), darkSteelMat);\n  mast.name = `ForkliftVerticalMast_${id}`;\n  mast.position.set(0.52, 0.68, 0);\n  forklift.add(mast);\n\n  [-0.16, 0.16].forEach((zTine, tIdx) => {\n    const tine = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.035, 0.08), darkSteelMat);\n    tine.name = `ForkliftTine_${id}_${tIdx + 1}`;\n    tine.position.set(0.80, 0.12, zTine);\n    forklift.add(tine);\n  });\n\n  const wheelOffsets = [\n    [-0.32, 0.13, -0.35],\n    [0.32, 0.13, -0.35],\n    [-0.32, 0.13, 0.35],\n    [0.32, 0.13, 0.35]\n  ];\n  wheelOffsets.forEach((wp, wIdx) => {\n    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.09, 16), darkSteelMat);\n    wheel.name = `ForkliftWheel_${id}_${wIdx + 1}`;\n    wheel.rotation.x = Math.PI / 2;\n    wheel.position.set(wp[0], wp[1], wp[2]);\n    forklift.add(wheel);\n  });\n\n  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.09, 12), safetyLineMat);\n  beacon.name = `ForkliftAmberBeacon_${id}`;\n  beacon.position.set(-0.1, 1.23, 0);\n  forklift.add(beacon);\n\n  scene.add(forklift);\n  return forklift;\n}\n\nconst forkliftA = createPatrolForklift(1, [-1.4, 0, -0.45], [\n  [-1.8, 0, -0.45],\n  [1.8, 0, -0.45],\n  [1.8, 0, 0.55],\n  [-1.8, 0, 0.55]\n]);\n\nconst forkliftB = createPatrolForklift(2, [1.4, 0, 0.55], [\n  [1.8, 0, 0.55],\n  [-1.8, 0, 0.55],\n  [-1.8, 0, -0.45],\n  [1.8, 0, -0.45]\n]);\n\n// 3 Illuminated Safety Checkpoint Zones with Objectives\nconst checkpointCoords = [\n  [-0.65, 1.65],\n  [0.85, 1.65],\n  [2.15, -0.45]\n];\n\ncheckpointCoords.forEach((cp, idx) => {\n  const cpNum = idx + 1;\n  const zoneGroup = new THREE.Group();\n  zoneGroup.name = `SafetyCheckpointZone_${cpNum}`;\n  zoneGroup.position.set(cp[0], 0, cp[1]);\n  zoneGroup.userData.xr = {\n    zone: { kind: \"goal\", rate: 10, event: `safety_checkpoint_${cpNum}` },\n    objective: {\n      id: `checkpoint_obj_${cpNum}`,\n      kind: \"reach\",\n      target: `SafetyCheckpointZone_${cpNum}`,\n      radius: 0.55\n    },\n    bloom: { strength: 0.75 }\n  };\n\n  const padDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.42, 0.04, 24), checkpointGreenMat);\n  padDisc.name = `CheckpointPadDisc_${cpNum}`;\n  padDisc.position.y = 0.02;\n  zoneGroup.add(padDisc);\n\n  const beaconPillar = new THREE.Mesh(\n    new THREE.CylinderGeometry(0.32, 0.32, 0.55, 24, 1, true),\n    checkpointGreenMat\n  );\n  beaconPillar.name = `CheckpointHoloCylinder_${cpNum}`;\n  beaconPillar.position.y = 0.30;\n  zoneGroup.add(beaconPillar);\n\n  scene.add(zoneGroup);\n});\n\nfunction animate(t) {\n  forkliftA.position.x = Math.sin(t * 0.8) * 1.55;\n  forkliftB.position.x = -Math.sin(t * 0.8) * 1.55;\n}\n\ncamera.position.set(0.0, 4.4, 6.8);\ncamera.lookAt(0, 0.5, 0);\n"
   };
 
   const LIVING_ROOM_CDN =
@@ -932,6 +1135,8 @@ scene.add(sat2);`
       crystal: document.getElementById("btn-crystal"),
       orbital: document.getElementById("btn-orbital"),
       spheres: document.getElementById("btn-spheres"),
+      pagoda: document.getElementById("btn-pagoda"),
+      forklift: document.getElementById("btn-forklift"),
     };
 
     Object.entries(presetButtons).forEach(([id, btn]) => {
@@ -994,6 +1199,7 @@ scene.add(sat2);`
           el.viewer.render();
         }
         el.style.opacity = "1";
+        window.onSceneCompiled?.();
       } catch (err) {
         el.style.opacity = "1";
         if (arStatus) arStatus.textContent = err.message;
@@ -1047,6 +1253,8 @@ scene.add(sat2);`
   document.getElementById("btn-crystal").addEventListener("click", () => selectPreset("crystal"));
   document.getElementById("btn-orbital").addEventListener("click", () => selectPreset("orbital"));
   document.getElementById("btn-spheres").addEventListener("click", () => selectPreset("spheres"));
+  document.getElementById("btn-pagoda").addEventListener("click", () => selectPreset("pagoda"));
+  document.getElementById("btn-forklift").addEventListener("click", () => selectPreset("forklift"));
 
   const btnBloom = document.getElementById("btn-bloom");
   const btnOutline = document.getElementById("btn-outline");
@@ -1165,6 +1373,7 @@ scene.add(sat2);`
     try {
       currentGLBBuffer = await el.executeScript(codeEditor.value);
       arStatus.textContent = "Procedural script compiled & loaded!";
+      window.onSceneCompiled?.();
     } catch (err) {
       arStatus.textContent = err.message;
     }
@@ -1178,10 +1387,401 @@ scene.add(sat2);`
     new ResizeObserver(() => el.viewer?.resize?.()).observe(el);
   }
   window.addEventListener("DOMContentLoaded", () => {
-    selectPreset("artifact");
+    // A shared link (#p=<preset> or #s=z:<scene>) opens that scene instead of the default.
+    if (!window.bootFromLocation?.()) selectPreset("artifact");
     syncSpinButton();
     ensureRoomGLB();
   });
+</script>
+
+<script>
+  // Shared scene links, the "Run on phone" QR dialog, the mobile AR bar, and the native outputs
+  // panel. A link keeps the scene in the URL fragment, which is never sent to the server:
+  //   #p=<preset>     a preset or gallery scene on this page
+  //   #s=z:<payload>  a scene script: raw DEFLATE (RFC 1951), unpadded base64url
+  // `three-live-cli link` and the MCP tool `three_live_link` produce the same #s=z: links.
+  // Linked scenes run in the same sandbox as any script typed into the editor.
+  (() => {
+    const MAX_SCRIPT_BYTES = 128 * 1024;
+    const MAX_PAYLOAD_CHARS = 64 * 1024;
+    // Version 28 at level M: still scans from a laptop screen.
+    const MAX_QR_URL_CHARS = 1150;
+    const QRCODEJS_URL = "https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js";
+    const QRCODEJS_SRI = "sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU";
+    const $ = (id) => document.getElementById(id);
+
+    // Compile time: every compile (presets, Compile & View, shared links) goes through
+    // executeScript, so timing it here covers them all. It measures the sandboxed Three.js
+    // run and GLB build, not the first render.
+    const compileBadge = $("compile-time");
+    const executeScript = el.executeScript.bind(el);
+    el.executeScript = async (code) => {
+      const start = performance.now();
+      try {
+        const result = await executeScript(code);
+        const ms = performance.now() - start;
+        compileBadge.textContent = `Compiled in ${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
+        compileBadge.title = "Sandboxed Three.js run plus GLB build, in this browser";
+        compileBadge.classList.remove("failed");
+        compileBadge.hidden = false;
+        return result;
+      } catch (err) {
+        compileBadge.textContent = "Compile failed";
+        compileBadge.classList.add("failed");
+        compileBadge.hidden = false;
+        throw err;
+      }
+    };
+
+    // Camera / Mesh / Spatial & AR tabs (arrow keys move between tabs).
+    const tabs = ["camera", "mesh", "ar"];
+    function selectTab(name, focus) {
+      for (const t of tabs) {
+        const on = t === name;
+        $("tab-" + t).setAttribute("aria-selected", String(on));
+        $("tab-" + t).tabIndex = on ? 0 : -1;
+        $("panel-" + t).hidden = !on;
+      }
+      if (focus) $("tab-" + name).focus();
+    }
+    tabs.forEach((t, i) => {
+      $("tab-" + t).addEventListener("click", () => selectTab(t));
+      $("tab-" + t).addEventListener("keydown", (e) => {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        const next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+        selectTab(tabs[next], true);
+      });
+    });
+    selectTab("camera");
+    // Picking a mesh in the viewer shows its details.
+    el.addEventListener("meshclick", () => selectTab("mesh"));
+
+    function toBase64Url(bytes) {
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    function fromBase64Url(text) {
+      if (!/^[A-Za-z0-9_-]*$/.test(text)) throw new Error("The link is not valid base64url.");
+      const b64 = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
+      const bin = atob(b64);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+
+    // Streams `bytes` through `transform`, failing as soon as the output exceeds `limit`.
+    async function transformBytes(bytes, transform, limit) {
+      const reader = new Blob([bytes]).stream().pipeThrough(transform).getReader();
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (limit && total > limit) {
+          await reader.cancel();
+          throw new Error("The scene in this link is larger than 128 KB.");
+        }
+        chunks.push(value);
+      }
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const c of chunks) {
+        out.set(c, offset);
+        offset += c.length;
+      }
+      return out;
+    }
+
+    async function encodeScene(script) {
+      const bytes = new TextEncoder().encode(script);
+      if (bytes.length > MAX_SCRIPT_BYTES) throw new Error("The scene is larger than 128 KB.");
+      return "z:" + toBase64Url(await transformBytes(bytes, new CompressionStream("deflate-raw")));
+    }
+
+    async function decodeScene(value) {
+      if (value.length > MAX_PAYLOAD_CHARS) throw new Error("The link is too long.");
+      const kind = value.slice(0, 2);
+      const payload = value.slice(2);
+      let bytes;
+      if (kind === "z:") {
+        bytes = await transformBytes(
+          fromBase64Url(payload), new DecompressionStream("deflate-raw"), MAX_SCRIPT_BYTES);
+      } else if (kind === "b:") {
+        bytes = fromBase64Url(payload);
+        if (bytes.length > MAX_SCRIPT_BYTES) throw new Error("The scene in this link is larger than 128 KB.");
+      } else {
+        throw new Error("Unknown link format.");
+      }
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    }
+
+    function readLink(hash) {
+      const params = new URLSearchParams(hash.replace(/^#/, ""));
+      if (params.has("p")) return { preset: params.get("p") };
+      if (params.has("s")) return { scene: params.get("s") };
+      return null;
+    }
+
+    async function currentLink() {
+      const script = codeEditor.value;
+      const preset = Object.keys(PRESET_SCRIPTS).find((id) => PRESET_SCRIPTS[id] === script);
+      const fragment = preset ? "p=" + preset : "s=" + (await encodeScene(script));
+      return location.href.split("#")[0] + "#" + fragment;
+    }
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        window.prompt("Copy this link:", text);
+        return false;
+      }
+    }
+
+    // --- Opening links ---------------------------------------------------------------------
+    function showBanner(text, isError) {
+      $("link-banner-text").textContent = text;
+      $("link-banner").classList.toggle("error", Boolean(isError));
+      $("link-banner").classList.add("visible");
+    }
+
+    let lastHandledHash = "";
+
+    async function openLink(link) {
+      if (link.preset !== undefined) {
+        if (!Object.prototype.hasOwnProperty.call(PRESET_SCRIPTS, link.preset)) {
+          showBanner(`This link names a scene this page doesn't have ("${link.preset}"). Showing the default scene.`, true);
+          await selectPreset("artifact");
+          return;
+        }
+        await selectPreset(link.preset);
+        showBanner("Opened a shared scene.");
+        return;
+      }
+      try {
+        const script = await decodeScene(link.scene);
+        codeEditor.value = script;
+        Object.values(presetButtonsById()).forEach((btn) => btn && btn.classList.remove("primary"));
+        currentGLBBuffer = await el.executeScript(script);
+        el.viewer?.update?.(0);
+        el.viewer?.render?.();
+        showBanner("Opened a scene from a shared link. It runs in the playground's sandbox; check the source before using it elsewhere.");
+        window.onSceneCompiled?.();
+      } catch (err) {
+        showBanner("Couldn't open this link: " + err.message + " Showing the default scene.", true);
+        await selectPreset("artifact");
+      }
+    }
+
+    function presetButtonsById() {
+      const out = {};
+      for (const id of Object.keys(PRESET_SCRIPTS)) out[id] = $("btn-" + id);
+      return out;
+    }
+
+    // Called once on load by the page script; true when the URL carries a link.
+    window.bootFromLocation = () => {
+      const link = readLink(location.hash);
+      if (!link) return false;
+      lastHandledHash = location.hash;
+      openLink(link);
+      return true;
+    };
+
+    // Other hash changes (for example `#xr-state=` written by plugins) are not links.
+    window.addEventListener("hashchange", () => {
+      if (location.hash === lastHandledHash) return;
+      const link = readLink(location.hash);
+      if (!link) return;
+      lastHandledHash = location.hash;
+      openLink(link);
+    });
+
+    // --- Share and "Run on phone" ------------------------------------------------------------
+    $("btn-share").addEventListener("click", async () => {
+      try {
+        const url = await currentLink();
+        history.replaceState(null, "", url);
+        lastHandledHash = location.hash;
+        const copied = await copyText(url);
+        arStatus.textContent = copied
+          ? `Link copied (${url.length} characters${url.length > MAX_QR_URL_CHARS ? ", too long for a QR code" : ""}).`
+          : "Link ready to copy.";
+      } catch (err) {
+        arStatus.textContent = "Couldn't make a link: " + err.message;
+      }
+    });
+
+    let qrLibPromise = null;
+    function loadQrLibrary() {
+      if (window.QRCode) return Promise.resolve(window.QRCode);
+      if (qrLibPromise) return qrLibPromise;
+      qrLibPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = QRCODEJS_URL;
+        script.integrity = QRCODEJS_SRI;
+        script.crossOrigin = "anonymous";
+        script.referrerPolicy = "no-referrer";
+        script.onload = () =>
+          window.QRCode ? resolve(window.QRCode) : reject(new Error("The QR code library didn't load."));
+        script.onerror = () => {
+          qrLibPromise = null;
+          reject(new Error("Couldn't load the QR code library. Use Copy link instead."));
+        };
+        document.head.appendChild(script);
+      });
+      return qrLibPromise;
+    }
+
+    let dialogUrl = "";
+    $("btn-phone").addEventListener("click", async () => {
+      const box = $("qr-box");
+      box.textContent = "Loading…";
+      $("phone-dialog").showModal();
+      try {
+        dialogUrl = await currentLink();
+        if (dialogUrl.length > MAX_QR_URL_CHARS) {
+          box.textContent =
+            `This scene's link is ${dialogUrl.length} characters, too long for a QR code a phone can ` +
+            "scan from a screen. Copy the link and send it to your phone, or pick a preset or AI scene.";
+          return;
+        }
+        const QR = await loadQrLibrary();
+        box.textContent = "";
+        new QR(box, {
+          text: dialogUrl,
+          width: 216,
+          height: 216,
+          colorDark: "#000000",
+          colorLight: "#ffffff",
+          correctLevel: QR.CorrectLevel.M,
+        });
+      } catch (err) {
+        box.textContent = err.message;
+      }
+    });
+    $("btn-dialog-copy").addEventListener("click", async () => {
+      if (dialogUrl) await copyText(dialogUrl);
+    });
+    $("btn-dialog-close").addEventListener("click", () => $("phone-dialog").close());
+
+    // --- Phones: a large AR button and a note on what each platform does --------------------
+    const ua = navigator.userAgent || "";
+    const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const isAndroid = /Android/i.test(ua);
+    if (isIOS || isAndroid) {
+      document.body.classList.add("is-phone");
+      const note = $("mobile-ar-note");
+      note.textContent = isIOS
+        ? "View in AR opens AR Quick Look, rendered natively by RealityKit. Animations and tap interactions don't run in Quick Look."
+        : "View in AR starts WebXR in Chrome on ARCore phones.";
+      note.hidden = false;
+    }
+    $("btn-mobile-ar").addEventListener("click", () => $("btn-ar").click());
+    const showSource = () => {
+      codeEditor.scrollIntoView({ behavior: "smooth", block: "center" });
+      codeEditor.focus({ preventScroll: true });
+    };
+    $("btn-mobile-source").addEventListener("click", showSource);
+    $("btn-view-source").addEventListener("click", showSource);
+
+    // --- Native outputs ----------------------------------------------------------------------
+    const formatBytes = (n) =>
+      n >= 1048576 ? (n / 1048576).toFixed(2) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
+    let snippetKind = "android";
+
+    function snippetFor(kind, script) {
+      const body = script.replace(/\s+$/, "");
+      if (kind === "android") {
+        // Kotlin raw strings still interpolate `$`, so escape it.
+        const kt = body.replace(/\$/g, '${"$"}');
+        return [
+          "// build.gradle.kts (JitPack):",
+          '//   implementation("com.github.google.three-live:compiler:v1.3.1")',
+          '//   implementation("com.github.google.three-live:filament:v1.3.1")',
+          "import com.google.threelive.ThreeCompiler",
+          "import com.google.threelive.filament.ThreeLiveFilamentRenderer",
+          "",
+          'val scene = """',
+          kt,
+          '"""',
+          "",
+          "val renderer = ThreeLiveFilamentRenderer(context)",
+          "setContentView(renderer.createView(context))",
+          "lifecycleScope.launch {",
+          "  // Compiles on-device to GLB in native memory; Filament reads it without a copy.",
+          "  ThreeCompiler.compile(scene).use { glb -> renderer.load(glb.byteBuffer.duplicate()) }",
+          "}",
+        ].join("\n");
+      }
+      if (kind === "ios") {
+        return [
+          "// Package.swift:",
+          '//   .package(url: "https://github.com/google/three-live.git", from: "1.0.0")',
+          "import RealityKit",
+          "import ThreeLiveCompiler",
+          "",
+          'let scene = #"""',
+          body,
+          '"""#',
+          "",
+          "// Compiles on-device to USDZ and loads it as a RealityKit entity.",
+          "let entity = try await RealityKitHelper.loadEntity(from: scene)",
+          "anchor.addChild(entity)",
+        ].join("\n");
+      }
+      return [
+        "<!-- npm install three-live, or three-live-web-dist.zip from GitHub Releases -->",
+        '<script src="three-live.min.js"><\/script>',
+        "",
+        "<three-live camera-controls ar allow-client-scripts>",
+        '  <script type="text/three">',
+        body.replace(/<\/script/gi, "<\\/script"),
+        "  <\/script>",
+        "</three-live>",
+      ].join("\n");
+    }
+
+    function renderSnippet() {
+      $("snippet-code").textContent = snippetFor(snippetKind, codeEditor.value);
+      document.querySelectorAll(".snippet-tabs button").forEach((btn) => {
+        btn.setAttribute("aria-selected", String(btn.dataset.snippet === snippetKind));
+      });
+    }
+
+    document.querySelectorAll(".snippet-tabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        snippetKind = btn.dataset.snippet;
+        renderSnippet();
+      });
+    });
+    $("btn-copy-snippet").addEventListener("click", async () => {
+      if (await copyText($("snippet-code").textContent)) arStatus.textContent = "Snippet copied.";
+    });
+
+    window.onSceneCompiled = () => {
+      const glb = currentGLBBuffer;
+      $("out-meshes").textContent = el.viewer?.meshes ? String(el.viewer.meshes.length) : "–";
+      $("out-glb").textContent = glb && glb.byteLength ? formatBytes(glb.byteLength) : "–";
+      $("out-usdz").textContent = "…";
+      renderSnippet();
+      // USDZ packaging runs after the frame so it never delays the first render.
+      setTimeout(() => {
+        try {
+          $("out-usdz").textContent = glb ? formatBytes(ThreeLiveLib.createUSDZBlob(glb).size) : "–";
+        } catch (_) {
+          $("out-usdz").textContent = "–";
+        }
+      }, 0);
+    };
+    codeEditor.addEventListener("input", renderSnippet);
+  })();
 </script>
 
 </body>

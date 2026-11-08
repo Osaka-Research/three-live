@@ -22,6 +22,7 @@ pub mod glb;
 pub mod mcp;
 pub mod render;
 pub mod scene;
+pub mod scene_link;
 pub mod sim;
 pub mod spatial_lint;
 pub mod time;

@@ -336,7 +336,7 @@ pub fn handle_mcp_request(req: &Value) -> Option<Value> {
                         "name": "three-live-mcp",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "instructions": "Three-Live 3D, CAD & Spatial XR compiler, headless 4-up contact sheet renderer, spatial linter (TL100-TL402), and 60 Hz simulation engine. Use three_live_validate and three_live_render to verify Three.js scenes visually and spatially, three_live_convert to export .glb or Apple .usdz, and three_live_sim to step KHR_interactivity and 60 Hz physics."
+                    "instructions": "Three-Live 3D, CAD & Spatial XR compiler, headless 4-up contact sheet renderer, spatial linter (TL100-TL402), and 60 Hz simulation engine. Use three_live_validate and three_live_render to verify Three.js scenes visually and spatially, three_live_convert to export .glb or Apple .usdz, three_live_sim to step KHR_interactivity and 60 Hz physics, and three_live_link to give the user a playground link (or QR code) that opens the scene on any phone or desktop browser."
                 }),
             ))
         }
@@ -682,6 +682,38 @@ fn mcp_tool_definitions() -> Value {
                 "idempotentHint": true,
                 "openWorldHint": false
             }
+        },
+        {
+            "name": "three_live_link",
+            "description": "Validate a Three.js scene script and return a web playground link that opens it on any desktop or phone browser (with View in AR on iPhone and Android). The scene rides in the URL fragment (raw DEFLATE + base64url), so nothing is uploaded. Optionally returns the link as a QR code (terminal text and SVG) for the user to scan with a phone. Fails, listing the errors, when the scene does not compile.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Inline Three.js scene script (using pre-defined `THREE` and `scene` globals). Provide either `code` or `inputPath`."
+                    },
+                    "inputPath": {
+                        "type": "string",
+                        "description": "Path to a .js scene script on disk when `code` is not provided."
+                    },
+                    "qr": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Also return the link as a QR code (`qrText` for terminals, `qrSvg`) when it is short enough to scan."
+                    },
+                    "base": {
+                        "type": "string",
+                        "description": "Playground page the link opens (default https://google.github.io/three-live/three/)."
+                    }
+                }
+            },
+            "annotations": {
+                "title": "Share Three.js Scene as a Playground Link",
+                "readOnlyHint": true,
+                "idempotentHint": true,
+                "openWorldHint": false
+            }
         }
     ])
 }
@@ -813,6 +845,7 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "three_live_render" => call_tool_render(&args),
         "three_live_convert" => call_tool_convert(&args),
         "three_live_sim" => call_tool_sim(&args),
+        "three_live_link" => call_tool_link(&args),
         _ => {
             return jsonrpc_error_response(
                 id,
@@ -824,6 +857,47 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
     };
 
     jsonrpc_success_response(id, result)
+}
+
+fn call_tool_link(args: &Value) -> Value {
+    let src = match load_source_from_args(args, "inline.js") {
+        Ok(s) => s,
+        Err(e) => return tool_error_result(e),
+    };
+    if src.is_glb {
+        return tool_error_result(
+            "three_live_link takes a Three.js scene script, not a GLB.".to_string(),
+        );
+    }
+    let Ok(script) = String::from_utf8(src.raw_bytes) else {
+        return tool_error_result("Input source is not valid UTF-8".to_string());
+    };
+    let base = args
+        .get("base")
+        .and_then(Value::as_str)
+        .unwrap_or(crate::scene_link::DEFAULT_PLAYGROUND_URL);
+    match crate::scene_link::build_scene_link(&script, &src.filename, base) {
+        Ok(link) => {
+            let mut value = link.to_json();
+            if args.get("qr").and_then(Value::as_bool).unwrap_or(false) {
+                if let Some(code) = link.qr.as_ref() {
+                    value["qrText"] = json!(code.to_terminal_string(2));
+                    value["qrSvg"] = json!(code.to_svg(4));
+                }
+            }
+            let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string());
+            json!({
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text
+                    }
+                ],
+                "isError": false
+            })
+        }
+        Err(e) => tool_error_result(e),
+    }
 }
 
 fn call_tool_validate(args: &Value) -> Value {
@@ -1297,7 +1371,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mcp_tools_list_exposes_all_four_tools() {
+    fn test_mcp_tools_list_exposes_all_five_tools() {
         let req = json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -1312,9 +1386,40 @@ mod tests {
                 "three_live_validate",
                 "three_live_render",
                 "three_live_convert",
-                "three_live_sim"
+                "three_live_sim",
+                "three_live_link"
             ]
         );
+    }
+
+    #[test]
+    fn test_mcp_link_tool_returns_a_playground_link_and_refuses_broken_scenes() {
+        let code = "const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());\nm.name = 'box';\nscene.add(m);\n";
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": "three_live_link", "arguments": { "code": code, "qr": true } }
+        });
+        let resp = handle_mcp_request(&req).unwrap();
+        let result = &resp["result"];
+        assert_eq!(result["isError"], json!(false), "{result}");
+        let report: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        let url = report["url"].as_str().unwrap();
+        assert!(url.starts_with("https://google.github.io/three-live/three/#s=z:"), "{url}");
+        assert_eq!(report["fitsQr"], json!(true));
+        assert!(report["qrSvg"].as_str().unwrap().starts_with("<svg"));
+        assert!(report["qrText"].as_str().unwrap().contains('\u{2588}'));
+
+        let broken = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": { "name": "three_live_link", "arguments": { "code": "scene.add(new THREE.Mesh(" } }
+        });
+        let resp = handle_mcp_request(&broken).unwrap();
+        assert_eq!(resp["result"]["isError"], json!(true));
     }
 
     #[test]

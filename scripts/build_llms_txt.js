@@ -47,7 +47,7 @@ function buildLlmsIndex() {
     '- Procedural CAD, Instancing & IK helpers in `THREE`: `Shape`, `Path`, `ExtrudeGeometry`, `TextGeometry`, `CSG` (`union`, `subtract`, `intersect`), `InstancedMesh`, and `IKSolver` (`solveTwoBone`, `solveFABRIK`).',
     '- Attach declarative `KHR_interactivity` behavior graphs via `mesh.userData.interactivity = { onSelect, onHoverIn, onHoverOut, onStart, onReceive }`.',
     '- Scene quotas: max `1,000` meshes, `100,000` vertices, `300,000` indices, `16` textures (`2048x2048`), `3,000 ms` execution timeout.',
-    '- Verify and visually inspect scenes headlessly via `npx three-live-cli validate|render|convert|sim` or connect the built-in Model Context Protocol (MCP) stdio server via `npx -y -p three-live three-live-cli mcp` (`three_live_validate`, `three_live_render`, `three_live_convert`, `three_live_sim`).',
+    '- Verify, visually inspect, and share scenes headlessly via `npx three-live-cli validate|render|convert|sim|link` (with `--qr` for terminal QR codes) or connect the built-in Model Context Protocol (MCP) stdio server via `npx -y -p three-live three-live-cli mcp` (`three_live_validate`, `three_live_render`, `three_live_convert`, `three_live_sim`, `three_live_link`).',
     '',
     '## Documentation & Guides',
     '',

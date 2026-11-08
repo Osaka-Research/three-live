@@ -110,12 +110,15 @@ Render a 4-up orthographic/camera contact sheet (zero GPU required), run the
 spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
 / `.usdz`, or attach `three-live-cli mcp` as a zero-dependency **Model Context
 Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
-`three_live_convert`, `three_live_sim`) in Claude Code, Cursor, Gemini CLI, or
-Windsurf:
+`three_live_convert`, `three_live_sim`, `three_live_link`) in Gemini CLI, Google
+Antigravity, Claude Code, or any MCP client. `three-live-cli link scene.js --qr`
+prints a playground link (and a terminal QR code) that opens the scene on a
+phone, one tap from AR:
 
 ```bash
 $ npx three-live-cli render scene.js --view=quad --grid --annotations -o contact_sheet.png
 $ npx three-live-cli validate scene.js --json
+$ npx three-live-cli link scene.js --qr
 $ npx three-live-cli convert scene.js -o model.usdz
 
 # Or register the built-in MCP server for closed-loop visual + spatial AI verification:

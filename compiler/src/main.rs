@@ -181,6 +181,25 @@ enum Commands {
 
     /// Start a Model Context Protocol (MCP) server over stdio for AI coding agents
     Mcp,
+
+    /// Validate a Three.js scene script and print a web playground link to open it on any
+    /// device (optionally as a terminal QR code to scan with a phone)
+    Link {
+        /// Input JavaScript (.js) scene script
+        input: PathBuf,
+
+        /// Also print the link as a QR code in the terminal
+        #[arg(long)]
+        qr: bool,
+
+        /// Playground page the link opens
+        #[arg(long, default_value = three_live_compiler::scene_link::DEFAULT_PLAYGROUND_URL)]
+        base: String,
+
+        /// Output a structured JSON report instead of text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn inspect_glb(input: &PathBuf, data: &[u8]) {
@@ -869,6 +888,52 @@ fn main() {
             if let Err(e) = run_mcp_stdio_server() {
                 eprintln!("MCP server error: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Commands::Link { input, qr, base, json } => {
+            let source = match fs::read(&input).map(String::from_utf8) {
+                Ok(Ok(s)) => s,
+                Ok(Err(_)) => {
+                    eprintln!("Input script is not valid UTF-8");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Error reading input file {:?}: {}", input, e);
+                    std::process::exit(1);
+                }
+            };
+            let filename = input.to_string_lossy().to_string();
+            match three_live_compiler::scene_link::build_scene_link(&source, &filename, &base) {
+                Ok(link) => {
+                    if json {
+                        let mut value = link.to_json();
+                        if qr {
+                            if let Some(code) = link.qr.as_ref() {
+                                value["qrText"] = serde_json::json!(code.to_terminal_string(2));
+                            }
+                        }
+                        println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+                    } else {
+                        println!("{}", link.summary());
+                        println!("\n{}", link.url);
+                        if qr {
+                            match link.qr.as_ref() {
+                                Some(code) => println!("\n{}", code.to_terminal_string(2)),
+                                None => println!(
+                                    "\nThe link is {} characters, too long for a QR code a phone \
+                                     can scan from a screen (max {}). Open it on this computer \
+                                     and send it to your phone instead.",
+                                    link.url.len(),
+                                    three_live_compiler::scene_link::MAX_QR_URL_LEN
+                                ),
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
             }
         }
     }

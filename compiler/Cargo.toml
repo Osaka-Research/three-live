@@ -48,6 +48,8 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 boa_engine = { version = "0.21", features = ["jsvalue-enum"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Raw DEFLATE for playground scene links (`scene_link.rs`).
+miniz_oxide = "0.8"
 clap = { version = "4.4", features = ["derive"], optional = true }
 jni = { version = "0.21", optional = true }
 

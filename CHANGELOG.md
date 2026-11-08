@@ -24,17 +24,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+-   **Shareable playground links.** The `/three/` and `/xr/` playgrounds open
+    scenes from the URL fragment: `#p=<preset>` for built-in and gallery scenes,
+    and `#s=z:<payload>` for any scene script (raw DEFLATE, unpadded base64url;
+    the fragment never reaches the server). **Share** copies a link; **Run on
+    phone** shows a QR code that opens the scene on a phone, one tap from AR.
+-   **Gallery scenes** from the eval suite: an AI-generated five-story pagoda
+    (`#p=pagoda`) and warehouse forklift drill (`#p=forklift`).
+-   **Phone layout:** a large View in AR button (AR Quick Look on iOS, WebXR on
+    Android) and a note on what each platform runs.
+-   **Native outputs panel:** mesh count, GLB and USDZ sizes, and Android
+    (Kotlin), iOS (Swift), and web snippets for the current scene.
+-   **`three-live-cli link`** (and `--qr`) and the MCP tool
+    **`three_live_link`:** validate a scene and return its playground link and,
+    when short enough, a QR code (terminal text or SVG) from a dependency-free
+    encoder.
+
+### Fixed
+
+-   **XR Collect game drones keep moving.** The patrol route no longer runs into
+    an inner wall, and the chaser loops the right half of the arena while the
+    player is out of sight instead of idling in the far corner.
+
 --------------------------------------------------------------------------------
 
 ## [1.3.1] - 2026-11-07 (Beta)
 
 ### Added
 
--   **Built-In Model Context Protocol (MCP) Stdio Server (`three-live-cli mcp`)**:
-    Added a zero-dependency JSON-RPC 2.0 MCP server in `compiler/src/mcp.rs`
-    supporting both newline-delimited JSON and `Content-Length` framing for
-    Claude Code, Cursor, Gemini CLI, Windsurf, and MCP Inspector (`claude mcp
-    add three-live -- npx -y -p three-live three-live-cli mcp`):
+-   **Built-In Model Context Protocol (MCP) Stdio Server
+    (`three-live-cli mcp`)**: Added a zero-dependency JSON-RPC 2.0 MCP server in
+    `compiler/src/mcp.rs` supporting both newline-delimited JSON and
+    `Content-Length` framing for Claude Code, Cursor, Gemini CLI, Windsurf, and
+    MCP Inspector
+    (`claude mcp add three-live -- npx -y -p three-live three-live-cli mcp`):
     -   `three_live_validate` — Runs the Three.js compiler, schema checker, and
         3D spatial/frustum/grounding/collision linter (`TL100`–`TL402`).
     -   `three_live_render` — Renders headless 4-up orthographic/camera contact
@@ -54,11 +79,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `LuminanceFormat`, `RepeatWrapping` / `ClampToEdgeWrapping`), inline PNG
     data-URI serialization in `.glb`, `avgColor` material tinting in `.usdz`,
     and software rasterizer sampling in `three-live-cli render`.
--   **Distance-Based Level-of-Detail (`lod` / `THREE.LOD` / `MSFT_lod`)**:
-    Added multi-tier distance switching with hysteresis, far-distance culling,
+-   **Distance-Based Level-of-Detail (`lod` / `THREE.LOD` / `MSFT_lod`)**: Added
+    multi-tier distance switching with hysteresis, far-distance culling,
     automatic vertex-clustering mesh decimation (`decimateGeometry`), and
-    `MSFT_lod` / `KHR_node_visibility` export across Web, Android (`LodController.kt`),
-    iOS (`LodController.swift`), and the Rust compiler.
+    `MSFT_lod` / `KHR_node_visibility` export across Web, Android
+    (`LodController.kt`), iOS (`LodController.swift`), and the Rust compiler.
 -   **3D Spatial Audio Emitters (`spatial-audio` / `KHR_audio_emitter`) & 60 Hz
     Rigid-Body Physics (`rigid-body`)**: Added 8 zero-asset ambient spatial loop
     presets, `KHR_audio_emitter` / USDZ `SpatialAudio` export, and deterministic
@@ -66,7 +91,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 -   **Mobile-First Documentation & Animated Hero Showcase**: Redesigned
     `README.md` to lead with native Android (Google Filament & Jetpack XR
     SceneCore), iOS/visionOS (Apple RealityKit), and `three-live-cli` / MCP,
-    with an animated 4-stage hero showcase GIF (`docs/assets/hero-showcase.gif`).
+    with an animated 4-stage hero showcase GIF
+    (`docs/assets/hero-showcase.gif`).
 
 --------------------------------------------------------------------------------
 

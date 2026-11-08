@@ -904,6 +904,55 @@ limitations under the License.
         padding: 0 6px;
       }
     }
+
+    /* "Run on phone" dialog and shared-link notice. */
+    dialog.phone-dialog {
+      /* The page's global reset zeroes margins; auto margins re-center the modal. */
+      margin: auto;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 20px;
+      max-width: 360px;
+      width: calc(100% - 32px);
+    }
+    dialog.phone-dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+    .phone-dialog h2 { font-size: 16px; margin: 0 0 8px; }
+    .phone-dialog p, .phone-dialog li { font-size: 12.5px; color: #94a3b8; line-height: 1.45; }
+    .phone-dialog ul { margin: 8px 0 12px 18px; padding: 0; }
+    .phone-dialog .qr-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 240px;
+      margin: 12px 0;
+      padding: 12px;
+      background: #fff;
+      border-radius: 12px;
+      color: #0f172a;
+      font-size: 12.5px;
+      text-align: center;
+    }
+    body.is-phone #btn-phone { display: none; }
+    .compile-badge {
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      background: rgba(16, 185, 129, 0.1);
+      color: #34d399;
+      font-family: monospace;
+      font-size: 10.5px;
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .compile-badge.failed {
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.1);
+      color: #fb7185;
+    }
   </style>
   <script src="./xr-live.min.js"></script>
   <script src="./xr-live-sensors.min.js"></script>
@@ -926,6 +975,8 @@ limitations under the License.
       <span class="size-pill"><span data-bundle-size="xr-live.min.js">83.0 KB gz</span><span class="size-pill-detail"> (Zero WASM — Physics + Hand Gestures + Depth + Spatial UI)</span></span>
     </div>
     <div class="header-links">
+      <button class="action-btn" id="btn-share" title="Copy a link that opens this scene">🔗 Share</button>
+      <button class="action-btn" id="btn-phone" title="Show a QR code that opens this scene on your phone">📱 Run on phone</button>
       <button class="action-btn" onclick="exportScene('glb')">Export .glb</button>
       <button class="action-btn" onclick="exportScene('usdz')">Export .usdz</button>
     </div>
@@ -1136,7 +1187,7 @@ limitations under the License.
       <!-- LIVE SCENE CODE INSPECTOR -->
       <div class="card">
         <div class="card-header">
-          <h2 class="card-title">Live &lt;script type="text/three"&gt; Source</h2>
+          <h2 class="card-title">Live &lt;script type="text/three"&gt; Source <span class="compile-badge" id="compile-time" role="status" hidden></span></h2>
           <button class="action-btn" style="padding: 3px 8px; font-size: 11px;" onclick="applyEditorScript()">Run Script</button>
         </div>
         <textarea class="code-editor" id="scene-editor" spellcheck="false"></textarea>
@@ -1262,6 +1313,258 @@ limitations under the License.
       </div>
     </main>
   </div>
+
+  <script>
+    // Shared scene links and the "Run on phone" QR dialog (see three/index.html for the format):
+    //   #p=<preset>     ballpit, workbench, ik, perception, studio, game, or drill
+    //   #s=z:<payload>  a scene script: raw DEFLATE (RFC 1951), unpadded base64url
+    // Linked scenes run in the same sandbox as any script typed into the editor. Other hashes,
+    // such as `#xr-state=` from the studio's persistent anchors, are left alone.
+    (() => {
+      const MAX_SCRIPT_BYTES = 128 * 1024;
+      const MAX_PAYLOAD_CHARS = 64 * 1024;
+      const MAX_QR_URL_CHARS = 1150;
+      const QRCODEJS_URL = 'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js';
+      const QRCODEJS_SRI = 'sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU';
+      const LINK_PRESETS = ['ballpit', 'workbench', 'ik', 'perception', 'studio', 'game', 'drill'];
+      const $ = (id) => document.getElementById(id);
+
+      function toBase64Url(bytes) {
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      function fromBase64Url(text) {
+        if (!/^[A-Za-z0-9_-]*$/.test(text)) throw new Error('The link is not valid base64url.');
+        const b64 = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4);
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      async function transformBytes(bytes, transform, limit) {
+        const reader = new Blob([bytes]).stream().pipeThrough(transform).getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.length;
+          if (limit && total > limit) {
+            await reader.cancel();
+            throw new Error('The scene in this link is larger than 128 KB.');
+          }
+          chunks.push(value);
+        }
+        const out = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) {
+          out.set(c, offset);
+          offset += c.length;
+        }
+        return out;
+      }
+
+      async function encodeScene(script) {
+        const bytes = new TextEncoder().encode(script);
+        if (bytes.length > MAX_SCRIPT_BYTES) throw new Error('The scene is larger than 128 KB.');
+        return 'z:' + toBase64Url(await transformBytes(bytes, new CompressionStream('deflate-raw')));
+      }
+
+      async function decodeScene(value) {
+        if (value.length > MAX_PAYLOAD_CHARS) throw new Error('The link is too long.');
+        const kind = value.slice(0, 2);
+        const payload = value.slice(2);
+        let bytes;
+        if (kind === 'z:') {
+          bytes = await transformBytes(
+            fromBase64Url(payload), new DecompressionStream('deflate-raw'), MAX_SCRIPT_BYTES);
+        } else if (kind === 'b:') {
+          bytes = fromBase64Url(payload);
+          if (bytes.length > MAX_SCRIPT_BYTES) throw new Error('The scene in this link is larger than 128 KB.');
+        } else {
+          throw new Error('Unknown link format.');
+        }
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      }
+
+      function readLink(hash) {
+        const params = new URLSearchParams(hash.replace(/^#/, ''));
+        if (params.has('p')) return { preset: params.get('p') };
+        if (params.has('s')) return { scene: params.get('s') };
+        return null;
+      }
+
+      function presetScript(id) {
+        return id === 'game' || id === 'drill' ? SIM_SCRIPTS[id] : PRESET_SCRIPTS[id];
+      }
+
+      async function currentLink() {
+        const script = editorEl.value;
+        const preset = LINK_PRESETS.find((id) => presetScript(id) === script);
+        const fragment = preset ? 'p=' + preset : 's=' + (await encodeScene(script));
+        return location.href.split('#')[0] + '#' + fragment;
+      }
+
+      async function copyText(text) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (_) {
+          window.prompt('Copy this link:', text);
+          return false;
+        }
+      }
+
+      async function openPreset(id) {
+        if (id === 'game' || id === 'drill') return switchSimPreset(id);
+        if (id === 'workbench' || id === 'ik') return switchWorkbenchPreset(id);
+        return switchMode(id);
+      }
+
+      let lastHandledHash = '';
+      async function openLink(link) {
+        if (link.preset !== undefined) {
+          if (!LINK_PRESETS.includes(link.preset)) {
+            await switchMode('ballpit');
+            setToast(`This link names a scene this page doesn't have ("${link.preset}").`);
+            return;
+          }
+          await openPreset(link.preset);
+          setToast('Opened a shared scene.');
+          return;
+        }
+        try {
+          const script = await decodeScene(link.scene);
+          await switchMode('ballpit');
+          editorEl.value = script;
+          await applyEditorScript();
+          setToast('Opened a scene from a shared link (sandboxed). Check the source before using it elsewhere.');
+        } catch (err) {
+          await switchMode('ballpit');
+          setToast("Couldn't open this link: " + err.message);
+        }
+      }
+
+      window.bootFromLocation = () => {
+        const link = readLink(location.hash);
+        if (!link) return false;
+        lastHandledHash = location.hash;
+        openLink(link);
+        return true;
+      };
+
+      window.addEventListener('hashchange', () => {
+        if (location.hash === lastHandledHash) return;
+        const link = readLink(location.hash);
+        if (!link) return;
+        lastHandledHash = location.hash;
+        openLink(link);
+      });
+
+      let qrLibPromise = null;
+      function loadQrLibrary() {
+        if (window.QRCode) return Promise.resolve(window.QRCode);
+        if (qrLibPromise) return qrLibPromise;
+        qrLibPromise = new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = QRCODEJS_URL;
+          script.integrity = QRCODEJS_SRI;
+          script.crossOrigin = 'anonymous';
+          script.referrerPolicy = 'no-referrer';
+          script.onload = () =>
+            window.QRCode ? resolve(window.QRCode) : reject(new Error("The QR code library didn't load."));
+          script.onerror = () => {
+            qrLibPromise = null;
+            reject(new Error("Couldn't load the QR code library. Use Copy link instead."));
+          };
+          document.head.appendChild(script);
+        });
+        return qrLibPromise;
+      }
+
+      // Compile time for every executeScript call (modes, presets, Run Script, shared links).
+      // Installed now: the viewer and badge are already parsed, and the first compile runs
+      // before DOMContentLoaded.
+      const viewer = $('xr-viewer');
+      const badge = $('compile-time');
+      const executeScript = viewer.executeScript.bind(viewer);
+      viewer.executeScript = async (code) => {
+        const start = performance.now();
+        try {
+          const result = await executeScript(code);
+          const ms = performance.now() - start;
+          badge.textContent = `Compiled in ${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
+          badge.title = 'Sandboxed Three.js run plus GLB build, in this browser';
+          badge.classList.remove('failed');
+          badge.hidden = false;
+          return result;
+        } catch (err) {
+          badge.textContent = 'Compile failed';
+          badge.classList.add('failed');
+          badge.hidden = false;
+          throw err;
+        }
+      };
+
+      window.addEventListener('DOMContentLoaded', () => {
+        const ua = navigator.userAgent || '';
+        if (/Android|iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+          document.body.classList.add('is-phone');
+        }
+
+        $('btn-share').addEventListener('click', async () => {
+          try {
+            const url = await currentLink();
+            history.replaceState(null, '', url);
+            lastHandledHash = location.hash;
+            const copied = await copyText(url);
+            setToast(copied
+              ? `Link copied (${url.length} characters${url.length > MAX_QR_URL_CHARS ? ', too long for a QR code' : ''}).`
+              : 'Link ready to copy.');
+          } catch (err) {
+            setToast("Couldn't make a link: " + err.message);
+          }
+        });
+
+        let dialogUrl = '';
+        $('btn-phone').addEventListener('click', async () => {
+          const box = $('qr-box');
+          box.textContent = 'Loading…';
+          $('phone-dialog').showModal();
+          try {
+            dialogUrl = await currentLink();
+            if (dialogUrl.length > MAX_QR_URL_CHARS) {
+              box.textContent =
+                `This scene's link is ${dialogUrl.length} characters, too long for a QR code a phone ` +
+                'can scan from a screen. Copy the link and send it to your phone, or pick a preset.';
+              return;
+            }
+            const QR = await loadQrLibrary();
+            box.textContent = '';
+            new QR(box, {
+              text: dialogUrl,
+              width: 216,
+              height: 216,
+              colorDark: '#000000',
+              colorLight: '#ffffff',
+              correctLevel: QR.CorrectLevel.M,
+            });
+          } catch (err) {
+            box.textContent = err.message;
+          }
+        });
+        $('btn-dialog-copy').addEventListener('click', async () => {
+          if (dialogUrl) await copyText(dialogUrl);
+        });
+        $('btn-dialog-close').addEventListener('click', () => $('phone-dialog').close());
+      });
+    })();
+  </script>
 
   <script>
     const xrEl = document.getElementById('xr-viewer');
@@ -1625,7 +1928,9 @@ scene.add(player);
   scene.add(gem);
 });
 
-// Drones: one patrols, one chases the player inside its sight radius
+// Drones: one patrols, one chases the player inside its sight radius. Both routes run
+// around the inner walls (z = -2.6 passes between Wall_6 and the back wall), so the
+// drones keep circulating instead of pressing against a wall.
 const droneTraits = (agent) => ({
   agent,
   integrity: { max: 50, group: 'drones', showBar: true, scoreValue: 5, contactAmount: 20 },
@@ -1633,16 +1938,20 @@ const droneTraits = (agent) => ({
 });
 const patrol = new THREE.Mesh(new THREE.SphereGeometry(0.28, 24, 16), mat(0xef4444));
 patrol.name = 'Drone_Patrol';
-patrol.position.set(-2.5, 0.4, -2);
+patrol.position.set(-2.5, 0.4, -2.6);
 patrol.userData.xr = droneTraits({
   mode: 'patrol', speed: 1.4,
-  waypoints: [[-2.5, 0.4, -2], [2.5, 0.4, -2], [2.5, 0.4, 2], [-2.5, 0.4, 2]]
+  waypoints: [[-2.5, 0.4, -2.6], [2.5, 0.4, -2.6], [2.5, 0.4, 2], [-2.5, 0.4, 2]]
 });
 scene.add(patrol);
 const chaser = new THREE.Mesh(new THREE.SphereGeometry(0.28, 24, 16), mat(0xf97316));
 chaser.name = 'Drone_Chaser';
 chaser.position.set(2.8, 0.4, -3);
-chaser.userData.xr = droneTraits({ mode: 'chase', target: 'user', speed: 1.2, sightRadius: 3 });
+// Out of sight, the chaser loops the right half of the arena; within 3 m it chases.
+chaser.userData.xr = droneTraits({
+  mode: 'chase', target: 'user', speed: 1.2, sightRadius: 3,
+  waypoints: [[2.8, 0.4, -3], [2.8, 0.4, 1.5], [0.3, 0.4, 2], [0.3, 0.4, -3]]
+});
 scene.add(chaser);
 
 return scene;`,
@@ -2928,9 +3237,23 @@ return scene;`
 
     // Boot initial Ballpit scene
     renderDepthGrid([]);
-    switchMode('ballpit');
+    // A shared link (#p=<preset> or #s=z:<scene>) opens that scene instead of the default.
+    if (!window.bootFromLocation?.()) switchMode('ballpit');
     ensureRoomGLB();
     requestAnimationFrame(tickPlayground);
   </script>
+  <dialog class="phone-dialog" id="phone-dialog">
+    <h2>Open this scene on your phone</h2>
+    <p>Scan with your phone's camera. The scene opens in this playground; tap 📱 View in AR.</p>
+    <div class="qr-box" id="qr-box">Loading…</div>
+    <ul>
+      <li><strong>iPhone and iPad:</strong> View in AR opens AR Quick Look, rendered by RealityKit.</li>
+      <li><strong>Android:</strong> View in AR starts WebXR in Chrome on ARCore phones.</li>
+    </ul>
+    <div class="btn-row">
+      <button type="button" class="action-btn" id="btn-dialog-copy">Copy link</button>
+      <button type="button" class="action-btn primary" id="btn-dialog-close">Done</button>
+    </div>
+  </dialog>
 </body>
 </html>
