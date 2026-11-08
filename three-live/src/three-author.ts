@@ -1201,16 +1201,16 @@ export class BoxGeometry extends BufferGeometry {
       w2, -h2, d2, w2, -h2, -d2, w2, h2, -d2, w2, h2, d2,
       -w2, -h2, -d2, -w2, -h2, d2, -w2, h2, d2, -w2, h2, -d2,
     ];
-    const normals = [
-      0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
-      -1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
-      -1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0, 0, -1, 0, 0,
-      -1, 0, 0,
-    ];
+    const normals: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
     for (let f = 0; f < 6; f++) {
       const o = f * 4;
+      const ax = 2 - (f >> 1);
+      const sg = f & 1 ? -1 : 1;
+      for (let k = 0; k < 4; k++) {
+        normals.push(ax === 0 ? sg : 0, ax === 1 ? sg : 0, ax === 2 ? sg : 0);
+      }
       uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
       indices.push(o, o + 1, o + 2, o, o + 2, o + 3);
     }
@@ -1918,8 +1918,8 @@ export class DataTexture extends Texture {
       this.type === 1016 ||
       buf instanceof Float32Array ||
       buf instanceof Float64Array;
-    const dstW = Math.min(srcW, 48);
-    const dstH = Math.min(srcH, 48);
+    const dstW = Math.min(srcW, 64);
+    const dstH = Math.min(srcH, 64);
     let sig = (this.flipY ? 257 : 1) ^ this.colorSpace.length ^ buf.length;
     const step = Math.max(1, (buf.length >> 6) | 0);
     for (let i = 0; i < buf.length; i += step) {
@@ -2062,6 +2062,16 @@ export class Material {
   public side: number; // 2 = DoubleSide
   public doubleSided: boolean;
   public map: Texture | string | null;
+  public normalMap: Texture | string | null;
+  public normalScale: Vector2;
+  public roughnessMap: Texture | string | null;
+  public metalnessMap: Texture | string | null;
+  public emissiveMap: Texture | string | null;
+  public aoMap: Texture | string | null;
+  public aoMapIntensity: number;
+  public bumpMap: Texture | string | null;
+  public bumpScale: number;
+  public _em: boolean;
 
   // Luxury PBR / Physical Material extensions
   public clearcoat: number;
@@ -2081,25 +2091,30 @@ export class Material {
   constructor(params: Record<string, any> = {}) {
     this.name = params.name || '';
     this.color = new Color(params.color ?? 0xffffff);
+    this._em = params.emissive !== undefined;
     this.emissive = new Color(params.emissive ?? 0);
     this.emissiveIntensity = numberOr(params.emissiveIntensity, 1);
-    this.roughness = numberOr(params.roughness, 0.5);
-    this.metalness = numberOr(params.metalness, 0);
+    this.roughness = numberOr(params.roughness, params.roughnessMap ? 1 : 0.5);
+    this.metalness = numberOr(params.metalness, params.metalnessMap ? 1 : 0);
     this.opacity = numberOr(params.opacity, 1);
     this.transparent = booleanOr(params.transparent, false);
     this.wireframe = booleanOr(params.wireframe, false);
     this.side = numberOr(params.side, 2);
     this.doubleSided = booleanOr(params.doubleSided, true);
     this.map = params.map || null;
-    for (const k of [
-      'normalMap',
-      'roughnessMap',
-      'metalnessMap',
-      'emissiveMap',
-      'aoMap',
-    ]) {
-      if (params[k]) (this as any)[k] = params[k];
-    }
+    this.normalMap = params.normalMap || null;
+    const ns = params.normalScale;
+    this.normalScale =
+      typeof ns === 'number'
+        ? new Vector2(ns, ns)
+        : new Vector2(numberOr(ns?.x, 1), numberOr(ns?.y, 1));
+    this.roughnessMap = params.roughnessMap || null;
+    this.metalnessMap = params.metalnessMap || null;
+    this.emissiveMap = params.emissiveMap || null;
+    this.aoMap = params.aoMap || null;
+    this.aoMapIntensity = numberOr(params.aoMapIntensity, 1);
+    this.bumpMap = params.bumpMap || null;
+    this.bumpScale = numberOr(params.bumpScale, 1);
 
     this.clearcoat = numberOr(params.clearcoat, 0);
     this.clearcoatRoughness = numberOr(params.clearcoatRoughness, 0);
@@ -2714,6 +2729,7 @@ export class SceneQuotaValidator {
             'metalnessMap',
             'emissiveMap',
             'aoMap',
+            'bumpMap',
           ]) {
             if (mat[k]) textures.add(mat[k]);
           }
@@ -4428,10 +4444,9 @@ export class TetrahedronGeometry extends PolyhedronGeometry {
   }
 }
 
+const b36Idx = (s: string): number[] => Array.from(s, (c) => parseInt(c, 36));
 const OCTA_V = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1];
-const OCTA_I = [
-  0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 3, 1, 3, 4, 1, 4, 2,
-];
+const OCTA_I = b36Idx('024043035052125153134142');
 
 export class OctahedronGeometry extends PolyhedronGeometry {
   constructor(radius = 1, detail = 0) {
@@ -4448,12 +4463,7 @@ export class IcosahedronGeometry extends PolyhedronGeometry {
         0, -1, ICO_T, 0, 1, ICO_T, 0, -1, -ICO_T, 0, 1, -ICO_T,
         ICO_T, 0, -1, ICO_T, 0, 1, -ICO_T, 0, -1, -ICO_T, 0, 1,
       ],
-      [
-        0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
-        1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
-        3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
-        4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
-      ],
+      b36Idx('0b505101707a0ab1595b4ba2a7671839434232636838949524b62a867981'),
       radius,
       detail,
     );
@@ -4471,14 +4481,9 @@ export class DodecahedronGeometry extends PolyhedronGeometry {
         -DOD_R, -ICO_T, 0, -DOD_R, ICO_T, 0, DOD_R, -ICO_T, 0, DOD_R, ICO_T, 0,
         -ICO_T, 0, -DOD_R, ICO_T, 0, -DOD_R, -ICO_T, 0, DOD_R, ICO_T, 0, DOD_R,
       ],
-      [
-        3, 11, 7, 3, 7, 15, 3, 15, 13, 7, 19, 17, 7, 17, 6, 7, 6, 15,
-        17, 4, 8, 17, 8, 10, 17, 10, 6, 8, 0, 16, 8, 16, 2, 8, 2, 10,
-        0, 12, 1, 0, 1, 18, 0, 18, 16, 6, 10, 2, 6, 2, 13, 6, 13, 15,
-        2, 16, 18, 2, 18, 3, 2, 3, 13, 18, 1, 9, 18, 9, 11, 18, 11, 3,
-        4, 14, 12, 4, 12, 0, 4, 0, 8, 11, 9, 5, 11, 5, 19, 11, 19, 7,
-        19, 5, 14, 19, 14, 4, 19, 4, 17, 1, 12, 14, 1, 14, 5, 1, 5, 9,
-      ],
+      b36Idx(
+        '3b737f3fd7jh7h676fh48h8aha680g8g282a0c101i0ig6a262d6df2gi2i323di19i9bib34ec4c0408b95b5jbj7j5eje4j4h1ce1e5159',
+      ),
       radius,
       detail,
     );
@@ -5360,18 +5365,54 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
       let idx = materialRefs.indexOf(mat);
       if (idx === -1) {
         materialRefs.push(mat);
-        let mapUrl = '';
-        if (mat.map) {
-          if (typeof mat.map === 'string') mapUrl = mat.map;
-          else if (
-            typeof (mat.map as any).source === 'string' &&
-            (mat.map as any).source
-          ) {
-            mapUrl = (mat.map as any).source;
-          } else if (typeof (mat.map as any).image === 'string') {
-            mapUrl = (mat.map as any).image;
-          }
-        }
+        const tUri = (t: unknown): string => {
+          if (!t) return '';
+          if (typeof t === 'string') return t;
+          const r = t as {source?: unknown; image?: unknown};
+          return typeof r.source === 'string' && r.source
+            ? r.source
+            : typeof r.image === 'string'
+              ? r.image
+              : '';
+        };
+        const mapUrl = tUri(mat.map);
+        const pk = (mat as any)._packPbr?.() as
+          | {mrUri?: string; normUri?: string; normScale?: number}
+          | undefined;
+        const mrUri = pk?.mrUri || tUri(mat.roughnessMap || mat.metalnessMap);
+        const normUri = pk?.normUri || tUri(mat.normalMap || mat.bumpMap);
+        const rawNs = mat.normalScale as unknown;
+        const nsRaw =
+          typeof rawNs === 'number'
+            ? rawNs
+            : rawNs && typeof rawNs === 'object'
+              ? (Number((rawNs as Vector2).x ?? 1) +
+                  Number((rawNs as Vector2).y ?? 1)) *
+                0.5
+              : 1;
+        const normScale =
+          pk?.normScale ??
+          (!mat.normalMap && mat.bumpMap
+            ? Math.abs(Number.isFinite(mat.bumpScale) ? mat.bumpScale : 1)
+            : Number.isFinite(nsRaw)
+              ? Math.max(0, nsRaw)
+              : 1);
+        const aoUri = tUri(mat.aoMap);
+        const aoRaw = Number(mat.aoMapIntensity);
+        const aoStrength = Number.isFinite(aoRaw)
+          ? Math.max(0, Math.min(1, aoRaw))
+          : 1;
+        const emUri = tUri(mat.emissiveMap);
+        const ei = Number.isFinite(mat.emissiveIntensity)
+          ? Math.max(0, mat.emissiveIntensity)
+          : 1;
+        const hasEm =
+          mat.emissive.r > 0 || mat.emissive.g > 0 || mat.emissive.b > 0;
+        const emFactor: [number, number, number] = hasEm
+          ? [mat.emissive.r * ei, mat.emissive.g * ei, mat.emissive.b * ei]
+          : emUri && !mat._em
+            ? [ei, ei, ei]
+            : [0, 0, 0];
         materials.push({
           name: mat.name || `Material_${materials.length}`,
           base_color: [
@@ -5384,6 +5425,13 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
           roughness: mat.roughness !== undefined ? mat.roughness : 0.5,
           double_sided: mat.side === 2 || mat.doubleSided,
           base_color_texture: mapUrl || null,
+          metallic_roughness_texture: mrUri || null,
+          normal_texture: normUri || null,
+          normal_scale: normScale,
+          emissive_factor: emFactor,
+          emissive_texture: emUri || null,
+          occlusion_texture: aoUri || null,
+          occlusion_strength: aoStrength,
           clearcoat: mat.clearcoat || 0.0,
           clearcoat_roughness: mat.clearcoatRoughness || 0.0,
           transmission: mat.transmission || 0.0,

@@ -332,6 +332,42 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
 
     // 1. Process Materials
     for (i, mat) in scene.materials.iter().enumerate() {
+        let mut register_tex = |uri_opt: &Option<String>| -> Result<Option<usize>, String> {
+            let Some(ref uri) = uri_opt else {
+                return Ok(None);
+            };
+            if uri.is_empty() {
+                return Ok(None);
+            }
+            validate_texture_uri(uri)?;
+            if let Some(&idx) = texture_lookup.get(uri) {
+                return Ok(Some(idx));
+            }
+            if images.len() >= SECURITY_3D_MAX_TEXTURES {
+                return Err(format!(
+                    "Scene exceeds SECURITY_3D_MAX_TEXTURES ({})",
+                    SECURITY_3D_MAX_TEXTURES
+                ));
+            }
+            let img_idx = images.len();
+            images.push(json!({ "uri": uri }));
+            if samplers.is_empty() {
+                samplers.push(json!({
+                    "magFilter": 9729,
+                    "minFilter": 9987,
+                    "wrapS": 10497,
+                    "wrapT": 10497,
+                }));
+            }
+            let t_idx = textures.len();
+            textures.push(json!({
+                "sampler": 0,
+                "source": img_idx,
+            }));
+            texture_lookup.insert(uri.clone(), t_idx);
+            Ok(Some(t_idx))
+        };
+
         let mut pbr = json!({
             "baseColorFactor": [
                 jnum(sanitize_finite(mat.base_color[0], 0.8)),
@@ -343,45 +379,50 @@ fn write_glb_into(scene: &SceneGraph, bin_data: &mut Vec<u8>) -> Result<Vec<u8>,
             "roughnessFactor": jnum(sanitize_finite(mat.roughness, 0.5)),
         });
 
-        if let Some(ref uri) = mat.base_color_texture {
-            if !uri.is_empty() {
-                validate_texture_uri(uri)?;
-                let tex_idx = if let Some(&idx) = texture_lookup.get(uri) {
-                    idx
-                } else {
-                    if images.len() >= SECURITY_3D_MAX_TEXTURES {
-                        return Err(format!(
-                            "Scene exceeds SECURITY_3D_MAX_TEXTURES ({})",
-                            SECURITY_3D_MAX_TEXTURES
-                        ));
-                    }
-                    let img_idx = images.len();
-                    images.push(json!({ "uri": uri }));
-                    if samplers.is_empty() {
-                        samplers.push(json!({
-                            "magFilter": 9729,
-                            "minFilter": 9987,
-                            "wrapS": 10497,
-                            "wrapT": 10497,
-                        }));
-                    }
-                    let t_idx = textures.len();
-                    textures.push(json!({
-                        "sampler": 0,
-                        "source": img_idx,
-                    }));
-                    texture_lookup.insert(uri.clone(), t_idx);
-                    t_idx
-                };
-                pbr["baseColorTexture"] = json!({ "index": tex_idx });
-            }
+        if let Some(tex_idx) = register_tex(&mat.base_color_texture)? {
+            pbr["baseColorTexture"] = json!({ "index": tex_idx });
         }
+        if let Some(mr_idx) = register_tex(&mat.metallic_roughness_texture)? {
+            pbr["metallicRoughnessTexture"] = json!({ "index": mr_idx });
+        }
+
+        let norm_idx_opt = register_tex(&mat.normal_texture)?;
+        let em_idx_opt = register_tex(&mat.emissive_texture)?;
+        let ao_idx_opt = register_tex(&mat.occlusion_texture)?;
 
         let mut mat_json = json!({
             "name": if mat.name.is_empty() { format!("Material_{}", i) } else { mat.name.clone() },
             "pbrMetallicRoughness": pbr,
             "doubleSided": mat.double_sided,
         });
+
+        if let Some(norm_idx) = norm_idx_opt {
+            let ns = sanitize_finite(mat.normal_scale, 1.0).max(0.0);
+            if (ns - 1.0).abs() > 1e-4 {
+                mat_json["normalTexture"] = json!({ "index": norm_idx, "scale": jnum(ns) });
+            } else {
+                mat_json["normalTexture"] = json!({ "index": norm_idx });
+            }
+        }
+        if let Some(em_idx) = em_idx_opt {
+            mat_json["emissiveTexture"] = json!({ "index": em_idx });
+        }
+        if let Some(ao_idx) = ao_idx_opt {
+            let os = sanitize_finite(mat.occlusion_strength, 1.0).clamp(0.0, 1.0);
+            if (os - 1.0).abs() > 1e-4 {
+                mat_json["occlusionTexture"] = json!({ "index": ao_idx, "strength": jnum(os) });
+            } else {
+                mat_json["occlusionTexture"] = json!({ "index": ao_idx });
+            }
+        }
+        let ef = [
+            sanitize_finite(mat.emissive_factor[0], 0.0).max(0.0),
+            sanitize_finite(mat.emissive_factor[1], 0.0).max(0.0),
+            sanitize_finite(mat.emissive_factor[2], 0.0).max(0.0),
+        ];
+        if ef[0] > 0.0 || ef[1] > 0.0 || ef[2] > 0.0 {
+            mat_json["emissiveFactor"] = json!([jnum(ef[0]), jnum(ef[1]), jnum(ef[2])]);
+        }
 
         let mut mat_exts = serde_json::Map::new();
         let clearcoat = sanitize_finite(mat.clearcoat, 0.0);
@@ -1260,6 +1301,11 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
     };
 
     // 1. Materials
+    let resolve_tex_uri = |tex_info: &serde_json::Value| -> Option<String> {
+        let tex_idx = tex_info["index"].as_u64()? as usize;
+        let img_idx = gltf["textures"].get(tex_idx)?["source"].as_u64()? as usize;
+        gltf["images"].get(img_idx)?["uri"].as_str().map(|s| s.to_string())
+    };
     let mut materials = Vec::new();
     if let Some(mats) = gltf["materials"].as_array() {
         for (i, m) in mats.iter().enumerate() {
@@ -1282,12 +1328,38 @@ pub fn read_glb(glb: &[u8]) -> Result<SceneGraph, String> {
             let metallic = pbr["metallicFactor"].as_f64().unwrap_or(0.1) as f32;
             let roughness = pbr["roughnessFactor"].as_f64().unwrap_or(0.5) as f32;
             let double_sided = m["doubleSided"].as_bool().unwrap_or(true);
+            let base_color_texture = resolve_tex_uri(&pbr["baseColorTexture"]);
+            let metallic_roughness_texture = resolve_tex_uri(&pbr["metallicRoughnessTexture"]);
+            let normal_texture = resolve_tex_uri(&m["normalTexture"]);
+            let normal_scale = m["normalTexture"]["scale"].as_f64().unwrap_or(1.0) as f32;
+            let emissive_texture = resolve_tex_uri(&m["emissiveTexture"]);
+            let emissive_factor = m["emissiveFactor"]
+                .as_array()
+                .map(|a| {
+                    [
+                        a.first().and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                        a.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                        a.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                    ]
+                })
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let occlusion_texture = resolve_tex_uri(&m["occlusionTexture"]);
+            let occlusion_strength =
+                m["occlusionTexture"]["strength"].as_f64().unwrap_or(1.0) as f32;
             materials.push(Material3D {
                 name,
                 base_color: bc,
                 metallic,
                 roughness,
                 double_sided,
+                base_color_texture,
+                metallic_roughness_texture,
+                normal_texture,
+                normal_scale,
+                emissive_factor,
+                emissive_texture,
+                occlusion_texture,
+                occlusion_strength,
                 ..Default::default()
             });
         }

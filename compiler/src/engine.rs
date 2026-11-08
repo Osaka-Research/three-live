@@ -978,6 +978,65 @@ impl ThreeEngine {
                                         .map(|s| s.to_std_string_escaped())
                                 });
 
+                            let metallic_roughness_texture = mat_obj
+                                .get(js_string!("metallic_roughness_texture"), &mut self.context)
+                                .ok()
+                                .and_then(|v| {
+                                    v.as_string()
+                                        .filter(|s| s.len() <= SECURITY_3D_MAX_HEAP_BYTES)
+                                        .map(|s| s.to_std_string_escaped())
+                                });
+
+                            let normal_texture = mat_obj
+                                .get(js_string!("normal_texture"), &mut self.context)
+                                .ok()
+                                .and_then(|v| {
+                                    v.as_string()
+                                        .filter(|s| s.len() <= SECURITY_3D_MAX_HEAP_BYTES)
+                                        .map(|s| s.to_std_string_escaped())
+                                });
+
+                            let normal_scale = mat_obj
+                                .get(js_string!("normal_scale"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_number())
+                                .filter(|v| v.is_finite())
+                                .unwrap_or(1.0)
+                                as f32;
+
+                            let emissive_val = mat_obj
+                                .get(js_string!("emissive_factor"), &mut self.context)
+                                .unwrap_or(JsValue::undefined());
+                            let emissive_factor =
+                                extract_f32_3(&emissive_val, [0.0, 0.0, 0.0], &mut self.context);
+
+                            let emissive_texture = mat_obj
+                                .get(js_string!("emissive_texture"), &mut self.context)
+                                .ok()
+                                .and_then(|v| {
+                                    v.as_string()
+                                        .filter(|s| s.len() <= SECURITY_3D_MAX_HEAP_BYTES)
+                                        .map(|s| s.to_std_string_escaped())
+                                });
+
+                            let occlusion_texture = mat_obj
+                                .get(js_string!("occlusion_texture"), &mut self.context)
+                                .ok()
+                                .and_then(|v| {
+                                    v.as_string()
+                                        .filter(|s| s.len() <= SECURITY_3D_MAX_HEAP_BYTES)
+                                        .map(|s| s.to_std_string_escaped())
+                                });
+
+                            let occlusion_strength = mat_obj
+                                .get(js_string!("occlusion_strength"), &mut self.context)
+                                .ok()
+                                .and_then(|v| v.as_number())
+                                .filter(|v| v.is_finite())
+                                .unwrap_or(1.0)
+                                .clamp(0.0, 1.0)
+                                as f32;
+
                             let clearcoat = mat_obj
                                 .get(js_string!("clearcoat"), &mut self.context)
                                 .ok()
@@ -1017,6 +1076,13 @@ impl ThreeEngine {
                                 roughness,
                                 double_sided,
                                 base_color_texture,
+                                metallic_roughness_texture,
+                                normal_texture,
+                                normal_scale,
+                                emissive_factor,
+                                emissive_texture,
+                                occlusion_texture,
+                                occlusion_strength,
                                 clearcoat,
                                 clearcoat_roughness,
                                 transmission,

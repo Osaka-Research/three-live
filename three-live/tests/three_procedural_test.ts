@@ -630,6 +630,160 @@ function runProceduralTests(): void {
     'Procedural SimplexNoise + ImprovedNoise displaced terrain exports cleanly to GLB and USDZ',
   );
 
+  // 19. Full PBR Material Texture Channels (A4: normalMap/normalScale, roughnessMap+metalnessMap ORM packing, emissiveMap, aoMap/aoMapIntensity, bumpMap/bumpScale)
+  const makeSolidDataTex = (
+    r: number,
+    g: number,
+    b: number,
+    w = 4,
+    h = 4,
+  ) => {
+    const px = new Uint8Array(w * h * 4);
+    for (let i = 0; i < px.length; i += 4) {
+      px[i] = r;
+      px[i + 1] = g;
+      px[i + 2] = b;
+      px[i + 3] = 255;
+    }
+    return new THREE.DataTexture(px, w, h, THREE.RGBAFormat);
+  };
+  const roughTex = makeSolidDataTex(64, 64, 64);
+  const metalTex = makeSolidDataTex(220, 220, 220);
+  const aoTex = makeSolidDataTex(120, 120, 120);
+  const emTex = makeSolidDataTex(255, 128, 0);
+
+  // Slope heightmap for bumpMap -> tangent-space normal conversion
+  const bumpPx = new Uint8Array(8 * 8 * 4);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const hVal = Math.round((x / 7) * 255);
+      const o = (y * 8 + x) * 4;
+      bumpPx[o] = hVal;
+      bumpPx[o + 1] = hVal;
+      bumpPx[o + 2] = hVal;
+      bumpPx[o + 3] = 255;
+    }
+  }
+  const bumpTex = new THREE.DataTexture(bumpPx, 8, 8, THREE.RGBAFormat);
+
+  const pbrMat = new MeshStandardMaterial({
+    color: 0xdddddd,
+    roughnessMap: roughTex,
+    metalnessMap: metalTex,
+    aoMap: aoTex,
+    aoMapIntensity: 0.65,
+    emissiveMap: emTex,
+    emissiveIntensity: 1.5,
+    bumpMap: bumpTex,
+    bumpScale: 2.0,
+  });
+  assert(
+    pbrMat.roughness === 1 && pbrMat.metalness === 1,
+    'MeshStandardMaterial defaults roughness/metalness factors to 1.0 when roughnessMap/metalnessMap are supplied',
+  );
+
+  const pbrScene = new Scene();
+  pbrScene.add(new Mesh(new BoxGeometry(1, 1, 1), pbrMat));
+  const pbrData = sceneToCanvas3D(pbrScene);
+  const gltfMat = pbrData.gltf.materials[0];
+  assert(
+    gltfMat.pbrMetallicRoughness?.metallicRoughnessTexture?.index !==
+      undefined &&
+      gltfMat.normalTexture?.index !== undefined &&
+      gltfMat.emissiveTexture?.index !== undefined &&
+      gltfMat.occlusionTexture?.index !== undefined &&
+      approx(gltfMat.occlusionTexture.strength, 0.65, 1e-5) &&
+      Array.isArray(gltfMat.emissiveFactor) &&
+      approx(gltfMat.emissiveFactor[0], 1.5, 1e-5),
+    'sceneToCanvas3D serializes packed ORM, bump->normal, emissiveTexture+default emissiveFactor, and occlusionTexture.strength',
+  );
+
+  const samplePngPixel = (uri: string, x: number, y: number): number[] => {
+    const buf = Buffer.from(
+      uri.slice('data:image/png;base64,'.length),
+      'base64',
+    );
+    const w = buf.readUInt32BE(16);
+    const len = buf.readUInt32BE(33);
+    const raw = zlib.inflateSync(buf.subarray(41, 41 + len));
+    const o = y * (1 + w * 4) + 1 + x * 4;
+    return [raw[o], raw[o + 1], raw[o + 2], raw[o + 3]];
+  };
+
+  // Verify packed ORM PNG bytes (G = 64 from roughnessMap, B = 220 from metalnessMap)
+  const mrImgUri: string =
+    pbrData.gltf.images[
+      pbrData.gltf.textures[
+        gltfMat.pbrMetallicRoughness.metallicRoughnessTexture.index
+      ].source
+    ].uri;
+  const mrSample = samplePngPixel(mrImgUri, 1, 1);
+  assert(
+    mrSample[0] === 255 && mrSample[1] === 64 && mrSample[2] === 220,
+    `ORM channel packer places roughness in G (got ${mrSample[1]}) and metalness in B (got ${mrSample[2]})`,
+  );
+
+  // Verify bumpMap -> normalTexture PNG has tilted X normal (R < 128 for positive +X height slope)
+  const normImgUri: string =
+    pbrData.gltf.images[
+      pbrData.gltf.textures[gltfMat.normalTexture.index].source
+    ].uri;
+  const normSample = samplePngPixel(normImgUri, 3, 3);
+  assert(
+    normSample[0] < 120 &&
+      Math.abs(normSample[1] - 128) <= 2 &&
+      normSample[2] > 128,
+    `bumpMap Sobel normal baker tilts normal X on +X height ramp (rgba=${normSample[0]},${normSample[1]},${normSample[2]})`,
+  );
+
+  // Explicit emissive: 0x000000 suppresses auto-white emissiveFactor, and Vector2 normalScale averages cleanly
+  const explicitZeroMat = new MeshStandardMaterial({
+    normalMap: makeSolidDataTex(128, 128, 255),
+    normalScale: new THREE.Vector2(0.4, 0.8),
+    emissive: 0x000000,
+    emissiveMap: emTex,
+  });
+  const explicitScene = new Scene();
+  explicitScene.add(new Mesh(new BoxGeometry(1, 1, 1), explicitZeroMat));
+  const explicitGltfMat = sceneToCanvas3D(explicitScene).gltf.materials[0];
+  assert(
+    explicitGltfMat.emissiveFactor === undefined &&
+      approx(explicitGltfMat.normalTexture?.scale ?? 0, 0.6, 1e-5),
+    'Explicit emissive: 0x000000 preserves zero emissiveFactor and Vector2 normalScale serializes to glTF normalTexture.scale',
+  );
+
+  // SceneQuotaValidator enforces texture dimension limits on bumpMap
+  const bumpOnlyScene = new Scene();
+  bumpOnlyScene.add(
+    new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshStandardMaterial({bumpMap: new THREE.CanvasTexture(hugeCanvas)}),
+    ),
+  );
+  let bumpQuotaRejected = false;
+  try {
+    SceneQuotaValidator.validate(bumpOnlyScene);
+  } catch (e: unknown) {
+    bumpQuotaRejected = String(e).includes('SECURITY_3D_MAX_TEXTURE_DIMENSION');
+  }
+  assert(
+    bumpQuotaRejected,
+    'SceneQuotaValidator enforces texture quota and dimension bounds on bumpMap',
+  );
+
+  // USDZ export wires all 5 UsdUVTexture shaders cleanly
+  const pbrUsdz = sceneToUSDZ(pbrScene);
+  const pbrUsdzText = new TextDecoder().decode(pbrUsdz);
+  assert(
+    pbrUsdz.byteLength > 1000 &&
+      pbrUsdzText.includes('MetallicRoughnessTexture.outputs:g') &&
+      pbrUsdzText.includes('MetallicRoughnessTexture.outputs:b') &&
+      pbrUsdzText.includes('NormalTexture.outputs:rgb') &&
+      pbrUsdzText.includes('EmissiveTexture.outputs:rgb') &&
+      pbrUsdzText.includes('OcclusionTexture.outputs:r'),
+    'sceneToUSDZ wires Roughness, Metallic, Normal, Emissive, and Occlusion UsdUVTexture channels',
+  );
+
   console.log(`\nResults: ${passed} passed, ${failed} failed.`);
   if (failed > 0) {
     process.exit(1);

@@ -544,17 +544,37 @@ function serializeScene(
       }
       return {index: texIdx};
     };
+    const pk = (m as any)._packPbr?.() as
+      | {mrUri?: string; normUri?: string; normScale?: number}
+      | undefined;
     const baseTex = addTex(m.map);
     if (baseTex) pbr.baseColorTexture = baseTex;
-    const mrTex = addTex((m as any).roughnessMap || (m as any).metalnessMap);
+    const mrTex = addTex(
+      pk?.mrUri || (m as any).roughnessMap || (m as any).metalnessMap,
+    );
     if (mrTex) pbr.metallicRoughnessTexture = mrTex;
     const avg = (m.map as any)?.avgColor;
     if (Array.isArray(avg) && avg.length >= 3) {
       matExtras.avgColor = [avg[0], avg[1], avg[2]];
     }
-    const normTex = addTex((m as any).normalMap);
+    const normTex: Record<string, unknown> | undefined = addTex(
+      pk?.normUri || (m as any).normalMap || (m as any).bumpMap,
+    );
+    const rawNs = (m as any).normalScale;
+    const ns =
+      pk?.normScale ??
+      (!(m as any).normalMap && (m as any).bumpMap
+        ? Math.abs(finUsd((m as any).bumpScale, 1))
+        : typeof rawNs === 'number'
+          ? Math.max(0, finUsd(rawNs, 1))
+          : rawNs
+            ? Math.max(0, (finUsd(rawNs.x, 1) + finUsd(rawNs.y, 1)) * 0.5)
+            : 1);
+    if (normTex && ns !== 1) normTex.scale = ns;
     const emTex = addTex((m as any).emissiveMap);
-    const aoTex = addTex((m as any).aoMap);
+    const aoTex: Record<string, unknown> | undefined = addTex((m as any).aoMap);
+    const os = Math.max(0, Math.min(1, finUsd((m as any).aoMapIntensity, 1)));
+    if (aoTex && os !== 1) aoTex.strength = os;
     const matDef: Record<string, unknown> = {
       name: m.name || '',
       pbrMetallicRoughness: pbr,
@@ -564,16 +584,13 @@ function serializeScene(
       ...(aoTex ? {occlusionTexture: aoTex} : {}),
       ...(Object.keys(matExtras).length > 0 ? {extras: matExtras} : {}),
     };
-    if (
-      m.emissive &&
-      (m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0)
-    ) {
-      const ei = m.emissiveIntensity ?? 1.0;
-      matDef.emissiveFactor = [
-        m.emissive.r * ei,
-        m.emissive.g * ei,
-        m.emissive.b * ei,
-      ];
+    const ei = Math.max(0, finUsd(m.emissiveIntensity, 1));
+    const hasEm =
+      m.emissive && (m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0);
+    if (hasEm || (emTex && !(m as any)._em && ei > 0)) {
+      matDef.emissiveFactor = hasEm
+        ? [m.emissive.r * ei, m.emissive.g * ei, m.emissive.b * ei]
+        : [ei, ei, ei];
     }
     const ext: Record<string, unknown> = {};
     if (m.clearcoat && m.clearcoat > 0) {
@@ -1596,8 +1613,27 @@ export function extractMeshesFromGLB(
             ? [emissiveColor[0], emissiveColor[1], emissiveColor[2], 1]
             : undefined;
         const et = resolveTex(mat.emissiveTexture, emScale);
-        const nt = resolveTex(mat.normalTexture, [2, 2, 2, 1], [-1, -1, -1, 0]);
-        const ot = resolveTex(mat.occlusionTexture);
+        const ns =
+          typeof mat.normalTexture?.scale === 'number'
+            ? mat.normalTexture.scale
+            : 1;
+        const nt = resolveTex(
+          mat.normalTexture,
+          [2 * ns, 2 * ns, 2, 1],
+          [-ns, -ns, -1, 0],
+        );
+        const os =
+          typeof mat.occlusionTexture?.strength === 'number'
+            ? mat.occlusionTexture.strength
+            : 1;
+        const ot =
+          os !== 1
+            ? resolveTex(
+                mat.occlusionTexture,
+                [os, os, os, 1],
+                [1 - os, 1 - os, 1 - os, 0],
+              )
+            : resolveTex(mat.occlusionTexture);
         if (dt || mrt || nt || et || ot) textures = [dt, mrt, nt, et, ot];
         const ext = mat.extensions || {};
         if (ext.KHR_materials_clearcoat) {

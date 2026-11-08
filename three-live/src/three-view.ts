@@ -417,9 +417,9 @@ in vec4 vInstTint;
 #define uBaseColor (uBaseColor*vInstTint)
 uniform float uMetallic,uRoughness,uEmissive,uEnvIntensity,uExposure;
 uniform vec2 uClearcoat;
-uniform vec3 uCameraPos,uAmbientColor;
-uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap;
-uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap;
+uniform vec3 uCameraPos,uAmbientColor,uEmissiveFactor;
+uniform sampler2D uBaseColorTexture,uMetallicRoughnessTexture,uNormalTexture,uOcclusionTexture,uEnvironmentMap,uEmissiveTexture;
+uniform int uHasTexture,uHasMetallicRoughnessTexture,uHasNormalTexture,uHasOcclusionTexture,uHasEnvironmentMap,uHasEmissiveTexture;
 uniform float uNormalScale,uOcclusionStrength;
 /*XRD_U*/
 uniform vec2 uViewportSize;
@@ -526,8 +526,9 @@ void main(){
 if(uSectionEnabled==1&&dot(vWorldPos,uSectionPlane.xyz)>uSectionPlane.w)discard;
 vec4 base=uBaseColor;
 if(uHasTexture==1)base*=texture(uBaseColorTexture,vUV);
+vec3 em=uHasEmissiveTexture==1?uEmissiveFactor*texture(uEmissiveTexture,vUV).rgb:uEmissiveFactor;
 if(length(vNormal)<1e-4&&uHasTexture==1){
-vec3 unlit=base.rgb+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
+vec3 unlit=base.rgb+em+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
 fragColor=vec4(unlit,base.a);
 return;
 }
@@ -589,7 +590,7 @@ envDiffuse=mix(vec3(0.10,0.10,0.12),vec3(0.52,0.54,0.58),N.y*0.5+0.5);
 
 vec3 kD=(vec3(1.0)-F)*(1.0-metallic);
 vec3 diffuseIBL=kD*base.rgb*(uAmbientColor+envDiffuse*0.5)*occ;
-vec3 color=directLight+(diffuseIBL+specularIBL)*uEnvIntensity+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
+vec3 color=directLight+(diffuseIBL+specularIBL)*uEnvIntensity+em+vec3(uEmissive*0.35,uEmissive*0.5,uEmissive*0.7);
 if(uClearcoat.x>0.0){
 vec3 ccF=F_SchlickRoughness(vec3(0.04),uClearcoat.y,NoV)*uClearcoat.x;
 color=color*(vec3(1.0)-ccF)+getStudioRadiance(R,uClearcoat.y)*ccF*uEnvIntensity;
@@ -718,6 +719,9 @@ const RENDER_UNIFORMS = [
   'uOcclusionTexture',
   'uHasOcclusionTexture',
   'uOcclusionStrength',
+  'uEmissiveFactor',
+  'uEmissiveTexture',
+  'uHasEmissiveTexture',
   'uToneMapping',
   'uEnvironmentMap',
   'uHasEnvironmentMap',
@@ -773,6 +777,8 @@ interface PrimitiveGpu {
   metallicRoughnessTexture: WebGLTexture | null;
   normalTexture: WebGLTexture | null;
   occlusionTexture: WebGLTexture | null;
+  emissiveTexture: WebGLTexture | null;
+  emissiveFactor: [number, number, number];
   normalScale: number;
   occlusionStrength: number;
   buffers: WebGLBuffer[];
@@ -1038,10 +1044,13 @@ function extractMaterialProps(
   | 'normalScale'
   | 'occlusionTexture'
   | 'occlusionStrength'
+  | 'emissiveTexture'
+  | 'emissiveFactor'
   | 'isTransmissive'
 > {
   const pbr = mat?.pbrMetallicRoughness;
   const bcf = pbr?.baseColorFactor;
+  const ef = mat?.emissiveFactor;
   const ccExt = mat?.extensions?.KHR_materials_clearcoat;
   const tex = (info: {index: number} | undefined) =>
     info !== undefined && gpuTextures[info.index]
@@ -1061,6 +1070,9 @@ function extractMaterialProps(
     normalScale: mat?.normalTexture?.scale ?? 1.0,
     occlusionTexture: tex(mat?.occlusionTexture),
     occlusionStrength: mat?.occlusionTexture?.strength ?? 1.0,
+    emissiveTexture: tex(mat?.emissiveTexture),
+    emissiveFactor:
+      Array.isArray(ef) && ef.length >= 3 ? [ef[0], ef[1], ef[2]] : [0, 0, 0],
     isTransmissive:
       (mat?.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0) >
       0,
@@ -1097,6 +1109,7 @@ function deleteMeshListGl(
       deleteTex(prim.metallicRoughnessTexture);
       deleteTex(prim.normalTexture);
       deleteTex(prim.occlusionTexture);
+      deleteTex(prim.emissiveTexture);
       const programs = new Set<WebGLProgram>();
       if (prim.customProgram) programs.add(prim.customProgram);
       for (const entry of prim.programCache?.values() ?? []) {
@@ -4120,6 +4133,16 @@ export class ThreeView {
             gl.uniform1f(u.uOcclusionStrength, prim.occlusionStrength);
           } else {
             gl.uniform1i(u.uHasOcclusionTexture, 0);
+          }
+
+          gl.uniform3fv(u.uEmissiveFactor, prim.emissiveFactor);
+          if (prim.emissiveTexture) {
+            gl.activeTexture(gl.TEXTURE8);
+            gl.bindTexture(gl.TEXTURE_2D, prim.emissiveTexture);
+            gl.uniform1i(u.uEmissiveTexture, 8);
+            gl.uniform1i(u.uHasEmissiveTexture, 1);
+          } else {
+            gl.uniform1i(u.uHasEmissiveTexture, 0);
           }
 
           gl.bindVertexArray(prim.vao);

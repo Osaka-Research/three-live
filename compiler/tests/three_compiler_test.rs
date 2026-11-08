@@ -3461,3 +3461,133 @@ fn test_procedural_noise_and_seeded_random_determinism_glb_usdz() {
         .expect("Headless render of procedural noise terrain should succeed");
     assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() > 2000);
 }
+
+#[test]
+fn test_full_pbr_material_maps_glb_usdz_and_software_render() {
+    let pbr_script = r#"
+        function solidTex(r, g, b, size) {
+            const s = size || 8;
+            const buf = new Uint8Array(s * s * 4);
+            for (let i = 0; i < buf.length; i += 4) {
+                buf[i] = r;
+                buf[i + 1] = g;
+                buf[i + 2] = b;
+                buf[i + 3] = 255;
+            }
+            return new THREE.DataTexture(buf, s, s, THREE.RGBAFormat);
+        }
+
+        const darkAlbedo = solidTex(12, 12, 16, 8);
+        const roughTex = solidTex(70, 70, 70, 8);
+        const metalTex = solidTex(210, 210, 210, 8);
+        const aoTex = solidTex(140, 140, 140, 8);
+
+        // Glowing orange emissive stripe across the center of the panel
+        const emCvs = document.createElement('canvas');
+        emCvs.width = 32;
+        emCvs.height = 32;
+        const emCtx = emCvs.getContext('2d');
+        emCtx.fillStyle = '#000000';
+        emCtx.fillRect(0, 0, 32, 32);
+        emCtx.fillStyle = '#ff6600';
+        emCtx.fillRect(4, 10, 24, 12);
+        const emTex = new THREE.CanvasTexture(emCvs);
+
+        // Diagonal height ridge for bumpMap -> tangent-space normal baking
+        const bumpBuf = new Uint8Array(16 * 16 * 4);
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 16; x++) {
+                const h = Math.round(127 + 120 * Math.sin((x + y) * 0.6));
+                const o = (y * 16 + x) * 4;
+                bumpBuf[o] = h;
+                bumpBuf[o + 1] = h;
+                bumpBuf[o + 2] = h;
+                bumpBuf[o + 3] = 255;
+            }
+        }
+        const bumpTex = new THREE.DataTexture(bumpBuf, 16, 16, THREE.RGBAFormat);
+
+        const panel = new THREE.Mesh(
+            new THREE.BoxGeometry(1.6, 1.6, 0.2),
+            new THREE.MeshStandardMaterial({
+                map: darkAlbedo,
+                roughnessMap: roughTex,
+                metalnessMap: metalTex,
+                aoMap: aoTex,
+                aoMapIntensity: 0.7,
+                emissiveMap: emTex,
+                emissiveIntensity: 2.0,
+                bumpMap: bumpTex,
+                bumpScale: 1.5,
+            })
+        );
+        panel.name = "PbrPanel";
+        panel.position.set(0, 0.8, 0);
+        scene.add(panel);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+        const key = new THREE.DirectionalLight(0xffffff, 0.9);
+        key.position.set(2, 3, 4);
+        scene.add(key);
+        camera.position.set(0, 0.8, 2.4);
+        camera.lookAt(0, 0.8, 0);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(pbr_script, "pbr.js", 1.5);
+    assert!(
+        report.valid && report.diagnostics.is_empty(),
+        "Expected zero diagnostics for full PBR material maps scene, got: {:?}",
+        report.diagnostics
+    );
+
+    let sg = three_live_compiler::validate_three_script(pbr_script).expect("PBR SceneGraph");
+    assert_eq!(sg.materials.len(), 1);
+    let m = &sg.materials[0];
+    assert!(m.base_color_texture.as_deref().unwrap_or("").starts_with("data:image/png;base64,"));
+    assert!(m
+        .metallic_roughness_texture
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("data:image/png;base64,"));
+    assert!(m.normal_texture.as_deref().unwrap_or("").starts_with("data:image/png;base64,"));
+    assert!(m.emissive_texture.as_deref().unwrap_or("").starts_with("data:image/png;base64,"));
+    assert!(m.occlusion_texture.as_deref().unwrap_or("").starts_with("data:image/png;base64,"));
+    assert!((m.occlusion_strength - 0.7).abs() < 1e-5);
+    assert!((m.emissive_factor[0] - 2.0).abs() < 1e-5);
+
+    // GLB write + read round-trip preserves all 5 PBR textures and scalar strengths
+    let glb = transcode_three_to_glb(pbr_script).expect("PBR GLB");
+    let round_trip = three_live_compiler::glb::read_glb(&glb).expect("read_glb round-trip");
+    let rm = &round_trip.materials[0];
+    assert_eq!(rm.metallic_roughness_texture, m.metallic_roughness_texture);
+    assert_eq!(rm.normal_texture, m.normal_texture);
+    assert_eq!(rm.emissive_texture, m.emissive_texture);
+    assert_eq!(rm.occlusion_texture, m.occlusion_texture);
+    assert!((rm.occlusion_strength - 0.7).abs() < 1e-4);
+    assert!((rm.emissive_factor[0] - 2.0).abs() < 1e-4);
+
+    // USDZ export packages all 5 PNG textures with 64-byte alignment
+    let usdz = three_live_compiler::transcode_three_to_usdz(pbr_script).expect("PBR USDZ");
+    let entry_count = verify_usdz_alignment(&usdz);
+    assert!(
+        entry_count >= 6,
+        "Expected model.usda + 5 PBR PNG textures in USDZ archive, got {} entries",
+        entry_count
+    );
+
+    // Headless software rasterizer renders glowing orange emissive pixels despite dark baseColorTexture
+    let opts = three_live_compiler::render::RenderOptions {
+        width: 128,
+        height: 128,
+        view: three_live_compiler::render::RenderViewMode::Camera,
+        ..Default::default()
+    };
+    let (_w, _h, rgba) = three_live_compiler::render::render_scene_rgba(&sg, &opts);
+    let glowing_orange_pixels =
+        rgba.chunks_exact(4).filter(|px| px[0] > 180 && px[1] > 60 && px[2] < 60).count();
+    assert!(
+        glowing_orange_pixels > 50,
+        "Expected glowing orange emissiveMap stripe pixels over dark albedo in software render, got {}",
+        glowing_orange_pixels
+    );
+}

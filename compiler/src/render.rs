@@ -142,22 +142,36 @@ fn mat3_transform_normal(nmat: &[f32; 9], d: [f32; 3]) -> [f32; 3] {
 }
 
 /// Evaluates Cook-Torrance metallic-roughness PBR + hemisphere studio lighting.
-fn shade_pbr(
+#[allow(clippy::too_many_arguments)]
+fn shade_pbr_ext(
     world_pos: [f32; 3],
     normal: [f32; 3],
     view_pos: [f32; 3],
     mat: &Material3D,
+    base_tex_linear: Option<[f32; 4]>,
+    rough_scale: f32,
+    metal_scale: f32,
+    ao_factor: f32,
+    emissive_add: [f32; 3],
     instance_tint: Option<[f32; 3]>,
     lights: &[Light3D],
 ) -> [u8; 4] {
     let mut base = [mat.base_color[0], mat.base_color[1], mat.base_color[2]];
+    let mut base_alpha = mat.base_color[3];
+    if let Some(bt) = base_tex_linear {
+        base[0] *= bt[0];
+        base[1] *= bt[1];
+        base[2] *= bt[2];
+        base_alpha *= bt[3];
+    }
     if let Some(tint) = instance_tint {
         base[0] *= tint[0];
         base[1] *= tint[1];
         base[2] *= tint[2];
     }
-    let metallic = mat.metallic.clamp(0.0, 1.0);
-    let roughness = mat.roughness.clamp(0.08, 1.0);
+    let metallic = (mat.metallic * metal_scale).clamp(0.0, 1.0);
+    let roughness = (mat.roughness * rough_scale).clamp(0.08, 1.0);
+    let ao = ao_factor.clamp(0.0, 1.0);
     let v = normalize3([
         view_pos[0] - world_pos[0],
         view_pos[1] - world_pos[1],
@@ -190,7 +204,7 @@ fn shade_pbr(
         // Metallic environment reflection approximation so metals aren't black
         let spec_env =
             f0[c] * (1.0 - 0.5 * roughness) * (0.45 + 0.55 * hemi_t + 0.35 * n_dot_v.powi(4));
-        lo[c] = (diffuse_albedo[c] * env + spec_env) * amb_scale;
+        lo[c] = (diffuse_albedo[c] * env * ao + spec_env * (0.5 + 0.5 * ao)) * amb_scale;
     }
 
     let default_lights: [Light3D; 2] = [
@@ -294,6 +308,12 @@ fn shade_pbr(
         }
     }
 
+    for c in 0..3 {
+        if emissive_add[c].is_finite() && emissive_add[c] > 0.0 {
+            lo[c] += emissive_add[c];
+        }
+    }
+
     // ACES / Neutral tone map + gamma 2.2
     let mut rgb = [0u8; 3];
     for c in 0..3 {
@@ -302,8 +322,31 @@ fn shade_pbr(
         let srgb = mapped.clamp(0.0, 1.0).powf(1.0 / 2.2);
         rgb[c] = (srgb * 255.0).round() as u8;
     }
-    let alpha_u8 = (mat.base_color[3].clamp(0.15, 1.0) * 255.0).round() as u8;
+    let alpha_u8 = (base_alpha.clamp(0.15, 1.0) * 255.0).round() as u8;
     [rgb[0], rgb[1], rgb[2], alpha_u8]
+}
+
+fn shade_pbr(
+    world_pos: [f32; 3],
+    normal: [f32; 3],
+    view_pos: [f32; 3],
+    mat: &Material3D,
+    instance_tint: Option<[f32; 3]>,
+    lights: &[Light3D],
+) -> [u8; 4] {
+    shade_pbr_ext(
+        world_pos,
+        normal,
+        view_pos,
+        mat,
+        None,
+        1.0,
+        1.0,
+        1.0,
+        mat.emissive_factor,
+        instance_tint,
+        lights,
+    )
 }
 
 #[derive(Clone)]
@@ -904,11 +947,29 @@ pub fn render_viewport_rgba(
     }
 
     // Rasterize all meshes
+    #[derive(Default)]
+    struct DecodedMaterialMaps {
+        base_color: Option<DecodedTexture>,
+        metallic_roughness: Option<DecodedTexture>,
+        normal: Option<DecodedTexture>,
+        emissive: Option<DecodedTexture>,
+        occlusion: Option<DecodedTexture>,
+    }
     let default_mat = Material3D::default();
-    let decoded_textures: Vec<Option<DecodedTexture>> = scene
+    let default_maps = DecodedMaterialMaps::default();
+    let decoded_maps: Vec<DecodedMaterialMaps> = scene
         .materials
         .iter()
-        .map(|m| m.base_color_texture.as_deref().and_then(decode_stored_png_data_uri))
+        .map(|m| DecodedMaterialMaps {
+            base_color: m.base_color_texture.as_deref().and_then(decode_stored_png_data_uri),
+            metallic_roughness: m
+                .metallic_roughness_texture
+                .as_deref()
+                .and_then(decode_stored_png_data_uri),
+            normal: m.normal_texture.as_deref().and_then(decode_stored_png_data_uri),
+            emissive: m.emissive_texture.as_deref().and_then(decode_stored_png_data_uri),
+            occlusion: m.occlusion_texture.as_deref().and_then(decode_stored_png_data_uri),
+        })
         .collect();
     let mut clipped_tris = Vec::with_capacity(2);
 
@@ -941,9 +1002,14 @@ pub fn render_viewport_rgba(
         }
         let mat =
             mesh.material_index.and_then(|mi| scene.materials.get(mi)).unwrap_or(&default_mat);
-        let tex_opt =
-            mesh.material_index.and_then(|mi| decoded_textures.get(mi)).and_then(|t| t.as_ref());
+        let maps = mesh.material_index.and_then(|mi| decoded_maps.get(mi)).unwrap_or(&default_maps);
+        let tex_opt = maps.base_color.as_ref();
         let has_uvs = !mesh.uvs.is_empty();
+        let has_pbr_maps = has_uvs
+            && (maps.metallic_roughness.is_some()
+                || maps.normal.is_some()
+                || maps.emissive.is_some()
+                || maps.occlusion.is_some());
 
         let inst_count = (inst_matrices.len() / 16).max(1);
         let has_inst = inst_matrices.len() >= 16;
@@ -1105,32 +1171,81 @@ pub fn render_viewport_rgba(
                         continue;
                     }
 
-                    // Per-vertex shading (Gouraud / Phong hybrid: evaluate PBR at the 3 vertices
-                    // for small triangles or per-pixel for shiny/large triangles)
-                    let c0 = shade_pbr(
-                        ctri[0].world_pos,
-                        ctri[0].world_norm,
-                        eye_pos,
-                        mat,
-                        inst_tint,
-                        &scene.lights,
-                    );
-                    let c1 = shade_pbr(
-                        ctri[1].world_pos,
-                        ctri[1].world_norm,
-                        eye_pos,
-                        mat,
-                        inst_tint,
-                        &scene.lights,
-                    );
-                    let c2 = shade_pbr(
-                        ctri[2].world_pos,
-                        ctri[2].world_norm,
-                        eye_pos,
-                        mat,
-                        inst_tint,
-                        &scene.lights,
-                    );
+                    // Per-triangle world tangent/bitangent frame when normal mapping is active
+                    let (tri_t, tri_b) = if maps.normal.is_some() && has_uvs {
+                        let dp1 = [
+                            ctri[1].world_pos[0] - ctri[0].world_pos[0],
+                            ctri[1].world_pos[1] - ctri[0].world_pos[1],
+                            ctri[1].world_pos[2] - ctri[0].world_pos[2],
+                        ];
+                        let dp2 = [
+                            ctri[2].world_pos[0] - ctri[0].world_pos[0],
+                            ctri[2].world_pos[1] - ctri[0].world_pos[1],
+                            ctri[2].world_pos[2] - ctri[0].world_pos[2],
+                        ];
+                        let du1 = ctri[1].uv[0] - ctri[0].uv[0];
+                        let dv1 = ctri[1].uv[1] - ctri[0].uv[1];
+                        let du2 = ctri[2].uv[0] - ctri[0].uv[0];
+                        let dv2 = ctri[2].uv[1] - ctri[0].uv[1];
+                        let uv_det = du1 * dv2 - dv1 * du2;
+                        if uv_det.abs() > 1e-7 {
+                            let inv = 1.0 / uv_det;
+                            let t = normalize3([
+                                (dp1[0] * dv2 - dp2[0] * dv1) * inv,
+                                (dp1[1] * dv2 - dp2[1] * dv1) * inv,
+                                (dp1[2] * dv2 - dp2[2] * dv1) * inv,
+                            ]);
+                            let b = normalize3([
+                                (dp2[0] * du1 - dp1[0] * du2) * inv,
+                                (dp2[1] * du1 - dp1[1] * du2) * inv,
+                                (dp2[2] * du1 - dp1[2] * du2) * inv,
+                            ]);
+                            (t, b)
+                        } else {
+                            let ref_up = if face_n[1].abs() < 0.9 {
+                                [0.0, 1.0, 0.0]
+                            } else {
+                                [1.0, 0.0, 0.0]
+                            };
+                            let t = normalize3(cross3(ref_up, face_n));
+                            let b = normalize3(cross3(face_n, t));
+                            (t, b)
+                        }
+                    } else {
+                        ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+                    };
+
+                    // Per-vertex shading (fast Gouraud path when no per-pixel PBR maps are present)
+                    let (c0, c1, c2) = if !has_pbr_maps {
+                        (
+                            shade_pbr(
+                                ctri[0].world_pos,
+                                ctri[0].world_norm,
+                                eye_pos,
+                                mat,
+                                inst_tint,
+                                &scene.lights,
+                            ),
+                            shade_pbr(
+                                ctri[1].world_pos,
+                                ctri[1].world_norm,
+                                eye_pos,
+                                mat,
+                                inst_tint,
+                                &scene.lights,
+                            ),
+                            shade_pbr(
+                                ctri[2].world_pos,
+                                ctri[2].world_norm,
+                                eye_pos,
+                                mat,
+                                inst_tint,
+                                &scene.lights,
+                            ),
+                        )
+                    } else {
+                        ([0; 4], [0; 4], [0; 4])
+                    };
 
                     let inv_area = 1.0 / area;
                     for py in min_y..=max_y {
@@ -1150,36 +1265,132 @@ pub fn render_viewport_rgba(
                                     let b0 = pw0 / psum;
                                     let b1 = pw1 / psum;
                                     let b2 = pw2 / psum;
-                                    let mut rgba = [
-                                        (b0 * c0[0] as f32 + b1 * c1[0] as f32 + b2 * c2[0] as f32)
-                                            .round() as u8,
-                                        (b0 * c0[1] as f32 + b1 * c1[1] as f32 + b2 * c2[1] as f32)
-                                            .round() as u8,
-                                        (b0 * c0[2] as f32 + b1 * c1[2] as f32 + b2 * c2[2] as f32)
-                                            .round() as u8,
-                                        c0[3],
-                                    ];
-                                    if let Some(tex) = tex_opt {
-                                        let texel = if has_uvs {
-                                            let u = b0 * ctri[0].uv[0]
-                                                + b1 * ctri[1].uv[0]
-                                                + b2 * ctri[2].uv[0];
-                                            let v = b0 * ctri[0].uv[1]
-                                                + b1 * ctri[1].uv[1]
-                                                + b2 * ctri[2].uv[1];
-                                            tex.sample_srgb([u, v])
+                                    let u = b0 * ctri[0].uv[0]
+                                        + b1 * ctri[1].uv[0]
+                                        + b2 * ctri[2].uv[0];
+                                    let v = b0 * ctri[0].uv[1]
+                                        + b1 * ctri[1].uv[1]
+                                        + b2 * ctri[2].uv[1];
+                                    let rgba = if has_pbr_maps {
+                                        let wp = [
+                                            b0 * ctri[0].world_pos[0]
+                                                + b1 * ctri[1].world_pos[0]
+                                                + b2 * ctri[2].world_pos[0],
+                                            b0 * ctri[0].world_pos[1]
+                                                + b1 * ctri[1].world_pos[1]
+                                                + b2 * ctri[2].world_pos[1],
+                                            b0 * ctri[0].world_pos[2]
+                                                + b1 * ctri[1].world_pos[2]
+                                                + b2 * ctri[2].world_pos[2],
+                                        ];
+                                        let mut n = normalize3([
+                                            b0 * ctri[0].world_norm[0]
+                                                + b1 * ctri[1].world_norm[0]
+                                                + b2 * ctri[2].world_norm[0],
+                                            b0 * ctri[0].world_norm[1]
+                                                + b1 * ctri[1].world_norm[1]
+                                                + b2 * ctri[2].world_norm[1],
+                                            b0 * ctri[0].world_norm[2]
+                                                + b1 * ctri[1].world_norm[2]
+                                                + b2 * ctri[2].world_norm[2],
+                                        ]);
+                                        if let Some(ref norm_tex) = maps.normal {
+                                            let ns = mat.normal_scale.max(0.0);
+                                            let tn = norm_tex.sample_srgb([u, v]);
+                                            let tx = ((tn[0] as f32 / 255.0) * 2.0 - 1.0) * ns;
+                                            let ty = ((tn[1] as f32 / 255.0) * 2.0 - 1.0) * ns;
+                                            let tz = ((tn[2] as f32 / 255.0) * 2.0 - 1.0).max(0.05);
+                                            n = normalize3([
+                                                tri_t[0] * tx + tri_b[0] * ty + n[0] * tz,
+                                                tri_t[1] * tx + tri_b[1] * ty + n[1] * tz,
+                                                tri_t[2] * tx + tri_b[2] * ty + n[2] * tz,
+                                            ]);
+                                        }
+                                        let (rough_scale, metal_scale) =
+                                            if let Some(ref mr_tex) = maps.metallic_roughness {
+                                                let mr = mr_tex.sample_srgb([u, v]);
+                                                (mr[1] as f32 / 255.0, mr[2] as f32 / 255.0)
+                                            } else {
+                                                (1.0, 1.0)
+                                            };
+                                        let ao_factor = if let Some(ref occ_tex) = maps.occlusion {
+                                            let occ = occ_tex.sample_srgb([u, v]);
+                                            let os = mat.occlusion_strength.clamp(0.0, 1.0);
+                                            1.0 + os * ((occ[0] as f32 / 255.0) - 1.0)
                                         } else {
-                                            tex.avg_srgb
+                                            1.0
                                         };
-                                        rgba[0] =
-                                            ((rgba[0] as u32 * texel[0] as u32 + 127) / 255) as u8;
-                                        rgba[1] =
-                                            ((rgba[1] as u32 * texel[1] as u32 + 127) / 255) as u8;
-                                        rgba[2] =
-                                            ((rgba[2] as u32 * texel[2] as u32 + 127) / 255) as u8;
-                                        rgba[3] =
-                                            ((rgba[3] as u32 * texel[3] as u32 + 127) / 255) as u8;
-                                    }
+                                        let emissive_add = if let Some(ref em_tex) = maps.emissive {
+                                            let em = em_tex.sample_srgb([u, v]);
+                                            [
+                                                mat.emissive_factor[0]
+                                                    * ((em[0] as f32 / 255.0).powf(2.2)),
+                                                mat.emissive_factor[1]
+                                                    * ((em[1] as f32 / 255.0).powf(2.2)),
+                                                mat.emissive_factor[2]
+                                                    * ((em[2] as f32 / 255.0).powf(2.2)),
+                                            ]
+                                        } else {
+                                            mat.emissive_factor
+                                        };
+                                        let base_tex_lin = tex_opt.map(|tex| {
+                                            let ts = tex.sample_srgb([u, v]);
+                                            [
+                                                (ts[0] as f32 / 255.0).powf(2.2),
+                                                (ts[1] as f32 / 255.0).powf(2.2),
+                                                (ts[2] as f32 / 255.0).powf(2.2),
+                                                ts[3] as f32 / 255.0,
+                                            ]
+                                        });
+                                        shade_pbr_ext(
+                                            wp,
+                                            n,
+                                            eye_pos,
+                                            mat,
+                                            base_tex_lin,
+                                            rough_scale,
+                                            metal_scale,
+                                            ao_factor,
+                                            emissive_add,
+                                            inst_tint,
+                                            &scene.lights,
+                                        )
+                                    } else {
+                                        let mut out = [
+                                            (b0 * c0[0] as f32
+                                                + b1 * c1[0] as f32
+                                                + b2 * c2[0] as f32)
+                                                .round()
+                                                as u8,
+                                            (b0 * c0[1] as f32
+                                                + b1 * c1[1] as f32
+                                                + b2 * c2[1] as f32)
+                                                .round()
+                                                as u8,
+                                            (b0 * c0[2] as f32
+                                                + b1 * c1[2] as f32
+                                                + b2 * c2[2] as f32)
+                                                .round()
+                                                as u8,
+                                            c0[3],
+                                        ];
+                                        if let Some(tex) = tex_opt {
+                                            let texel = if has_uvs {
+                                                tex.sample_srgb([u, v])
+                                            } else {
+                                                tex.avg_srgb
+                                            };
+                                            out[0] = ((out[0] as u32 * texel[0] as u32 + 127) / 255)
+                                                as u8;
+                                            out[1] = ((out[1] as u32 * texel[1] as u32 + 127) / 255)
+                                                as u8;
+                                            out[2] = ((out[2] as u32 * texel[2] as u32 + 127) / 255)
+                                                as u8;
+                                            out[3] = ((out[3] as u32 * texel[3] as u32 + 127) / 255)
+                                                as u8;
+                                        }
+                                        out
+                                    };
                                     ss_buf.blend_pixel(px, py, z, rgba);
                                 }
                             }

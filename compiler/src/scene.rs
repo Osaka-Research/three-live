@@ -165,6 +165,20 @@ pub struct Material3D {
     #[serde(default)]
     pub base_color_texture: Option<String>,
     #[serde(default)]
+    pub metallic_roughness_texture: Option<String>,
+    #[serde(default)]
+    pub normal_texture: Option<String>,
+    #[serde(default = "default_one")]
+    pub normal_scale: f32,
+    #[serde(default)]
+    pub emissive_factor: [f32; 3],
+    #[serde(default)]
+    pub emissive_texture: Option<String>,
+    #[serde(default)]
+    pub occlusion_texture: Option<String>,
+    #[serde(default = "default_one")]
+    pub occlusion_strength: f32,
+    #[serde(default)]
     pub clearcoat: f32,
     #[serde(default)]
     pub clearcoat_roughness: f32,
@@ -183,6 +197,10 @@ fn default_ior() -> f32 {
     1.5
 }
 
+fn default_one() -> f32 {
+    1.0
+}
+
 impl Default for Material3D {
     fn default() -> Self {
         Self {
@@ -192,6 +210,13 @@ impl Default for Material3D {
             roughness: 0.5,
             double_sided: true,
             base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            normal_scale: default_one(),
+            emissive_factor: [0.0, 0.0, 0.0],
+            emissive_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: default_one(),
             clearcoat: 0.0,
             clearcoat_roughness: 0.0,
             transmission: 0.0,

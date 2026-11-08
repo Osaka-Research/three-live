@@ -3597,6 +3597,153 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
   }
   Object.freeze(SimplexNoise.prototype);
 
+  // =========================================================================
+  // PBR Channel Packing (`roughnessMap` + `metalnessMap` -> ORM, `bumpMap` -> normal)
+  // =========================================================================
+
+  interface RawPbrPixels {
+    buf: ArrayLike<number>;
+    w: number;
+    h: number;
+    ch: number;
+    isFloat: boolean;
+    flipY: boolean;
+  }
+
+  const getPbrTexPixels = (t: unknown): RawPbrPixels | null => {
+    if (!t || typeof t !== 'object') return null;
+    // tslint:disable-next-line:no-any Heterogeneous DataTexture / CanvasTexture / VirtualCanvas.
+    const tx = t as Record<string, any>;
+    const img = tx.image;
+    const vc = extractPixelsFromSource(img ?? tx);
+    if (vc && img?._vc) {
+      return {
+        buf: vc.data,
+        w: vc.width,
+        h: vc.height,
+        ch: 4,
+        isFloat: false,
+        flipY: Boolean(tx.flipY),
+      };
+    }
+    const buf = img?.data;
+    const w = Number(img?.width ?? tx.width) | 0;
+    const h = Number(img?.height ?? tx.height) | 0;
+    if (!buf || !(w > 0 && h > 0) || !buf.length) return null;
+    const n = w * h;
+    const f = tx.format;
+    const ch =
+      f === 1021 || f === 1024 || f === 1028 || buf.length === n
+        ? 1
+        : f === 1025 || f === 1030 || buf.length === n * 2
+          ? 2
+          : f === 1022 || buf.length === n * 3
+            ? 3
+            : 4;
+    return {
+      buf,
+      w,
+      h,
+      ch,
+      isFloat:
+        tx.type === 1015 ||
+        tx.type === 1016 ||
+        buf instanceof Float32Array ||
+        buf instanceof Float64Array,
+      flipY: Boolean(tx.flipY),
+    };
+  };
+
+  const samplePbrByte = (
+    px: RawPbrPixels,
+    u: number,
+    v: number,
+    comp: number,
+  ): number => {
+    const x = Math.min(px.w - 1, Math.max(0, (u * px.w) | 0));
+    const row = Math.min(px.h - 1, Math.max(0, (v * px.h) | 0));
+    const y = px.flipY ? px.h - 1 - row : row;
+    const raw = Number(
+      px.buf[(y * px.w + x) * px.ch + Math.min(comp, px.ch - 1)] ?? 0,
+    );
+    if (!Number.isFinite(raw)) return 0;
+    const b = px.isFloat && raw <= 1 ? raw * 255 : raw;
+    return b > 0 ? (b < 255 ? (b + 0.5) | 0 : 255) : 0;
+  };
+
+  const matProto =
+    threeNs.MeshStandardMaterial?.prototype &&
+    (Object.getPrototypeOf(threeNs.MeshStandardMaterial.prototype) ||
+      threeNs.MeshStandardMaterial.prototype);
+  if (matProto && typeof matProto._packPbr !== 'function') {
+    // tslint:disable-next-line:no-any Bound to Material instance.
+    matProto._packPbr = function (this: any): {
+      mrUri?: string;
+      normUri?: string;
+      normScale?: number;
+    } {
+      let mrUri: string | undefined;
+      if (
+        (this.roughnessMap || this.metalnessMap) &&
+        this.roughnessMap !== this.metalnessMap
+      ) {
+        const pr = getPbrTexPixels(this.roughnessMap);
+        const pm = getPbrTexPixels(this.metalnessMap);
+        if (pr || pm) {
+          const w = Math.min(128, Math.max(pr?.w ?? 1, pm?.w ?? 1));
+          const h = Math.min(128, Math.max(pr?.h ?? 1, pm?.h ?? 1));
+          const out = new Uint8ClampedArray(w * h * 4);
+          for (let y = 0; y < h; y++) {
+            const v = (y + 0.5) / h;
+            for (let x = 0; x < w; x++) {
+              const u = (x + 0.5) / w;
+              const o = (y * w + x) * 4;
+              out[o] = 255;
+              out[o + 1] = pr ? samplePbrByte(pr, u, v, 1) : 255;
+              out[o + 2] = pm ? samplePbrByte(pm, u, v, 2) : 255;
+              out[o + 3] = 255;
+            }
+          }
+          mrUri = encodeRgbaToPngDataUri(out, w, h, false, true, 128).uri;
+        }
+      }
+
+      let normUri: string | undefined;
+      let normScale: number | undefined;
+      if (!this.normalMap && this.bumpMap) {
+        const pb = getPbrTexPixels(this.bumpMap);
+        if (pb) {
+          const bs = Number.isFinite(this.bumpScale) ? this.bumpScale : 1;
+          const w = Math.min(128, pb.w);
+          const h = Math.min(128, pb.h);
+          const out = new Uint8ClampedArray(w * h * 4);
+          const hAt = (ix: number, iy: number): number =>
+            samplePbrByte(
+              pb,
+              ((((ix % w) + w) % w) + 0.5) / w,
+              ((((iy % h) + h) % h) + 0.5) / h,
+              0,
+            ) / 255;
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              const dx = (hAt(x + 1, y) - hAt(x - 1, y)) * bs * 2;
+              const dy = (hAt(x, y + 1) - hAt(x, y - 1)) * bs * 2;
+              const inv = 1 / Math.hypot(dx, dy, 1);
+              const o = (y * w + x) * 4;
+              out[o] = ((-dx * inv * 0.5 + 0.5) * 255 + 0.5) | 0;
+              out[o + 1] = ((dy * inv * 0.5 + 0.5) * 255 + 0.5) | 0;
+              out[o + 2] = ((inv * 0.5 + 0.5) * 255 + 0.5) | 0;
+              out[o + 3] = 255;
+            }
+          }
+          normUri = encodeRgbaToPngDataUri(out, w, h, false, true, 128).uri;
+          normScale = 1;
+        }
+      }
+      return {mrUri, normUri, normScale};
+    };
+  }
+
   const exportsMap = {
     Box3,
     Sphere,
