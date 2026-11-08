@@ -37,8 +37,8 @@ Full 3D viewer + studio + CAD/CSG/Text + procedural + animation + IK            
 6DoF WebXR + spatial traits (`grab`, `scale`, `billboard`, `anchor`) + `<div slot="spatial">`             | `<xr-live>`    | `xr-live.min.js`               | `< 84 KB gz`
 Add-on: hardware XR depth occlusion, heightfield physics, 25-joint hands, simulator, WebMCP               | `<xr-live>`    | `xr-live-sensors.min.js`       | `< 10 KB gz`
 Add-on bundle with all 15 modular `<xr-live>` spatial UX, world, splat, audio & AI plugins                | `<xr-live>`    | `xr-live-spatial.min.js`       | `< 63 KB gz`
-Add-on bundle with the 6 simulation plugins (character, agents, rigid-body, hit zones, objectives, audio) | `<xr-live>`    | `xr-live-sim.min.js`           | `< 26 KB gz`
-Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim plugins                  | `<xr-live>`    | `xr-live-full.min.js`          | `< 236 KB gz`
+Add-on bundle with the 6 simulation plugins (character, agents, rigid-body/joints, hit zones, objectives, audio) | `<xr-live>`    | `xr-live-sim.min.js`           | `< 30 KB gz`
+Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim plugins                  | `<xr-live>`    | `xr-live-full.min.js`          | `< 239 KB gz`
 
 ---
 
@@ -57,6 +57,7 @@ Full Spatial Computing + Depth Physics + 25-Joint Hands + all 15 spatial + 6 sim
       follow: { mode: 'head', lazy: true, distance: 1.2, deadzoneDeg: 15, stiffness: 6 },
       anchor: { target: 'table', id: 'turbine-1', persist: true }, // string or { target?, id?, persist? }
       physics: { body: 'dynamic', shape: 'box', mass: 1.5, restitution: 0.5, friction: 0.6 }, // 'dynamic' | 'static' | 'kinematic' or PhysicsBodyOptions (also userData.xr.rigidBody)
+      joint: { type: 'hinge', target: 'DoorFrame', anchor: [-0.4, 0, 0], axis: 'y', limits: [-90, 90], stiffness: 0, damping: 0.5 }, // 'hinge' | 'slider' | 'spring' | 'ball'
       orbit: { target: [0, 1, -1], radius: 0.4, speed: 0.8, height: 0.1, faceCenter: true },
       handles: { rotateAxis: 'y', minScale: 0.2, maxScale: 4.0 },
       dimensions: { unit: 'cm', axes: ['x', 'y', 'z'], color: '#38bdf8', showOnSelect: false },

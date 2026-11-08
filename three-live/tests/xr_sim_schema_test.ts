@@ -23,6 +23,7 @@ import THREE from '../src/three-author';
 import {generateUSDA, sceneToCanvas3D} from '../src/three-convert';
 import {
   AGENT_TARGET_USER,
+  JOINT_TYPES,
   MAX_AGENT_WAYPOINTS,
   MAX_SPAWNER_ACTIVE,
   MAX_ZONE_WATCH_GROUPS,
@@ -30,6 +31,7 @@ import {
   parseAudioCues,
   parseCharacter,
   parseIntegrity,
+  parseJoint,
   parseObjective,
   parsePhysicsBody,
   parseRigidBody,
@@ -443,6 +445,7 @@ function testNormalizeAndExtensions() {
     audioCues: {onTap: 'confirm'},
     collidable: true,
     rigidBody: {body: 'dynamic', shape: 'sphere', mass: 2.5, restitution: 0.8},
+    joint: {type: 'hinge', anchor: [0.2, 0, 0], limits: [-30, 60]},
   })!;
   assert(
     !!n.character &&
@@ -453,8 +456,13 @@ function testNormalizeAndExtensions() {
       !!n.objective &&
       !!n.audioCues &&
       n.collidable === true &&
-      n.rigidBody?.mass === 2.5,
+      n.rigidBody?.mass === 2.5 &&
+      n.joint?.type === 'hinge',
     'all sim traits normalized',
+  );
+  assert(
+    normalizeXRTraits({constraint: 'ball'})?.joint?.type === 'ball',
+    'constraint synonym normalized to joint',
   );
   const physObj = normalizeXRTraits({
     physics: {body: 'dynamic', mass: 4, restitution: 0.6},
@@ -569,12 +577,66 @@ function testExportPipelines() {
   };
   scene.add(drone);
 
+  const door = new THREE.Mesh(
+    new THREE.BoxGeometry(0.8, 2.0, 0.06),
+    new THREE.MeshStandardMaterial(),
+  );
+  door.name = 'Door';
+  door.userData.xr = {
+    joint: {
+      type: 'hinge',
+      anchor: [-0.4, 0, 0],
+      axis: 'y',
+      limits: [-10, 95],
+      motorSpeed: 1.5,
+    },
+  };
+  scene.add(door);
+  const drawer = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.2, 0.5),
+    new THREE.MeshStandardMaterial(),
+  );
+  drawer.name = 'Drawer';
+  drawer.userData.xr = {
+    joint: {type: 'slider', axis: 'z', limits: [0, 0.45]},
+  };
+  scene.add(drawer);
+  const bob = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15),
+    new THREE.MeshStandardMaterial(),
+  );
+  bob.name = 'SpringBob';
+  bob.userData.xr = {
+    joint: {
+      type: 'spring',
+      target: 'Hero',
+      restLength: 0.6,
+      limits: [0.2, 1.2],
+    },
+  };
+  scene.add(bob);
+  const lamp = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12),
+    new THREE.MeshStandardMaterial(),
+  );
+  lamp.name = 'PendantLamp';
+  lamp.userData.xr = {
+    joint: {type: 'ball', anchor: [0, 0.5, 0], limits: [-35, 35]},
+  };
+  scene.add(lamp);
+
   const {gltf} = sceneToCanvas3D(scene);
   // tslint:disable-next-line:no-any glTF node JSON.
   const nodes = (gltf.nodes ?? []) as any[];
   const heroNode = nodes.find((x) => x.name === 'Hero');
   const droneNode = nodes.find((x) => x.name === 'Drone');
-  assert(!!heroNode && !!droneNode, 'nodes exported');
+  const doorNode = nodes.find((x) => x.name === 'Door');
+  assert(!!heroNode && !!droneNode && !!doorNode, 'nodes exported');
+  assert(
+    doorNode?.extras?.xr?.joint?.type === 'hinge' &&
+      doorNode?.extensions?.ANDROID_xr_scenecore?.joint?.limits?.[1] === 95,
+    'glTF extras + ANDROID_xr_scenecore carry joint',
+  );
   assert(
     heroNode?.extras?.xr?.character?.speed === 20,
     'glTF extras carry clamped character',
@@ -619,6 +681,119 @@ function testExportPipelines() {
   assert(
     usda.includes('float physics:mass = 3.5'),
     'USDA physics:mass attribute',
+  );
+  assert(
+    usda.includes('def PhysicsRevoluteJoint "Joint"') &&
+      usda.includes('float physics:lowerLimit = -10') &&
+      usda.includes('float physics:upperLimit = 95'),
+    'USDA PhysicsRevoluteJoint emitted with limits',
+  );
+  assert(
+    usda.includes('def PhysicsPrismaticJoint "Joint"') &&
+      usda.includes('uniform token physics:axis = "Z"'),
+    'USDA PhysicsPrismaticJoint emitted',
+  );
+  assert(
+    usda.includes('def PhysicsDistanceJoint "Joint"') &&
+      usda.includes('float physics:minDistance = 0.2') &&
+      usda.includes('float physics:maxDistance = 1.2'),
+    'USDA PhysicsDistanceJoint emitted',
+  );
+  assert(
+    usda.includes('def PhysicsSphericalJoint "Joint"') &&
+      usda.includes('float physics:coneAngle0Limit = 35'),
+    'USDA PhysicsSphericalJoint emitted',
+  );
+}
+
+function testJoint() {
+  console.log('\n🔩 joint');
+  assert(JOINT_TYPES.join() === 'hinge,slider,spring,ball', 'JOINT_TYPES');
+  assert(parseJoint(undefined) === null, 'absent → null');
+  assert(parseJoint(false) === null, 'false → null');
+  assert(parseJoint('none') === null, 'none → null');
+  assert(parseJoint('unknown') === null, 'unknown type → null');
+  assert(parseJoint({enabled: false}) === null, 'enabled:false → null');
+
+  const d = parseJoint(true)!;
+  assert(
+    d.type === 'hinge' &&
+      d.target === '' &&
+      d.anchor.join() === '0,0,0' &&
+      d.axis.join() === '0,1,0' &&
+      d.limits === null &&
+      d.stiffness === 0 &&
+      d.damping === 0.5 &&
+      d.restLength === 0 &&
+      d.motorSpeed === 0 &&
+      d.motorMaxForce === 0,
+    'true → hinge defaults',
+  );
+
+  assert(parseJoint('revolute')!.type === 'hinge', 'revolute → hinge');
+  assert(
+    parseJoint('prismatic')!.type === 'slider' &&
+      parseJoint('slider')!.axis.join() === '0,0,1',
+    'prismatic → slider with +Z default axis',
+  );
+  const sp = parseJoint('distance')!;
+  assert(
+    sp.type === 'spring' &&
+      sp.axis.join() === '0,-1,0' &&
+      sp.stiffness === 40 &&
+      sp.damping === 4,
+    'distance → spring with -Y default axis and spring k=40/c=4',
+  );
+  assert(parseJoint('spherical')!.type === 'ball', 'spherical → ball');
+
+  const custom = parseJoint({
+    kind: 'hinge',
+    connectedBody: 'FrameNode',
+    pivot: [0.5, 0, -0.25],
+    axis: '-x',
+    limits: [90, -45],
+    motorSpeed: 3,
+  })!;
+  assert(custom.target === 'FrameNode', 'connectedBody alias');
+  assert(custom.anchor.join() === '0.5,0,-0.25', 'pivot alias');
+  assert(custom.axis.join() === '-1,0,0', 'axis shorthand -x');
+  assert(
+    custom.limits?.[0] === -45 && custom.limits?.[1] === 90,
+    'reversed limits sorted to [-45, 90]',
+  );
+  assert(
+    custom.motorSpeed === 3 && custom.motorMaxForce === 50,
+    'nonzero motorSpeed defaults motorMaxForce to 50',
+  );
+
+  const vecAxis = parseJoint({
+    type: 'slider',
+    target: ' WORLD ',
+    axis: [3, 4, 0],
+    limits: [-200, 10],
+  })!;
+  assert(vecAxis.target === '', '"world" target normalized to empty string');
+  assert(
+    Math.abs(vecAxis.axis[0] - 0.6) < 1e-6 &&
+      Math.abs(vecAxis.axis[1] - 0.8) < 1e-6,
+    'non-unit axis vector normalized',
+  );
+  assert(
+    vecAxis.limits?.[0] === -100 && vecAxis.limits?.[1] === 10,
+    'slider limits clamped to [-100, 100]',
+  );
+
+  const zeroAxis = parseJoint({
+    type: 'spring',
+    target: '__proto__',
+    axis: [0, 0, 0],
+    limits: [-5, 2],
+  })!;
+  assert(zeroAxis.target === '', 'forbidden target sanitized to empty');
+  assert(zeroAxis.axis.join() === '0,-1,0', 'zero-length axis falls back');
+  assert(
+    zeroAxis.limits?.[0] === 0 && zeroAxis.limits?.[1] === 2,
+    'spring lower limit clamped >= 0',
   );
 }
 
@@ -732,6 +907,43 @@ function testValidateXRTraits() {
     ),
     'TL201 suggests audioCues when audio has event keys without src',
   );
+
+  const jointDiags = validateXRTraits(
+    {
+      constraint: 'hinge',
+      joint: {
+        type: 'hinge',
+        target: '__proto__',
+        stiffness: 99999,
+        limits: [-500, 500],
+      },
+    },
+    'DoorNode',
+  );
+  assert(
+    jointDiags.some(
+      (d) => d.code === 'TL201' && d.message.includes('constraint'),
+    ),
+    'TL201 flags constraint synonym -> joint',
+  );
+  assert(
+    jointDiags.some(
+      (d) => d.code === 'TL202' && d.message.includes('joint.stiffness'),
+    ),
+    'TL202 flags out-of-range joint.stiffness',
+  );
+  assert(
+    jointDiags.some(
+      (d) => d.code === 'TL202' && d.message.includes('joint.limits'),
+    ),
+    'TL202 flags out-of-range joint.limits',
+  );
+  assert(
+    jointDiags.some(
+      (d) => d.code === 'TL203' && d.message.includes('joint.target'),
+    ),
+    'TL203 flags unsafe __proto__ joint.target',
+  );
 }
 
 function run() {
@@ -745,6 +957,7 @@ function run() {
   testObjective();
   testAudioCues();
   testRigidBody();
+  testJoint();
   testNormalizeAndExtensions();
   testExportPipelines();
   testValidateXRTraits();

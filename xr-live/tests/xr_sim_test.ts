@@ -1185,6 +1185,202 @@ function testRigidBodyPhysics() {
   );
 }
 
+function testMechanicalJoints() {
+  console.log('\n🔩 mechanical joints (hinge, slider, spring, ball)');
+  assert(
+    sim.JOINT_TYPES.join() === 'hinge,slider,spring,ball' &&
+      typeof sim.parseJoint === 'function',
+    'JOINT_TYPES + parseJoint re-exported from xr-live/sim',
+  );
+
+  const h = makeHarness([
+    {
+      name: 'DoorY',
+      translation: [0, 1, 0],
+      cube: 0.2,
+      xr: {
+        joint: {
+          type: 'hinge',
+          anchor: [-0.5, 0, 0],
+          axis: 'y',
+          limits: [-30, 45],
+          motorSpeed: 4,
+          motorMaxForce: 100,
+        },
+      },
+    },
+    {
+      name: 'FlapX',
+      translation: [2, 1, 0],
+      cube: 0.2,
+      xr: {
+        joint: {
+          type: 'hinge',
+          anchor: [0, 0.3, 0],
+          axis: 'x',
+          limits: [-60, 60],
+          motorSpeed: 3,
+          motorMaxForce: 80,
+        },
+      },
+    },
+    {
+      name: 'SliderDrawer',
+      translation: [-2, 1, 0],
+      cube: 0.2,
+      xr: {
+        joint: {
+          type: 'slider',
+          axis: 'x',
+          limits: [-0.2, 0.35],
+          motorSpeed: 2,
+          motorMaxForce: 80,
+        },
+      },
+    },
+    {
+      name: 'SpringWeight',
+      translation: [0, 2, -2],
+      cube: 0.15,
+      xr: {
+        rigidBody: {body: 'dynamic', mass: 1, gravityScale: 1},
+        joint: {
+          type: 'spring',
+          anchor: [0, 0.6, 0],
+          restLength: 0.6,
+          stiffness: 80,
+          damping: 12,
+        },
+      },
+    },
+    {
+      name: 'StiffSpring',
+      translation: [2, 2, -2],
+      cube: 0.15,
+      xr: {
+        rigidBody: {body: 'dynamic', mass: 0.2, gravityScale: 1},
+        joint: {
+          type: 'spring',
+          anchor: [0, 0.5, 0],
+          restLength: 0.3,
+          stiffness: 10000,
+          damping: 100,
+        },
+      },
+    },
+    {
+      name: 'TwinA',
+      translation: [-2, 2, 2],
+      cube: 0.15,
+      xr: {rigidBody: {body: 'dynamic', mass: 1, gravityScale: 0}},
+    },
+    {
+      name: 'TwinB',
+      translation: [-0.8, 2, 2],
+      cube: 0.15,
+      xr: {
+        rigidBody: {body: 'dynamic', mass: 1, gravityScale: 0},
+        joint: {
+          type: 'spring',
+          target: 'TwinA',
+          restLength: 0.4,
+          stiffness: 60,
+          damping: 8,
+        },
+      },
+    },
+    {
+      name: 'BallBob',
+      translation: [2.35, 1.5, 2],
+      cube: 0.15,
+      xr: {
+        joint: {
+          type: 'ball',
+          anchor: [-0.35, 0.5, 0],
+          limits: [-25, 25],
+          damping: 2,
+        },
+      },
+    },
+    {
+      name: 'SelfJoint',
+      translation: [4, 1, 0],
+      cube: 0.15,
+      xr: {
+        joint: {type: 'spring', target: 'SelfJoint', stiffness: 100},
+      },
+    },
+  ]);
+
+  const doorY = h.body('DoorY');
+  const flapX = h.body('FlapX');
+  const slider = h.body('SliderDrawer');
+  const springW = h.body('SpringWeight');
+  const stiff = h.body('StiffSpring');
+  const twinA = h.body('TwinA');
+  const twinB = h.body('TwinB');
+  const ballBob = h.body('BallBob');
+  const selfJoint = h.body('SelfJoint');
+
+  h.run(1.2);
+
+  const maxRad45 = (45 * Math.PI) / 180;
+  assert(
+    near(doorY.yaw, maxRad45, 0.02),
+    `Y-axis motorized hinge reaches +45° limit (yaw=${doorY.yaw.toFixed(3)})`,
+  );
+  assert(
+    Math.abs(flapX.rot[0]) > 0.25 && Number.isFinite(flapX.rot[3]),
+    `X-axis hinge updates body.rot quaternion (${flapX.rot.map((v) => v.toFixed(3)).join(',')})`,
+  );
+  assert(
+    near(slider.pos[0], -2 + 0.35, 0.02) && near(slider.pos[1], 1, 1e-4),
+    `slider motor translates along +X and clamps at +0.35m (x=${slider.pos[0].toFixed(3)})`,
+  );
+  assert(
+    springW.pos[1] < 2.0 && springW.pos[1] > 1.5 && Number.isFinite(springW.pos[1]),
+    `spring weight sags under gravity and settles (y=${springW.pos[1].toFixed(3)})`,
+  );
+  assert(
+    stiff.pos.every(Number.isFinite) &&
+      Math.abs(stiff.pos[1] - 2.2) < 0.1,
+    `L-stable stiff spring (k=10000) stays finite without blowup (y=${stiff.pos[1].toFixed(3)})`,
+  );
+  assert(
+    twinA.pos[0] > -2.0 + 0.15 &&
+      twinB.pos[0] < -0.8 - 0.15 &&
+      near(twinA.pos[0] + twinB.pos[0], -2.8, 0.02),
+    `two-body spring pulls TwinA (${twinA.pos[0].toFixed(3)}) & TwinB (${twinB.pos[0].toFixed(3)}) symmetrically`,
+  );
+  assert(
+    ballBob.pos[0] < 2.35 && Number.isFinite(ballBob.pos[1]),
+    `ball pendulum swings inward under gravity (x=${ballBob.pos[0].toFixed(3)})`,
+  );
+  assert(
+    selfJoint.pos.every(Number.isFinite),
+    'self-targeting joint safely anchors to world without NaN',
+  );
+
+  // Impulse on a joint-only body (no rigidBody trait) wakes and moves it.
+  assert(
+    sim.applyRigidBodyImpulse(h.world, slider, [-8, 0, 0]),
+    'applyRigidBodyImpulse accepts joint-only body',
+  );
+  h.run(0.15);
+  assert(
+    slider.pos[0] < -1.66,
+    `impulse drives slider backward within limits (x=${slider.pos[0].toFixed(3)})`,
+  );
+
+  resetSimScenario(h.viewer);
+  assert(
+    doorY.yaw === 0 &&
+      flapX.rot.join() === '0,0,0,1' &&
+      slider.pos.join() === '-2,1,0',
+    'resetSimScenario restores pos, yaw, and rot quaternion',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Cross-platform parity (testdata/golden/sim_scene.json)
 // ---------------------------------------------------------------------------
@@ -1521,6 +1717,7 @@ function run() {
   testAudio();
   testBundleExports();
   testRigidBodyPhysics();
+  testMechanicalJoints();
   testGoldenParity();
   console.log(
     `\n🏆 xr-live-sim Test Results: ${passed} Passed, ${failed} Failed.`,

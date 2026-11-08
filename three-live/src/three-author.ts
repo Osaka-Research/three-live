@@ -5834,6 +5834,21 @@ if (typeof ENABLE_SERVER_EXTRACT !== 'undefined' && ENABLE_SERVER_EXTRACT) {
             checkTargetNode('ik.pole', poleRef);
           }
         }
+        const rawJoint = parsedXR.joint ?? parsedXR.constraint;
+        if (
+          rawJoint &&
+          typeof rawJoint === 'object' &&
+          rawJoint.enabled !== false
+        ) {
+          const jt =
+            rawJoint.target ?? rawJoint.connectedBody ?? rawJoint.parent;
+          if (
+            typeof jt === 'string' &&
+            jt.trim().toLowerCase() !== 'world'
+          ) {
+            checkTargetNode('joint.target', jt);
+          }
+        }
       }
 
       if (inter && typeof inter === 'object') {

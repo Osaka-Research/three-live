@@ -33,6 +33,7 @@ import type {
   AudioCueOptions,
   CharacterOptions,
   IntegrityOptions,
+  JointOptions,
   ObjectiveOptions,
   PhysicsBodyOptions,
   SpawnerOptions,
@@ -1217,6 +1218,7 @@ export interface NormalizedXRTraits {
   audioCues?: AudioCueOptions;
   audioEmitter?: AudioEmitterOptions;
   rigidBody?: PhysicsBodyOptions;
+  joint?: JointOptions;
   /** Static obstacle for `character-controller` and `steering-agents`. */
   collidable?: true;
 }
@@ -1246,6 +1248,8 @@ export interface XRTraitExtension {
     put: (prefix: string, obj: object) => void,
     out: Record<string, UsdCustomValue>,
   ): void;
+  /** Emits optional nested USD child prim definitions inside the node body. */
+  usdPrims?(n: NormalizedXRTraits): string;
 }
 
 // Module-scoped (not on the shared global registry) so untrusted scene scripts
@@ -1735,10 +1739,17 @@ export function buildUsdXRLines(
   return lines;
 }
 
+/** Builds optional nested USD child prims (e.g. `PhysicsRevoluteJoint`) for normalized traits. */
+export const buildUsdXRPrims = (rawXR: unknown): string => {
+  const n = normalizeXRTraits(rawXR);
+  return n ? XR_TRAIT_EXTENSIONS.map((e) => e.usdPrims?.(n) ?? '').join('') : '';
+};
+
 /** Serializer hooks consulted by `three-convert.ts` when registered. */
 export interface XRTraitSerializer {
   gltfNode: typeof upgradeGltfNodeXR;
   usdLines: typeof buildUsdXRLines;
+  usdPrims?: typeof buildUsdXRPrims;
 }
 
 /**
@@ -1754,6 +1765,7 @@ export function registerXRTraitSerializer(): void {
       value: Object.freeze({
         gltfNode: upgradeGltfNodeXR,
         usdLines: buildUsdXRLines,
+        usdPrims: buildUsdXRPrims,
       }),
       writable: false,
       configurable: false,
@@ -1813,6 +1825,7 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
   'objective',
   'audioCues',
   'rigidBody',
+  'joint',
   'collidable',
   'traits',
   'schemaVersion',
@@ -1821,6 +1834,10 @@ const CANONICAL_XR_KEYS: ReadonlySet<string> = new Set([
 const XR_KEY_SYNONYMS: Readonly<
   Record<string, {target: string; hint: string}>
 > = {
+  constraint: {
+    target: 'joint',
+    hint: "Use 'joint: { type: \"hinge\" | \"slider\" | \"spring\" | \"ball\" }' instead of 'constraint'.",
+  },
   rigidbody: {
     target: 'rigidBody',
     hint: "Use 'rigidBody: { body: \"dynamic\", mass: 1, restitution: 0.35 }' or 'physics' instead of 'rigidbody'.",
@@ -2550,6 +2567,22 @@ export function validateXRTraits(
     checkRange('rigidBody.angularDamping', physObj['angularDamping'], 0, 20);
     checkRange('rigidBody.gravityScale', physObj['gravityScale'], -5, 5);
   }
+  const jointObj = asRecord(r['joint'] ?? r['constraint']);
+  if (jointObj && jointObj['enabled'] !== false) {
+    checkRange('joint.stiffness', jointObj['stiffness'], 0, 10000);
+    checkRange('joint.damping', jointObj['damping'], 0, 1000);
+    checkRange('joint.restLength', jointObj['restLength'], 0, 100);
+    checkRange('joint.motorSpeed', jointObj['motorSpeed'], -100, 100);
+    checkRange('joint.motorMaxForce', jointObj['motorMaxForce'], 0, 10000);
+    const jt = String(jointObj['type'] ?? 'hinge').toLowerCase();
+    const isAng = jt === 'hinge' || jt === 'revolute' || jt === 'ball' || jt === 'spherical';
+    const limLo = isAng ? -360 : jt === 'spring' || jt === 'distance' ? 0 : -100;
+    const limHi = isAng ? 360 : 100;
+    if (Array.isArray(jointObj['limits'])) {
+      checkRange('joint.limits[0]', jointObj['limits'][0], limLo, limHi);
+      checkRange('joint.limits[1]', jointObj['limits'][1], limLo, limHi);
+    }
+  }
 
   // Security checks (TL203)
   const checkUrl = (field: string, val: unknown): void => {
@@ -2667,6 +2700,13 @@ export function validateXRTraits(
     const rawPole = ikObj['pole'] ?? ikObj['poleTarget'];
     if (rawPole !== undefined && !Array.isArray(rawPole)) {
       checkAnchorIdField('ik.pole', rawPole);
+    }
+  }
+  if (jointObj && jointObj['enabled'] !== false) {
+    const jtRef =
+      jointObj['target'] ?? jointObj['connectedBody'] ?? jointObj['parent'];
+    if (jtRef !== undefined && jtRef !== null && jtRef !== '') {
+      checkAnchorIdField('joint.target', jtRef);
     }
   }
 

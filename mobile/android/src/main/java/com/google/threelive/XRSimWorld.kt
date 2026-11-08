@@ -75,6 +75,7 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
   ) {
     var pos: DoubleArray = initPos.copyOf()
     var yaw: Double = 0.0
+    var rot: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0, 1.0)
     var vel: DoubleArray = DoubleArray(3)
     var hidden: Boolean = false
     var isTemplate: Boolean = false
@@ -403,6 +404,7 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
       }
       b.pos = b.initPos.copyOf()
       b.yaw = 0.0
+      b.rot = doubleArrayOf(0.0, 0.0, 0.0, 1.0)
       b.vel = DoubleArray(3)
       b.hidden = b.isTemplate
       b.integrity = b.traits.integrity?.current ?: 0.0
@@ -490,20 +492,31 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
     for (b in bodies) {
       val visible = !b.hidden && !b.viewHidden
       val last = b.lastWritten
+      val rotIdentity = b.rot[0] == 0.0 && b.rot[1] == 0.0 && b.rot[2] == 0.0 && b.rot[3] == 1.0
       val moved =
         last == null ||
           last[0] != b.pos[0] ||
           last[1] != b.pos[1] ||
           last[2] != b.pos[2] ||
-          last[3] != b.yaw
+          last[3] != b.yaw ||
+          last[4] != b.rot[0] ||
+          last[5] != b.rot[1] ||
+          last[6] != b.rot[2] ||
+          last[7] != b.rot[3]
       if (b.isInstance) {
         if (moved || b.lastVisible != visible) {
-          XRSpatialMath.quatMultiply(XRSpatialMath.quatFromYaw(b.yaw, q2), b.initQuat, q)
+          val qJoint =
+            if (rotIdentity) XRSpatialMath.quatFromYaw(b.yaw, q2)
+            else XRSpatialMath.quatMultiply(b.rot, XRSpatialMath.quatFromYaw(b.yaw, q2))
+          XRSpatialMath.quatMultiply(qJoint, b.initQuat, q)
           listener?.onInstancePose(b.name, b.nodeIndex, b.pos.copyOf(), q.copyOf(), visible)
         }
       } else {
         if (moved && last != null) {
-          XRSpatialMath.quatMultiply(XRSpatialMath.quatFromYaw(b.yaw, q2), b.initQuat, q)
+          val qJoint =
+            if (rotIdentity) XRSpatialMath.quatFromYaw(b.yaw, q2)
+            else XRSpatialMath.quatMultiply(b.rot, XRSpatialMath.quatFromYaw(b.yaw, q2))
+          XRSpatialMath.quatMultiply(qJoint, b.initQuat, q)
           if (rootIdentity) {
             session.setNodeWorldPose(b.nodeIndex, b.pos, q)
           } else {
@@ -515,7 +528,17 @@ class XRSimWorld(val session: XRLiveRuntimeSession, gltfJson: String) {
         }
         if (b.lastVisible != visible) session.setNodeVisible(b.nodeIndex, visible)
       }
-      b.lastWritten = doubleArrayOf(b.pos[0], b.pos[1], b.pos[2], b.yaw)
+      b.lastWritten =
+        doubleArrayOf(
+          b.pos[0],
+          b.pos[1],
+          b.pos[2],
+          b.yaw,
+          b.rot[0],
+          b.rot[1],
+          b.rot[2],
+          b.rot[3],
+        )
       b.lastVisible = visible
     }
   }

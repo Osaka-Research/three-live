@@ -647,4 +647,106 @@ class XRSimWorldTest {
       assertNear(sceneFile, expected, actual)
     }
   }
+
+  @Test
+  fun mechanicalJointsArticulateClampAndReset() {
+    assertNull(XRSimTraits.parseJoint(null))
+    assertNull(XRSimTraits.parseJoint(false))
+    assertNull(XRSimTraits.parseJoint("none"))
+    assertNull(XRSimTraits.parseJoint("unknown"))
+    assertEquals("hinge", XRSimTraits.parseJoint(true)!!.type)
+    assertEquals("hinge", XRSimTraits.parseJoint("revolute")!!.type)
+    assertEquals("slider", XRSimTraits.parseJoint("prismatic")!!.type)
+    assertEquals("spring", XRSimTraits.parseJoint("distance")!!.type)
+    assertEquals("ball", XRSimTraits.parseJoint("spherical")!!.type)
+
+    val parsed =
+      XRSimTraits.parseJoint(
+        MiniJson.parseObjectOrNull(
+          """{"kind":"hinge","connectedBody":"WORLD","pivot":[0.5,0,-0.25],"axis":"-x","limits":[90,-45],"motorSpeed":3}"""
+        )
+      )!!
+    assertEquals("", parsed.target)
+    assertArrayEquals(doubleArrayOf(-1.0, 0.0, 0.0), parsed.axis, 1e-9)
+    assertArrayEquals(doubleArrayOf(-45.0, 90.0), parsed.limits!!, 1e-9)
+    assertEquals(50.0, parsed.motorMaxForce, 1e-9)
+
+    val json =
+      gltf(
+        node(
+          "DoorY",
+          t = listOf(0.0, 1.0, 0.0),
+          cube = 0.2,
+          xr =
+            """{"joint":{"type":"hinge","anchor":[-0.5,0,0],"axis":"y","limits":[-30,45],"motorSpeed":4,"motorMaxForce":100}}""",
+        ),
+        node(
+          "FlapX",
+          t = listOf(2.0, 1.0, 0.0),
+          cube = 0.2,
+          xr =
+            """{"joint":{"type":"hinge","anchor":[0,0.3,0],"axis":"x","limits":[-60,60],"motorSpeed":3,"motorMaxForce":80}}""",
+        ),
+        node(
+          "SliderDrawer",
+          t = listOf(-2.0, 1.0, 0.0),
+          cube = 0.2,
+          xr =
+            """{"joint":{"type":"slider","axis":"x","limits":[-0.2,0.35],"motorSpeed":2,"motorMaxForce":80}}""",
+        ),
+        node(
+          "StiffSpring",
+          t = listOf(2.0, 2.0, -2.0),
+          cube = 0.15,
+          xr =
+            """{"rigidBody":{"body":"dynamic","mass":0.2},"joint":{"type":"spring","anchor":[0,0.5,0],"restLength":0.3,"stiffness":10000,"damping":100}}""",
+        ),
+        node(
+          "TwinA",
+          t = listOf(-2.0, 2.0, 2.0),
+          cube = 0.15,
+          xr = """{"rigidBody":{"body":"dynamic","mass":1,"gravityScale":0}}""",
+        ),
+        node(
+          "TwinB",
+          t = listOf(-0.8, 2.0, 2.0),
+          cube = 0.15,
+          xr =
+            """{"rigidBody":{"body":"dynamic","mass":1,"gravityScale":0},"joint":{"type":"spring","target":"TwinA","restLength":0.4,"stiffness":60,"damping":8}}""",
+        ),
+        node(
+          "BallBob",
+          t = listOf(2.35, 1.5, 2.0),
+          cube = 0.15,
+          xr = """{"constraint":{"type":"ball","anchor":[-0.35,0.5,0],"limits":[-25,25],"damping":2}}""",
+        ),
+      )
+    val (w, _) = world(json)
+    w.run(1.2)
+
+    val doorY = w.body("DoorY")!!
+    val flapX = w.body("FlapX")!!
+    val slider = w.body("SliderDrawer")!!
+    val stiff = w.body("StiffSpring")!!
+    val twinA = w.body("TwinA")!!
+    val twinB = w.body("TwinB")!!
+    val ballBob = w.body("BallBob")!!
+
+    assertEquals(Math.toRadians(45.0), doorY.yaw, 0.02)
+    assertTrue("X-axis hinge rotates body.rot", Math.abs(flapX.rot[0]) > 0.25 && flapX.rot[3].isFinite())
+    assertEquals(-2.0 + 0.35, slider.pos[0], 0.02)
+    assertTrue("L-stable stiff spring stays finite", stiff.pos.all { it.isFinite() } && Math.abs(stiff.pos[1] - 2.2) < 0.1)
+    assertTrue("TwinA & TwinB pull symmetrically", twinA.pos[0] > -1.85 && twinB.pos[0] < -0.95)
+    assertEquals(-2.8, twinA.pos[0] + twinB.pos[0], 0.02)
+    assertTrue("BallBob swings inward", ballBob.pos[0] < 2.35 && ballBob.pos[1].isFinite())
+
+    assertTrue(RigidBodyPhysics.applyImpulse(w, slider, doubleArrayOf(-8.0, 0.0, 0.0)))
+    w.run(0.15)
+    assertTrue("Impulse moves joint-only slider", slider.pos[0] < -1.66)
+
+    w.reset()
+    assertEquals(0.0, doorY.yaw, 1e-9)
+    assertArrayEquals(doubleArrayOf(0.0, 0.0, 0.0, 1.0), flapX.rot, 1e-9)
+    assertArrayEquals(doubleArrayOf(-2.0, 1.0, 0.0), slider.pos, 1e-9)
+  }
 }

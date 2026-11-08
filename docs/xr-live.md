@@ -219,6 +219,7 @@ Android, and iOS or visionOS. The following table describes each trait key:
 | **`follow`** | `'head' \| 'hand-left' \| 'hand-right'` **or** `{ mode, lazy, distance, deadzoneDeg, stiffness, height, faceUser, snapOnStart }` | String values apply an eager spring follow; object values activate lazy head or hand follow with an angular deadzone (`deadzoneDeg`, default `15°`) and a critically damped spring (`stiffness`, default `6`). |
 | **`anchor`** | `'floor' \| 'wall' \| 'ceiling' \| 'table' \| 'horizontal' \| 'vertical'` **or** `{ target?, id?, persist? }` | Pins the node to a detected real-world plane or simulator surface; setting `persist: true` (or `id`) persists user-moved transforms across reloads and `#xr-state` links. |
 | **`physics`** / **`rigidBody`** | `'dynamic' \| 'static' \| 'kinematic'` **or** `{ body?, shape?: 'auto' \| 'box' \| 'sphere' \| 'cylinder', mass?, restitution?, friction?, linearDamping?, angularDamping?, gravityScale?, velocity?, angularVelocity?, lockRotation? }` | Steps 60 Hz deterministic Sequential Impulse rigid-body physics (gravity, restitution bounce, friction, stacking, sleeping, character push, projectile knockback, and depth heightfield collisions) and exports USDZ `PhysicsRigidBodyAPI` / `PhysicsMassAPI`. |
+| **`joint`** / **`constraint`** | `'hinge' \| 'slider' \| 'spring' \| 'ball' \| true` **or** `{ type?, target?: string, anchor?: [x,y,z], axis?: 'x' \| 'y' \| 'z' \| [x,y,z], limits?: [min, max], stiffness?: number, damping?: number, restLength?: number, motorSpeed?: number, motorMaxForce?: number }` | Articulates 60 Hz mechanical hinge (revolute), slider (prismatic), spring (distance), and ball (spherical) constraints with limits, motors, and implicit spring-damper forces, and exports USDZ `PhysicsRevoluteJoint` / `PhysicsPrismaticJoint` / `PhysicsDistanceJoint` / `PhysicsSphericalJoint` prims. |
 | **`orbit`** | `{ target: [x,y,z] \| string, radius?: number, speed?: number, height?: number, phase?: number, faceCenter?: boolean }` | Orbits around a 3D world point or another mesh's `name` at `speed` rad/s. |
 | **`handles`** | `{ rotateAxis?: 'y' \| 'none', minScale?: number, maxScale?: number } \| true` | Adds four top-corner uniform scale handles and a bottom pedestal yaw-rotation bar; emits `xr-handles-change`. |
 | **`dimensions`** | `{ enabled?: boolean, unit?: 'auto' \| 'm' \| 'cm' \| 'mm' \| 'in' \| 'ft-in', axes?: Array<'x' \| 'y' \| 'z'>, color?: string, showOnSelect?: boolean } \| true` | Renders live `W × H × D` bounding-box dimension guide bars and camera-facing vector-glyph metric or imperial labels (`spatial-measure`). |
@@ -379,7 +380,7 @@ Load the bundle after the core, or use `xr-live-full.min.js`, which includes it:
 
 ```html
 <script src="/dist/xr-live.min.js"></script>
-<script src="/dist/xr-live-sim.min.js"></script> <!-- < 26 KB gz, global XRSim -->
+<script src="/dist/xr-live-sim.min.js"></script> <!-- < 30 KB gz, global XRSim -->
 ```
 
 With a bundler, import `xr-live/sim`. Importing the module registers all six
@@ -390,7 +391,7 @@ plugins.
 | :--------------------- | :-------------------------------------------------- |
 | `character-controller` | Moves the first `character` node with WASD or arrow keys, a gamepad, or a touch joystick. Jump with Space, sprint with Shift. Slides along `collidable` nodes, follows with the camera, and switches `idle`, `walk`, `run`, and `jump` clips. |
 | `steering-agents` | Moves `agent` nodes with `patrol`, `chase`, `flee`, `follow`, or `wander` steering, with separation and wall push-out. |
-| `rigid-body` | Steps `rigidBody` / `physics` nodes (`dynamic`, `static`, `kinematic`) at 60 Hz with a deterministic Sequential Impulse solver (box, sphere, and cylinder colliders, restitution, friction, stacking, sleeping, character push, and projectile knockback). |
+| `rigid-body` | Steps `rigidBody` / `physics` nodes (`dynamic`, `static`, `kinematic`) and mechanical `joint` constraints (`hinge`, `slider`, `spring`, `ball`) at 60 Hz with a deterministic Sequential Impulse solver (box, sphere, and cylinder colliders, restitution, friction, stacking, sleeping, character push, projectile knockback, joint motors/limits, and USDZ `Physics*Joint` export). |
 | `hit-zones` | Tracks `integrity`, fires projectiles or hitscan rays, applies contact amounts, emits zone enter and exit events, and runs `spawner` nodes. |
 | `objectives` | Tracks pickups, checkpoints, keys, time bonuses, and restores, plus score, attempts, a countdown, and the pass, fail, or timeout outcome. |
 | `synth-audio` | Plays procedural cues (no audio files) mapped per node by the `audioCues` trait. |
@@ -406,6 +407,7 @@ Add these keys to `userData.xr` on any mesh or group:
 | `character` | `true`, a camera mode, or `{ speed, runMultiplier, jumpVelocity, gravity, radius, height, cameraMode, cameraDistance, cameraHeight, clips: { idle, walk, run, jump } }`. Camera modes: `third-person`, `first-person`, `top-down`, `fixed`. |
 | `agent` | A mode string or `{ mode, target, speed, turnSpeed, sightRadius, stopDistance, separationRadius, waypoints, loopWaypoints }`. `target` is a node name or `'user'` (the character, else the viewer). |
 | `rigidBody` / `physics` | `'dynamic' \| 'static' \| 'kinematic' \| true` or `{ body, shape: 'auto' \| 'box' \| 'sphere' \| 'cylinder', mass, restitution, friction, linearDamping, angularDamping, gravityScale, velocity, angularVelocity, lockRotation }`. |
+| `joint` / `constraint` | `'hinge' \| 'slider' \| 'spring' \| 'ball' \| true` or `{ type, target, anchor, axis, limits, stiffness, damping, restLength, motorSpeed, motorMaxForce }`. `target` is another node's `name` or `'world'` (default). |
 | `integrity` | A max number or `{ max, current, group, showBar, cooldownMs, hideOnDepleted, scoreValue, contactAmount }`. Hits skip nodes in the shooter's own `group`. |
 | `zone` | `'box'`, `'sphere'`, or `{ shape, size, radius, watchGroups, color }`. |
 | `spawner` | A template node name or `{ template, intervalSec, maxActive, totalCount, spawnRadius }`. The template node is hidden. |

@@ -71,6 +71,7 @@ public final class XRSimWorld {
     public let radius: Double
     public var pos: SIMD3<Double>
     public var yaw = 0.0
+    public var rot = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
     public var vel = SIMD3<Double>(repeating: 0)
     public var hidden = false
     public internal(set) var isTemplate = false
@@ -80,6 +81,7 @@ public final class XRSimWorld {
     public var lastHitMs = -Double.infinity
     var data: [String: Any] = [:]
     var lastWritten: SIMD4<Double>?
+    var lastWrittenRot: simd_quatd?
     var lastVisible: Bool?
     var viewHidden = false
 
@@ -376,6 +378,7 @@ public final class XRSimWorld {
       }
       b.pos = b.initPos
       b.yaw = 0
+      b.rot = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
       b.vel = .zero
       b.hidden = b.isTemplate
       b.integrity = b.traits.integrity?.current ?? 0
@@ -436,11 +439,14 @@ public final class XRSimWorld {
 
   /// Writes changed poses and visibility to the session (or the instance delegate).
   func applyBodies() {
+    let idRot = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
     for b in bodies {
       let visible = !b.hidden && !b.viewHidden
       let now = SIMD4(b.pos.x, b.pos.y, b.pos.z, b.yaw)
-      let moved = b.lastWritten != now
-      let rot = simd_quatd(angle: b.yaw, axis: SIMD3(0, 1, 0)) * b.initQuat
+      let moved = b.lastWritten != now || b.lastWrittenRot != b.rot
+      let qYaw = simd_quatd(angle: b.yaw, axis: SIMD3(0, 1, 0))
+      let qJoint = b.rot == idRot ? qYaw : (b.rot * qYaw)
+      let rot = qJoint * b.initQuat
       if b.isInstance {
         if moved || b.lastVisible != visible {
           delegate?.simInstancePose(
@@ -462,6 +468,7 @@ public final class XRSimWorld {
         if b.lastVisible != visible { session.setNodeVisible(b.nodeIndex, visible) }
       }
       b.lastWritten = now
+      b.lastWrittenRot = b.rot
       b.lastVisible = visible
     }
   }

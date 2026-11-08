@@ -155,6 +155,51 @@ data class XRPhysicsBodyTrait(
       .hashCode()
 }
 
+/** Normalized `joint` trait (`rigid-body`). */
+data class XRJointTrait(
+  val type: String = "hinge",
+  /** Connected node name (`""` means anchored to world space). */
+  val target: String = "",
+  val anchor: DoubleArray = doubleArrayOf(0.0, 0.0, 0.0),
+  val axis: DoubleArray = doubleArrayOf(0.0, 1.0, 0.0),
+  /** Optional `[min, max]` limits (degrees for `hinge`/`ball`, meters for `slider`/`spring`). */
+  val limits: DoubleArray? = null,
+  val stiffness: Double = 0.0,
+  val damping: Double = 0.5,
+  val restLength: Double = 0.0,
+  val motorSpeed: Double = 0.0,
+  val motorMaxForce: Double = 0.0,
+) {
+  override fun equals(other: Any?): Boolean =
+    other is XRJointTrait &&
+      type == other.type &&
+      target == other.target &&
+      anchor.contentEquals(other.anchor) &&
+      axis.contentEquals(other.axis) &&
+      ((limits == null && other.limits == null) ||
+        (limits != null && other.limits != null && limits.contentEquals(other.limits))) &&
+      stiffness == other.stiffness &&
+      damping == other.damping &&
+      restLength == other.restLength &&
+      motorSpeed == other.motorSpeed &&
+      motorMaxForce == other.motorMaxForce
+
+  override fun hashCode(): Int =
+    listOf(
+        type,
+        target,
+        anchor.contentHashCode(),
+        axis.contentHashCode(),
+        limits?.contentHashCode() ?: 0,
+        stiffness,
+        damping,
+        restLength,
+        motorSpeed,
+        motorMaxForce,
+      )
+      .hashCode()
+}
+
 /**
  * The `xr-live-sim` traits of one node, parsed from glTF `extras.xr` with the same clamps as
  * `three-live/src/xr-sim-schema.ts` and `XRSimTraits.swift`.
@@ -168,6 +213,7 @@ data class XRSimTraits(
   val objective: XRObjectiveTrait? = null,
   val audioCues: XRAudioCuesTrait? = null,
   val rigidBody: XRPhysicsBodyTrait? = null,
+  val joint: XRJointTrait? = null,
   val collidable: Boolean = false,
 ) {
   val isEmpty: Boolean
@@ -180,6 +226,7 @@ data class XRSimTraits(
         objective == null &&
         audioCues == null &&
         rigidBody == null &&
+        joint == null &&
         !collidable
 
   companion object {
@@ -194,6 +241,7 @@ data class XRSimTraits(
     val OBJECTIVE_TYPES = listOf("pickup", "checkpoint", "time-bonus", "restore", "key")
     val PHYSICS_BODY_MODES = listOf("dynamic", "static", "kinematic")
     val PHYSICS_BODY_SHAPES = listOf("auto", "box", "sphere", "cylinder")
+    val JOINT_TYPES = listOf("hinge", "slider", "spring", "ball")
     val AUDIO_CUES =
       listOf(
         "confirm",
@@ -440,6 +488,116 @@ data class XRSimTraits(
 
     @JvmStatic fun parseRigidBody(raw: Any?): XRPhysicsBodyTrait? = parsePhysicsBody(raw)
 
+    private val JOINT_TYPE_ALIASES =
+      mapOf(
+        "hinge" to "hinge",
+        "revolute" to "hinge",
+        "slider" to "slider",
+        "prismatic" to "slider",
+        "spring" to "spring",
+        "distance" to "spring",
+        "ball" to "ball",
+        "spherical" to "ball",
+      )
+
+    private fun parseJointAxis(raw: Any?, fallback: DoubleArray): DoubleArray {
+      if (raw is String) {
+        return when (raw.trim().lowercase()) {
+          "x",
+          "+x" -> doubleArrayOf(1.0, 0.0, 0.0)
+          "-x" -> doubleArrayOf(-1.0, 0.0, 0.0)
+          "y",
+          "+y" -> doubleArrayOf(0.0, 1.0, 0.0)
+          "-y" -> doubleArrayOf(0.0, -1.0, 0.0)
+          "z",
+          "+z" -> doubleArrayOf(0.0, 0.0, 1.0)
+          "-z" -> doubleArrayOf(0.0, 0.0, -1.0)
+          else -> fallback.copyOf()
+        }
+      }
+      val v = vec3(raw) ?: return fallback.copyOf()
+      val len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+      return if (len > 1e-6) doubleArrayOf(v[0] / len, v[1] / len, v[2] / len)
+      else fallback.copyOf()
+    }
+
+    @JvmStatic
+    fun parseJoint(raw: Any?): XRJointTrait? {
+      if (raw == null || raw == false || raw == "" || raw == "none") return null
+      if (raw is Number && (raw.toDouble() == 0.0 || raw.toDouble().isNaN())) return null
+      val r =
+        when {
+          raw == true -> emptyMap()
+          raw is String -> mapOf("type" to raw)
+          else -> record(raw) ?: return null
+        }
+      if (r["enabled"] == false) return null
+      val rt = r["type"] ?: r["kind"] ?: r["mode"]
+      val type =
+        if (rt is String) JOINT_TYPE_ALIASES[rt.trim().lowercase()] ?: return null else "hinge"
+      val rawTgt = r["target"] ?: r["connectedBody"] ?: r["parent"]
+      val target =
+        if (rawTgt is String && rawTgt.trim().lowercase() == "world") ""
+        else XRLiveSceneCoreHelper.safeAnchorId(rawTgt) ?: ""
+      val aRaw = vec3(r["anchor"] ?: r["pivot"])
+      val anchor =
+        if (aRaw != null) DoubleArray(3) { num(aRaw[it], -100.0, 100.0, 0.0) }
+        else doubleArrayOf(0.0, 0.0, 0.0)
+      val axisFallback =
+        when (type) {
+          "slider" -> doubleArrayOf(0.0, 0.0, 1.0)
+          "spring" -> doubleArrayOf(0.0, -1.0, 0.0)
+          else -> doubleArrayOf(0.0, 1.0, 0.0)
+        }
+      val axis = parseJointAxis(r["axis"], axisFallback)
+      val isAng = type == "hinge" || type == "ball"
+      val limLo = if (isAng) -360.0 else if (type == "spring") 0.0 else -100.0
+      val limHi = if (isAng) 360.0 else 100.0
+      val rl = MiniJson.asList(r["limits"])
+      val loR =
+        if (rl != null && rl.size >= 2) rl[0]
+        else r["min"] ?: if (isAng) r["minAngle"] else r["minDistance"]
+      val hiR =
+        if (rl != null && rl.size >= 2) rl[1]
+        else r["max"] ?: if (isAng) r["maxAngle"] else r["maxDistance"]
+      val hasLim =
+        if (rl != null) {
+          rl.size >= 2 &&
+            (rl[0] as? Number)?.toDouble()?.isFinite() == true &&
+            (rl[1] as? Number)?.toDouble()?.isFinite() == true
+        } else {
+          (loR as? Number)?.toDouble()?.isFinite() == true ||
+            (hiR as? Number)?.toDouble()?.isFinite() == true
+        }
+      val limits =
+        if (hasLim) {
+          val a = num(loR, limLo, limHi, limLo)
+          val b = num(hiR, limLo, limHi, limHi)
+          doubleArrayOf(Math.min(a, b), Math.max(a, b))
+        } else {
+          null
+        }
+      val motorSpeed = num(r["motorSpeed"], -100.0, 100.0, 0.0)
+      return XRJointTrait(
+        type = type,
+        target = target,
+        anchor = anchor,
+        axis = axis,
+        limits = limits,
+        stiffness = num(r["stiffness"], 0.0, 10000.0, if (type == "spring") 40.0 else 0.0),
+        damping = num(r["damping"], 0.0, 1000.0, if (type == "spring") 4.0 else 0.5),
+        restLength = num(r["restLength"], 0.0, 100.0, 0.0),
+        motorSpeed = motorSpeed,
+        motorMaxForce =
+          num(
+            r["motorMaxForce"] ?: r["maxMotorForce"],
+            0.0,
+            10000.0,
+            if (motorSpeed != 0.0) 50.0 else 0.0,
+          ),
+      )
+    }
+
     /** Parses the sim traits of a `userData.xr` / `extras.xr` bag, or `null` when none. */
     @JvmStatic
     fun parse(raw: Any?): XRSimTraits? {
@@ -459,6 +617,7 @@ data class XRSimTraits(
           objective = parseObjective(r["objective"]),
           audioCues = parseAudioCues(r["audioCues"]),
           rigidBody = parsePhysicsBody(rbSource),
+          joint = parseJoint(r["joint"] ?: r["constraint"]),
           collidable = r["collidable"] == true,
         )
       return if (t.isEmpty) null else t

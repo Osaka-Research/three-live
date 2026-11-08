@@ -3839,3 +3839,198 @@ fn test_a6_2d_curves_and_scene_helpers_parity() {
         non_bg_px
     );
 }
+
+#[test]
+fn test_a7_mechanical_joints_glb_usdz_lint_and_sim() {
+    let script = r#"
+        const floor = new THREE.Mesh(
+            new THREE.BoxGeometry(8, 0.2, 8),
+            new THREE.MeshStandardMaterial({ color: 0x334155 })
+        );
+        floor.name = 'Floor';
+        floor.position.set(0, -0.1, 0);
+        floor.userData.xr = { collidable: true };
+        scene.add(floor);
+
+        const frame = new THREE.Mesh(
+            new THREE.BoxGeometry(0.2, 2.0, 0.2),
+            new THREE.MeshStandardMaterial({ color: 0x64748b })
+        );
+        frame.name = 'DoorFrame';
+        frame.position.set(-1.5, 1.0, 0);
+        scene.add(frame);
+
+        const door = new THREE.Mesh(
+            new THREE.BoxGeometry(0.8, 1.8, 0.08),
+            new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        door.name = 'HingeDoor';
+        door.position.set(-1.0, 1.0, 0);
+        door.userData.xr = {
+            joint: {
+                type: 'hinge',
+                target: 'DoorFrame',
+                anchor: [-0.4, 0, 0],
+                axis: 'y',
+                limits: [-15, 60],
+                motorSpeed: 3.0,
+                motorMaxForce: 80
+            }
+        };
+        scene.add(door);
+
+        const slider = new THREE.Mesh(
+            new THREE.BoxGeometry(0.4, 0.25, 0.4),
+            new THREE.MeshStandardMaterial({ color: 0x22c55e })
+        );
+        slider.name = 'SliderCarriage';
+        slider.position.set(0.5, 0.6, 0);
+        slider.userData.xr = {
+            joint: {
+                type: 'slider',
+                axis: 'x',
+                limits: [-0.2, 0.4],
+                motorSpeed: 1.5,
+                motorMaxForce: 60
+            }
+        };
+        scene.add(slider);
+
+        const springBob = new THREE.Mesh(
+            new THREE.SphereGeometry(0.18, 16, 12),
+            new THREE.MeshStandardMaterial({ color: 0xf59e0b })
+        );
+        springBob.name = 'SpringBob';
+        springBob.position.set(1.8, 1.5, 0);
+        springBob.userData.xr = {
+            rigidBody: { body: 'dynamic', mass: 1.0 },
+            joint: {
+                type: 'spring',
+                anchor: [0, 0.5, 0],
+                restLength: 0.5,
+                stiffness: 10000,
+                damping: 80,
+                limits: [0.1, 1.2]
+            }
+        };
+        scene.add(springBob);
+
+        const ballLamp = new THREE.Mesh(
+            new THREE.SphereGeometry(0.16, 16, 12),
+            new THREE.MeshStandardMaterial({ color: 0xe879f9 })
+        );
+        ballLamp.name = 'BallLamp';
+        ballLamp.position.set(0.3, 1.6, -1.2);
+        ballLamp.userData.xr = {
+            joint: {
+                type: 'ball',
+                anchor: [-0.3, 0.5, 0],
+                limits: [-30, 30],
+                damping: 1.5
+            }
+        };
+        scene.add(ballLamp);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(3, 5, 4);
+        scene.add(sun);
+        camera.position.set(0.2, 2.2, 6.2);
+        camera.lookAt(0.2, 0.9, -0.3);
+    "#;
+
+    let report = three_live_compiler::validate_and_lint_scene(script, "a7_joints.js", 1.5);
+    assert!(
+        report.valid && !report.diagnostics.iter().any(|d| d.code.starts_with("TL2")),
+        "Expected clean validation for valid mechanical joints, got: {:?}",
+        report.diagnostics
+    );
+
+    // Broken joint.target emits TL204 diagnostic.
+    let broken_script = r#"
+        const m = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial());
+        m.name = 'OrphanDoor';
+        m.position.set(0, 0.2, 0);
+        m.userData.xr = { joint: { type: 'hinge', target: 'MissingFrame' } };
+        scene.add(m);
+        scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+        camera.position.set(0, 1, 3);
+        camera.lookAt(0, 0.2, 0);
+    "#;
+    let broken_report =
+        three_live_compiler::validate_and_lint_scene(broken_script, "a7_broken.js", 1.5);
+    assert!(
+        broken_report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "TL204" && d.message.contains("MissingFrame")),
+        "Expected TL204 broken node reference for MissingFrame, got: {:?}",
+        broken_report.diagnostics
+    );
+
+    // GLB carries extras.xr.joint and ANDROID_xr_scenecore.joint.
+    let glb = transcode_three_to_glb(script).expect("A7 GLB export succeeds");
+    let glb_str = String::from_utf8_lossy(&glb);
+    assert!(
+        glb_str.contains("\"joint\"") && glb_str.contains("\"DoorFrame\""),
+        "Expected GLB JSON chunk to preserve joint traits"
+    );
+
+    // USDZ carries PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsDistanceJoint, PhysicsSphericalJoint.
+    let usdz = three_live_compiler::transcode_three_to_usdz(script).expect("A7 USDZ export");
+    let usdz_str = String::from_utf8_lossy(&usdz);
+    for prim in [
+        "PhysicsRevoluteJoint",
+        "PhysicsPrismaticJoint",
+        "PhysicsDistanceJoint",
+        "PhysicsSphericalJoint",
+    ] {
+        assert!(usdz_str.contains(prim), "Expected USDZ to emit {}, missing in USDA payload", prim);
+    }
+
+    // 60 Hz deterministic simulation articulates all 4 joint types cleanly.
+    let (sim, _snaps) = three_live_compiler::sim::simulate_scenario_from_source(
+        script.as_bytes(),
+        false,
+        1.2,
+        &[],
+        &[],
+    )
+    .expect("A7 60 Hz simulation succeeds");
+    assert!(
+        sim.triggered_events.iter().any(|e| e == "xrTrait:joint:HingeDoor")
+            && sim.triggered_events.iter().any(|e| e == "xrTrait:joint:SliderCarriage"),
+        "Expected xrTrait:joint:* triggered events, got: {:?}",
+        sim.triggered_events
+    );
+    let door_delta = sim.bodies.iter().find(|n| n.name == "HingeDoor").expect("HingeDoor present");
+    let slider_delta =
+        sim.bodies.iter().find(|n| n.name == "SliderCarriage").expect("SliderCarriage present");
+    let ball_delta = sim.bodies.iter().find(|n| n.name == "BallLamp").expect("BallLamp present");
+    assert!(
+        (door_delta.final_rotation[1]).abs() > 0.2,
+        "Expected HingeDoor Y rotation from motor, got {:?}",
+        door_delta.final_rotation
+    );
+    assert!(
+        (slider_delta.final_translation[0] - 0.9).abs() < 0.03,
+        "Expected SliderCarriage X translation clamped near 0.5 + 0.4 = 0.9, got {:?}",
+        slider_delta.final_translation
+    );
+    assert!(
+        ball_delta.final_translation[0] < 0.3
+            && ball_delta.final_translation.iter().all(|v| v.is_finite()),
+        "Expected BallLamp pendulum to swing inward cleanly, got {:?}",
+        ball_delta.final_translation
+    );
+    // Stiff spring (k=10000) must remain finite with no NaN/explosion.
+    for n in &sim.bodies {
+        assert!(
+            n.final_translation.iter().all(|v| v.is_finite())
+                && n.final_rotation.iter().all(|v| v.is_finite()),
+            "Non-finite state on {}: {:?}",
+            n.name,
+            n
+        );
+    }
+}

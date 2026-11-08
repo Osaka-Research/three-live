@@ -306,69 +306,13 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     }
 
     // tslint:disable-next-line:no-any Dynamic Object3D instance.
-    setFromObject(object: any, precise = false): this {
-      return this.makeEmpty().expandByObject(object, precise);
+    setFromObject(object: any, precise?: boolean): this {
+      return this.makeEmpty().expandByObject(object, Boolean(precise));
     }
 
     // tslint:disable-next-line:no-any Dynamic Object3D instance.
-    expandByObject(object: any, precise = false): this {
-      if (!object) return this;
-      object.updateMatrixWorld?.(true);
-      const v = new Vector3();
-      const scratchBox = new Box3();
-      const instMat = new Matrix4();
-      const worldMat = new Matrix4();
-      const seen = new Set<unknown>();
-
-      // tslint:disable-next-line:no-any Dynamic BufferGeometry / Matrix4.
-      const expandGeo = (geo: any, m: any) => {
-        const pos = geo?.attributes?.position;
-        if (!pos || !(pos.count > 0)) return;
-        if (precise) {
-          for (let i = 0; i < pos.count; i++) {
-            v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
-            this.expandByPoint(v);
-          }
-        } else {
-          const localBox = new Box3().setFromBufferAttribute(pos);
-          if (!localBox.isEmpty()) {
-            this.union(scratchBox.copy(localBox).applyMatrix4(m));
-          }
-        }
-      };
-
-      // tslint:disable-next-line:no-any Dynamic Object3D hierarchy.
-      const visit = (node: any) => {
-        if (!node || typeof node !== 'object' || seen.has(node)) return;
-        seen.add(node);
-        reg?.materializeDeclarativeGeometry?.(node);
-        if (node.isBoxHelper && node !== object) return;
-        if (node.isSprite || node.isBox3Helper) node._bakeAuthorGeometry?.();
-        const geo = node._sourceGeo || node.geometry;
-        if (geo && geo.attributes?.position && node.matrixWorld) {
-          if (node.isInstancedMesh && typeof node.getMatrixAt === 'function') {
-            const cap = Math.floor(
-              (node.instanceMatrix?.array?.length ?? 0) / 16,
-            );
-            const n = Math.min(
-              Math.max(0, Math.floor(Number(node.count) || 0)),
-              cap,
-            );
-            for (let i = 0; i < n; i++) {
-              node.getMatrixAt(i, instMat);
-              worldMat.multiplyMatrices(node.matrixWorld, instMat);
-              expandGeo(geo, worldMat);
-            }
-          } else {
-            expandGeo(geo, node.matrixWorld);
-          }
-        }
-        if (Array.isArray(node.children)) {
-          for (const ch of node.children) visit(ch);
-        }
-      };
-
-      visit(object);
+    expandByObject(objectIn: any, preciseIn?: boolean): this {
+      expandBox3ByObject(this, objectIn, Boolean(preciseIn));
       return this;
     }
 
@@ -523,6 +467,67 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         Boolean(box) && box.min.equals(this.min) && box.max.equals(this.max)
       );
     }
+  }
+
+  // tslint:disable-next-line:no-any Dynamic Object3D instance.
+  function expandBox3ByObject(targetBox: Box3, object: any, precise: boolean): void {
+    if (!object) return;
+    object.updateMatrixWorld?.(true);
+    const v = new Vector3();
+    const scratchBox = new Box3();
+    const instMat = new Matrix4();
+    const worldMat = new Matrix4();
+    const seen = new Set<unknown>();
+
+    // tslint:disable-next-line:no-any Dynamic BufferGeometry / Matrix4.
+    const expandGeo = (geo: any, m: any) => {
+      const pos = geo?.attributes?.position;
+      if (!pos || !(pos.count > 0)) return;
+      if (precise) {
+        for (let i = 0; i < pos.count; i++) {
+          v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
+          targetBox.expandByPoint(v);
+        }
+      } else {
+        const localBox = new Box3().setFromBufferAttribute(pos);
+        if (!localBox.isEmpty()) {
+          targetBox.union(scratchBox.copy(localBox).applyMatrix4(m));
+        }
+      }
+    };
+
+    // tslint:disable-next-line:no-any Dynamic Object3D hierarchy.
+    const visit = (node: any) => {
+      if (!node || typeof node !== 'object' || seen.has(node)) return;
+      seen.add(node);
+      reg?.materializeDeclarativeGeometry?.(node);
+      if (node.isBoxHelper && node !== object) return;
+      if (node.isSprite || node.isBox3Helper) node._bakeAuthorGeometry?.();
+      const geo = node._sourceGeo || node.geometry;
+      if (geo && geo.attributes?.position && node.matrixWorld) {
+        if (node.isInstancedMesh && typeof node.getMatrixAt === 'function') {
+          const cap = Math.floor(
+            (node.instanceMatrix?.array?.length ?? 0) / 16,
+          );
+          const n = Math.min(
+            Math.max(0, Math.floor(Number(node.count) || 0)),
+            cap,
+          );
+          for (let i = 0; i < n; i++) {
+            node.getMatrixAt(i, instMat);
+            worldMat.multiplyMatrices(node.matrixWorld, instMat);
+            expandGeo(geo, worldMat);
+          }
+        } else {
+          expandGeo(geo, node.matrixWorld);
+        }
+      }
+      if (Array.isArray(node.children)) {
+        for (const ch of node.children) visit(ch);
+      }
+    };
+
+    visit(object);
   }
 
   class Sphere {
@@ -2204,7 +2209,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       );
     }
 
-    fill(fillRule = 'nonzero'): void {
+    fill(fillRule?: string): void {
       if (this.canvas.width <= 0 || this.canvas.height <= 0) return;
       const shader = makeShader(this, this.fillStyle);
       const op = resolveOp(this);
@@ -2217,7 +2222,7 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
       this.canvas._ver++;
     }
 
-    clip(fillRule = 'nonzero'): void {
+    clip(fillRule?: string): void {
       const bw = this.canvas._bw;
       const bh = this.canvas._bh;
       const next = new Uint8Array(bw * bh);
@@ -3278,28 +3283,33 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
     | number
     | undefined;
 
+  function resolveSimplexRandomFn(rIn?: RandomSource): () => number {
+    const r: RandomSource = rIn === undefined ? Math : rIn;
+    if (typeof r === 'function') {
+      return r;
+    }
+    if (typeof r === 'number') {
+      let localSeed = Number.isFinite(r) ? r | 0 : 0;
+      return (): number => {
+        let t = (localSeed = (localSeed + 0x6d2b79f5) | 0);
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    if (r && typeof r === 'object' && typeof r.random === 'function') {
+      return () => r.random();
+    }
+    return Math.random;
+  }
+
   class SimplexNoise {
     declare p: Uint8Array;
     declare perm: Uint8Array;
     declare permMod12: Uint8Array;
 
-    constructor(r: RandomSource = Math) {
-      let randFn: () => number;
-      if (typeof r === 'function') {
-        randFn = r;
-      } else if (typeof r === 'number') {
-        let localSeed = Number.isFinite(r) ? r | 0 : 0;
-        randFn = (): number => {
-          let t = (localSeed = (localSeed + 0x6d2b79f5) | 0);
-          t = Math.imul(t ^ (t >>> 15), t | 1);
-          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-        };
-      } else if (r && typeof r === 'object' && typeof r.random === 'function') {
-        randFn = () => r.random();
-      } else {
-        randFn = Math.random;
-      }
+    constructor(rIn?: RandomSource) {
+      const randFn = resolveSimplexRandomFn(rIn);
 
       const p = new Uint8Array(256);
       for (let i = 0; i < 256; i++) {

@@ -27,6 +27,12 @@ fn main() {
     println!("cargo:rerun-if-changed=../three-live/src/constants.ts");
     println!("cargo:rerun-if-changed=../three-live/src/three-author.ts");
     println!("cargo:rerun-if-changed=../three-live/src/three-view.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/xr-trait-schema.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/xr-sim-schema.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/plugins/procedural.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/plugins/cad.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/plugins/ik.ts");
+    println!("cargo:rerun-if-changed=../three-live/src/plugins/lod.ts");
     println!("cargo:rerun-if-changed=assets/three-author-engine.min.js");
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set by Cargo");

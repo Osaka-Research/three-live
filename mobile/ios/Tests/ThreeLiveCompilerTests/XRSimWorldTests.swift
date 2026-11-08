@@ -394,4 +394,113 @@ final class XRSimWorldTests: XCTestCase {
       assertNear(sceneFile, expected, XRSimWorld.runParityScene(scene))
     }
   }
+
+  func testMechanicalJointsArticulateClampAndReset() throws {
+    XCTAssertNil(XRSimTraits.parseJoint(nil))
+    XCTAssertNil(XRSimTraits.parseJoint(false))
+    XCTAssertNil(XRSimTraits.parseJoint("none"))
+    XCTAssertNil(XRSimTraits.parseJoint("unknown"))
+    XCTAssertEqual(XRSimTraits.parseJoint(true)?.type, "hinge")
+    XCTAssertEqual(XRSimTraits.parseJoint("revolute")?.type, "hinge")
+    XCTAssertEqual(XRSimTraits.parseJoint("prismatic")?.type, "slider")
+    XCTAssertEqual(XRSimTraits.parseJoint("distance")?.type, "spring")
+    XCTAssertEqual(XRSimTraits.parseJoint("spherical")?.type, "ball")
+
+    let parsed = try XCTUnwrap(
+      XRSimTraits.parseJoint([
+        "kind": "hinge",
+        "connectedBody": "WORLD",
+        "pivot": [0.5, 0.0, -0.25],
+        "axis": "-x",
+        "limits": [90.0, -45.0],
+        "motorSpeed": 3.0,
+      ]))
+    XCTAssertEqual(parsed.target, "")
+    XCTAssertEqual(parsed.axis, SIMD3(-1, 0, 0))
+    XCTAssertEqual(parsed.limits, SIMD2(-45, 90))
+    XCTAssertEqual(parsed.motorMaxForce, 50, accuracy: 1e-9)
+
+    let (w, _) = makeWorld([
+      Node(
+        name: "DoorY", t: [0, 1, 0], cube: 0.2,
+        xr: [
+          "joint": [
+            "type": "hinge", "anchor": [-0.5, 0.0, 0.0], "axis": "y",
+            "limits": [-30.0, 45.0], "motorSpeed": 4.0, "motorMaxForce": 100.0,
+          ]
+        ]),
+      Node(
+        name: "FlapX", t: [2, 1, 0], cube: 0.2,
+        xr: [
+          "joint": [
+            "type": "hinge", "anchor": [0.0, 0.3, 0.0], "axis": "x",
+            "limits": [-60.0, 60.0], "motorSpeed": 3.0, "motorMaxForce": 80.0,
+          ]
+        ]),
+      Node(
+        name: "SliderDrawer", t: [-2, 1, 0], cube: 0.2,
+        xr: [
+          "joint": [
+            "type": "slider", "axis": "x",
+            "limits": [-0.2, 0.35], "motorSpeed": 2.0, "motorMaxForce": 80.0,
+          ]
+        ]),
+      Node(
+        name: "StiffSpring", t: [2, 2, -2], cube: 0.15,
+        xr: [
+          "rigidBody": ["body": "dynamic", "mass": 0.2],
+          "joint": [
+            "type": "spring", "anchor": [0.0, 0.5, 0.0],
+            "restLength": 0.3, "stiffness": 10000.0, "damping": 100.0,
+          ],
+        ]),
+      Node(
+        name: "TwinA", t: [-2, 2, 2], cube: 0.15,
+        xr: ["rigidBody": ["body": "dynamic", "mass": 1.0, "gravityScale": 0.0]]),
+      Node(
+        name: "TwinB", t: [-0.8, 2, 2], cube: 0.15,
+        xr: [
+          "rigidBody": ["body": "dynamic", "mass": 1.0, "gravityScale": 0.0],
+          "joint": [
+            "type": "spring", "target": "TwinA",
+            "restLength": 0.4, "stiffness": 60.0, "damping": 8.0,
+          ],
+        ]),
+      Node(
+        name: "BallBob", t: [2.35, 1.5, 2], cube: 0.15,
+        xr: [
+          "constraint": [
+            "type": "ball", "anchor": [-0.35, 0.5, 0.0],
+            "limits": [-25.0, 25.0], "damping": 2.0,
+          ]
+        ]),
+    ])
+    run(w, 1.2)
+
+    let doorY = try XCTUnwrap(w.body(named: "DoorY"))
+    let flapX = try XCTUnwrap(w.body(named: "FlapX"))
+    let slider = try XCTUnwrap(w.body(named: "SliderDrawer"))
+    let stiff = try XCTUnwrap(w.body(named: "StiffSpring"))
+    let twinA = try XCTUnwrap(w.body(named: "TwinA"))
+    let twinB = try XCTUnwrap(w.body(named: "TwinB"))
+    let ballBob = try XCTUnwrap(w.body(named: "BallBob"))
+
+    XCTAssertEqual(doorY.yaw, 45.0 * .pi / 180.0, accuracy: 0.02)
+    XCTAssertGreaterThan(abs(flapX.rot.imag.x), 0.25)
+    XCTAssertEqual(slider.pos.x, -2.0 + 0.35, accuracy: 0.02)
+    XCTAssertTrue(stiff.pos.x.isFinite && stiff.pos.y.isFinite && abs(stiff.pos.y - 2.2) < 0.1)
+    XCTAssertGreaterThan(twinA.pos.x, -1.85)
+    XCTAssertLessThan(twinB.pos.x, -0.95)
+    XCTAssertEqual(twinA.pos.x + twinB.pos.x, -2.8, accuracy: 0.02)
+    XCTAssertLessThan(ballBob.pos.x, 2.35)
+
+    XCTAssertTrue(RigidBodyPhysics.applyImpulse(w, slider, SIMD3(-8, 0, 0)))
+    run(w, 0.15)
+    XCTAssertLessThan(slider.pos.x, -1.66)
+
+    w.reset()
+    XCTAssertEqual(doorY.yaw, 0, accuracy: 1e-9)
+    XCTAssertEqual(flapX.rot, simd_quatd(ix: 0, iy: 0, iz: 0, r: 1))
+    XCTAssertEqual(slider.pos, SIMD3(-2, 1, 0))
+  }
 }

@@ -189,6 +189,32 @@ struct NodeSimState {
     spawner_timer_sec: f64,
     spawner_active_children: usize,
     spawned_by: Option<usize>,
+    // Mechanical joint (`hinge`, `slider`, `spring`, `ball`)
+    joint: Option<JointSimState>,
+}
+
+#[derive(Debug, Clone)]
+struct JointSimState {
+    kind: String,
+    target: String,
+    anchor: [f32; 3],
+    axis: [f32; 3],
+    limits: Option<[f32; 2]>,
+    stiffness: f32,
+    damping: f32,
+    rest_length: f32,
+    motor_speed: f32,
+    motor_max_force: f32,
+    initialized: bool,
+    target_local_anchor: [f32; 3],
+    world_anchor: [f32; 3],
+    effective_rest_len: f32,
+    angle: f32,
+    omega: f32,
+    slide_pos: f32,
+    slide_vel: f32,
+    omega_vec: [f32; 3],
+    joint_rot: [f32; 4],
 }
 
 /// Objective tracker entry.
@@ -384,6 +410,9 @@ fn run_simulation_loop(
             if states[idx].xr.get(trait_key).is_some() {
                 triggered_events.push(format!("xrTrait:{}:{}", trait_key, states[idx].name));
             }
+        }
+        if states[idx].joint.is_some() {
+            triggered_events.push(format!("xrTrait:joint:{}", states[idx].name));
         }
         if let Some(inter) = states[idx].interactivity.clone() {
             if let Some(on_start) = inter.get("onStart") {
@@ -861,6 +890,9 @@ fn run_simulation_loop(
                 }
             }
         }
+
+        // 5c. Step mechanical joints (`hinge`, `slider`, `spring`, `ball`).
+        step_joints(&mut states, dt_f32);
 
         // 6. Step autonomous agents (`patrol` / `chase` / `flee`).
         let player_pos =
@@ -1562,6 +1594,7 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
             _ => (None, 3.0, 5, 1.5),
         };
 
+    let joint = parse_joint_sim_state(&xr);
     let grounded = (node.translation[1] - half_extents[1]).abs() <= 0.08;
 
     NodeSimState {
@@ -1619,6 +1652,7 @@ fn build_node_sim_state(node: &SceneNode, scene: &SceneGraph) -> NodeSimState {
         spawner_timer_sec: 0.0,
         spawner_active_children: 0,
         spawned_by: None,
+        joint,
     }
 }
 
@@ -2264,6 +2298,639 @@ fn normalize_quat(q: [f32; 4]) -> [f32; 4] {
         [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
     } else {
         [0.0, 0.0, 0.0, 1.0]
+    }
+}
+
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn quat_from_axis_angle(axis: [f32; 3], angle: f32) -> [f32; 4] {
+    let half = angle * 0.5;
+    let (s, c) = half.sin_cos();
+    [axis[0] * s, axis[1] * s, axis[2] * s, c]
+}
+
+fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
+}
+
+fn quat_rotate_vec(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let tx = 2.0 * (q[1] * v[2] - q[2] * v[1]);
+    let ty = 2.0 * (q[2] * v[0] - q[0] * v[2]);
+    let tz = 2.0 * (q[0] * v[1] - q[1] * v[0]);
+    [
+        v[0] + q[3] * tx + (q[1] * tz - q[2] * ty),
+        v[1] + q[3] * ty + (q[2] * tx - q[0] * tz),
+        v[2] + q[3] * tz + (q[0] * ty - q[1] * tx),
+    ]
+}
+
+fn parse_joint_axis(val: Option<&Value>, fallback: [f32; 3]) -> [f32; 3] {
+    match val {
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "x" | "+x" => [1.0, 0.0, 0.0],
+            "-x" => [-1.0, 0.0, 0.0],
+            "y" | "+y" => [0.0, 1.0, 0.0],
+            "-y" => [0.0, -1.0, 0.0],
+            "z" | "+z" => [0.0, 0.0, 1.0],
+            "-z" => [0.0, 0.0, -1.0],
+            _ => fallback,
+        },
+        Some(Value::Array(arr)) if arr.len() >= 3 => {
+            let x = arr[0].as_f64().unwrap_or(0.0) as f32;
+            let y = arr[1].as_f64().unwrap_or(0.0) as f32;
+            let z = arr[2].as_f64().unwrap_or(0.0) as f32;
+            let len = (x * x + y * y + z * z).sqrt();
+            if len.is_finite() && len > 1e-6 {
+                [x / len, y / len, z / len]
+            } else {
+                fallback
+            }
+        }
+        _ => fallback,
+    }
+}
+
+fn parse_joint_sim_state(xr: &Value) -> Option<JointSimState> {
+    let raw = xr.get("joint").or_else(|| xr.get("constraint"))?;
+    let (raw_type, obj) = match raw {
+        Value::Bool(true) => ("hinge", None),
+        Value::String(s) => {
+            if s.trim().eq_ignore_ascii_case("none") || s.trim().is_empty() {
+                return None;
+            }
+            (s.as_str(), None)
+        }
+        Value::Object(o) => {
+            if o.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
+                return None;
+            }
+            let t = o
+                .get("type")
+                .or_else(|| o.get("kind"))
+                .or_else(|| o.get("mode"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("hinge");
+            (t, Some(o))
+        }
+        _ => return None,
+    };
+    let kind = match raw_type.trim().to_ascii_lowercase().as_str() {
+        "hinge" | "revolute" => "hinge",
+        "slider" | "prismatic" => "slider",
+        "spring" | "distance" => "spring",
+        "ball" | "spherical" => "ball",
+        _ => return None,
+    }
+    .to_string();
+
+    let target = obj
+        .and_then(|o| {
+            o.get("target").or_else(|| o.get("connectedBody")).or_else(|| o.get("parent"))
+        })
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("world"))
+        .unwrap_or("")
+        .to_string();
+
+    let anchor = obj
+        .and_then(|o| o.get("anchor").or_else(|| o.get("pivot")))
+        .and_then(|v| v.as_array())
+        .filter(|a| a.len() >= 3)
+        .map(|a| {
+            [
+                (a[0].as_f64().unwrap_or(0.0) as f32).clamp(-100.0, 100.0),
+                (a[1].as_f64().unwrap_or(0.0) as f32).clamp(-100.0, 100.0),
+                (a[2].as_f64().unwrap_or(0.0) as f32).clamp(-100.0, 100.0),
+            ]
+        })
+        .unwrap_or([0.0, 0.0, 0.0]);
+
+    let axis_fallback = match kind.as_str() {
+        "slider" => [0.0, 0.0, 1.0],
+        "spring" => [0.0, -1.0, 0.0],
+        _ => [0.0, 1.0, 0.0],
+    };
+    let axis = parse_joint_axis(obj.and_then(|o| o.get("axis")), axis_fallback);
+    let is_ang = kind == "hinge" || kind == "ball";
+    let lim_lo = if is_ang {
+        -360.0f32
+    } else if kind == "spring" {
+        0.0f32
+    } else {
+        -100.0f32
+    };
+    let lim_hi = if is_ang { 360.0f32 } else { 100.0f32 };
+    let limits = obj.and_then(|o| {
+        if let Some(arr) = o.get("limits").and_then(|v| v.as_array()).filter(|a| a.len() >= 2) {
+            let a = (arr[0].as_f64()? as f32).clamp(lim_lo, lim_hi);
+            let b = (arr[1].as_f64()? as f32).clamp(lim_lo, lim_hi);
+            return Some(if a <= b { [a, b] } else { [b, a] });
+        }
+        let min_v = o
+            .get("min")
+            .or_else(|| if is_ang { o.get("minAngle") } else { o.get("minDistance") })
+            .and_then(|v| v.as_f64());
+        let max_v = o
+            .get("max")
+            .or_else(|| if is_ang { o.get("maxAngle") } else { o.get("maxDistance") })
+            .and_then(|v| v.as_f64());
+        if min_v.is_some() || max_v.is_some() {
+            let a = (min_v.unwrap_or(lim_lo as f64) as f32).clamp(lim_lo, lim_hi);
+            let b = (max_v.unwrap_or(lim_hi as f64) as f32).clamp(lim_lo, lim_hi);
+            Some(if a <= b { [a, b] } else { [b, a] })
+        } else {
+            None
+        }
+    });
+
+    let default_stiffness = if kind == "spring" { 40.0 } else { 0.0 };
+    let default_damping = if kind == "spring" { 4.0 } else { 0.5 };
+    let stiffness = obj
+        .and_then(|o| o.get("stiffness"))
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32).clamp(0.0, 10000.0))
+        .unwrap_or(default_stiffness);
+    let damping = obj
+        .and_then(|o| o.get("damping"))
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32).clamp(0.0, 1000.0))
+        .unwrap_or(default_damping);
+    let rest_length = obj
+        .and_then(|o| o.get("restLength").or_else(|| o.get("length")))
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32).clamp(0.0, 100.0))
+        .unwrap_or(0.0);
+    let motor_speed = obj
+        .and_then(|o| o.get("motorSpeed"))
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32).clamp(-100.0, 100.0))
+        .unwrap_or(0.0);
+    let default_motor_force = if motor_speed != 0.0 { 50.0 } else { 0.0 };
+    let motor_max_force = obj
+        .and_then(|o| {
+            o.get("motorMaxForce")
+                .or_else(|| o.get("maxMotorForce"))
+                .or_else(|| o.get("motorForce"))
+        })
+        .and_then(|v| v.as_f64())
+        .map(|v| (v as f32).clamp(0.0, 10000.0))
+        .unwrap_or(default_motor_force);
+
+    Some(JointSimState {
+        kind,
+        target,
+        anchor,
+        axis,
+        limits,
+        stiffness,
+        damping,
+        rest_length,
+        motor_speed,
+        motor_max_force,
+        initialized: false,
+        target_local_anchor: [0.0, 0.0, 0.0],
+        world_anchor: [0.0, 0.0, 0.0],
+        effective_rest_len: 0.0,
+        angle: 0.0,
+        omega: 0.0,
+        slide_pos: 0.0,
+        slide_vel: 0.0,
+        omega_vec: [0.0, 0.0, 0.0],
+        joint_rot: [0.0, 0.0, 0.0, 1.0],
+    })
+}
+
+fn step_joints(states: &mut [NodeSimState], dt: f32) {
+    let n = states.len();
+    for i in 0..n {
+        if states[i].destroyed || !states[i].visible || states[i].joint.is_none() {
+            continue;
+        }
+        let target_name = states[i].joint.as_ref().map(|j| j.target.clone()).unwrap_or_default();
+        let tb_idx = if !target_name.is_empty() {
+            (0..n).find(|&k| {
+                k != i && !states[k].destroyed && states[k].visible && states[k].name == target_name
+            })
+        } else {
+            None
+        };
+
+        let base_pos_i = states[i].base_translation;
+        let base_rot_i = states[i].base_rotation;
+        let tb_init_pos = tb_idx.map(|k| states[k].base_translation);
+        let tb_pos = tb_idx.map(|k| states[k].translation);
+        let tb_vel = tb_idx.map(|k| states[k].velocity).unwrap_or([0.0, 0.0, 0.0]);
+        let tb_joint_rot = tb_idx
+            .and_then(|k| states[k].joint.as_ref().map(|j| j.joint_rot))
+            .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        let tb_dyn_mass = tb_idx.and_then(|k| {
+            if states[k].physics_mode.as_deref() == Some("dynamic") && states[k].mass > 0.0 {
+                Some(states[k].mass)
+            } else {
+                None
+            }
+        });
+
+        let has_rb_cfg = states[i].physics_mode.is_some();
+        let has_dyn_rb = states[i].physics_mode.as_deref() == Some("dynamic");
+        let mass = if has_dyn_rb && states[i].mass > 0.0 { states[i].mass } else { 1.0 };
+        let g_scale = if has_rb_cfg {
+            if has_dyn_rb {
+                states[i].gravity_scale
+            } else {
+                0.0
+            }
+        } else {
+            1.0
+        };
+        let mut pos_i = states[i].translation;
+        let mut vel_i = states[i].velocity;
+        let mut rot_i = states[i].rotation;
+        let mut pending_tb_dv: Option<([f32; 3], [f32; 3])> = None;
+
+        if let Some(js) = states[i].joint.as_mut() {
+            if !js.initialized {
+                let pivot0 = [
+                    base_pos_i[0] + js.anchor[0],
+                    base_pos_i[1] + js.anchor[1],
+                    base_pos_i[2] + js.anchor[2],
+                ];
+                let mut target_local = [0.0f32; 3];
+                let mut d0 = 0.0f32;
+                if let Some(t0) = tb_init_pos {
+                    if js.kind == "spring" {
+                        let dx = pivot0[0] - t0[0];
+                        let dy = pivot0[1] - t0[1];
+                        let dz = pivot0[2] - t0[2];
+                        d0 = (dx * dx + dy * dy + dz * dz).sqrt();
+                    } else {
+                        target_local = [pivot0[0] - t0[0], pivot0[1] - t0[1], pivot0[2] - t0[2]];
+                    }
+                } else if js.kind == "spring" {
+                    d0 = (js.anchor[0] * js.anchor[0]
+                        + js.anchor[1] * js.anchor[1]
+                        + js.anchor[2] * js.anchor[2])
+                        .sqrt();
+                }
+                js.initialized = true;
+                js.target_local_anchor = target_local;
+                js.world_anchor = pivot0;
+                js.effective_rest_len = if js.rest_length > 0.0 { js.rest_length } else { d0 };
+            }
+
+            let world_pivot = if let Some(tp) = tb_pos {
+                let off = quat_rotate_vec(tb_joint_rot, js.target_local_anchor);
+                [tp[0] + off[0], tp[1] + off[1], tp[2] + off[2]]
+            } else {
+                js.world_anchor
+            };
+
+            match js.kind.as_str() {
+                "hinge" => {
+                    let u = js.axis;
+                    let r0 = [-js.anchor[0], -js.anchor[1], -js.anchor[2]];
+                    let q_prev = quat_from_axis_angle(u, js.angle);
+                    let r_prev = quat_rotate_vec(q_prev, r0);
+                    let u_dot_r = dot3(u, r_prev);
+                    let r_perp = [
+                        r_prev[0] - u[0] * u_dot_r,
+                        r_prev[1] - u[1] * u_dot_r,
+                        r_prev[2] - u[2] * u_dot_r,
+                    ];
+                    let r_perp2 = dot3(r_perp, r_perp);
+                    let inertia = (mass * r_perp2.max(0.25)).max(0.05);
+                    let wx_r_prev = cross3(u, r_prev);
+                    let dv = [
+                        vel_i[0] - (tb_vel[0] + wx_r_prev[0] * js.omega),
+                        vel_i[1] - (tb_vel[1] + wx_r_prev[1] * js.omega),
+                        vel_i[2] - (tb_vel[2] + wx_r_prev[2] * js.omega),
+                    ];
+                    let mut omega = js.omega;
+                    if r_perp2 > 1e-6 {
+                        omega += dot3(cross3(r_prev, dv), u) / r_perp2;
+                    }
+                    let tau_g = if has_dyn_rb {
+                        0.0
+                    } else {
+                        dot3(cross3(r_prev, [0.0, -9.81 * mass * g_scale, 0.0]), u)
+                    };
+                    let denom = inertia + js.damping * dt + js.stiffness * dt * dt;
+                    omega = (inertia * omega + (tau_g - js.stiffness * js.angle) * dt) / denom;
+                    if js.motor_max_force > 0.0 {
+                        let max_dw = (js.motor_max_force / inertia) * dt;
+                        omega += (js.motor_speed - omega).clamp(-max_dw, max_dw);
+                    }
+                    omega = omega.clamp(-50.0, 50.0);
+                    let mut angle = js.angle + omega * dt;
+                    if let Some(lims) = js.limits {
+                        let min_rad = lims[0].to_radians();
+                        let max_rad = lims[1].to_radians();
+                        if angle < min_rad {
+                            angle = min_rad;
+                            if omega < 0.0 {
+                                omega = 0.0;
+                            }
+                        } else if angle > max_rad {
+                            angle = max_rad;
+                            if omega > 0.0 {
+                                omega = 0.0;
+                            }
+                        }
+                    }
+                    js.angle = angle;
+                    js.omega = omega;
+                    let q_hinge = quat_from_axis_angle(u, angle);
+                    js.joint_rot = q_hinge;
+                    rot_i = normalize_quat(quat_mul(q_hinge, base_rot_i));
+                    let r_new = quat_rotate_vec(q_hinge, r0);
+                    pos_i = [
+                        world_pivot[0] + r_new[0],
+                        world_pivot[1] + r_new[1],
+                        world_pivot[2] + r_new[2],
+                    ];
+                    let wx_r = cross3(u, r_new);
+                    vel_i = [
+                        tb_vel[0] + wx_r[0] * omega,
+                        tb_vel[1] + wx_r[1] * omega,
+                        tb_vel[2] + wx_r[2] * omega,
+                    ];
+                }
+                "slider" => {
+                    let u = js.axis;
+                    let origin = [
+                        world_pivot[0] - js.anchor[0],
+                        world_pivot[1] - js.anchor[1],
+                        world_pivot[2] - js.anchor[2],
+                    ];
+                    let dv = [
+                        vel_i[0] - (tb_vel[0] + u[0] * js.slide_vel),
+                        vel_i[1] - (tb_vel[1] + u[1] * js.slide_vel),
+                        vel_i[2] - (tb_vel[2] + u[2] * js.slide_vel),
+                    ];
+                    let mut v = js.slide_vel + dot3(dv, u);
+                    let f_grav = if has_dyn_rb { 0.0 } else { -9.81 * mass * g_scale * u[1] };
+                    let denom = mass + js.damping * dt + js.stiffness * dt * dt;
+                    v = (mass * v + (f_grav - js.stiffness * js.slide_pos) * dt) / denom;
+                    if js.motor_max_force > 0.0 {
+                        let max_dv = (js.motor_max_force / mass) * dt;
+                        v += (js.motor_speed - v).clamp(-max_dv, max_dv);
+                    }
+                    v = v.clamp(-200.0, 200.0);
+                    let mut s = js.slide_pos + v * dt;
+                    if let Some(lims) = js.limits {
+                        if s < lims[0] {
+                            s = lims[0];
+                            if v < 0.0 {
+                                v = 0.0;
+                            }
+                        } else if s > lims[1] {
+                            s = lims[1];
+                            if v > 0.0 {
+                                v = 0.0;
+                            }
+                        }
+                    }
+                    js.slide_pos = s;
+                    js.slide_vel = v;
+                    pos_i = [origin[0] + u[0] * s, origin[1] + u[1] * s, origin[2] + u[2] * s];
+                    vel_i = [tb_vel[0] + u[0] * v, tb_vel[1] + u[1] * v, tb_vel[2] + u[2] * v];
+                }
+                "spring" => {
+                    if !has_rb_cfg {
+                        vel_i[1] += -9.81 * g_scale * dt;
+                    }
+                    let p_b = tb_pos.unwrap_or(js.world_anchor);
+                    let off_a = if tb_pos.is_some() {
+                        quat_rotate_vec(js.joint_rot, js.anchor)
+                    } else {
+                        [0.0, 0.0, 0.0]
+                    };
+                    let p_a = [pos_i[0] + off_a[0], pos_i[1] + off_a[1], pos_i[2] + off_a[2]];
+                    let d = [p_a[0] - p_b[0], p_a[1] - p_b[1], p_a[2] - p_b[2]];
+                    let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                    let dir =
+                        if dist > 1e-6 { [d[0] / dist, d[1] / dist, d[2] / dist] } else { js.axis };
+                    let stretch = dist - js.effective_rest_len;
+                    let inv_m1 = 1.0 / mass;
+                    let inv_m2 = tb_dyn_mass.map(|m| 1.0 / m).unwrap_or(0.0);
+                    let eff_mass = 1.0 / (inv_m1 + inv_m2);
+                    let rel_vel =
+                        [vel_i[0] - tb_vel[0], vel_i[1] - tb_vel[1], vel_i[2] - tb_vel[2]];
+                    let v_rel = dot3(rel_vel, dir);
+                    let denom = eff_mass + js.damping * dt + js.stiffness * dt * dt;
+                    let v_rel_new = (eff_mass * v_rel - js.stiffness * stretch * dt) / denom;
+                    let j_imp = (v_rel_new - v_rel) * eff_mass;
+                    let dv1 = j_imp * inv_m1;
+                    vel_i = [
+                        (vel_i[0] + dir[0] * dv1).clamp(-200.0, 200.0),
+                        (vel_i[1] + dir[1] * dv1).clamp(-200.0, 200.0),
+                        (vel_i[2] + dir[2] * dv1).clamp(-200.0, 200.0),
+                    ];
+                    if !has_rb_cfg {
+                        let lat_damp = (1.0 - (js.damping * 0.05).min(5.0) * dt).max(0.0);
+                        let vn_after = dot3(vel_i, dir);
+                        vel_i = [
+                            dir[0] * vn_after + (vel_i[0] - dir[0] * vn_after) * lat_damp,
+                            dir[1] * vn_after + (vel_i[1] - dir[1] * vn_after) * lat_damp,
+                            dir[2] * vn_after + (vel_i[2] - dir[2] * vn_after) * lat_damp,
+                        ];
+                        pos_i = [
+                            pos_i[0] + vel_i[0] * dt,
+                            pos_i[1] + vel_i[1] * dt,
+                            pos_i[2] + vel_i[2] * dt,
+                        ];
+                    } else if has_dyn_rb {
+                        pos_i = [
+                            pos_i[0] + dir[0] * dv1 * dt,
+                            pos_i[1] + dir[1] * dv1 * dt,
+                            pos_i[2] + dir[2] * dv1 * dt,
+                        ];
+                    }
+                    let mut tb_pos_mut = tb_pos;
+                    let mut tb_vel_mut = tb_vel;
+                    if inv_m2 > 0.0 {
+                        let dv2 = -j_imp * inv_m2;
+                        tb_vel_mut = [
+                            (tb_vel_mut[0] + dir[0] * dv2).clamp(-200.0, 200.0),
+                            (tb_vel_mut[1] + dir[1] * dv2).clamp(-200.0, 200.0),
+                            (tb_vel_mut[2] + dir[2] * dv2).clamp(-200.0, 200.0),
+                        ];
+                        if let Some(tp) = tb_pos_mut.as_mut() {
+                            tp[0] += dir[0] * dv2 * dt;
+                            tp[1] += dir[1] * dv2 * dt;
+                            tp[2] += dir[2] * dv2 * dt;
+                        }
+                    }
+                    if let Some(lims) = js.limits {
+                        let p_b2 = tb_pos_mut.unwrap_or(js.world_anchor);
+                        let dx = pos_i[0] + off_a[0] - p_b2[0];
+                        let dy = pos_i[1] + off_a[1] - p_b2[1];
+                        let dz = pos_i[2] + off_a[2] - p_b2[2];
+                        let d2 = (dx * dx + dy * dy + dz * dz).sqrt();
+                        let clamped = d2.clamp(lims[0], lims[1]);
+                        if (clamped - d2).abs() > 1e-6 {
+                            let n_dir =
+                                if d2 > 1e-6 { [dx / d2, dy / d2, dz / d2] } else { js.axis };
+                            let corr = (clamped - d2) / (inv_m1 + inv_m2);
+                            pos_i = [
+                                pos_i[0] + n_dir[0] * corr * inv_m1,
+                                pos_i[1] + n_dir[1] * corr * inv_m1,
+                                pos_i[2] + n_dir[2] * corr * inv_m1,
+                            ];
+                            if inv_m2 > 0.0 {
+                                if let Some(tp) = tb_pos_mut.as_mut() {
+                                    tp[0] -= n_dir[0] * corr * inv_m2;
+                                    tp[1] -= n_dir[1] * corr * inv_m2;
+                                    tp[2] -= n_dir[2] * corr * inv_m2;
+                                }
+                            }
+                            let rv = dot3(
+                                [
+                                    vel_i[0] - if tb_pos.is_some() { tb_vel_mut[0] } else { 0.0 },
+                                    vel_i[1] - if tb_pos.is_some() { tb_vel_mut[1] } else { 0.0 },
+                                    vel_i[2] - if tb_pos.is_some() { tb_vel_mut[2] } else { 0.0 },
+                                ],
+                                n_dir,
+                            );
+                            if (d2 > lims[1] && rv > 0.0) || (d2 < lims[0] && rv < 0.0) {
+                                let j_lim = -rv / (inv_m1 + inv_m2);
+                                vel_i = [
+                                    vel_i[0] + n_dir[0] * j_lim * inv_m1,
+                                    vel_i[1] + n_dir[1] * j_lim * inv_m1,
+                                    vel_i[2] + n_dir[2] * j_lim * inv_m1,
+                                ];
+                                if inv_m2 > 0.0 {
+                                    tb_vel_mut = [
+                                        tb_vel_mut[0] - n_dir[0] * j_lim * inv_m2,
+                                        tb_vel_mut[1] - n_dir[1] * j_lim * inv_m2,
+                                        tb_vel_mut[2] - n_dir[2] * j_lim * inv_m2,
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                    if inv_m2 > 0.0 {
+                        if let Some(tp) = tb_pos_mut {
+                            pending_tb_dv = Some((tp, tb_vel_mut));
+                        }
+                    }
+                }
+                "ball" => {
+                    let r0 = [-js.anchor[0], -js.anchor[1], -js.anchor[2]];
+                    let arm_len2 = dot3(r0, r0);
+                    let r_prev = quat_rotate_vec(js.joint_rot, r0);
+                    let inertia = (mass * arm_len2.max(0.25)).max(0.05);
+                    let mut w = js.omega_vec;
+                    if arm_len2 > 1e-8 {
+                        let wx_r_prev = cross3(w, r_prev);
+                        let dv = [
+                            vel_i[0] - (tb_vel[0] + wx_r_prev[0]),
+                            vel_i[1] - (tb_vel[1] + wx_r_prev[1]),
+                            vel_i[2] - (tb_vel[2] + wx_r_prev[2]),
+                        ];
+                        let dw = cross3(r_prev, dv);
+                        w = [
+                            w[0] + dw[0] / arm_len2,
+                            w[1] + dw[1] / arm_len2,
+                            w[2] + dw[2] / arm_len2,
+                        ];
+                    }
+                    let fg = if has_dyn_rb { 0.0 } else { -9.81 * mass * g_scale };
+                    let tau_g = [-r_prev[2] * fg, 0.0, r_prev[0] * fg];
+                    let q_pos = if js.joint_rot[3] < 0.0 {
+                        [-js.joint_rot[0], -js.joint_rot[1], -js.joint_rot[2], -js.joint_rot[3]]
+                    } else {
+                        js.joint_rot
+                    };
+                    let sin_half =
+                        (q_pos[0] * q_pos[0] + q_pos[1] * q_pos[1] + q_pos[2] * q_pos[2]).sqrt();
+                    let swing_angle = 2.0 * sin_half.atan2(q_pos[3].clamp(0.0, 1.0));
+                    let swing_axis = if sin_half > 1e-7 {
+                        [q_pos[0] / sin_half, q_pos[1] / sin_half, q_pos[2] / sin_half]
+                    } else {
+                        [0.0, 1.0, 0.0]
+                    };
+                    let denom = inertia + js.damping * dt + js.stiffness * dt * dt;
+                    w = [
+                        (inertia * w[0]
+                            + (tau_g[0] - js.stiffness * swing_angle * swing_axis[0]) * dt)
+                            / denom,
+                        (inertia * w[1]
+                            + (tau_g[1] - js.stiffness * swing_angle * swing_axis[1]) * dt)
+                            / denom,
+                        (inertia * w[2]
+                            + (tau_g[2] - js.stiffness * swing_angle * swing_axis[2]) * dt)
+                            / denom,
+                    ];
+                    let w_mag = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+                    if w_mag > 50.0 {
+                        let scale = 50.0 / w_mag;
+                        w = [w[0] * scale, w[1] * scale, w[2] * scale];
+                    }
+                    let w_step = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+                    if w_step > 1e-8 {
+                        let dq = quat_from_axis_angle(
+                            [w[0] / w_step, w[1] / w_step, w[2] / w_step],
+                            w_step * dt,
+                        );
+                        js.joint_rot = normalize_quat(quat_mul(dq, js.joint_rot));
+                    }
+                    if let Some(lims) = js.limits {
+                        let max_rad = lims[0].abs().max(lims[1].abs()).to_radians();
+                        let q_c = if js.joint_rot[3] < 0.0 {
+                            [-js.joint_rot[0], -js.joint_rot[1], -js.joint_rot[2], -js.joint_rot[3]]
+                        } else {
+                            js.joint_rot
+                        };
+                        let s_h = (q_c[0] * q_c[0] + q_c[1] * q_c[1] + q_c[2] * q_c[2]).sqrt();
+                        let ang = 2.0 * s_h.atan2(q_c[3].clamp(0.0, 1.0));
+                        if ang > max_rad && s_h > 1e-7 {
+                            let ax = [q_c[0] / s_h, q_c[1] / s_h, q_c[2] / s_h];
+                            js.joint_rot = quat_from_axis_angle(ax, max_rad);
+                            let w_out = dot3(w, ax);
+                            if w_out > 0.0 {
+                                w = [
+                                    w[0] - ax[0] * w_out,
+                                    w[1] - ax[1] * w_out,
+                                    w[2] - ax[2] * w_out,
+                                ];
+                            }
+                        }
+                    }
+                    js.omega_vec = w;
+                    rot_i = normalize_quat(quat_mul(js.joint_rot, base_rot_i));
+                    let r_new = quat_rotate_vec(js.joint_rot, r0);
+                    pos_i = [
+                        world_pivot[0] + r_new[0],
+                        world_pivot[1] + r_new[1],
+                        world_pivot[2] + r_new[2],
+                    ];
+                    let wx_r = cross3(w, r_new);
+                    vel_i = [tb_vel[0] + wx_r[0], tb_vel[1] + wx_r[1], tb_vel[2] + wx_r[2]];
+                }
+                _ => {}
+            }
+        }
+
+        states[i].translation = pos_i;
+        states[i].velocity = vel_i;
+        states[i].rotation = rot_i;
+        if let (Some(k), Some((tp, tv))) = (tb_idx, pending_tb_dv) {
+            states[k].translation = tp;
+            states[k].velocity = tv;
+        }
     }
 }
 

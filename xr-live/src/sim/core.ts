@@ -84,6 +84,8 @@ export interface SimBody {
   pos: Vec3;
   /** Yaw delta (radians) applied about the body origin. */
   yaw: number;
+  /** 3D rotation delta quaternion `[x, y, z, w]` applied about the body origin (for non-Y joints). */
+  rot: [number, number, number, number];
   vel: Vec3;
   hidden: boolean;
   /** AABB center offset from `pos` (yaw 0), in meters. */
@@ -524,6 +526,7 @@ export function makeBody(
     initPos: [...initPos],
     pos: [...initPos],
     yaw: 0,
+    rot: [0, 0, 0, 1],
     vel: [0, 0, 0],
     hidden: false,
     center,
@@ -648,14 +651,44 @@ export function applySimBodies(world: SimWorld): void {
   const delta = mat4Create();
   for (const b of world.bodies) {
     if (b.meshes.length === 0) continue;
+    const identityRot =
+      b.rot[0] === 0 && b.rot[1] === 0 && b.rot[2] === 0 && b.rot[3] === 1;
     const identity =
       b.yaw === 0 &&
+      identityRot &&
       b.pos[0] === b.initPos[0] &&
       b.pos[1] === b.initPos[1] &&
       b.pos[2] === b.initPos[2];
     if (!identity) {
-      const q = [0, Math.sin(b.yaw / 2), 0, Math.cos(b.yaw / 2)];
-      const r = rotateY(b.initPos, b.yaw);
+      let q: [number, number, number, number] = [
+        0,
+        Math.sin(b.yaw / 2),
+        0,
+        Math.cos(b.yaw / 2),
+      ];
+      let r: Vec3;
+      if (identityRot) {
+        r = rotateY(b.initPos, b.yaw);
+      } else {
+        const [ax, ay, az, aw] = b.rot;
+        const [, by, , bw] = q;
+        q = [
+          aw * 0 + ax * bw + ay * 0 - az * by,
+          aw * by + ay * bw,
+          ax * by + az * bw,
+          aw * bw - ay * by,
+        ];
+        const [qx, qy, qz, qw] = q;
+        const [vx, vy, vz] = b.initPos;
+        const tx = 2 * (qy * vz - qz * vy);
+        const ty = 2 * (qz * vx - qx * vz);
+        const tz = 2 * (qx * vy - qy * vx);
+        r = [
+          vx + qw * tx + (qy * tz - qz * ty),
+          vy + qw * ty + (qz * tx - qx * tz),
+          vz + qw * tz + (qx * ty - qy * tx),
+        ];
+      }
       mat4FromRotationTranslationScale(
         delta,
         q,
@@ -778,6 +811,7 @@ export function resetSimScenario(target: any): void {
     }
     b.pos = [...b.initPos];
     b.yaw = 0;
+    b.rot = [0, 0, 0, 1];
     b.vel = [0, 0, 0];
     b.hidden = b.isTemplate;
     b.integrity = b.traits.integrity?.current ?? 0;

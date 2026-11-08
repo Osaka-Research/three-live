@@ -125,6 +125,21 @@ public struct XRPhysicsBodyTrait: Equatable, Sendable {
   public init() {}
 }
 
+/// Normalized mechanical `joint` trait (`hinge`, `slider`, `spring`, `ball`).
+public struct XRJointTrait: Equatable, Sendable {
+  public var type = "hinge"
+  public var target = ""
+  public var anchor = SIMD3<Double>(repeating: 0)
+  public var axis = SIMD3<Double>(0, 1, 0)
+  public var limits: SIMD2<Double>?
+  public var stiffness = 0.0
+  public var damping = 0.5
+  public var restLength = 0.0
+  public var motorSpeed = 0.0
+  public var motorMaxForce = 0.0
+  public init() {}
+}
+
 /// The `xr-live-sim` traits of one node, parsed from glTF `extras.xr`.
 public struct XRSimTraits: Equatable, Sendable {
   public var character: XRCharacterTrait?
@@ -135,13 +150,14 @@ public struct XRSimTraits: Equatable, Sendable {
   public var objective: XRObjectiveTrait?
   public var audioCues: XRAudioCuesTrait?
   public var rigidBody: XRPhysicsBodyTrait?
+  public var joint: XRJointTrait?
   public var collidable = false
 
   public init() {}
 
   public var isEmpty: Bool {
     character == nil && agent == nil && integrity == nil && zone == nil && spawner == nil
-      && objective == nil && audioCues == nil && rigidBody == nil && !collidable
+      && objective == nil && audioCues == nil && rigidBody == nil && joint == nil && !collidable
   }
 
   public static let agentTargetUser = "user"
@@ -154,6 +170,7 @@ public struct XRSimTraits: Equatable, Sendable {
   public static let objectiveTypes = ["pickup", "checkpoint", "time-bonus", "restore", "key"]
   public static let physicsBodyModes = ["dynamic", "static", "kinematic"]
   public static let physicsBodyShapes = ["auto", "box", "sphere", "cylinder"]
+  public static let jointTypes = ["hinge", "slider", "spring", "ball"]
   public static let audioCueNames = [
     "confirm", "error", "alarm", "warning", "pickup", "jump", "beam", "impact", "burst",
     "powerup", "step", "pass", "fail",
@@ -371,6 +388,100 @@ public struct XRSimTraits: Equatable, Sendable {
     parsePhysicsBody(raw)
   }
 
+  private static let jointTypeAliases: [String: String] = [
+    "hinge": "hinge", "revolute": "hinge",
+    "slider": "slider", "prismatic": "slider",
+    "spring": "spring", "distance": "spring",
+    "ball": "ball", "spherical": "ball",
+  ]
+
+  private static func parseJointAxis(_ raw: Any?, _ fallback: SIMD3<Double>) -> SIMD3<Double> {
+    if let s = XRJSON.string(raw)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+      switch s {
+      case "x", "+x": return SIMD3(1, 0, 0)
+      case "-x": return SIMD3(-1, 0, 0)
+      case "y", "+y": return SIMD3(0, 1, 0)
+      case "-y": return SIMD3(0, -1, 0)
+      case "z", "+z": return SIMD3(0, 0, 1)
+      case "-z": return SIMD3(0, 0, -1)
+      default: return fallback
+      }
+    }
+    guard let v = XRJSON.finiteVec3(raw) else { return fallback }
+    let len = (v.x * v.x + v.y * v.y + v.z * v.z).squareRoot()
+    return len > 1e-6 ? SIMD3(v.x / len, v.y / len, v.z / len) : fallback
+  }
+
+  public static func parseJoint(_ raw: Any?) -> XRJointTrait? {
+    if falsy(raw) { return nil }
+    if let s = XRJSON.string(raw), s == "none" { return nil }
+    let r: [String: Any]
+    if XRJSON.bool(raw) == true {
+      r = [:]
+    } else if let s = XRJSON.string(raw) {
+      r = ["type": s]
+    } else if let obj = XRJSON.object(raw) {
+      r = obj
+    } else {
+      return nil
+    }
+    if XRJSON.bool(r["enabled"]) == false { return nil }
+    let rt = r["type"] ?? r["kind"] ?? r["mode"]
+    let type: String
+    if let s = XRJSON.string(rt) {
+      guard let mapped = jointTypeAliases[s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]
+      else { return nil }
+      type = mapped
+    } else {
+      type = "hinge"
+    }
+    var t = XRJointTrait()
+    t.type = type
+    let rawTgt = r["target"] ?? r["connectedBody"] ?? r["parent"]
+    if let ts = XRJSON.string(rawTgt), ts.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "world" {
+      t.target = ""
+    } else {
+      t.target = XRLiveTraitParser.safeAnchorId(rawTgt) ?? ""
+    }
+    if let a = XRJSON.finiteVec3(r["anchor"] ?? r["pivot"]) {
+      t.anchor = SIMD3(num(a.x, -100, 100, 0), num(a.y, -100, 100, 0), num(a.z, -100, 100, 0))
+    }
+    let axisFallback: SIMD3<Double> =
+      type == "slider" ? SIMD3(0, 0, 1) : (type == "spring" ? SIMD3(0, -1, 0) : SIMD3(0, 1, 0))
+    t.axis = parseJointAxis(r["axis"], axisFallback)
+    let isAng = type == "hinge" || type == "ball"
+    let limLo: Double = isAng ? -360 : (type == "spring" ? 0 : -100)
+    let limHi: Double = isAng ? 360 : 100
+    let rl = XRJSON.array(r["limits"])
+    let loR: Any? =
+      (rl != nil && rl!.count >= 2)
+      ? rl![0] : (r["min"] ?? (isAng ? r["minAngle"] : r["minDistance"]))
+    let hiR: Any? =
+      (rl != nil && rl!.count >= 2)
+      ? rl![1] : (r["max"] ?? (isAng ? r["maxAngle"] : r["maxDistance"]))
+    let hasLim: Bool
+    if let arr = rl {
+      hasLim =
+        arr.count >= 2 && (XRJSON.number(arr[0])?.isFinite == true)
+        && (XRJSON.number(arr[1])?.isFinite == true)
+    } else {
+      hasLim = (XRJSON.number(loR)?.isFinite == true) || (XRJSON.number(hiR)?.isFinite == true)
+    }
+    if hasLim {
+      let a = num(loR, limLo, limHi, limLo)
+      let b = num(hiR, limLo, limHi, limHi)
+      t.limits = SIMD2(Swift.min(a, b), Swift.max(a, b))
+    }
+    t.stiffness = num(r["stiffness"], 0, 10000, type == "spring" ? 40 : 0)
+    t.damping = num(r["damping"], 0, 1000, type == "spring" ? 4 : 0.5)
+    t.restLength = num(r["restLength"], 0, 100, 0)
+    let ms = num(r["motorSpeed"], -100, 100, 0)
+    t.motorSpeed = ms
+    t.motorMaxForce = num(
+      r["motorMaxForce"] ?? r["maxMotorForce"], 0, 10000, ms != 0 ? 50 : 0)
+    return t
+  }
+
   /// Parses the sim traits of a `userData.xr` / `extras.xr` bag, or `nil` when none.
   public static func parse(_ raw: Any?) -> XRSimTraits? {
     guard let r = XRJSON.object(raw) else { return nil }
@@ -388,6 +499,7 @@ public struct XRSimTraits: Equatable, Sendable {
     t.objective = parseObjective(r["objective"])
     t.audioCues = parseAudioCues(r["audioCues"])
     t.rigidBody = parsePhysicsBody(rbSource)
+    t.joint = parseJoint(r["joint"] ?? r["constraint"])
     t.collidable = XRJSON.bool(r["collidable"]) == true
     return t.isEmpty ? nil : t
   }

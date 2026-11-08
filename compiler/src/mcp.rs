@@ -98,7 +98,7 @@ const AUTHORING_GUIDE_MARKDOWN: &str = r#"# Three-Live Authoring Guide for AI Co
 - **Spatial Traits (`mesh.userData.xr`)**:
   - Manipulation & Follow: `grab` (`"1-hand"` | `"2-hand"`), `scale` (`{ min, max }`), `billboard` (`"y"` | `"full"` | `"capsule"`), `follow` (`{ distance, speed }`), `orbit` (`{ radius, speed, axis }`), `handles` (`true`).
   - CAD & World: `dimensions` (`{ unit: "mm"|"cm"|"m"|"in" }`), `explode` (`{ layer, direction }`), `snapTo` (`{ grid, angle, socket }`), `gaze` (`{ action: "select"|"ask", dwellMs }`), `anchor` (`{ plane: "horizontal"|"vertical", persist: true }`).
-  - 60 Hz Simulation (`xr-live-sim`): `rigidBody` (`{ type: "dynamic"|"static"|"kinematic", collider: "box"|"sphere"|"cylinder", mass, restitution, friction }`), `character`, `agent` (`{ behavior: "patrol"|"chase"|"flee"|"wander", speed, waypoints }`), `integrity`, `zone`, `spawner`, `objective`, `audioEmitter`, `audioCues`.
+  - 60 Hz Simulation (`xr-live-sim`): `rigidBody` (`{ type: "dynamic"|"static"|"kinematic", collider: "box"|"sphere"|"cylinder", mass, restitution, friction }`), `joint` (`{ type: "hinge"|"slider"|"spring"|"ball", target: "<nodeName>"|"world", anchor, axis, limits, stiffness, damping, motorSpeed }`), `character`, `agent` (`{ behavior: "patrol"|"chase"|"flee"|"wander", speed, waypoints }`), `integrity`, `zone`, `spawner`, `objective`, `audioEmitter`, `audioCues`.
 - **Verification Loop**:
   1. Call `three_live_validate` to check for compiler errors (`TL1xx`), schema warnings (`TL2xx`), and spatial/frustum/grounding diagnostics (`TL301`–`TL308`).
   2. Call `three_live_render` (`view: "quad"`, `grid: true`, `annotations: true`) to inspect the 4-up orthographic/camera contact sheet (`CAMERA`, `FRONT +Z`, `TOP +Y FRUSTUM`, `ISO 45°`).
@@ -616,7 +616,7 @@ fn mcp_tool_definitions() -> Value {
         },
         {
             "name": "three_live_sim",
-            "description": "Simulate interactive KHR_interactivity behavior graphs, orbit/explode traits, and 60 Hz xr-live-sim rigid-body physics, character controllers, steering agents, hit zones, and objectives deterministically at 60 Hz.",
+            "description": "Simulate interactive KHR_interactivity behavior graphs, orbit/explode traits, and 60 Hz xr-live-sim rigid-body physics, mechanical joints (hinge, slider, spring, ball), character controllers, steering agents, hit zones, and objectives deterministically at 60 Hz.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

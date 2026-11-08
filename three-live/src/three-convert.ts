@@ -190,6 +190,25 @@ export interface XRMeshTraits {
           node?: string;
         }>;
       };
+  /** Mechanical joint constraint (`hinge`, `slider`, `spring`, `ball`; `xr-live-sim`). */
+  joint?:
+    | 'hinge'
+    | 'slider'
+    | 'spring'
+    | 'ball'
+    | boolean
+    | {
+        type?: 'hinge' | 'slider' | 'spring' | 'ball' | string;
+        target?: string;
+        anchor?: [number, number, number];
+        axis?: [number, number, number] | string;
+        limits?: [number, number];
+        stiffness?: number;
+        damping?: number;
+        restLength?: number;
+        motorSpeed?: number;
+        motorMaxForce?: number;
+      };
   [key: string]: any;
 }
 
@@ -2227,12 +2246,10 @@ def Scope "Meshes"
     if (schemas.length > 0) {
       metaLines.push(`prepend apiSchemas = [${schemas.join(', ')}]`);
     }
+    const ser = getSharedRegistry().xrTraitSerializer;
     if (xr) {
       const xrDictLines: string[] =
-        getSharedRegistry().xrTraitSerializer?.usdLines(
-          xr,
-          sanitizeUsdStringLiteral,
-        ) ?? [];
+        ser?.usdLines(xr, sanitizeUsdStringLiteral) ?? [];
       if (!xrDictLines.length) {
         for (const k of [
           'grab',
@@ -2267,9 +2284,10 @@ def Scope "Meshes"
       }
     }
     const parsedAe = readAudioEmitter(xr);
-    const tail = parsedAe
-      ? `def SpatialAudio "AudioEmitter"\n{\n${parsedAe.src ? `asset inputs:file = @${sanitizeUsdStringLiteral(parsedAe.src)}@\n` : ''}uniform token inputs:auralMode = "${parsedAe.isGlobal ? 'nonSpatial' : 'spatial'}"\nuniform token inputs:playbackMode = "${parsedAe.loop ? 'loopFromStart' : 'onceFromStart'}"\ndouble gain = ${formatNum(parsedAe.volume)}\n}\n`
-      : '';
+    const tail =
+      (parsedAe
+        ? `def SpatialAudio "AudioEmitter"\n{\n${parsedAe.src ? `asset inputs:file = @${sanitizeUsdStringLiteral(parsedAe.src)}@\n` : ''}uniform token inputs:auralMode = "${parsedAe.isGlobal ? 'nonSpatial' : 'spatial'}"\nuniform token inputs:playbackMode = "${parsedAe.loop ? 'loopFromStart' : 'onceFromStart'}"\ndouble gain = ${formatNum(parsedAe.volume)}\n}\n`
+        : '') + (xr ? (ser?.usdPrims?.(xr) ?? '') : '');
     return {header, body, tail};
   };
 

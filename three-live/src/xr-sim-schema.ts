@@ -32,6 +32,7 @@ import {
   FORBIDDEN_ANCHOR_IDS,
   isFiniteVec3,
   registerXRTraitExtension,
+  safeAnchorId,
   safeHexColor,
   shortString,
   type NormalizedXRTraits,
@@ -518,6 +519,139 @@ export function parsePhysicsBody(raw: unknown): PhysicsBodyOptions | null {
 /** Alias for {@link parsePhysicsBody}. */
 export const parseRigidBody = parsePhysicsBody;
 
+/** Mechanical joint types supported by `rigid-body` (`xr.joint`). */
+export const JOINT_TYPES = ['hinge', 'slider', 'spring', 'ball'] as const;
+/** One mechanical joint constraint type. */
+export type JointType = (typeof JOINT_TYPES)[number];
+
+/** Normalized `joint` trait options (`xr.joint`). */
+export interface JointOptions {
+  readonly type: JointType;
+  /** Connected node name (`''` means anchored to world space). */
+  readonly target: string;
+  /** Local anchor offset `[x, y, z]` in meters relative to this node's initial origin. */
+  readonly anchor: TraitVec3;
+  /** Unit axis `[x, y, z]` in world/parent space. */
+  readonly axis: TraitVec3;
+  /** Optional angle `[minDeg, maxDeg]` (`hinge`/`ball`) or distance `[minM, maxM]` (`slider`/`spring`). */
+  readonly limits: [number, number] | null;
+  readonly stiffness: number;
+  readonly damping: number;
+  readonly restLength: number;
+  readonly motorSpeed: number;
+  readonly motorMaxForce: number;
+}
+
+const JOINT_TYPE_ALIASES: Readonly<Record<string, JointType>> = {
+  hinge: 'hinge',
+  revolute: 'hinge',
+  slider: 'slider',
+  prismatic: 'slider',
+  spring: 'spring',
+  distance: 'spring',
+  ball: 'ball',
+  spherical: 'ball',
+};
+
+const AXIS_SHORTHANDS: Readonly<Record<string, TraitVec3>> = {
+  x: [1, 0, 0],
+  '+x': [1, 0, 0],
+  '-x': [-1, 0, 0],
+  y: [0, 1, 0],
+  '+y': [0, 1, 0],
+  '-y': [0, -1, 0],
+  z: [0, 0, 1],
+  '+z': [0, 0, 1],
+  '-z': [0, 0, -1],
+};
+
+function parseJointAxis(raw: unknown, fb: TraitVec3): TraitVec3 {
+  if (typeof raw === 'string') {
+    const sh = AXIS_SHORTHANDS[raw.trim().toLowerCase()];
+    return sh ? [...sh] : [...fb];
+  }
+  const len = isFiniteVec3(raw) ? Math.hypot(raw[0], raw[1], raw[2]) : 0;
+  return len > 1e-6 && isFiniteVec3(raw)
+    ? [raw[0] / len, raw[1] / len, raw[2] / len]
+    : [...fb];
+}
+
+/**
+ * Parses a `joint` trait (`'hinge' | 'slider' | 'spring' | 'ball'`, `true`, or
+ * `{ type, target, anchor, axis, limits, stiffness, damping, restLength,
+ * motorSpeed, motorMaxForce }`).
+ */
+export function parseJoint(raw: unknown): JointOptions | null {
+  if (!raw || raw === 'none') return null;
+  const r =
+    raw === true ? {} : typeof raw === 'string' ? {type: raw} : asRecord(raw);
+  if (!r || r['enabled'] === false) return null;
+  const rt = r['type'] ?? r['kind'] ?? r['mode'];
+  const type =
+    typeof rt === 'string'
+      ? JOINT_TYPE_ALIASES[rt.trim().toLowerCase()]
+      : 'hinge';
+  if (!type) return null;
+  const rawTgt = r['target'] ?? r['connectedBody'] ?? r['parent'];
+  const target =
+    typeof rawTgt === 'string' && rawTgt.trim().toLowerCase() === 'world'
+      ? ''
+      : (safeAnchorId(rawTgt) ?? '');
+  const anchor = parseBoundedVec3(
+    r['anchor'] ?? r['pivot'],
+    -100,
+    100,
+    [0, 0, 0],
+  );
+  const axis = parseJointAxis(
+    r['axis'],
+    type === 'slider'
+      ? [0, 0, 1]
+      : type === 'spring'
+        ? [0, -1, 0]
+        : [0, 1, 0],
+  );
+  const isAng = type === 'hinge' || type === 'ball';
+  const limLo = isAng ? -360 : type === 'spring' ? 0 : -100;
+  const limHi = isAng ? 360 : 100;
+  const rl = r['limits'];
+  const loR =
+    Array.isArray(rl) && rl.length >= 2
+      ? rl[0]
+      : (r['min'] ?? (isAng ? r['minAngle'] : r['minDistance']));
+  const hiR =
+    Array.isArray(rl) && rl.length >= 2
+      ? rl[1]
+      : (r['max'] ?? (isAng ? r['maxAngle'] : r['maxDistance']));
+  const hasLim = Array.isArray(rl)
+    ? rl.length >= 2 && Number.isFinite(rl[0]) && Number.isFinite(rl[1])
+    : (typeof loR === 'number' && Number.isFinite(loR)) ||
+      (typeof hiR === 'number' && Number.isFinite(hiR));
+  const a = clampNum(loR, limLo, limHi, limLo);
+  const b = clampNum(hiR, limLo, limHi, limHi);
+  const limits: [number, number] | null = hasLim
+    ? [Math.min(a, b), Math.max(a, b)]
+    : null;
+  const motorSpeed = clampNum(r['motorSpeed'], -100, 100, 0);
+  return {
+    type,
+    target,
+    anchor,
+    axis,
+    limits,
+    stiffness: clampNum(r['stiffness'], 0, 10000, type === 'spring' ? 40 : 0),
+    damping: clampNum(r['damping'], 0, 1000, type === 'spring' ? 4 : 0.5),
+    restLength: clampNum(r['restLength'], 0, 100, 0),
+    motorSpeed,
+    motorMaxForce: clampNum(
+      r['motorMaxForce'] ?? r['maxMotorForce'],
+      0,
+      10000,
+      motorSpeed !== 0 ? 50 : 0,
+    ),
+  };
+}
+
 /** Normalizes, and serializes to SceneCore and USD, every sim trait. */
 const SIM_TRAIT_EXTENSION: XRTraitExtension = {
   normalize(r, out) {
@@ -635,6 +769,8 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
     ) {
       out.collidable = true;
     }
+    const joint = parseJoint(r['joint'] ?? r['constraint']);
+    if (joint) out.joint = joint;
   },
   sceneCore(n, comp) {
     if (n.character) {
@@ -668,6 +804,14 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
       };
     }
     if (n.collidable) comp['collidable'] = {enabled: true};
+    if (n.joint) {
+      comp['joint'] = {
+        ...n.joint,
+        anchor: [...n.joint.anchor],
+        axis: [...n.joint.axis],
+        limits: n.joint.limits ? [...n.joint.limits] : null,
+      };
+    }
   },
   usd(n, put, out) {
     if (n.character) {
@@ -704,6 +848,46 @@ const SIM_TRAIT_EXTENSION: XRTraitExtension = {
       put('rigidBody', n.rigidBody);
     }
     if (n.collidable) out['collidable'] = true;
+    if (n.joint) {
+      out['joint'] = n.joint.type;
+      put('joint', {...n.joint, type: undefined, limits: undefined});
+      if (n.joint.limits) {
+        out['jointMin'] = n.joint.limits[0];
+        out['jointMax'] = n.joint.limits[1];
+      }
+    }
+  },
+  usdPrims(n) {
+    const j = n.joint;
+    if (!j) return '';
+    const PRIMS: Record<JointType, string> = {
+      hinge: 'PhysicsRevoluteJoint',
+      slider: 'PhysicsPrismaticJoint',
+      spring: 'PhysicsDistanceJoint',
+      ball: 'PhysicsSphericalJoint',
+    };
+    const [ax, ay, az] = j.axis;
+    const axisTok =
+      Math.abs(ax) >= Math.abs(ay) && Math.abs(ax) >= Math.abs(az)
+        ? 'X'
+        : Math.abs(az) >= Math.abs(ay)
+          ? 'Z'
+          : 'Y';
+    let body = `point3f physics:localPos0 = (${j.anchor.join(', ')})\n`;
+    if (j.type === 'hinge' || j.type === 'slider') {
+      body += `uniform token physics:axis = "${axisTok}"\n`;
+      if (j.limits) {
+        body += `float physics:lowerLimit = ${j.limits[0]}\nfloat physics:upperLimit = ${j.limits[1]}\n`;
+      }
+    } else if (j.limits) {
+      const [lo, hi] = j.limits;
+      const c = Math.max(Math.abs(lo), Math.abs(hi));
+      body +=
+        j.type === 'spring'
+          ? `float physics:minDistance = ${lo}\nfloat physics:maxDistance = ${hi}\n`
+          : `float physics:coneAngle0Limit = ${c}\nfloat physics:coneAngle1Limit = ${c}\n`;
+    }
+    return `def ${PRIMS[j.type]} "Joint"\n{\n${body}}\n`;
   },
 };
 

@@ -51,6 +51,7 @@ You are authoring 3D and Spatial Computing scenes using Google's `three-live` an
   - `follow`: `'head' | 'hand-left' | 'hand-right'` or `{ mode: 'head', lazy: true, distance: 1.2, deadzoneDeg: 15, stiffness: 6, height: -0.1, faceUser: true }`
   - `anchor`: `'floor' | 'wall' | 'ceiling' | 'table' | 'horizontal' | 'vertical'` or `{ target: 'table', id: 'part-1', persist: true }`
   - `physics` / `rigidBody`: `'dynamic' | 'static' | 'kinematic' | true` or `{ body: 'dynamic' | 'static' | 'kinematic', shape: 'auto' | 'box' | 'sphere' | 'cylinder', mass: 1, restitution: 0.35, friction: 0.5, linearDamping: 0.05, angularDamping: 0.1, gravityScale: 1, velocity: [0, 0, 0], angularVelocity: [0, 0, 0], lockRotation: false }`
+  - `joint`: `'hinge' | 'slider' | 'spring' | 'ball' | true` or `{ type: 'hinge' | 'slider' | 'spring' | 'ball', target: 'nodeName' | 'world', anchor: [0, 0, 0], axis: 'x' | 'y' | 'z' | [0, 1, 0], limits: [-45, 90], stiffness: 40, damping: 4, restLength: 0.5, motorSpeed: 0, motorMaxForce: 10 }`
   - `orbit`: `{ target: [x, y, z] | 'nodeName', radius: 0.5, speed: 0.8, height: 0, faceCenter: true }`
   - `handles`: `{ rotateAxis: 'y' | 'none', minScale: 0.2, maxScale: 3.0 } | true`
   - `dimensions`: `{ unit: 'auto' | 'm' | 'cm' | 'mm' | 'in' | 'ft-in', axes: ['x', 'y', 'z'], color: '#38bdf8', showOnSelect: false } | true`
@@ -390,7 +391,7 @@ three-live-cli sim scene.js --duration=5.0 \
 :         :          : (`safeMediaUrl`, `isAllowedLiveUrl`, :
 :         :          : `safeAnchorId`).                     :
 | `TL204` | Schema   | Broken node reference                |
-:         :          : (`orbit.target`,                     :
+:         :          : (`orbit.target`, `joint.target`,     :
 :         :          : `ik.root`/`mid`/`effector`/`target`, :
 :         :          : `spawner.template`,                  :
 :         :          : `interactivity.*.target`).           :

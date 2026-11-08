@@ -50,6 +50,7 @@ export const GUIDED_SYSTEM_PROMPT = [
   '     `grab` (`true` | `"1-hand"` | `"2-hand"` — NEVER `grabbable`), `scale` (`{ min, max }`), `billboard` (`true` | `"y"` | `"spherical"`),',
   '     `follow` (`{ mode: "head"|"hand-left"|"hand-right", distance: 1.0, stiffness: 6 }`), `anchor` (`"Floor"` | `"Table"` | `"Wall"` | `"Ceiling"`),',
   '     `physics` (`{ body: "dynamic"|"static"|"kinematic", collider: "box"|"sphere"|"hull"|"mesh", mass: 1.0, restitution: 0.4, friction: 0.5 }`),',
+  '     `joint` (`{ type: "hinge"|"slider"|"spring"|"ball", target: "<nodeName>"|"world", anchor: [x,y,z], axis: "x"|"y"|"z"|[x,y,z], limits: [min,max], stiffness: 40, damping: 4, motorSpeed: 0 }`),',
   '     `orbit` (`{ target: [0,0,0] | "<nodeName>", radius: 0.5, speed: 1.0, height: 0 }`), `handles` (`true` | `{ rotateAxis: "y", minScale: 0.5, maxScale: 2.0 }`),',
   '     `dimensions` (`true` | `{ unit: "m"|"cm"|"mm", axes: ["x","y","z"] }`), `snapTo` (`true` | `{ radius: 0.15, targets: ["<socketNodeName>"] }`),',
   '     `snapSocket` (`{ id: "socket_1", radius: 0.15 }`), `gaze` (`{ dwellMs: 800, action: "select" }`),',
