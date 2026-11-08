@@ -752,6 +752,40 @@ function runProceduralTests(): void {
     'Explicit emissive: 0x000000 preserves zero emissiveFactor and Vector2 normalScale serializes to glTF normalTexture.scale',
   );
 
+  // Canvas arc() sweeps follow the HTML spec in both directions: a full circle
+  // needs a >= 2*PI sweep in the drawing direction, otherwise coincident
+  // start/end angles are an empty arc (matches browsers and three.js).
+  const arcFillCount = (
+    start: number,
+    end: number,
+    anticlockwise: boolean,
+  ): number => {
+    const c: any = document.createElement('canvas');
+    c.width = 32;
+    c.height = 32;
+    const cx = c.getContext('2d');
+    cx.fillStyle = '#ffffff';
+    cx.beginPath();
+    cx.moveTo(16, 16);
+    cx.arc(16, 16, 12, start, end, anticlockwise);
+    cx.closePath();
+    cx.fill();
+    const d = cx.getImageData(0, 0, 32, 32).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+    return n;
+  };
+  const fullDisc = arcFillCount(0, Math.PI * 2, false);
+  assert(
+    fullDisc > 350 &&
+      arcFillCount(0, Math.PI * 2, true) === 0 &&
+      arcFillCount(0, -Math.PI * 2, false) === 0 &&
+      Math.abs(arcFillCount(0, -Math.PI * 2, true) - fullDisc) <= 2 &&
+      Math.abs(arcFillCount(0, Math.PI / 2, true) / fullDisc - 0.75) < 0.05 &&
+      Math.abs(arcFillCount(0, Math.PI / 2, false) / fullDisc - 0.25) < 0.05,
+    'Canvas arc() full-circle and anticlockwise sweeps follow the HTML spec',
+  );
+
   // An un-bakeable bumpMap (remote URL height map) must never be emitted as a
   // tangent-space glTF normalTexture (a grayscale height map is not a normal map).
   const urlBumpScene = new Scene();

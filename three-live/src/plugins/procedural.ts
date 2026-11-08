@@ -2128,8 +2128,14 @@ export function installProceduralExtension(threeNs: any, reg?: any): any {
         if (sweep >= tau) sweep = tau;
         else if (sweep < 0) sweep = ((sweep % tau) + tau) % tau;
       } else {
+        // Per the HTML spec, an anticlockwise arc is the whole circumference only
+        // when startAngle - endAngle >= 2*PI; otherwise coincident start/end
+        // angles (e.g. arc(x, y, r, 0, 2 * Math.PI, true)) form an empty arc.
         if (sweep <= -tau) sweep = -tau;
-        else if (sweep > 0) sweep = -(((tau - (sweep % tau)) % tau) || tau);
+        else if (sweep > 0) {
+          const m = sweep % tau;
+          sweep = m === 0 ? 0 : m - tau;
+        }
       }
       const cosR = Math.cos(rotation);
       const sinR = Math.sin(rotation);
