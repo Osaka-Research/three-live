@@ -6,6 +6,7 @@ RUN ARCH="$(uname -m)" && \
     else \
       BIN="three-live-cli-linux-x86_64"; \
     fi && \
-    curl -fsSL "https://github.com/google/three-live/releases/download/v1.3.1/${BIN}" -o /usr/local/bin/three-live-cli && \
+    (curl -fsSL "https://github.com/google/three-live/releases/download/v1.3.2/${BIN}" -o /usr/local/bin/three-live-cli || \
+     curl -fsSL "https://github.com/google/three-live/releases/latest/download/${BIN}" -o /usr/local/bin/three-live-cli) && \
     chmod +x /usr/local/bin/three-live-cli
 ENTRYPOINT ["/usr/local/bin/three-live-cli", "mcp"]

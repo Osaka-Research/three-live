@@ -107,7 +107,7 @@ if [ ! -f "${ROOT_DIR}/gradle/wrapper/gradle-wrapper.jar" ]; then
     bash "${SCRIPT_DIR}/bootstrap_gradle_wrapper.sh"
 fi
 
-PREBUILT_JNI_VERSION="v1.3.1"
+PREBUILT_JNI_VERSION="v1.3.2"
 
 download_prebuilt_jnilibs() {
     # If all 3 ABI .so files and the expected prebuilt version stamp are present in jniLibs, reuse them directly.

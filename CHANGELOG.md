@@ -22,31 +22,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 --------------------------------------------------------------------------------
 
-## [Unreleased]
+## [1.3.2] - 2026-11-08 (Beta)
 
 ### Added
 
--   **Shareable playground links.** The `/three/` and `/xr/` playgrounds open
-    scenes from the URL fragment: `#p=<preset>` for built-in and gallery scenes,
-    and `#s=z:<payload>` for any scene script (raw DEFLATE, unpadded base64url;
-    the fragment never reaches the server). **Share** copies a link; **Run on
-    phone** shows a QR code that opens the scene on a phone, one tap from AR.
--   **Gallery scenes** from the eval suite: an AI-generated five-story pagoda
-    (`#p=pagoda`) and warehouse forklift drill (`#p=forklift`).
--   **Phone layout:** a large View in AR button (AR Quick Look on iOS, WebXR on
-    Android) and a note on what each platform runs.
--   **Native outputs panel:** mesh count, GLB and USDZ sizes, and Android
-    (Kotlin), iOS (Swift), and web snippets for the current scene.
--   **`three-live-cli link`** (and `--qr`) and the MCP tool
-    **`three_live_link`:** validate a scene and return its playground link and,
-    when short enough, a QR code (terminal text or SVG) from a dependency-free
-    encoder.
+-   **Shareable Playground Links & QR Codes (`#p=`, `#s=z:`):** The `/three/`
+    and `/xr/` web playgrounds open scenes directly from the URL fragment:
+    `#p=<preset>` for built-in and gallery scenes, and `#s=z:<payload>` for any
+    scene script (raw DEFLATE, unpadded base64url; decoded client-side via
+    `DecompressionStream('deflate-raw')` so scene code never touches a server).
+    Added **🔗 Share**, a centered **📱 Run on phone** QR code modal, a
+    persistent **Compiled in X ms** header badge, a 3-tab **Camera / Mesh /
+    Spatial & AR** inspector, and **🏯 AI Pagoda** (`#p=pagoda`) and **🚜 AI
+    Forklift Drill** (`#p=forklift`) gallery presets.
+-   **Native Outputs Panel:** Live mesh count, `.glb` and `.usdz` byte sizes,
+    and copyable Android (Kotlin), iOS (Swift), and Web HTML snippets for the
+    active scene in `/three/`.
+-   **`three-live-cli link` & `three_live_link` MCP Tool:** Validates a scene
+    and returns a shareable playground URL (`#s=z:<deflate-base64url>`) plus a
+    dependency-free ISO/IEC 18004 Model 2 QR code (UTF-8 half-block terminal
+    rendering via `--qr` and vector SVG via MCP).
+-   **USDZ Embedded Texture Packaging (`UsdUVTexture`):** Packages embedded
+    `.glb` and procedural `THREE.DataTexture` images (PNG, JPEG, WebP) as
+    64-byte-aligned entries inside `.usdz` archives and emits connected
+    `UsdUVTexture` + `UsdPrimvarReader_float2` shader graphs on both Web and
+    Rust compilers.
+-   **60 Hz Temporal Simulation Harness (`three-live-cli sim` &
+    `three_live_sim`):** Headless deterministic simulation runner stepping
+    `KHR_interactivity`, `xr-live-sim` rigid-body physics, character
+    controllers, and objectives with optional contact-sheet filmstrips.
+-   **`Object3D` World-Transform Helpers & `defineModelViewer()`:** Added
+    `getWorldPosition`, `getWorldQuaternion`, `getWorldScale`,
+    `getWorldDirection`, `localToWorld`, `worldToLocal`,
+    `Quaternion.identity()`, `defineModelViewer()` custom-element alias, and
+    native partial-arc (`thetaStart`/`thetaLength`/`phiStart`/`phiLength`/`arc`)
+    support across `CylinderGeometry`, `SphereGeometry`, `RingGeometry`,
+    `CircleGeometry`, and `TorusGeometry`.
 
 ### Fixed
 
--   **XR Collect game drones keep moving.** The patrol route no longer runs into
-    an inner wall, and the chaser loops the right half of the arena while the
-    player is out of sight instead of idling in the far corner.
+-   **XR Collect Game Drone Patrols:** Updated `Drone_Patrol` and `Drone_Chaser`
+    routes so enemy drones circulate continuously around inner walls instead of
+    stopping at the far corners.
+-   **macOS Quick Look (`.usdz`) Button Label:** Clarified the desktop Safari
+    AR button label and tooltip when downloading `.usdz` for Finder Quick Look.
 
 --------------------------------------------------------------------------------
 

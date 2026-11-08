@@ -58,7 +58,7 @@ publishing {
     register<MavenPublication>("release") {
       groupId = "com.google.threelive"
       artifactId = "detect-mlkit"
-      version = "1.3.1"
+      version = "1.3.2"
       afterEvaluate { from(components["release"]) }
 
       pom {
