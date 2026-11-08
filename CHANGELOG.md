@@ -26,6 +26,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Bring-your-own-LLM scene editing (`three-live-ai.min.js`, `< 5 KB gz`):**
+    `el.editScene(instruction, { selection, maxRepairs, dryRun, signal })`
+    sends the current scene script and selected mesh to any LLM, compiles the
+    reply in the element's sandbox before touching the live scene, retries once
+    with the exact error, rejects edits that empty the scene or silently drop
+    the selected mesh, then hot-swaps (`el.undoEdit()` reverts). Providers:
+    `ai-chat` (any Chat Completions-compatible endpoint via `ai-endpoint` /
+    `ai-model`, or `createAIChatProvider()`) or any custom
+    `{ complete({ messages, signal }) }` object. Emits `three-live-edit-start`
+    and `three-live-edit` events. Included in `three-live-full` and
+    `xr-live-full` (budgets raised to `< 146 KB gz` and `< 246 KB gz`); core
+    bundles are unchanged.
+
 -   **Deterministic PBR material presets (`THREE.ProceduralTexture`,
     `userData.xr.material`):** 11 seamlessly tiling presets (`wood`, `marble`,
     `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`,

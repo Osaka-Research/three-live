@@ -93,6 +93,11 @@
       "import": "./dist/three-live-cad.js",
       "require": "./dist/three-live-cad.cjs"
     },
+    "./ai": {
+      "types": "./dist/three-live-ai.d.ts",
+      "import": "./dist/three-live-ai.js",
+      "require": "./dist/three-live-ai.cjs"
+    },
     "./procedural": {
       "types": "./dist/three-live-procedural.d.ts",
       "import": "./dist/three-live-procedural.js",
