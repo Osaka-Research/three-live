@@ -110,11 +110,14 @@ Render a 4-up orthographic/camera contact sheet (zero GPU required), run the
 spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
 / `.usdz`, or attach `three-live-cli mcp` as a zero-dependency **Model Context
 Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
-`three_live_convert`, `three_live_sim`, `three_live_link`, and the closed-loop
+`three_live_convert`, `three_live_sim`, `three_live_link`, and the
 `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close` agent
-gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. Not
-using MCP? `three-live-cli gym reset level.js --session ep.json` and
-`three-live-cli gym step --session ep.json --actions '[...]'` play a level one
+gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. The
+agent gym lets an agent play a scene step by step (act, observe, react) to
+check a level is winnable; "gym" is the reinforcement-learning term for such a
+reset/step environment, and no ML is involved. Not using MCP?
+`three-live-cli gym reset level.js --session ep.json` and
+`three-live-cli gym step --session ep.json --actions '[...]'` do the same, one
 command per step. `three-live-cli link scene.js --qr` prints a playground link (and a terminal QR code) that opens the scene on a
 phone, one tap from AR. Building from a photo, mockup, sketch, or blueprint? Pass
 `--reference` (or `reference` in MCP) to get a side-by-side + aligned-overlay +

@@ -366,12 +366,18 @@ three-live-cli sim scene.js --duration=5.0 \
   --json
 ```
 
-### Closed-Loop Agent Gym (`three_live_gym_reset` / `three_live_gym_step`)
+### Agent Gym: Play a Scene Step by Step (`three_live_gym_reset` / `three_live_gym_step`)
 
 `three_live_sim` runs a script you write up front. The gym lets an agent *play*
-a scene instead: act, look at the result, and decide the next action, like a
-reinforcement-learning environment. Use it to check that a level is winnable,
-tune enemy speed or jump heights, or test interactive scenes end to end.
+a scene instead: act, look at the result, and decide the next action. Use it to
+check that a level is winnable, tune enemy speed or jump heights, or test
+interactive scenes end to end.
+
+"Gym" is the reinforcement-learning name for this kind of playable
+environment, after OpenAI Gym (now Gymnasium): `reset` starts an episode, and
+each `step` takes actions and returns an observation, a reward, and whether
+the episode is done. No machine learning is involved; any agent (or script)
+that can call a tool in a loop can use it.
 
 ```json
 { "name": "three_live_gym_reset",
