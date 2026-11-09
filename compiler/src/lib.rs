@@ -14,6 +14,8 @@
 
 //! three-live-compiler: In-process Pure Rust Three.js to binary GLB compiler.
 
+pub mod ai_edit;
+pub mod ai_voice;
 pub mod constants;
 pub mod engine;
 pub mod ffi;

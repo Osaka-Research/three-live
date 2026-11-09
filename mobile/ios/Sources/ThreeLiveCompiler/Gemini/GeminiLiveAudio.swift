@@ -78,13 +78,21 @@ import Foundation
 
   /// Streams 16 kHz mono PCM16 microphone audio to an `XRGeminiLiveController`.
   public final class MicrophoneStreamer: @unchecked Sendable {
-    private let controller: XRGeminiLiveController
+    private let sampleRate: Double
+    private let onChunk: (Data) -> Void
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var running = false
 
-    public init(controller: XRGeminiLiveController) {
-      self.controller = controller
+    /// Streams 16 kHz audio to a Gemini Live `controller`.
+    public convenience init(controller: XRGeminiLiveController) {
+      self.init(sampleRate: 16_000) { controller.sendAudioChunk($0, sampleRate: 16_000) }
+    }
+
+    /// Streams mono PCM16 chunks at `sampleRate` to `onChunk` (e.g. `AIVoiceSession.sendAudio`).
+    public init(sampleRate: Int, onChunk: @escaping (Data) -> Void) {
+      self.sampleRate = Double(sampleRate)
+      self.onChunk = onChunk
     }
 
     /// Starts capturing (the system prompts for microphone permission on first use).
@@ -93,13 +101,14 @@ import Foundation
       let input = engine.inputNode
       let inFormat = input.outputFormat(forBus: 0)
       guard
-        let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true),
+        let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true),
         let conv = AVAudioConverter(from: inFormat, to: outFormat)
       else { return }
       converter = conv
-      let controller = self.controller
+      let onChunk = self.onChunk
+      let outRate = sampleRate
       input.installTap(onBus: 0, bufferSize: 4096, format: inFormat) { buffer, _ in
-        let ratio = 16_000 / inFormat.sampleRate
+        let ratio = outRate / inFormat.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 16)
         guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
         var fed = false
@@ -114,7 +123,7 @@ import Foundation
           return buffer
         }
         guard error == nil, out.frameLength > 0, let ch = out.int16ChannelData?[0] else { return }
-        controller.sendAudioChunk(Data(bytes: ch, count: Int(out.frameLength) * 2), sampleRate: 16_000)
+        onChunk(Data(bytes: ch, count: Int(out.frameLength) * 2))
       }
       engine.prepare()
       try engine.start()

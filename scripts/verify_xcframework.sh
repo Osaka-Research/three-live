@@ -39,6 +39,8 @@ _three_live_compile_usdz
 _three_live_glb_to_usdz
 _three_live_free_buffer
 _three_live_free_error
+_three_live_ai_call
+_three_live_free_string
 "
 
 # A slice that is only a few KB means the Rust build silently produced a stub.

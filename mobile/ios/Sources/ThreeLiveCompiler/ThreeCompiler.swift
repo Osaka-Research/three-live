@@ -239,6 +239,28 @@ public enum ThreeCompiler {
     }
   }
 
+  // MARK: - AI core
+
+  /// Runs one AI scene-editing / voice-protocol JSON request in the shared Rust core
+  /// (`three_live_ai_call`). Always returns JSON; failures come back as `{"error": ...}`.
+  ///
+  /// - Parameter onCompilerThread: `true` for ops that compile scripts (`validate`), so they reuse
+  ///   the warm JavaScript VM on the 8 MiB compiler thread; `false` for pure ops (prompts,
+  ///   parsing, voice protocol), which then never wait behind a compile.
+  public static func aiCall(_ request: String, onCompilerThread: Bool) async throws -> String {
+    let cRequest = try nullTerminatedUTF8(request)
+    let work: @Sendable () -> String = {
+      let ptr = cRequest.withUnsafeBufferPointer { three_live_ai_call($0.baseAddress) }
+      guard let ptr = ptr else { return "{\"error\":\"null response\"}" }
+      defer { three_live_free_string(ptr) }
+      return String(cString: ptr)
+    }
+    if onCompilerThread {
+      return try await offloadFromCooperativePool(work)
+    }
+    return work()
+  }
+
   // MARK: - Private helpers
 
   /// Runs blocking native work on the dedicated 8 MiB compiler thread rather than the cooperative thread pool.

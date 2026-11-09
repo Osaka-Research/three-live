@@ -220,6 +220,12 @@ object ThreeCompiler {
   @JvmStatic external fun nativeGetDirectBufferAddress(buffer: ByteBuffer): Long
 
   /**
+   * Runs one AI scene-editing / voice-protocol JSON request in the shared Rust core (see
+   * `three_live_ai_call`). Always returns JSON; failures come back as `{"error": ...}`.
+   */
+  @JvmStatic external fun nativeAiCall(request: String): String
+
+  /**
    * Compiles a Three.js script on a background coroutine thread and wraps the resulting direct
    * memory buffer in an [AutoCloseable] [GlbBuffer].
    *
@@ -244,6 +250,26 @@ object ThreeCompiler {
     withContext(compilerDispatcher) {
       checkNativeLibraryLoaded()
       compileToByteArray(script)
+    }
+
+  /**
+   * Runs an AI core request that compiles scripts (`validate`) on the compiler thread, so it
+   * reuses the warm JavaScript VM.
+   */
+  suspend fun aiCall(request: String): String =
+    withContext(compilerDispatcher) {
+      checkNativeLibraryLoaded()
+      nativeAiCall(request)
+    }
+
+  /**
+   * Runs a pure AI core request (prompts, parsing, voice protocol) off the compiler thread, so it
+   * never waits behind a compile.
+   */
+  suspend fun aiCallPure(request: String): String =
+    withContext(Dispatchers.Default) {
+      checkNativeLibraryLoaded()
+      nativeAiCall(request)
     }
 
   private fun checkNativeLibraryLoaded() {

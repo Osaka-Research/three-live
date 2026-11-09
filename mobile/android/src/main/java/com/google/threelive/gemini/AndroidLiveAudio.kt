@@ -139,7 +139,14 @@ class AudioTrackPcmSink : PcmAudioSink {
  * Streams 16 kHz mono PCM16 microphone audio to an [XRGeminiLiveController]. Requires the
  * `RECORD_AUDIO` runtime permission (checked in [start]); declare it in the app manifest.
  */
-class MicrophoneStreamer(private val controller: XRGeminiLiveController) {
+class MicrophoneStreamer(
+  private val sampleRate: Int,
+  private val onChunk: (ByteArray) -> Unit,
+) {
+  /** Streams 16 kHz audio to a Gemini Live [controller]. */
+  constructor(controller: XRGeminiLiveController) : this(RATE, { chunk -> controller.sendAudioChunk(chunk, RATE) })
+
+  private val chunkBytes = sampleRate / 10 * 2
   private val running = AtomicBoolean(false)
   private var thread: Thread? = null
 
@@ -150,14 +157,14 @@ class MicrophoneStreamer(private val controller: XRGeminiLiveController) {
       return false
     }
     if (!running.compareAndSet(false, true)) return true
-    val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+    val min = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
     if (min <= 0) {
       running.set(false)
       return false
     }
     val record =
       try {
-        AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, CHUNK_BYTES * 2))
+        AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, chunkBytes * 2))
       } catch (e: IllegalArgumentException) {
         running.set(false)
         return false
@@ -170,12 +177,12 @@ class MicrophoneStreamer(private val controller: XRGeminiLiveController) {
     thread =
       Thread(
           {
-            val buf = ByteArray(CHUNK_BYTES)
+            val buf = ByteArray(chunkBytes)
             try {
               record.startRecording()
               while (running.get()) {
                 val n = record.read(buf, 0, buf.size)
-                if (n > 0) controller.sendAudioChunk(buf.copyOf(n), RATE)
+                if (n > 0) onChunk(buf.copyOf(n))
               }
             } finally {
               try {
@@ -203,8 +210,6 @@ class MicrophoneStreamer(private val controller: XRGeminiLiveController) {
 
   private companion object {
     const val RATE = 16_000
-    /** 100 ms of audio per chunk. */
-    const val CHUNK_BYTES = RATE / 10 * 2
   }
 }
 

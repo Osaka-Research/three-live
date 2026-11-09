@@ -223,6 +223,52 @@ pub unsafe extern "C" fn three_live_free_error(error_msg: *mut c_char) {
     }
 }
 
+/// Runs one AI scene-editing / voice-protocol request (see [`crate::ai_edit::ai_call`]).
+///
+/// `request` is a NUL-terminated UTF-8 JSON object such as
+/// `{"op":"validate","code":"...","selection":"Roof","instruction":"make it red"}`. Returns a
+/// newly allocated NUL-terminated JSON string (never null); free it with
+/// `three_live_free_string`. Malformed input yields `{"error":"..."}`.
+///
+/// Ops that compile scripts (`validate`) use the calling thread's warm JS engine, so call this
+/// from the same large-stack worker thread used for `three_live_compile`.
+///
+/// # Safety
+/// `request` must be a valid, null-terminated C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn three_live_ai_call(request: *const c_char) -> *mut c_char {
+    let response = if request.is_null() {
+        "{\"error\":\"null request\"}".to_string()
+    } else {
+        // Requests carry whole scene scripts, so allow the script ceiling plus JSON overhead.
+        let max_scan = SECURITY_3D_MAX_SCRIPT_BYTES * 2 + 65_536;
+        let base = request as *const u8;
+        let mut len = 0usize;
+        while len < max_scan && *base.add(len) != 0 {
+            len += 1;
+        }
+        if len >= max_scan {
+            "{\"error\":\"request too large\"}".to_string()
+        } else {
+            match std::str::from_utf8(std::slice::from_raw_parts(base, len)) {
+                Ok(text) => std::panic::catch_unwind(|| crate::ai_edit::ai_call(text))
+                    .unwrap_or_else(|_| "{\"error\":\"internal panic\"}".to_string()),
+                Err(_) => "{\"error\":\"request is not valid UTF-8\"}".to_string(),
+            }
+        }
+    };
+    ThreeLiveGlbBuffer::with_error(&response).error_msg
+}
+
+/// Frees a string returned by `three_live_ai_call` (same allocator as `three_live_free_error`).
+///
+/// # Safety
+/// Must only be called with a pointer returned by `three_live_ai_call`.
+#[no_mangle]
+pub unsafe extern "C" fn three_live_free_string(s: *mut c_char) {
+    three_live_free_error(s);
+}
+
 /// High-level struct-returning conversion for FFI callers.
 pub fn three_live_convert(script: &str) -> ConversionResult {
     match transcode_three_to_glb(script) {
@@ -238,6 +284,28 @@ mod tests {
     use super::*;
     use std::ffi::CStr;
     use std::slice;
+
+    #[test]
+    fn ai_call_round_trips_json_and_frees() {
+        unsafe {
+            let req =
+                CString::new(r#"{"op":"extract","reply":"```js\nscene.add(x)\n```"}"#).unwrap();
+            let out = three_live_ai_call(req.as_ptr());
+            assert!(!out.is_null());
+            let text = CStr::from_ptr(out).to_str().unwrap().to_string();
+            three_live_free_string(out);
+            assert_eq!(text, r#"{"code":"scene.add(x)"}"#);
+            // Double free is ignored.
+            three_live_free_string(out);
+            let null_out = three_live_ai_call(std::ptr::null());
+            assert!(CStr::from_ptr(null_out).to_str().unwrap().contains("null request"));
+            three_live_free_string(null_out);
+            let bad = CString::new("{").unwrap();
+            let bad_out = three_live_ai_call(bad.as_ptr());
+            assert!(CStr::from_ptr(bad_out).to_str().unwrap().contains("invalid request JSON"));
+            three_live_free_string(bad_out);
+        }
+    }
 
     #[test]
     fn test_c_abi_compile_success_and_free() {

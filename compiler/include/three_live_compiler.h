@@ -80,6 +80,26 @@ void three_live_free_buffer(uint8_t* data, size_t capacity);
  */
 void three_live_free_error(char* error_msg);
 
+/**
+ * Runs one AI scene-editing or voice-protocol request for Tap & Speak (`three-live-ai` parity).
+ *
+ * @param request Null-terminated UTF-8 JSON object, e.g.
+ *     `{"op":"validate","code":"...","selection":"Roof","instruction":"make it red"}`.
+ *     Ops: `messages`, `repair`, `extract`, `validate`, `describe`, `voice_setup`, `voice_audio`,
+ *     `voice_text`, `voice_tool_result`, `voice_parse`, `voice_tools`.
+ * @return A newly allocated null-terminated JSON string (never null; `{"error": ...}` on bad
+ *     input). Free with `three_live_free_string`. `validate` compiles with the calling thread's
+ *     warm engine: call it from the same worker thread as `three_live_compile`.
+ */
+char* three_live_ai_call(const char* request);
+
+/**
+ * Frees a string returned by `three_live_ai_call`.
+ *
+ * @param s Pointer returned by `three_live_ai_call`.
+ */
+void three_live_free_string(char* s);
+
 #ifdef __cplusplus
 }
 #endif

@@ -26,6 +26,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
+    and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
+    with any `ai-chat` code model; tap-to-select via `toggleSelection`;
+    push-to-talk `VoiceEditController` (platform speech recognition and TTS);
+    and `AIVoiceSession` realtime voice over `ai-realtime` or `gemini-live`
+    with `edit_scene` / `undo_edit` tools. The prompt, reply parsing, edit
+    validation, and voice protocols live in a new shared Rust core
+    (`ai_edit.rs`, `ai_voice.rs`) exposed as `three_live_ai_call` (C, freed
+    with `three_live_free_string`) and `ThreeCompiler.nativeAiCall` (JNI), with
+    tests that keep the prompt and tools identical to the web plugin.
+    `MicrophoneStreamer` now takes any sample rate and callback (the
+    `XRGeminiLiveController` constructor still works); on Android it records
+    with `VOICE_COMMUNICATION` for echo cancellation while model audio plays.
+
 -   **Tap & Speak voice scene editing (`three-live-ai`):** `ai-select-on-tap`
     makes tapping a mesh set `selected-mesh` (tap again to clear);
     `el.startVoiceEdit()` is push-to-talk with the browser's speech recognizer

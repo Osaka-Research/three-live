@@ -15,7 +15,7 @@
 //! JNI exports for Android integration and zero-copy DirectByteBuffer operations.
 
 use jni::objects::{JByteBuffer, JClass, JString};
-use jni::sys::{jbyteArray, jlong, jobject};
+use jni::sys::{jbyteArray, jlong, jobject, jstring};
 use jni::JNIEnv;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -244,6 +244,43 @@ pub unsafe extern "system" fn Java_com_google_threelive_ThreeCompiler_compileToB
             }));
             std::ptr::null_mut()
         }
+    }
+}
+
+/// Runs one AI scene-editing / voice-protocol JSON request (see `crate::ai_edit::ai_call`).
+///
+/// Always returns a JSON string (`{"error": ...}` on bad input or an internal panic). Ops that
+/// compile scripts use this thread's warm JS engine, like `compileToByteArray`.
+///
+/// # Safety
+/// Standard JNI entry point dynamically discovered by Android ART / JVM.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_google_threelive_ThreeCompiler_nativeAiCall<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    request: JString<'local>,
+) -> jstring {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if request.is_null() {
+            return "{\"error\":\"null request\"}".to_string();
+        }
+        match env.get_string(&request) {
+            Ok(jstr) => {
+                if jstr.to_bytes().len()
+                    > crate::constants::SECURITY_3D_MAX_SCRIPT_BYTES * 2 + 65_536
+                {
+                    return "{\"error\":\"request too large\"}".to_string();
+                }
+                let text: String = jstr.into();
+                crate::ai_edit::ai_call(&text)
+            }
+            Err(_) => "{\"error\":\"request is not valid UTF-8\"}".to_string(),
+        }
+    }))
+    .unwrap_or_else(|_| "{\"error\":\"internal panic\"}".to_string());
+    match env.new_string(response) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
     }
 }
 

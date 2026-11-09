@@ -78,6 +78,40 @@ Both Android and iOS include complete sample applications featuring an on-device
 - **Android (Jetpack Compose + Filament)**: See [`mobile/examples/android_compose`](examples/android_compose/README.md)
 - **iOS (SwiftUI + RealityKit)**: See [`mobile/examples/ios_swiftui`](examples/ios_swiftui/README.md)
 
+## AI Scene Editing: Tap & Speak
+
+The same bring-your-own-LLM editing as `el.editScene()` / `el.connectVoice()` on the web, with
+the prompt, reply parsing, edit validation, and voice protocols shared through the Rust core
+(`three_live_ai_call`), so every platform accepts and rejects the same edits. A text/code model
+writes each edit; the voice model only talks and calls the `edit_scene` / `undo_edit` tools.
+Keep API keys on your server: point endpoints at your own proxy or a local model.
+
+| | Android (`com.google.threelive.ai`) | iOS / visionOS |
+|---|---|---|
+| Text edits + undo | `ThreeLiveAIEditor` | `AIEditor` |
+| Code model (`ai-chat`) | `AIChatProvider` | `AIChatProvider` |
+| Tap to select | `editor.toggleSelection(name)` from `ThreeLiveRendererListener.onPick` | `editor.toggleSelection(entity.name)` from your tap handler |
+| Push-to-talk | `VoiceEditController` (`SpeechRecognizer` + `TextToSpeech`) | `VoiceEditController` (`SFSpeechRecognizer` + `AVSpeechSynthesizer`) |
+| Realtime voice (`ai-realtime` / `gemini-live`) | `AIVoiceSession` + `WebSocketLiveTransport` + `MicrophoneStreamer(rate)` + `AudioTrackPcmSink` | `AIVoiceSession` + `URLSessionLiveTransport` + `MicrophoneStreamer(sampleRate:)` + `AVAudioPcmSink` |
+
+```kotlin
+val editor = ThreeLiveAIEditor(script, AIChatProvider("https://your-backend.example/chat")) { code ->
+  renderer.loadGlb(ThreeCompiler.compileToBytes(code))
+}
+val session = AIVoiceSession(editor, WebSocketLiveTransport("wss://your-backend.example/realtime"), scope, sink = AudioTrackPcmSink())
+val rate = session.start()  // 24000 for ai-realtime, 16000 for gemini-live
+MicrophoneStreamer(rate) { session.sendAudio(it) }.start(context)
+```
+
+```swift
+let editor = AIEditor(source: script, provider: AIChatProvider(endpoint: "https://your-backend.example/chat")!) { code in
+  try await reload(try await ThreeCompiler.compile(code))
+}
+let session = try AIVoiceSession(editor: editor, transport: URLSessionLiveTransport(url: realtimeURL)!, sink: AVAudioPcmSink())
+let rate = try await session.start()
+try MicrophoneStreamer(sampleRate: rate) { session.sendAudio($0) }.start()
+```
+
 ## Building Native Distribution Packages
 
 Run the automated scripts from the root directory:
