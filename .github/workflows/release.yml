@@ -20,6 +20,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-binaries:
     name: Build Native CLI Binaries (${{ matrix.target }})
@@ -47,10 +50,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.x'
 
@@ -60,8 +63,9 @@ jobs:
           npm run build
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master; stable toolchain below
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Build with Cargo
@@ -84,7 +88,7 @@ jobs:
           fi
 
       - name: Upload Binary Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact_name }}
           path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
@@ -99,10 +103,10 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.x'
 
@@ -112,26 +116,27 @@ jobs:
           npm run build
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
       # Keep in sync with gradle/wrapper/gradle-wrapper.properties; see the note in ci.yml.
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3
         with:
           gradle-version: '8.7'
 
       - name: Set up Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r26b
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master; stable toolchain below
         with:
+          toolchain: stable
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
 
       - name: Install cargo-ndk
@@ -157,7 +162,7 @@ jobs:
       # if-no-files-found defaults to 'warn', which previously let this job go green while
       # uploading nothing at all.
       - name: Upload Android AAR Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: three-live-compiler-release-aar
           path: mobile/android/build/outputs/aar/*-release.aar
@@ -175,35 +180,35 @@ jobs:
           --stacktrace
 
       - name: Upload Filament renderer AAR Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: three-live-filament-release-aar
           path: mobile/android-filament/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
       - name: Upload Firebase AI adapter AAR Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: three-live-firebase-ai-release-aar
           path: mobile/android-firebase-ai/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
       - name: Upload ML Kit detector AAR Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: three-live-detect-mlkit-release-aar
           path: mobile/android-detect-mlkit/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
       - name: Upload Android XR hands AAR Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: three-live-hands-androidxr-release-aar
           path: mobile/android-hands-androidxr/build/outputs/aar/*-release.aar
           if-no-files-found: error
 
       - name: Upload MediaPipe hands AAR Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: three-live-hands-mediapipe-release-aar
           path: mobile/android-hands-mediapipe/build/outputs/aar/*-release.aar
@@ -266,10 +271,10 @@ jobs:
       checksum: ${{ steps.package_xcframework.outputs.checksum }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.x'
 
@@ -279,8 +284,9 @@ jobs:
           npm run build
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master; stable toolchain below
         with:
+          toolchain: stable
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Build XCFramework
@@ -299,7 +305,7 @@ jobs:
           echo "checksum=${CHECKSUM}" >> "$GITHUB_OUTPUT"
 
       - name: Upload iOS XCFramework Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ThreeLiveCompiler.xcframework.zip
           path: mobile/ios/ThreeLiveCompiler.xcframework.zip
@@ -314,10 +320,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.x'
 
@@ -327,7 +333,7 @@ jobs:
           npm run build
 
       - name: Download all built artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-artifacts
 
@@ -345,7 +351,7 @@ jobs:
           ls -la dist-release
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist-release/*
           body_path: CHANGELOG.md
@@ -360,10 +366,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.x'
 
@@ -406,7 +412,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install mcp-publisher and publish server.json via GitHub OIDC
         run: |
@@ -420,10 +426,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.x'
 
@@ -433,7 +439,9 @@ jobs:
           npm run build
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master; stable toolchain below
+        with:
+          toolchain: stable
 
       - name: Cargo Publish
         env:
@@ -460,7 +468,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
