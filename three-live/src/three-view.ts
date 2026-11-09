@@ -287,26 +287,15 @@ export function parseGLB(input: ArrayBuffer | ArrayBufferView): GLBData {
   }
 
   const extensionsRequired: string[] = jsonChunk.extensionsRequired || [];
-  if (extensionsRequired.includes('KHR_draco_mesh_compression')) {
-    const decoder = getDecoder('draco');
-    if (!decoder) {
+  for (const [ext, kind] of [
+    ['KHR_draco_mesh_compression', 'draco'],
+    ['EXT_meshopt_compression', 'meshopt'],
+    ['KHR_meshopt_compression', 'meshopt'],
+    ['KHR_texture_basisu', 'ktx2'],
+  ] as const) {
+    if (extensionsRequired.includes(ext) && !getDecoder(kind)) {
       throw new Error(
-        "Model requires KHR_draco_mesh_compression. Register a decoder via ThreeLiveElement.registerDecoder('draco', decoder).",
-      );
-    }
-  }
-  for (const ext of ['EXT_meshopt_compression', 'KHR_meshopt_compression']) {
-    if (extensionsRequired.includes(ext) && !getDecoder('meshopt')) {
-      throw new Error(
-        `Model requires ${ext}. Register a decoder via ThreeLiveElement.registerDecoder('meshopt', decoder).`,
-      );
-    }
-  }
-  if (extensionsRequired.includes('KHR_texture_basisu')) {
-    const decoder = getDecoder('ktx2');
-    if (!decoder) {
-      throw new Error(
-        "Model requires KHR_texture_basisu. Register a decoder via ThreeLiveElement.registerDecoder('ktx2', decoder).",
+        `Model requires ${ext}. Register a decoder via ThreeLiveElement.registerDecoder('${kind}', decoder).`,
       );
     }
   }
@@ -738,6 +727,8 @@ interface PrimitiveGpu {
   clearcoat: number;
   clearcoatRoughness: number;
   positions: Float32Array;
+  normals?: Float32Array | null;
+  uvs?: Float32Array | null;
   indices: Uint16Array | Uint32Array | null;
   texture: WebGLTexture | null;
   metallicRoughnessTexture: WebGLTexture | null;
@@ -1275,12 +1266,18 @@ function buildGpuSceneUnchecked(
           gl.UNSIGNED_BYTE,
           new Uint8Array([255, 255, 255, 255]),
         );
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        for (const [p, v] of [
+          [gl.TEXTURE_WRAP_S, gl.REPEAT],
+          [gl.TEXTURE_WRAP_T, gl.REPEAT],
+          [gl.TEXTURE_MIN_FILTER, gl.LINEAR],
+          [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+        ]) {
+          gl.texParameteri(gl.TEXTURE_2D, p, v);
+        }
 
         const uploadTex = (source: TexImageSource) => {
+          (tex as {__gpuImageSource?: TexImageSource}).__gpuImageSource =
+            source;
           gl.bindTexture(gl.TEXTURE_2D, tex);
           gl.texImage2D(
             gl.TEXTURE_2D,
@@ -1548,8 +1545,16 @@ function buildGpuSceneUnchecked(
       )!;
 
       // 2. NORMAL & TEXCOORD_0 (optional)
-      bindBufferAttribute(gl, gltf, bin, prim.attributes.NORMAL, 1, 3, buffers);
-      bindBufferAttribute(
+      const normData = bindBufferAttribute(
+        gl,
+        gltf,
+        bin,
+        prim.attributes.NORMAL,
+        1,
+        3,
+        buffers,
+      );
+      const uvData = bindBufferAttribute(
         gl,
         gltf,
         bin,
@@ -1656,6 +1661,8 @@ function buildGpuSceneUnchecked(
         indexType,
         ...matProps,
         positions: posData,
+        normals: normData,
+        uvs: uvData,
         indices: idxDataRaw,
         buffers,
         materialIndex: prim.material,
@@ -1718,6 +1725,10 @@ function buildGpuSceneUnchecked(
 // 4. Arcball Interaction & GPU Color-ID MicroViewer
 // =========================================================================
 
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
 function getOrbitEye(v: {
   customTarget: [number, number, number] | null;
   bounds: {center: [number, number, number]};
@@ -1762,6 +1773,7 @@ export class ThreeView {
   public shadowSoftness = 0.5;
   private toneMapping: ToneMappingMode = 'neutral';
   public environmentTexture: WebGLTexture | null = null;
+  environmentSource: string | HTMLImageElement | ImageBitmap | null = null;
   public animations: AnimationClip[] = [];
   public currentClip: AnimationClip | null = null;
   public animationTime = 0.0;
@@ -1799,7 +1811,7 @@ export class ThreeView {
   private initialCustomTarget: [number, number, number] | null = null;
 
   // Active camera state
-  private customTarget: [number, number, number] | null = null;
+  customTarget: [number, number, number] | null = null;
   private fov = Math.PI / 4;
   private minTheta = -Infinity;
   private maxTheta = Infinity;
@@ -1811,11 +1823,11 @@ export class ThreeView {
   private isPanning = false;
 
   private targetTheta = 0.6;
-  private currTheta = 0.6;
+  currTheta = 0.6;
   private targetPhi = 0.35;
-  private currPhi = 0.35;
+  currPhi = 0.35;
   private targetDistance = 3.0;
-  private currDistance = 3.0;
+  currDistance = 3.0;
   private autoRotate = false;
   private autoRotateSpeed = Math.PI / 6;
   private autoRotateDelay = 3000;
@@ -1887,19 +1899,17 @@ export class ThreeView {
       let existing = container.querySelector<HTMLCanvasElement>('canvas');
       if (!existing) {
         existing = document.createElement('canvas');
-        existing.style.width = '100%';
-        existing.style.height = '100%';
-        existing.style.display = 'block';
-        existing.style.touchAction = 'none';
+        existing.style.cssText =
+          'width:100%;height:100%;display:block;touch-action:none';
         container.prepend(existing);
       }
       canvas = existing;
     }
 
     this.canvas = canvas;
-    this.opts = opts || {};
-    if (this.opts.clearColor) {
-      this.clearColor = this.opts.clearColor;
+    const o = (this.opts = opts || {});
+    if (o.clearColor) {
+      this.clearColor = o.clearColor;
     }
 
     const prefersReducedMotion =
@@ -1907,77 +1917,61 @@ export class ThreeView {
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    if (this.opts.autoRotate !== undefined) {
-      this.autoRotate = this.opts.autoRotate && !prefersReducedMotion;
+    if (o.autoRotate !== undefined) {
+      this.autoRotate = o.autoRotate && !prefersReducedMotion;
     } else if (prefersReducedMotion) {
       this.autoRotate = false;
     }
-    if (this.opts.autoRotateSpeed !== undefined) {
-      this.autoRotateSpeed = this.opts.autoRotateSpeed;
+    if (o.autoRotateSpeed !== undefined) {
+      this.autoRotateSpeed = o.autoRotateSpeed;
     }
-    if (this.opts.autoRotateDelay !== undefined) {
-      this.autoRotateDelay = Math.max(
-        0,
-        Number(this.opts.autoRotateDelay) || 0,
-      );
+    if (o.autoRotateDelay !== undefined) {
+      this.autoRotateDelay = Math.max(0, Number(o.autoRotateDelay) || 0);
     }
-    if (this.opts.exposure !== undefined) {
-      this.exposure = sanitizeExposure(this.opts.exposure);
+    if (o.exposure !== undefined) {
+      this.exposure = sanitizeExposure(o.exposure);
     }
-    if (this.opts.camera) {
+    if (o.camera) {
       this.setInitialCamera(
-        this.opts.camera.theta,
-        this.opts.camera.phi,
-        this.opts.camera.distance,
-        this.opts.camera.zoom,
+        o.camera.theta,
+        o.camera.phi,
+        o.camera.distance,
+        o.camera.zoom,
       );
     }
-    if (this.opts.shadowIntensity !== undefined) {
-      this.shadowIntensity = Math.max(
-        0,
-        Math.min(1, Number(this.opts.shadowIntensity) || 0),
-      );
+    if (o.shadowIntensity !== undefined || o.shadowSoftness !== undefined) {
+      this.setShadow(o.shadowIntensity ?? 0, o.shadowSoftness);
     }
-    if (this.opts.shadowSoftness !== undefined) {
-      this.shadowSoftness = Math.max(
-        0,
-        Math.min(1, Number(this.opts.shadowSoftness) || 0),
-      );
+    if (o.toneMapping !== undefined) {
+      this.toneMapping = normalizeToneMapping(o.toneMapping);
     }
-    if (this.opts.toneMapping !== undefined) {
-      this.toneMapping = normalizeToneMapping(this.opts.toneMapping);
+    if (o.autoplay !== undefined) {
+      this.autoplay = o.autoplay;
     }
-    if (this.opts.autoplay !== undefined) {
-      this.autoplay = this.opts.autoplay;
+    if (o.animationName !== undefined) {
+      this.animationName = o.animationName;
     }
-    if (this.opts.animationName !== undefined) {
-      this.animationName = this.opts.animationName;
+    if (o.variantName !== undefined) {
+      this.activeVariantName = o.variantName || null;
     }
-    if (this.opts.variantName !== undefined) {
-      this.activeVariantName = this.opts.variantName || null;
+    if (o.fieldOfView !== undefined) {
+      this.fov = (o.fieldOfView * Math.PI) / 180;
     }
-    if (this.opts.fieldOfView !== undefined) {
-      this.fov = (this.opts.fieldOfView * Math.PI) / 180;
+    if (o.distanceMode !== undefined) {
+      this.distanceMode = o.distanceMode;
     }
-    if (this.opts.distanceMode !== undefined) {
-      this.distanceMode = this.opts.distanceMode;
+    if (o.cameraTarget !== undefined) {
+      this.setTarget(o.cameraTarget[0], o.cameraTarget[1], o.cameraTarget[2]);
+      this.initialCustomTarget = [...o.cameraTarget];
     }
-    if (this.opts.cameraTarget !== undefined) {
-      this.setTarget(
-        this.opts.cameraTarget[0],
-        this.opts.cameraTarget[1],
-        this.opts.cameraTarget[2],
-      );
-      this.initialCustomTarget = [...this.opts.cameraTarget];
-    }
-    if (this.opts.minCameraOrbit || this.opts.maxCameraOrbit) {
+    if (o.minCameraOrbit || o.maxCameraOrbit) {
       this.setOrbitLimits({
-        minTheta: this.opts.minCameraOrbit?.theta,
-        maxTheta: this.opts.maxCameraOrbit?.theta,
-        minPhi: this.opts.minCameraOrbit?.phi,
-        maxPhi: this.opts.maxCameraOrbit?.phi,
-        minDistance: this.opts.minCameraOrbit?.distance,
-        maxDistance: this.opts.maxCameraOrbit?.distance,
+        minTheta: o.minCameraOrbit?.theta,
+        maxTheta: o.maxCameraOrbit?.theta,
+        minPhi: o.minCameraOrbit?.phi,
+        maxPhi: o.maxCameraOrbit?.phi,
+        minDistance: o.minCameraOrbit?.distance,
+        maxDistance: o.maxCameraOrbit?.distance,
       });
     }
 
@@ -1994,14 +1988,11 @@ export class ThreeView {
     this.setupEvents();
     this.setupContextLossHandling();
 
-    if (this.opts.environmentImage) {
-      this.setEnvironmentImage(this.opts.environmentImage).catch(() => {});
+    if (o.environmentImage) {
+      this.setEnvironmentImage(o.environmentImage).catch(() => {});
     }
 
-    if (
-      typeof requestAnimationFrame !== 'undefined' &&
-      this.opts.autoStart !== false
-    ) {
+    if (typeof requestAnimationFrame !== 'undefined' && o.autoStart !== false) {
       this.start();
     }
   }
@@ -2073,29 +2064,7 @@ export class ThreeView {
     this.pickFbo = gl.createFramebuffer();
     this.pickTexture = gl.createTexture();
     this.pickDepth = gl.createRenderbuffer();
-
-    const w = Math.max(1, this.canvas.width);
-    const h = Math.max(1, this.canvas.height);
-    this.pickFboWidth = w;
-    this.pickFboHeight = h;
-
-    gl.bindTexture(gl.TEXTURE_2D, this.pickTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA,
-      w,
-      h,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      null,
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-    gl.bindRenderbuffer(gl.RENDERBUFFER, this.pickDepth);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+    this.resizePickingFbo(this.canvas.width, this.canvas.height);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.framebufferTexture2D(
@@ -2133,6 +2102,8 @@ export class ThreeView {
       gl.UNSIGNED_BYTE,
       null,
     );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.bindRenderbuffer(gl.RENDERBUFFER, this.pickDepth);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
   }
@@ -2398,8 +2369,14 @@ export class ThreeView {
         ptCols.push(col[0] * intensity, col[1] * intensity, col[2] * intensity);
         if (l.type === 'spot') {
           const sd = l.direction || [0, -1, 0];
-          const outer = Math.max(0.01, Math.min(Math.PI / 2, l.outerConeAngle ?? Math.PI / 3));
-          const inner = Math.max(0, Math.min(outer - 1e-4, l.innerConeAngle ?? 0));
+          const outer = Math.max(
+            0.01,
+            Math.min(Math.PI / 2, l.outerConeAngle ?? Math.PI / 3),
+          );
+          const inner = Math.max(
+            0,
+            Math.min(outer - 1e-4, l.innerConeAngle ?? 0),
+          );
           ptSpotDirs.push(sd[0], sd[1], sd[2]);
           ptSpotCones.push(Math.cos(inner), Math.cos(outer));
         } else {
@@ -2426,7 +2403,8 @@ export class ThreeView {
       gl.uniform3fv(u.uPointLightPos, ptPositions);
       gl.uniform3fv(u.uPointLightColor, ptCols);
       if (u.uPointLightSpotDir) gl.uniform3fv(u.uPointLightSpotDir, ptSpotDirs);
-      if (u.uPointLightSpotCone) gl.uniform2fv(u.uPointLightSpotCone, ptSpotCones);
+      if (u.uPointLightSpotCone)
+        gl.uniform2fv(u.uPointLightSpotCone, ptSpotCones);
     }
     gl.uniform1f(u.uEnvIntensity, this.envIntensity);
   }
@@ -2470,12 +2448,16 @@ export class ThreeView {
   public async setEnvironmentImage(
     imageOrUrl: string | HTMLImageElement | ImageBitmap | null,
   ): Promise<void> {
+    this.environmentSource =
+      imageOrUrl && typeof imageOrUrl === 'object' ? imageOrUrl : null;
     for (const plugin of registeredPlugins) {
       if ((plugin as any).setEnvironmentImage) {
         await (plugin as any).setEnvironmentImage(this, imageOrUrl);
+        this.render();
         return;
       }
     }
+    this.render();
   }
 
   public async setSkyboxImage(
@@ -2574,6 +2556,20 @@ export class ThreeView {
         ? firstPrim.roughness
         : (gMat.pbrMetallicRoughness?.roughnessFactor ?? 0.5);
 
+      const setScalar = (
+        prop: 'metallicFactor' | 'roughnessFactor',
+        primProp: 'metallic' | 'roughness',
+        val: number,
+      ) => {
+        pbrProxy[prop] = val;
+        if (gMat.pbrMetallicRoughness) {
+          gMat.pbrMetallicRoughness[prop] = val;
+        }
+        for (const p of matchingPrims) {
+          p[primProp] = val;
+        }
+        this.render();
+      };
       const pbrProxy = {
         baseColorFactor,
         metallicFactor,
@@ -2594,26 +2590,10 @@ export class ThreeView {
           }
           this.render();
         },
-        setMetallicFactor: (val: number) => {
-          pbrProxy.metallicFactor = val;
-          if (gMat.pbrMetallicRoughness) {
-            gMat.pbrMetallicRoughness.metallicFactor = val;
-          }
-          for (const p of matchingPrims) {
-            p.metallic = val;
-          }
-          this.render();
-        },
-        setRoughnessFactor: (val: number) => {
-          pbrProxy.roughnessFactor = val;
-          if (gMat.pbrMetallicRoughness) {
-            gMat.pbrMetallicRoughness.roughnessFactor = val;
-          }
-          for (const p of matchingPrims) {
-            p.roughness = val;
-          }
-          this.render();
-        },
+        setMetallicFactor: (val: number) =>
+          setScalar('metallicFactor', 'metallic', val),
+        setRoughnessFactor: (val: number) =>
+          setScalar('roughnessFactor', 'roughness', val),
       };
 
       return {
@@ -2890,36 +2870,34 @@ export class ThreeView {
     zoom?: number,
   ): void {
     if (thetaDeg !== undefined) {
-      this.initialTheta = this.clampTheta((thetaDeg * Math.PI) / 180);
-      this.targetTheta = this.initialTheta;
-      this.currTheta = this.initialTheta;
+      this.initialTheta =
+        this.targetTheta =
+        this.currTheta =
+          this.clampTheta((thetaDeg * Math.PI) / 180);
     }
     if (phiDeg !== undefined) {
-      this.initialPhi = this.clampPhi((phiDeg * Math.PI) / 180);
-      this.targetPhi = this.initialPhi;
-      this.currPhi = this.initialPhi;
+      this.initialPhi =
+        this.targetPhi =
+        this.currPhi =
+          this.clampPhi((phiDeg * Math.PI) / 180);
     }
-    if (distance !== undefined && distance > 0) {
-      const d = this.clampDistance(distance);
-      this.initialDistance = d;
-      this.customDistance = true;
-      this.targetDistance = d;
-      this.currDistance = d;
-    } else if (zoom !== undefined && zoom > 0) {
-      const d = this.clampDistance((this.bounds.radius * 2.5) / zoom);
-      this.initialDistance = d;
-      this.customDistance = true;
-      this.targetDistance = d;
-      this.currDistance = d;
-    } else {
-      this.customDistance = false;
-      const d = this.clampDistance(
-        this.distanceMode === 'absolute' ? 3.0 : this.bounds.radius * 2.5,
-      );
-      this.initialDistance = d;
-      this.targetDistance = d;
-      this.currDistance = d;
-    }
+    const distArg =
+      distance !== undefined && distance > 0
+        ? distance
+        : zoom !== undefined && zoom > 0
+          ? (this.bounds.radius * 2.5) / zoom
+          : null;
+    this.customDistance = distArg !== null;
+    this.initialDistance =
+      this.targetDistance =
+      this.currDistance =
+        this.clampDistance(
+          distArg !== null
+            ? distArg
+            : this.distanceMode === 'absolute'
+              ? 3.0
+              : this.bounds.radius * 2.5,
+        );
     if (this.gl && (this.meshes.length > 0 || this.backdropMeshes.length > 0)) {
       this.update(0);
       this.render();
@@ -3029,8 +3007,7 @@ export class ThreeView {
 
   private setupEvents(): void {
     const c = this.canvas;
-    const now = () =>
-      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const now = nowMs;
 
     this.boundContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -3213,14 +3190,18 @@ export class ThreeView {
       }
     };
     const c = this.canvas;
-    rm(c, 'webglcontextlost', 'boundContextLost');
-    rm(c, 'webglcontextrestored', 'boundContextRestored');
-    rm(c, 'contextmenu', 'boundContextMenu');
-    rm(c, 'pointerdown', 'boundPointerDown');
-    rm(c, 'pointermove', 'boundPointerMove');
-    rm(c, 'pointerup', 'boundPointerUp');
-    rm(c, 'wheel', 'boundWheel');
-    rm(c, 'keydown', 'boundKeyDown');
+    for (const [evt, key] of [
+      ['webglcontextlost', 'boundContextLost'],
+      ['webglcontextrestored', 'boundContextRestored'],
+      ['contextmenu', 'boundContextMenu'],
+      ['pointerdown', 'boundPointerDown'],
+      ['pointermove', 'boundPointerMove'],
+      ['pointerup', 'boundPointerUp'],
+      ['wheel', 'boundWheel'],
+      ['keydown', 'boundKeyDown'],
+    ] as const) {
+      rm(c, evt, key);
+    }
     rm(this.container, 'setCamera', 'boundSetCamera');
     rm(this.container, 'resetCamera', 'boundResetCamera');
   }
@@ -3450,18 +3431,11 @@ export class ThreeView {
               wnz = -wnz;
             }
 
+            const r3 = (v: number) => Math.round(v * 1000) / 1000;
             bestHitMesh = hitMesh;
-            bestHitDistance = Math.round(dist * 1000) / 1000;
-            bestHitPoint = [
-              Math.round(wx * 1000) / 1000,
-              Math.round(wy * 1000) / 1000,
-              Math.round(wz * 1000) / 1000,
-            ];
-            bestHitNormal = [
-              Math.round(wnx * 1000) / 1000,
-              Math.round(wny * 1000) / 1000,
-              Math.round(wnz * 1000) / 1000,
-            ];
+            bestHitDistance = r3(dist);
+            bestHitPoint = [r3(wx), r3(wy), r3(wz)];
+            bestHitNormal = [r3(wnx), r3(wny), r3(wnz)];
           }
         }
       }
@@ -3578,8 +3552,7 @@ export class ThreeView {
       for (const plugin of registeredPlugins) {
         plugin.onXRSessionEnd?.(this);
       }
-      this.lastTime =
-        typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.lastTime = nowMs();
       this.updateTurntableMatrix();
       if (this.isVisible) {
         try {
@@ -3613,8 +3586,7 @@ export class ThreeView {
 
   public start(): void {
     if (this.animFrameId !== null) return;
-    this.lastTime =
-      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.lastTime = nowMs();
     const renderLoop = (time: number) => {
       if (this.animFrameId === null) return;
       const dt = Math.min(Math.max((time - this.lastTime) / 1000, 0), 0.1);
@@ -3707,8 +3679,7 @@ export class ThreeView {
       plugin.onUpdate?.(this, dt);
     }
 
-    const now =
-      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const now = nowMs();
     if (
       !this.isPointerDown &&
       this.autoRotate &&
@@ -3825,8 +3796,6 @@ export class ThreeView {
       : [0, 1.6, 0];
     if (placementMatrix) {
       this.modelRootMatrix.set(placementMatrix);
-    } else if (isPlaced && placementMatrix) {
-      this.modelRootMatrix.set(placementMatrix);
     }
     this.render({
       viewMatrix,
@@ -3863,55 +3832,36 @@ export class ThreeView {
       const rightVecX = Math.cos(this.currTheta);
       const rightVecZ = -Math.sin(this.currTheta);
       const halfIpd = 0.032;
-
-      const leftProj = mat4Create();
-      const leftView = mat4Create();
-      const leftEye: [number, number, number] = [
-        baseEyeX - rightVecX * halfIpd,
-        baseEyeY,
-        baseEyeZ - rightVecZ * halfIpd,
-      ];
-      const leftTarget: [number, number, number] = [
-        c[0] - rightVecX * halfIpd * 0.25,
-        c[1],
-        c[2] - rightVecZ * halfIpd * 0.25,
-      ];
-      mat4Perspective(leftProj, this.fov, halfW / fullH, 0.1, farPlane);
-      mat4LookAt(leftView, leftEye, leftTarget, [0, 1, 0]);
-
-      const rightProj = mat4Create();
-      const rightView = mat4Create();
-      const rightEye: [number, number, number] = [
-        baseEyeX + rightVecX * halfIpd,
-        baseEyeY,
-        baseEyeZ + rightVecZ * halfIpd,
-      ];
-      const rightTarget: [number, number, number] = [
-        c[0] + rightVecX * halfIpd * 0.25,
-        c[1],
-        c[2] + rightVecZ * halfIpd * 0.25,
-      ];
-      mat4Perspective(rightProj, this.fov, rightW / fullH, 0.1, farPlane);
-      mat4LookAt(rightView, rightEye, rightTarget, [0, 1, 0]);
-
-      this.render({
-        viewMatrix: leftView,
-        projMatrix: leftProj,
-        eyePos: leftEye,
-        viewport: [0, 0, halfW, fullH],
-        eye: 'left',
-        clear: true,
-        isAR: false,
-      });
-      this.render({
-        viewMatrix: rightView,
-        projMatrix: rightProj,
-        eyePos: rightEye,
-        viewport: [halfW, 0, rightW, fullH],
-        eye: 'right',
-        clear: false,
-        isAR: false,
-      });
+      for (const s of [-1, 1] as const) {
+        const eyeProj = mat4Create();
+        const eyeView = mat4Create();
+        const eyeW = s < 0 ? halfW : rightW;
+        const eyePos: [number, number, number] = [
+          baseEyeX + s * rightVecX * halfIpd,
+          baseEyeY,
+          baseEyeZ + s * rightVecZ * halfIpd,
+        ];
+        mat4Perspective(eyeProj, this.fov, eyeW / fullH, 0.1, farPlane);
+        mat4LookAt(
+          eyeView,
+          eyePos,
+          [
+            c[0] + s * rightVecX * halfIpd * 0.25,
+            c[1],
+            c[2] + s * rightVecZ * halfIpd * 0.25,
+          ],
+          [0, 1, 0],
+        );
+        this.render({
+          viewMatrix: eyeView,
+          projMatrix: eyeProj,
+          eyePos,
+          viewport: [s < 0 ? 0 : halfW, 0, eyeW, fullH],
+          eye: s < 0 ? 'left' : 'right',
+          clear: s < 0,
+          isAR: false,
+        });
+      }
       this.gl.viewport(0, 0, fullW, fullH);
       return;
     }
@@ -3948,8 +3898,10 @@ export class ThreeView {
     const vp = mat4Create();
     const activeView = xrOverride?.viewMatrix ?? this.viewMatrix;
     this.activeViewMatrix = activeView;
-    mat4Multiply(vp, xrOverride?.projMatrix ?? this.projMatrix, activeView);
-    const xrDepth = getSharedRegistry().xrDepthShader;
+    const activeProj = xrOverride?.projMatrix ?? this.projMatrix;
+    mat4Multiply(vp, activeProj, activeView);
+    const reg = getSharedRegistry();
+    const xrDepth = reg.xrDepthShader;
 
     const toneMode = toneMappingShaderIndex(this.toneMapping);
 
@@ -3968,9 +3920,46 @@ export class ThreeView {
     }
 
     const numBackdrop = xrOverride?.isAR ? 0 : this.backdropMeshes.length;
-    if (this.meshes.length === 0 && numBackdrop === 0) return;
+    if (this.meshes.length === 0 && numBackdrop === 0) {
+      reg.gpuSceneAccelerator?.hideLayer?.(this);
+      return;
+    }
 
     const currentEye = xrOverride?.eye || 'none';
+    const clearPass = !xrOverride || xrOverride.clear !== false;
+    if (
+      !this.xrSessionActive &&
+      reg.gpuSceneAccelerator?.renderScene(
+        this,
+        vp,
+        activeProj,
+        activeView,
+        [eyeX, eyeY, eyeZ],
+        toneMode,
+        [vpX, vpY, vpW, vpH],
+        currentEye,
+        clearPass,
+        Boolean(xrOverride?.isAR),
+      )
+    ) {
+      if (clearPass && !this.skyboxTexture) {
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+      for (const plugin of registeredPlugins) {
+        if (plugin.name.includes('webgpu')) {
+          plugin.onAfterRender?.(
+            gl,
+            this,
+            vp,
+            currentEye,
+            [vpX, vpY, vpW, vpH],
+            activeProj,
+          );
+        }
+      }
+      return;
+    }
     let hasTransmissive = false;
     const renderList =
       numBackdrop > 0 ? [...this.backdropMeshes, ...this.meshes] : this.meshes;
@@ -3991,7 +3980,8 @@ export class ThreeView {
           mat4Multiply(this.modelMatrix, this.modelRootMatrix, mesh.transform);
           const bb =
             !xrOverride &&
-            (mesh.extras?.xr?.billboard ?? (mesh as any).userData?.xr?.billboard);
+            (mesh.extras?.xr?.billboard ??
+              (mesh as any).userData?.xr?.billboard);
           if (bb) {
             const m = this.modelMatrix,
               sx = Math.hypot(m[0], m[1], m[2]) || 1,
@@ -4080,14 +4070,28 @@ export class ThreeView {
             Math.max(1, vpH),
           ]);
 
-          if (this.environmentTexture) {
-            gl.activeTexture(gl.TEXTURE4);
-            gl.bindTexture(gl.TEXTURE_2D, this.environmentTexture);
-            gl.uniform1i(u.uEnvironmentMap, 4);
-            gl.uniform1i(u.uHasEnvironmentMap, 1);
-          } else {
-            gl.uniform1i(u.uHasEnvironmentMap, 0);
-          }
+          const bindTex2D = (
+            slot: number,
+            tex: WebGLTexture | null,
+            uSampler: WebGLUniformLocation | null,
+            uHas: WebGLUniformLocation | null,
+          ) => {
+            if (tex) {
+              gl.activeTexture(gl.TEXTURE0 + slot);
+              gl.bindTexture(gl.TEXTURE_2D, tex);
+              gl.uniform1i(uSampler, slot);
+              gl.uniform1i(uHas, 1);
+            } else {
+              gl.uniform1i(uHas, 0);
+            }
+          };
+
+          bindTex2D(
+            4,
+            this.environmentTexture,
+            u.uEnvironmentMap,
+            u.uHasEnvironmentMap,
+          );
 
           this.bindLights(u);
           if (u.uSectionEnabled) gl.uniform1i(u.uSectionEnabled, 0);
@@ -4114,53 +4118,38 @@ export class ThreeView {
             );
           }
 
-          if (prim.texture) {
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, prim.texture);
-            gl.uniform1i(u.uBaseColorTexture, 0);
-            gl.uniform1i(u.uHasTexture, 1);
-          } else {
-            gl.uniform1i(u.uHasTexture, 0);
-          }
-
-          if (prim.metallicRoughnessTexture) {
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, prim.metallicRoughnessTexture);
-            gl.uniform1i(u.uMetallicRoughnessTexture, 1);
-            gl.uniform1i(u.uHasMetallicRoughnessTexture, 1);
-          } else {
-            gl.uniform1i(u.uHasMetallicRoughnessTexture, 0);
-          }
-
+          bindTex2D(0, prim.texture, u.uBaseColorTexture, u.uHasTexture);
+          bindTex2D(
+            1,
+            prim.metallicRoughnessTexture,
+            u.uMetallicRoughnessTexture,
+            u.uHasMetallicRoughnessTexture,
+          );
+          bindTex2D(
+            2,
+            prim.normalTexture,
+            u.uNormalTexture,
+            u.uHasNormalTexture,
+          );
           if (prim.normalTexture) {
-            gl.activeTexture(gl.TEXTURE2);
-            gl.bindTexture(gl.TEXTURE_2D, prim.normalTexture);
-            gl.uniform1i(u.uNormalTexture, 2);
-            gl.uniform1i(u.uHasNormalTexture, 1);
             gl.uniform1f(u.uNormalScale, prim.normalScale);
-          } else {
-            gl.uniform1i(u.uHasNormalTexture, 0);
           }
-
+          bindTex2D(
+            3,
+            prim.occlusionTexture,
+            u.uOcclusionTexture,
+            u.uHasOcclusionTexture,
+          );
           if (prim.occlusionTexture) {
-            gl.activeTexture(gl.TEXTURE3);
-            gl.bindTexture(gl.TEXTURE_2D, prim.occlusionTexture);
-            gl.uniform1i(u.uOcclusionTexture, 3);
-            gl.uniform1i(u.uHasOcclusionTexture, 1);
             gl.uniform1f(u.uOcclusionStrength, prim.occlusionStrength);
-          } else {
-            gl.uniform1i(u.uHasOcclusionTexture, 0);
           }
-
           gl.uniform3fv(u.uEmissiveFactor, prim.emissiveFactor);
-          if (prim.emissiveTexture) {
-            gl.activeTexture(gl.TEXTURE8);
-            gl.bindTexture(gl.TEXTURE_2D, prim.emissiveTexture);
-            gl.uniform1i(u.uEmissiveTexture, 8);
-            gl.uniform1i(u.uHasEmissiveTexture, 1);
-          } else {
-            gl.uniform1i(u.uHasEmissiveTexture, 0);
-          }
+          bindTex2D(
+            8,
+            prim.emissiveTexture,
+            u.uEmissiveTexture,
+            u.uHasEmissiveTexture,
+          );
 
           gl.bindVertexArray(prim.vao);
           const instMats = mesh.instanceMatrices;

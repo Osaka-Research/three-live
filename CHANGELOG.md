@@ -26,6 +26,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Opt-in WebGPU `GPURenderBundle` scene accelerator
+    (`three-live-webgpu.min.js`, `< 17 KB gz`):** Compiles multi-thousand-part
+    CAD assemblies, `EXT_mesh_gpu_instancing` scenes, and glTF PBR models into
+    pre-recorded 4× MSAA `GPURenderBundle`s backed by a 128-byte-stride storage
+    buffer and a single 464-byte per-frame `SceneUniforms` upload, with zero
+    byte impact on `three-live-viewer`, `three-live`, `xr-live-viewer`, and
+    `xr-live`. Supports `renderer="auto | webgpu | webgl2"` (default `"auto"`),
+    equirectangular IBL, all 5 tone-mapping curves (`neutral`, `reinhard`,
+    `none`, `aces`, `agx`), clearcoat, normal/MR/AO/emissive maps, planar
+    contact shadows, CAD section-plane clipping, `stereoSBS`, 1×1-scissor
+    `pickMeshGPU`, shared `GPUDevice` coordination, and automatic WebGL2
+    fallback for WebXR, `bloom`/`outline`, transmission, skinning/morphs, and
+    custom shaders. Included in `three-live-full` (`< 166 KB gz`) and
+    `xr-live-full` (`< 266 KB gz`).
+
 -   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;

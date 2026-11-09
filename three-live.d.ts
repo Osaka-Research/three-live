@@ -190,6 +190,8 @@ export type {
 export * from './xr-live/src/plugins/index';
 /** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
 export * from './xr-live/src/sim/index';
+/** Optional WebGPU `GPURenderBundle` scene accelerator (`three-live/webgpu`, `three-live-webgpu.min.js`). */
+export * from './three-live/src/webgpu';
 
 /**
  * Declarative JSX / HTML attributes supported by the <three-live> custom element.
@@ -284,6 +286,8 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
+  /** `three-live-webgpu`: scene rendering backend (`'auto'`, `'webgpu'`, or `'webgl2'`). */
+  renderer?: 'auto' | 'webgpu' | 'webgl2' | string;
   /** `three-live-ai`: tapping a mesh sets `selected-mesh` (tap again to clear) for voice and text edits. */
   'ai-select-on-tap'?: boolean | string;
   /** `three-live-ai`: show a mic button (push-to-talk, or a realtime session when `ai-voice-url` is set). */

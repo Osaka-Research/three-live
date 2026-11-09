@@ -95,6 +95,7 @@ bundles and entry points.
 | `autoplay` | `boolean` | `three-live-viewer`+ | Automatically starts keyframe animation playback on model load. |
 | `animation-name` | `string` | `three-live-viewer`+ | Name of specific glTF animation clip to play (defaults to first clip). |
 | `auto-rotate` | `boolean` | `three-live-viewer`+ | Automatically rotates the camera around the model. |
+| `renderer` | `"auto" \| "webgpu" \| "webgl2"` | `three-live-webgpu` | Renderer preference when `three-live-webgpu` is loaded (`"auto"` default accelerates compatible desktop/inline scenes via WebGPU `GPURenderBundle` and falls back to WebGL2 automatically). |
 <!-- mdformat on -->
 
 --------------------------------------------------------------------------------
@@ -300,6 +301,38 @@ Supported action objects in `onSelect` / `onHoverIn` / `onHoverOut` / `onStart` 
 - `cycleMaterialColor`: `{ action: 'cycleMaterialColor', colors: Array<[number, number, number, number?]>, duration?: number }`
 - `playAnimation` / `stopAnimation`: `{ action: 'playAnimation', animation?: number }` / `{ action: 'stopAnimation' }`
 - `sendEvent`: `{ action: 'sendEvent', event: string, values?: Record<string, unknown> }` (dispatches `interactivityEvent` on the host element).
+
+### Opt-in WebGPU Scene Accelerator (`three-live/webgpu`)
+
+Import `three-live/webgpu` (or include `dist/three-live-webgpu.min.js`, built
+into `three-live-full.min.js`) to accelerate multi-thousand-part CAD assemblies,
+`EXT_mesh_gpu_instancing` crowds, and glTF PBR scenes via WebGPU
+`GPURenderBundle` + storage-buffer submission with **zero byte overhead** on the
+default `three-live-viewer` and `three-live` bundles:
+
+```html
+<script type="module" src="/dist/three-live.min.js"></script>
+<script type="module" src="/dist/three-live-webgpu.min.js"></script>
+
+<three-live src="/models/cad-assembly.glb" renderer="auto" camera-controls></three-live>
+```
+
+-   **`GPURenderBundle` + Storage-Buffer Architecture:** Compiles all scene
+    geometry into contiguous vertex/index slabs and a 128-byte-stride
+    `PartInstance` storage buffer, pre-recording static draw calls into cached
+    4× MSAA `GPURenderBundle`s. Camera orbits and turntable rotation update a
+    single 464-byte `SceneUniforms` buffer per frame with zero JavaScript
+    per-part draw-loop overhead.
+-   **`renderer="auto | webgpu | webgl2"` (default `"auto"`):** Automatically
+    hands off to WebGL2 during active WebXR `XRWebGLLayer` sessions, or whenever
+    a scene uses `bloom`, `outline`, `skybox-image` (in `"auto"` mode),
+    `KHR_materials_transmission`, GPU skinning/morphs, or custom
+    `onResolveShader` GLSL programs. Shares a single `GPUDevice` with
+    `xr-live-webgpu` when both plugins are loaded.
+-   **1×1-Scissor Async GPU Picking:** `await pickMeshGPU(viewer, x, y)` renders
+    a cached Color-ID `GPURenderBundle` into a 1×1 scissored
+    `r8unorm`/`rgba8unorm` attachment with isolated picking uniforms and refines
+    exact hit points via narrowed triangle raycasting.
 
 ### Built-in `EXT_meshopt_compression` & Pluggable Decoders
 
