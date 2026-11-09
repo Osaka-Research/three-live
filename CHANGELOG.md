@@ -26,6 +26,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Tap & Speak voice scene editing (`three-live-ai`):** `ai-select-on-tap`
+    makes tapping a mesh set `selected-mesh` (tap again to clear);
+    `el.startVoiceEdit()` is push-to-talk with the browser's speech recognizer
+    and a spoken result; `el.connectVoice({provider, url})` starts a realtime
+    voice conversation over `ai-realtime` (any server speaking the Realtime
+    WebSocket event protocol) or `gemini-live`, where the voice model calls an
+    `edit_scene` / `undo_edit` tool that runs `editScene` with your code model.
+    Includes microphone capture, gapless playback with barge-in, selection
+    context, and a built-in `ai-voice-button` (or `slot="voice-button"`).
+    Progress is reported as `three-live-voice` events and selection changes as
+    `three-live-select`. Budgets: `three-live-ai` `< 10 KB gz`,
+    `three-live-full` `< 151 KB gz`, `xr-live-full` `< 251 KB gz`; core bundles
+    are unchanged.
+
 -   **`three-live-cli gym` (closed-loop agent gym without MCP):**
     `gym reset scene.js --session ep.json` and
     `gym step --session ep.json --actions '[...]' --ticks 30` play a scene one

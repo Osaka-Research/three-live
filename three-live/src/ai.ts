@@ -18,9 +18,34 @@ import {
   undoEdit,
 } from './plugins/ai';
 
+import {
+  AIVoiceSession,
+  connectVoice,
+  createWebSpeechRecognizer,
+  describeEditResult,
+  geminiLiveAdapter,
+  realtimeAdapter,
+  setSelectOnTap,
+  startVoiceEdit,
+} from './plugins/ai-voice';
+
 registerPlugin(aiPlugin);
 
-export {aiPlugin, createAIChatProvider, editScene, extractScript, undoEdit};
+export {
+  AIVoiceSession,
+  aiPlugin,
+  connectVoice,
+  createAIChatProvider,
+  createWebSpeechRecognizer,
+  describeEditResult,
+  editScene,
+  extractScript,
+  geminiLiveAdapter,
+  realtimeAdapter,
+  setSelectOnTap,
+  startVoiceEdit,
+  undoEdit,
+};
 export type {
   AIChatMessage,
   AIChatProviderOptions,
@@ -28,3 +53,16 @@ export type {
   EditSceneResult,
   ThreeLiveAIProvider,
 } from './plugins/ai';
+export type {
+  AIAudioSink,
+  AIMicrophoneSource,
+  AISpeechRecognizer,
+  AIVoiceAdapter,
+  AIVoiceEditOptions,
+  AIVoiceEditResult,
+  AIVoiceEventDetail,
+  AIVoiceProviderName,
+  AIVoiceSessionOptions,
+  AIVoiceState,
+  AIVoiceTransport,
+} from './plugins/ai-voice';

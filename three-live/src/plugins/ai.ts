@@ -25,6 +25,17 @@
  */
 
 import {getSharedRegistry, type ThreeLivePlugin} from '../plugin';
+import {
+  type AIVoiceEditOptions,
+  type AIVoiceEditResult,
+  type AIVoiceElement,
+  type AIVoiceSession,
+  type AIVoiceSessionOptions,
+  connectVoice,
+  installVoiceButton,
+  setSelectOnTap,
+  startVoiceEdit,
+} from './ai-voice';
 
 /** One chat message sent to an AI provider. */
 export interface AIChatMessage {
@@ -101,6 +112,10 @@ export interface AIEditableElement {
     options?: EditSceneOptions,
   ) => Promise<EditSceneResult>;
   undoEdit?: () => Promise<boolean>;
+  startVoiceEdit?: (options?: AIVoiceEditOptions) => Promise<AIVoiceEditResult>;
+  connectVoice?: (options: AIVoiceSessionOptions) => Promise<AIVoiceSession>;
+  setSelectOnTap?: (enabled: boolean) => void;
+  hasAttribute?(name: string): boolean;
   readonly sceneSource?: string;
   __tlAiSource?: string;
   __tlAiHistory?: string[];
@@ -534,6 +549,14 @@ export const aiPlugin: ThreeLivePlugin = {
     el.editScene = (instruction: string, options?: EditSceneOptions) =>
       editScene(el, instruction, options);
     el.undoEdit = () => undoEdit(el);
+    const voiceEl = el as AIVoiceElement;
+    el.startVoiceEdit = (options?: AIVoiceEditOptions) =>
+      startVoiceEdit(voiceEl, options);
+    el.connectVoice = (options: AIVoiceSessionOptions) =>
+      connectVoice(voiceEl, options);
+    el.setSelectOnTap = (enabled: boolean) => setSelectOnTap(voiceEl, enabled);
+    if (el.hasAttribute?.('ai-select-on-tap')) setSelectOnTap(voiceEl, true);
+    if (el.hasAttribute?.('ai-voice-button')) installVoiceButton(voiceEl);
     if (!('sceneSource' in el)) {
       Object.defineProperty(el, 'sceneSource', {
         get: () => currentSource(el),

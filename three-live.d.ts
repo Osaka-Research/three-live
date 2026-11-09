@@ -162,6 +162,30 @@ export type {
   EditSceneResult,
   ThreeLiveAIProvider,
 } from './three-live/src/plugins/ai';
+/** "Tap & Speak" voice editing (part of `three-live-ai.min.js`). */
+export {
+  AIVoiceSession,
+  connectVoice,
+  createWebSpeechRecognizer,
+  describeEditResult,
+  geminiLiveAdapter,
+  realtimeAdapter,
+  setSelectOnTap,
+  startVoiceEdit,
+} from './three-live/src/plugins/ai-voice';
+export type {
+  AIAudioSink,
+  AIMicrophoneSource,
+  AISpeechRecognizer,
+  AIVoiceAdapter,
+  AIVoiceEditOptions,
+  AIVoiceEditResult,
+  AIVoiceEventDetail,
+  AIVoiceProviderName,
+  AIVoiceSessionOptions,
+  AIVoiceState,
+  AIVoiceTransport,
+} from './three-live/src/plugins/ai-voice';
 /** Optional spatial plugins (`xr-live/spatial`, `xr-live-spatial.min.js`). */
 export * from './xr-live/src/plugins/index';
 /** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
@@ -260,6 +284,16 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
+  /** `three-live-ai`: tapping a mesh sets `selected-mesh` (tap again to clear) for voice and text edits. */
+  'ai-select-on-tap'?: boolean | string;
+  /** `three-live-ai`: show a mic button (push-to-talk, or a realtime session when `ai-voice-url` is set). */
+  'ai-voice-button'?: boolean | string;
+  /** `three-live-ai`: `wss://` realtime voice endpoint (your proxy or an ephemeral-token URL) for the mic button. */
+  'ai-voice-url'?: string;
+  /** `three-live-ai`: realtime voice protocol for `ai-voice-url` (`'ai-realtime'`, the default, or `'gemini-live'`). */
+  'ai-voice-provider'?: 'ai-realtime' | 'gemini-live';
+  /** `three-live-ai`: model name sent in the realtime session setup. */
+  'ai-voice-model'?: string;
 
   // React 19 / JSX Event Listeners
   onload?: (e: CustomEvent<{model: GLBData}>) => void;
