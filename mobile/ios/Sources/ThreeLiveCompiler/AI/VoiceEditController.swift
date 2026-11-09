@@ -21,15 +21,23 @@
   /// web: `SFSpeechRecognizer` turns one utterance into an instruction for
   /// `AIEditor.editScene` (applied to the current selection), and the result is spoken with
   /// `AVSpeechSynthesizer`. Needs microphone and speech-recognition usage descriptions.
+  ///
+  /// Talk-to-Select (B2b-4): "select the red chairs", "also select the lamp", "deselect the left
+  /// one", and "clear the selection" change the selection instead of editing; "select the lamp
+  /// and make it blue" selects, then edits right away when the reference was unambiguous.
+  /// Otherwise it asks which one was meant and changes nothing.
   @MainActor
   public final class VoiceEditController {
     public var onListening: ((String) -> Void)?
     public var onEditing: ((String) -> Void)?
     public var onResult: ((String, EditResult) -> Void)?
+    /// The utterance changed (or tried to change) the selection.
+    public var onSelection: ((String, AIVoiceSelection) -> Void)?
     public var onError: ((String) -> Void)?
 
     private let editor: AIEditor
     private let speakResults: Bool
+    private let talkToSelect: Bool
     private let recognizer: SFSpeechRecognizer?
     private let engine = AVAudioEngine()
     private let synthesizer = AVSpeechSynthesizer()
@@ -37,9 +45,12 @@
     private var task: SFSpeechRecognitionTask?
     private var latest = ""
 
-    public init(editor: AIEditor, locale: Locale = .current, speakResults: Bool = true) {
+    public init(
+      editor: AIEditor, locale: Locale = .current, speakResults: Bool = true, talkToSelect: Bool = true
+    ) {
       self.editor = editor
       self.speakResults = speakResults
+      self.talkToSelect = talkToSelect
       self.recognizer = SFSpeechRecognizer(locale: locale)
     }
 
@@ -119,12 +130,29 @@
         report("I didn't catch that.")
         return
       }
-      onEditing?(text)
       let editor = self.editor
+      let talkToSelect = self.talkToSelect
       Task { @MainActor in
-        let result = await editor.editScene(text)
-        self.onResult?(text, result)
-        if self.speakResults { self.speak(await editor.describe(result)) }
+        var instruction = text
+        var prefix = ""
+        let command = talkToSelect ? await editor.parseCommand(text) : nil
+        if let command, command.kind != "edit" {
+          let selection = await editor.selectByVoice(
+            command.kind == "clear" ? "" : command.query, mode: command.mode)
+          self.onSelection?(text, selection)
+          // Edit right away only when the reference was resolved locally (tier 1) and confidently.
+          guard command.kind == "mixed", selection.applied, selection.tier == 1 else {
+            let hint = command.kind == "mixed" && selection.applied ? " Say the change again to apply it." : ""
+            if self.speakResults { self.speak(selection.say + hint) }
+            return
+          }
+          instruction = command.instruction
+          prefix = selection.say + " "
+        }
+        self.onEditing?(instruction)
+        let result = await editor.editScene(instruction)
+        self.onResult?(instruction, result)
+        if self.speakResults { self.speak(prefix + (await editor.describe(result))) }
       }
     }
 

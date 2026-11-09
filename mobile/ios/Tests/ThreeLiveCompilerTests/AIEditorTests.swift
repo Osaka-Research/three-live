@@ -157,7 +157,7 @@ final class AIEditorTests: XCTestCase {
     let setup = transport.sent[0]
     XCTAssertEqual(setup["type"] as? String, "session.update")
     let tools = ((setup["session"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
-    XCTAssertEqual(tools, ["edit_scene", "undo_edit"])
+    XCTAssertEqual(tools, ["edit_scene", "undo_edit", "select_meshes"])
     XCTAssertTrue(
       transport.sent.contains { (($0["item"] as? [String: Any])?["role"] as? String) == "system" })
 
@@ -199,5 +199,69 @@ final class AIEditorTests: XCTestCase {
     XCTAssertNotNil(transport.sent[0]["setup"])
     session.close()
     XCTAssertThrowsError(try AIVoiceSession(editor: editor, transport: transport, provider: "pigeon"))
+  }
+
+  private let chairs = """
+    const mk = (name, x, color) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1.2, 1), new THREE.MeshStandardMaterial({ color }));
+      m.name = name; m.position.set(x, 0.6, 0); scene.add(m);
+    };
+    mk('Chair_Left', -2, 0xd93025); mk('Chair_Middle', 0, 0x1a73e8); mk('Chair_Right', 2, 0xd93025);
+    """
+
+  func testTalkToSelectWithTheNativeCore() async throws {
+    let provider = Scripted([#"{"ids": [1], "confidence": "high"}"#, fenced(chairs)])
+    let editor = AIEditor(source: chairs, provider: provider) { _ in }
+    var sources: [String] = []
+    editor.onSelectionsChanged = { _, source in sources.append(source) }
+
+    var r = await editor.selectByVoice("the red chairs")
+    XCTAssertTrue(r.applied)
+    XCTAssertEqual(r.tier, 1)
+    XCTAssertEqual(editor.selections, ["Chair_Left", "Chair_Right"])
+    XCTAssertEqual(r.say, "Selected 2: Chair Left and Chair Right.")
+
+    r = await editor.selectByVoice("the red chair")
+    XCTAssertFalse(r.applied)
+    XCTAssertEqual(r.candidates, ["Chair_Left", "Chair_Right"])
+    XCTAssertEqual(r.say, "Which one: Chair Left or Chair Right?")
+    XCTAssertTrue(provider.requests.isEmpty, "ambiguous references ask the user, not the model")
+
+    r = await editor.selectByVoice("the chair next to the window")
+    XCTAssertTrue(r.applied)
+    XCTAssertEqual(r.tier, 2)
+    XCTAssertEqual(editor.selections, ["Chair_Middle"])
+    XCTAssertTrue(provider.requests[0][0].content.hasPrefix("You find the objects a user means"))
+
+    // Left / right follow the camera: seen from behind, the left chair is Chair_Right.
+    editor.camera = AICamera(eye: [0, 1.6, -5], target: [0, 0.8, 0])
+    r = await editor.selectByVoice("the leftmost chair")
+    XCTAssertEqual(editor.selections, ["Chair_Right"])
+    editor.camera = nil
+
+    editor.setSelection(["Chair_Left", "Chair_Middle"])
+    r = await editor.selectByVoice("the blue one", mode: "remove")
+    XCTAssertTrue(r.applied)
+    XCTAssertEqual(editor.selections, ["Chair_Left"])
+    r = await editor.selectNames(["Chair_Right", "Nope"], mode: "add")
+    XCTAssertEqual(editor.selections, ["Chair_Left", "Chair_Right"])
+    r = await editor.selectByVoice("", mode: "clear")
+    XCTAssertEqual(r.say, "Selection cleared.")
+    r = await editor.selectByVoice("the sofa", mode: "remove")
+    XCTAssertEqual(r.say, "Nothing is selected.")
+
+    XCTAssertEqual(editor.toggleSelection("Chair_Left"), "Chair_Left")
+    editor.toggleSelection("Chair_Right", additive: true)
+    XCTAssertEqual(editor.selections, ["Chair_Left", "Chair_Right"])
+    XCTAssertTrue(sources.contains("voice") && sources.contains("tap") && sources.contains("api"))
+
+    let command = await editor.parseCommand("select the lamp and make it blue")
+    XCTAssertEqual(command, AIVoiceCommand(kind: "mixed", mode: "replace", query: "the lamp", instruction: "make it blue"))
+
+    // Several selected meshes reach the edit prompt.
+    let result = await editor.editScene("make them blue", dryRun: true)
+    XCTAssertTrue(result.applied, result.error ?? "")
+    let prompt = provider.requests.last?.last?.content ?? ""
+    XCTAssertTrue(prompt.contains(#"The user selected the meshes named "Chair_Left", "Chair_Right""#), prompt)
   }
 }

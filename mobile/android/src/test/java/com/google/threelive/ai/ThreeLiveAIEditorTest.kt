@@ -64,7 +64,7 @@ class ThreeLiveAIEditorTest {
             "messages" to
               listOf(
                 mapOf("role" to "system", "content" to "SYS"),
-                mapOf("role" to "user", "content" to "src=${request["source"]} sel=${request["selection"]} ins=${request["instruction"]}"),
+                mapOf("role" to "user", "content" to "src=${request["source"]} sel=${(request["selection"] as? List<*>)?.joinToString(",") ?: request["selection"]} ins=${request["instruction"]}"),
               )
           )
         "extract" -> mapOf("code" to (request["reply"] as String).removePrefix("```js\n").removeSuffix("\n```"))
@@ -86,9 +86,53 @@ class ThreeLiveAIEditorTest {
         "voice_text" -> mapOf("messages" to listOf(mapOf("type" to "text", "text" to request["text"], "respond" to request["respond"])))
         "voice_tool_result" -> mapOf("messages" to listOf(mapOf("type" to "tool_result", "id" to request["id"], "output" to request["output"])))
         "voice_parse" -> mapOf("events" to MiniJson.asList(MiniJson.asMap(request["message"])?.get("events")))
+        // Talk-to-Select: canned answers for a scene of three chairs and a sofa.
+        "select" -> {
+          val query = request["query"] as String
+          val within = (request["within"] as? List<*>)?.filterIsInstance<String>()
+          fun scoped(vararg names: String) = names.filter { within == null || it in within }
+          fun high(names: List<String>) =
+            if (names.isEmpty()) mapOf("confidence" to "none", "reason" to "no_match", "names" to emptyList<String>(), "candidates" to emptyList<String>())
+            else mapOf("confidence" to "high", "reason" to "match", "names" to names, "candidates" to emptyList<String>())
+          when {
+            request["withIndex"] == true -> mapOf("index" to SCENE.map { mapOf("name" to it) })
+            "next to" in query || "near" in query -> mapOf("confidence" to "none", "reason" to "relation", "names" to emptyList<String>(), "candidates" to emptyList<String>())
+            "red chairs" in query -> high(scoped("Chair_Left", "Chair_Right"))
+            "red" in query && within != null -> high(scoped("Chair_Left", "Chair_Right"))
+            "red chair" in query -> mapOf("confidence" to "ambiguous", "reason" to "multiple", "names" to emptyList<String>(), "candidates" to listOf("Chair_Left", "Chair_Right"))
+            "sofa" in query -> high(scoped("Sofa"))
+            else -> high(emptyList())
+          }
+        }
+        "select_messages" -> mapOf("messages" to listOf(mapOf("role" to "system", "content" to "SELECT"), mapOf("role" to "user", "content" to "q=${request["query"]}")), "names" to SCENE)
+        "select_parse" -> {
+          val reply = MiniJson.parseObjectOrNull(request["reply"] as String) ?: emptyMap()
+          val names = (request["names"] as List<*>).filterIsInstance<String>()
+          val picked = MiniJson.asList(reply["ids"])?.mapNotNull { (it as? Double)?.toInt()?.let(names::getOrNull) } ?: emptyList()
+          mapOf("names" to picked, "confidence" to if (reply["confidence"] == "high" && picked.isNotEmpty()) "high" else "low", "question" to (reply["question"] ?: ""))
+        }
+        "select_say" -> {
+          val m = MiniJson.asMap(request["match"])
+          mapOf("text" to "SAY ${request["mode"]} ${m?.get("confidence")} ${m?.get("names")} ${m?.get("candidates")} ${request["meshes"]}")
+        }
+        "select_context" -> mapOf("text" to "CTX " + (request["meshes"] as List<*>).joinToString { "\"$it\"" })
+        "parse_command" -> {
+          val t = request["text"] as String
+          when {
+            t == "clear the selection" -> mapOf("kind" to "clear", "mode" to "clear")
+            t.startsWith("select ") && " and " in t ->
+              mapOf("kind" to "mixed", "mode" to "replace", "query" to t.removePrefix("select ").substringBefore(" and "), "instruction" to t.substringAfter(" and "))
+            t.startsWith("select ") -> mapOf("kind" to "select", "mode" to "replace", "query" to t.removePrefix("select "))
+            else -> mapOf("kind" to "edit", "instruction" to t)
+          }
+        }
         else -> mapOf("error" to "unknown op $op")
       }
     }
+  }
+
+  companion object {
+    val SCENE = listOf("Chair_Left", "Chair_Middle", "Chair_Right", "Sofa")
   }
 
   private class Scripted(vararg replies: String) : AIProvider {
@@ -389,5 +433,130 @@ class ThreeLiveAIEditorTest {
       AIVoiceSession(editor, transport, this, provider = "pigeon", core = FakeCore())
       fail("unknown provider must throw")
     } catch (expected: IllegalArgumentException) {}
+  }
+
+  @Test
+  fun multiSelectionModesAndListener() = runBlocking {
+    val core = FakeCore()
+    val provider = Scripted(fenced(red))
+    val editor = ThreeLiveAIEditor(base, provider, {}, core)
+    val changes = mutableListOf<String>()
+    editor.listener =
+      object : ThreeLiveAIEditor.Listener {
+        override fun onSelectionsChanged(selections: List<String>, source: String) {
+          changes += "$source:${selections.joinToString(",")}"
+        }
+      }
+    assertEquals("Roof", editor.toggleSelection("Roof"))
+    assertEquals("Roof", editor.toggleSelection("Door", additive = true))
+    assertEquals(listOf("Roof", "Door"), editor.selections)
+    editor.toggleSelection("Roof", additive = true)
+    assertEquals(listOf("Door"), editor.selections)
+    assertEquals(listOf("Door", "Chimney"), editor.setSelection(listOf("Chimney", "Chimney", ""), "add"))
+    assertEquals(listOf("Chimney"), editor.setSelection(listOf("Door"), "remove"))
+    assertEquals(listOf("Door"), editor.setSelection(listOf("Chimney", "Door"), "toggle"))
+    assertEquals(emptyList<String>(), editor.setSelection(emptyList(), "clear"))
+    editor.selections = (1..80).map { "m$it" }
+    assertEquals(ThreeLiveAIEditor.MAX_SELECTION, editor.selections.size)
+    assertEquals("tap:Roof", changes[0])
+    assertTrue(changes.any { it.startsWith("api:Door,Chimney") })
+    editor.selections = listOf("Roof", "Door")
+    editor.editScene("make them red")
+    assertTrue(provider.requests[0][1].content.contains("sel=Roof,Door ins=make them red"))
+  }
+
+  @Test
+  fun selectByVoiceTiers() = runBlocking {
+    val core = FakeCore()
+    val provider = Scripted("""{"ids":[3],"confidence":"high"}""", """{"ids":[0,2],"confidence":"low","question":"Which chair?"}""")
+    val editor = ThreeLiveAIEditor(base, provider, {}, core)
+    editor.camera = AICamera(listOf(0.0, 1.6, 5.0), listOf(0.0, 0.8, 0.0))
+
+    var r = editor.selectByVoice("the red chairs")
+    assertTrue(r.applied)
+    assertEquals(1, r.tier)
+    assertEquals(listOf("Chair_Left", "Chair_Right"), editor.selections)
+    assertTrue(r.say.startsWith("SAY replace high"))
+
+    r = editor.selectByVoice("the red chair")
+    assertFalse(r.applied)
+    assertEquals(listOf("Chair_Left", "Chair_Right"), r.candidates)
+    assertEquals(listOf("Chair_Left", "Chair_Right"), editor.selections)
+    assertEquals(0, provider.requests.size)
+
+    r = editor.selectByVoice("the thing next to the window")
+    assertTrue(r.applied)
+    assertEquals(2, r.tier)
+    assertEquals(listOf("Sofa"), editor.selections)
+    assertEquals("SELECT", provider.requests[0][0].content)
+
+    r = editor.selectByVoice("the chair near the lamp")
+    assertFalse(r.applied)
+    assertEquals("Which chair?", r.say)
+    assertEquals(listOf("Chair_Left", "Chair_Right"), r.candidates)
+
+    r = editor.selectByVoice("the chair next to the door") // provider has no replies left
+    assertFalse(r.applied)
+    assertEquals(1, r.tier)
+
+    editor.selectWithModel = false
+    val before = provider.requests.size
+    editor.selectByVoice("the chair next to the door")
+    assertEquals(before, provider.requests.size)
+
+    editor.selections = listOf("Chair_Left", "Sofa")
+    r = editor.selectByVoice("the red one", "remove")
+    assertTrue(r.applied)
+    assertEquals(listOf("Sofa"), editor.selections)
+    r = editor.selectByVoice("", "clear")
+    assertTrue(r.applied)
+    assertTrue(editor.selections.isEmpty())
+    r = editor.selectByVoice("the sofa", "remove")
+    assertEquals("Nothing is selected.", r.say)
+
+    r = editor.selectNames(listOf("Sofa", "Nope"), "add")
+    assertTrue(r.applied)
+    assertEquals(listOf("Sofa"), editor.selections)
+    assertFalse(editor.selectNames(listOf("Nope")).applied)
+    assertEquals("mixed", editor.parseCommand("select the lamp and make it blue")["kind"])
+  }
+
+  @Test
+  fun voiceSessionSelectMeshesTool() = runBlocking {
+    val core = FakeCore()
+    val editor = ThreeLiveAIEditor(base, Scripted(), {}, core)
+    val transport = FakeTransport()
+    val session = AIVoiceSession(editor, transport, this, core = core)
+    val selections = CopyOnWriteArrayList<AIVoiceSelection>()
+    session.listener =
+      object : AIVoiceSession.Listener {
+        override fun onSelection(selection: AIVoiceSelection) {
+          selections += selection
+        }
+      }
+    session.start()
+    transport.server(mapOf("type" to "toolCall", "id" to "s1", "name" to "select_meshes", "args" to mapOf("query" to "the red chairs")))
+    waitFor { transport.sent.any { it["id"] == "s1" } }
+    var out = MiniJson.asMap(transport.sent.first { it["id"] == "s1" }["output"])!!
+    assertEquals(true, out["changed"])
+    assertEquals(listOf("Chair_Left", "Chair_Right"), out["selected"])
+    assertFalse(transport.sent.any { (it["text"] as? String)?.startsWith("CTX") == true })
+
+    transport.server(mapOf("type" to "toolCall", "id" to "s2", "name" to "select_meshes", "args" to mapOf("query" to "the red chair")))
+    waitFor { transport.sent.any { it["id"] == "s2" } }
+    out = MiniJson.asMap(transport.sent.first { it["id"] == "s2" }["output"])!!
+    assertEquals(false, out["changed"])
+    assertEquals(listOf("Chair_Left", "Chair_Right"), out["candidates"])
+    assertNotNull(out["question"])
+
+    transport.server(mapOf("type" to "toolCall", "id" to "s3", "name" to "select_meshes", "args" to mapOf("names" to listOf("Sofa"), "mode" to "add")))
+    waitFor { transport.sent.any { it["id"] == "s3" } }
+    out = MiniJson.asMap(transport.sent.first { it["id"] == "s3" }["output"])!!
+    assertEquals(listOf("Chair_Left", "Chair_Right", "Sofa"), out["selected"])
+    assertEquals(3, selections.size)
+
+    editor.toggleSelection("Sofa")
+    waitFor { transport.sent.any { (it["text"] as? String) == "CTX \"Sofa\"" } }
+    session.close()
   }
 }

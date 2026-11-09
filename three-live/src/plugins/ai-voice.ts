@@ -27,6 +27,19 @@
  */
 
 import type {EditSceneResult, ThreeLiveAIProvider} from './ai';
+import {
+  type AISelectableElement,
+  type AISelectionMode,
+  type AISelectProvider,
+  describeSelection,
+  getSelection,
+  resolveSelection,
+  resolveSelectionWithModel,
+  sceneSelectEntries,
+  setSelection,
+} from './ai-select';
+import {hideSelectionChips, showSelectionChips} from './ai-select-chips';
+import {parseVoiceCommand, type SelectMatch} from './ai-select-match';
 
 /** Voice protocols supported by {@link connectVoice}. */
 export type AIVoiceProviderName = 'ai-realtime' | 'gemini-live';
@@ -51,7 +64,25 @@ export interface AIVoiceEventDetail {
   readonly reply?: string;
   readonly isFinal?: boolean;
   readonly result?: EditSceneResult;
+  /** Set when the utterance changed (or tried to change) the selection. */
+  readonly selection?: AIVoiceSelection;
   readonly error?: string;
+}
+
+/** Outcome of a spoken selection request (Talk-to-Select). */
+export interface AIVoiceSelection {
+  readonly mode: AISelectionMode;
+  readonly query: string;
+  /** Tier-1 match (`null` for a clear). */
+  readonly match: SelectMatch | null;
+  /** Whether the selection changed to what was asked. */
+  readonly applied: boolean;
+  /** 1: resolved locally; 2: the code model resolved (or asked about) it. */
+  readonly tier: 1 | 2;
+  /** The selection afterwards. */
+  readonly meshes: readonly string[];
+  /** What to say back: a confirmation, or a question when the reference was unclear. */
+  readonly say: string;
 }
 
 /** Bidirectional JSON message transport (a WebSocket by default). */
@@ -161,6 +192,13 @@ export interface AIAudioSink {
 
 /** Options for {@link startVoiceEdit}. */
 export interface AIVoiceEditOptions {
+  /**
+   * Treat "select …", "deselect …", "clear the selection" and "select X and make it red" as
+   * selection commands (Talk-to-Select; default true).
+   */
+  readonly talkToSelect?: boolean;
+  /** Show confirmation chips after a selection (default true; `ai-select-chips="off"`). */
+  readonly chips?: boolean;
   /** BCP-47 language tag (default: the page language). */
   readonly lang?: string;
   /** Speak the result with `speechSynthesis` (default true). */
@@ -182,7 +220,10 @@ export interface AISpeechRecognizer {
 /** Result of {@link startVoiceEdit}. */
 export interface AIVoiceEditResult {
   readonly transcript: string;
-  readonly result: EditSceneResult;
+  /** The edit result, or `null` when the utterance only changed the selection. */
+  readonly result: EditSceneResult | null;
+  /** Set when the utterance changed (or tried to change) the selection. */
+  readonly selection?: AIVoiceSelection;
 }
 
 /** The element surface voice editing relies on. */
@@ -203,8 +244,15 @@ export interface AIVoiceElement {
   undoEdit?: () => Promise<boolean>;
   __tlVoiceSession?: AIVoiceSession | null;
   __tlTapHandler?: ((e: Event) => void) | null;
+  __tlTapDown?: ((e: Event) => void) | null;
   __tlVoiceButton?: HTMLElement | null;
+  /** Code model for tier-2 selection, installed by the `ai` plugin (`null` when none). */
+  __tlSelectProvider?: () => AISelectProvider | null;
+  __tlChips?: {root: HTMLElement; off: () => void; state: unknown} | null;
 }
+
+/** Press duration that turns a tap into an add-to-selection. */
+const LONG_PRESS_MS = 500;
 
 /** Longest instruction or transcript forwarded. */
 export const MAX_VOICE_TEXT = 2000;
@@ -232,6 +280,30 @@ export const VOICE_TOOLS: readonly AIVoiceTool[] = [
     description: 'Undo the last scene change.',
     parameters: {type: 'object', properties: {}},
   },
+  {
+    name: 'select_meshes',
+    description:
+      'Select objects in the scene so the user can see what an edit will change. Call this when the user refers to objects by name, color, or position ("the two red chairs on the left"). Pass their words as query, or exact mesh names as names. The result lists the selection, or a question to ask when the reference was unclear.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The user\'s words for the objects, e.g. "the lamp next to the sofa".',
+        },
+        names: {
+          type: 'array',
+          items: {type: 'string'},
+          description: 'Exact mesh names, when known.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['replace', 'add', 'remove', 'clear'],
+          description: 'replace (default), add, remove, or clear.',
+        },
+      },
+    },
+  },
 ];
 
 const VOICE_INSTRUCTIONS = [
@@ -239,6 +311,8 @@ const VOICE_INSTRUCTIONS = [
   'Keep spoken replies short: one sentence.',
   'To change the scene, call edit_scene with the request; never describe code.',
   'After a tool result, say briefly what changed, or why it could not be done.',
+  'When the user refers to objects by name, color, or position, call select_meshes with their words first.',
+  'If its result has a question, ask it and wait; otherwise say what is selected, and if they also asked for a change, call edit_scene.',
 ].join(' ');
 
 /** Returns true for `wss:` URLs (or `ws:` on loopback). */
@@ -714,12 +788,12 @@ export class AIVoiceSession {
   private userText = '';
   private modelText = '';
   private readonly onSelect = (e: Event) => {
-    const mesh = (e as CustomEvent<{mesh?: string | null}>).detail?.mesh;
-    this.sendContext(
-      mesh
-        ? `The user selected the mesh "${String(mesh).slice(0, 200)}". "This" or "it" now refers to it.`
-        : 'The user cleared the selection.',
-    );
+    const d = (e as CustomEvent<{mesh?: string | null; meshes?: readonly string[]; source?: string}>)
+      .detail;
+    // Voice selections come back in the select_meshes tool result instead.
+    if (d?.source === 'voice') return;
+    const meshes = Array.isArray(d?.meshes) ? d.meshes : d?.mesh ? [d.mesh] : [];
+    this.sendContext(describeSelection(meshes));
   };
 
   constructor(
@@ -767,11 +841,8 @@ export class AIVoiceSession {
     // session, so browsers do not keep it suspended (an empty chunk plays nothing).
     this.sink?.play('', 24000);
     this.el.addEventListener?.('three-live-select', this.onSelect);
-    if (this.el.selectedMesh) {
-      this.sendContext(
-        `The user selected the mesh "${String(this.el.selectedMesh).slice(0, 200)}".`,
-      );
-    }
+    const selected = getSelection(this.el as AISelectableElement);
+    if (selected.length) this.sendContext(describeSelection(selected));
     try {
       await this.mic?.start(this.adapter.inputRate, (b64) => {
         if (this.state !== 'closed') this.transport.send(this.adapter.audio(b64));
@@ -895,6 +966,31 @@ export class AIVoiceSession {
           ? {applied: true, repairs: result.repairs}
           : {applied: false, error: result.error ?? 'edit rejected'};
         this.setState('thinking', {result});
+      } else if (name === 'select_meshes') {
+        const rawMode = str(args['mode']);
+        const mode: AISelectionMode = (['replace', 'add', 'remove', 'clear'] as const).includes(
+          rawMode as 'replace',
+        )
+          ? (rawMode as AISelectionMode)
+          : 'replace';
+        const names = Array.isArray(args['names'])
+          ? (args['names'] as unknown[]).filter((n): n is string => typeof n === 'string')
+          : [];
+        const sel =
+          names.length && mode !== 'clear'
+            ? selectNamesByVoice(this.el, names, mode)
+            : await selectByVoice(this.el, str(args['query']), {
+                mode,
+                provider: this.options.editProvider ?? this.el.__tlSelectProvider?.() ?? null,
+              });
+        output = {
+          changed: sel.applied,
+          selected: sel.meshes.slice(0, 50),
+          say: sel.say,
+          ...(sel.applied
+            ? {}
+            : {question: sel.say, candidates: sel.match?.candidates ?? []}),
+        };
       } else if (name === 'undo_edit') {
         const undone = (await this.el.undoEdit?.()) ?? false;
         output = undone ? {undone: true} : {undone: false, error: 'nothing to undo'};
@@ -1017,6 +1113,137 @@ function speak(text: string, lang?: string): void {
   } catch {}
 }
 
+/** A mesh name as it should be spoken: `"FloorLamp_2"` → `"Floor Lamp 2"`. */
+export function speakableName(name: string): string {
+  return String(name)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])([0-9])/g, '$1 $2')
+    .replace(/[_\-.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function speakList(names: readonly string[], joiner = 'and'): string {
+  const shown = names.slice(0, 5).map(speakableName);
+  const more = names.length - shown.length;
+  if (more > 0) return `${shown.join(', ')} ${joiner} ${more} more`;
+  if (shown.length < 2) return shown.join('');
+  return `${shown.slice(0, -1).join(', ')} ${joiner} ${shown[shown.length - 1]}`;
+}
+
+/** What to say back after a selection request. */
+export function describeVoiceSelection(
+  mode: AISelectionMode,
+  match: SelectMatch | null,
+  meshes: readonly string[],
+  query: string,
+): string {
+  if (mode === 'clear') return 'Selection cleared.';
+  if (!match) return 'Which object?';
+  if (match.confidence === 'high') {
+    if (mode === 'remove') {
+      return meshes.length
+        ? `Removed ${speakList(match.names)}. ${meshes.length} selected.`
+        : `Removed ${speakList(match.names)}. Nothing is selected.`;
+    }
+    if (mode === 'add') return `Added ${speakList(match.names)}. ${meshes.length} selected.`;
+    return match.names.length === 1
+      ? `Selected ${speakableName(match.names[0])}.`
+      : `Selected ${match.names.length}: ${speakList(match.names)}.`;
+  }
+  if (match.confidence === 'ambiguous') {
+    if (match.reason === 'count_mismatch') {
+      return `I found ${match.candidates.length}: ${speakList(match.candidates)}. Which ones?`;
+    }
+    return `Which one: ${speakList(match.candidates, 'or')}?`;
+  }
+  const q = String(query).replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (match.reason === 'relation') {
+    return `I can't tell which one "${q}" is yet. Try its name or color, or tap it.`;
+  }
+  if (match.reason === 'empty') return 'Which object?';
+  return `I couldn't find "${q}".`;
+}
+
+/**
+ * Talk-to-Select: changes the selection from a spoken reference ("the two red chairs") with
+ * the tier-1 matcher. `mode: 'remove'` only looks inside the current selection. Nothing changes
+ * unless the match is confident; `say` then asks which one was meant.
+ */
+export async function selectByVoice(
+  el: AIVoiceElement,
+  query: string,
+  options: {mode?: AISelectionMode; provider?: AISelectProvider | null; signal?: AbortSignal} = {},
+): Promise<AIVoiceSelection> {
+  const mode = options.mode ?? 'replace';
+  const q = String(query ?? '').slice(0, MAX_VOICE_TEXT);
+  if (mode === 'clear') {
+    setSelection(el, [], {mode: 'clear', source: 'voice', query: q || 'clear'});
+    return {mode, query: q, match: null, applied: true, tier: 1, meshes: [], say: describeVoiceSelection(mode, null, [], q)};
+  }
+  const within = mode === 'remove' ? getSelection(el) : null;
+  if (within && !within.length) {
+    return {mode, query: q, match: null, applied: false, tier: 1, meshes: [], say: 'Nothing is selected.'};
+  }
+  let match = resolveSelection(el, q, {within});
+  let tier: 1 | 2 = 1;
+  let question = '';
+  const provider = options.provider === undefined ? (el.__tlSelectProvider?.() ?? null) : options.provider;
+  if (
+    provider &&
+    q.trim() &&
+    match.confidence === 'none' &&
+    (match.reason === 'relation' || match.reason === 'no_match')
+  ) {
+    try {
+      const r = await resolveSelectionWithModel(el, q, provider, {within, signal: options.signal});
+      tier = 2;
+      question = r.question;
+      match =
+        r.confidence === 'high'
+          ? {ids: [], names: r.names, confidence: 'high', candidates: [], reason: 'model'}
+          : {
+              ids: [],
+              names: [],
+              confidence: r.names.length ? 'ambiguous' : 'none',
+              candidates: r.names.slice(0, 10),
+              reason: 'model',
+            };
+    } catch (e: unknown) {
+      if (options.signal?.aborted) throw e;
+      // Tier 2 failed (network, quota): fall back to the tier-1 answer.
+    }
+  }
+  let applied = false;
+  if (match.confidence === 'high' && match.names.length) {
+    setSelection(el, match.names, {mode, source: 'voice', query: q});
+    applied = true;
+  }
+  const meshes = getSelection(el);
+  const say = !applied && question ? question : describeVoiceSelection(mode, match, meshes, q);
+  return {mode, query: q, match, applied, tier, meshes, say};
+}
+
+/** Selects meshes by exact name (the voice model's `names`); unknown names are ignored. */
+export function selectNamesByVoice(
+  el: AIVoiceElement,
+  names: readonly string[],
+  mode: AISelectionMode = 'replace',
+): AIVoiceSelection {
+  const known = new Set(sceneSelectEntries(el).map((e) => e.name));
+  const valid = names.filter((n) => typeof n === 'string' && known.has(n)).slice(0, 50);
+  const query = names.filter((n) => typeof n === 'string').join(', ').slice(0, 200);
+  if (!valid.length) {
+    const match: SelectMatch = {ids: [], names: [], confidence: 'none', candidates: [], reason: 'no_match'};
+    const meshes = getSelection(el);
+    return {mode, query, match, applied: false, tier: 1, meshes, say: describeVoiceSelection(mode, match, meshes, query)};
+  }
+  setSelection(el, valid, {mode, source: 'voice', query});
+  const match: SelectMatch = {ids: [], names: valid, confidence: 'high', candidates: [], reason: 'exact'};
+  const meshes = getSelection(el);
+  return {mode, query, match, applied: true, tier: 1, meshes, say: describeVoiceSelection(mode, match, meshes, query)};
+}
+
 /** Short spoken summary of an edit result. */
 export function describeEditResult(result: EditSceneResult): string {
   if (result.applied) return 'Done.';
@@ -1024,6 +1251,24 @@ export function describeEditResult(result: EditSceneResult): string {
     .replace(/\s+/g, ' ')
     .slice(0, 160);
   return `Sorry, I couldn't apply that: ${reason}`;
+}
+
+/** Runs an edit confirmed from the chips' Apply button and speaks the result. */
+async function applyPendingEdit(
+  el: AIVoiceElement,
+  instruction: string,
+  options: AIVoiceEditOptions,
+): Promise<void> {
+  if (typeof el.editScene !== 'function') return;
+  emit(el, {state: 'editing', transcript: instruction, isFinal: true});
+  let result: EditSceneResult;
+  try {
+    result = await el.editScene(instruction);
+  } catch (e: unknown) {
+    result = {applied: false, code: '', repairs: 0, warnings: [], error: (e as Error)?.message || String(e)};
+  }
+  emit(el, {state: 'idle', transcript: instruction, isFinal: true, result});
+  if (options.speak !== false) speak(describeEditResult(result), options.lang);
 }
 
 /**
@@ -1066,10 +1311,58 @@ export async function startVoiceEdit(
     if (options.speak !== false) speak(error, options.lang);
     throw new Error(`startVoiceEdit: ${error}`);
   }
-  emit(el, {state: 'editing', transcript, isFinal: true});
+  let instruction = transcript;
+  let selection: AIVoiceSelection | undefined;
+  const command = options.talkToSelect === false ? null : parseVoiceCommand(transcript);
+  if (command && command.kind !== 'edit') {
+    emit(el, {state: 'thinking', transcript, isFinal: true});
+    try {
+      selection = await selectByVoice(el, command.kind === 'clear' ? '' : command.query, {
+        mode: command.mode,
+        signal: options.signal,
+      });
+    } catch (e: unknown) {
+      emit(el, {state: 'error', error: (e as Error)?.message || String(e)});
+      throw e;
+    }
+    const pending = command.kind === 'mixed' ? command.instruction : undefined;
+    // Edit right away only when the reference was resolved locally (tier 1) and confidently.
+    const editNow = pending !== undefined && selection.applied && selection.tier === 1;
+    // Chips only without a realtime session; there, the voice model reads the selection back.
+    const chips = options.chips !== false && !el.__tlVoiceSession;
+    if (chips) {
+      const sel = selection;
+      showSelectionChips(
+        el,
+        sel.applied || sel.mode === 'clear'
+          ? {pending: editNow ? undefined : pending}
+          : sel.match?.candidates.length
+            ? {question: sel.say, candidates: sel.match.candidates, mode: sel.mode, query: sel.query, pending}
+            : {},
+        (text) => applyPendingEdit(el, text, options),
+      );
+    }
+    if (!editNow) {
+      emit(el, {state: 'idle', transcript, isFinal: true, selection});
+      if (options.speak !== false) {
+        const hint =
+          pending !== undefined && selection.applied
+            ? chips && el.__tlChips
+              ? ' Tap Apply to make the change.'
+              : ' Say the change again to apply it.'
+            : '';
+        speak(selection.say + hint, options.lang);
+      }
+      return {transcript, result: null, selection};
+    }
+    instruction = pending;
+  } else if (options.chips !== false && el.__tlChips) {
+    hideSelectionChips(el);
+  }
+  emit(el, {state: 'editing', transcript, isFinal: true, ...(selection ? {selection} : {})});
   let result: EditSceneResult;
   try {
-    result = await el.editScene(transcript, {signal: options.signal});
+    result = await el.editScene(instruction, {signal: options.signal});
   } catch (e: unknown) {
     result = {
       applied: false,
@@ -1079,25 +1372,49 @@ export async function startVoiceEdit(
       error: (e as Error)?.message || String(e),
     };
   }
-  emit(el, {state: 'idle', transcript, isFinal: true, result});
-  if (options.speak !== false) speak(describeEditResult(result), options.lang);
-  return {transcript, result};
+  emit(el, {state: 'idle', transcript, isFinal: true, result, ...(selection ? {selection} : {})});
+  if (options.speak !== false) {
+    const said = describeEditResult(result);
+    speak(selection ? `${selection.say} ${said}` : said, options.lang);
+  }
+  return {transcript, result, ...(selection ? {selection} : {})};
 }
 
 /** Enables or disables tap-to-select (`ai-select-on-tap`). */
 export function setSelectOnTap(el: AIVoiceElement, enabled: boolean): void {
   if (!enabled) {
     if (el.__tlTapHandler) el.removeEventListener?.('meshclick', el.__tlTapHandler);
+    if (el.__tlTapDown) el.removeEventListener?.('pointerdown', el.__tlTapDown);
     el.__tlTapHandler = null;
+    el.__tlTapDown = null;
     return;
   }
   if (el.__tlTapHandler) return;
+  // Shift / Ctrl / Cmd-tap or a long press (>= 500 ms) adds or removes a mesh; a plain
+  // tap selects just that mesh (or clears it when it is the only one selected).
+  let additive = false;
+  let downAt = 0;
+  const onDown = (e: Event) => {
+    const p = e as PointerEvent;
+    additive = Boolean(p.shiftKey || p.ctrlKey || p.metaKey);
+    downAt = Date.now();
+  };
+  el.__tlTapDown = onDown;
+  el.addEventListener?.('pointerdown', onDown);
   el.__tlTapHandler = (e: Event) => {
     const name = (e as CustomEvent<{meshName?: string}>).detail?.meshName;
     if (typeof name !== 'string' || !name) return;
-    const next = el.selectedMesh === name ? null : name;
-    el.selectedMesh = next;
-    el.fireEvent?.('three-live-select', {mesh: next});
+    const longPress = downAt > 0 && Date.now() - downAt >= LONG_PRESS_MS;
+    const current = getSelection(el as AISelectableElement);
+    if (additive || longPress) {
+      setSelection(el as AISelectableElement, [name], {mode: 'toggle', source: 'tap'});
+    } else if (current.length === 1 && current[0] === name) {
+      setSelection(el as AISelectableElement, [], {mode: 'clear', source: 'tap'});
+    } else {
+      setSelection(el as AISelectableElement, [name], {mode: 'replace', source: 'tap'});
+    }
+    additive = false;
+    downAt = 0;
   };
   el.addEventListener?.('meshclick', el.__tlTapHandler);
 }

@@ -169,10 +169,48 @@ export {
   createWebSpeechRecognizer,
   describeEditResult,
   geminiLiveAdapter,
+  describeVoiceSelection,
   realtimeAdapter,
+  selectByVoice,
+  selectNamesByVoice,
   setSelectOnTap,
+  speakableName,
   startVoiceEdit,
 } from './three-live/src/plugins/ai-voice';
+export {hideSelectionChips, showSelectionChips} from './three-live/src/plugins/ai-select-chips';
+export type {AISelectChipsState} from './three-live/src/plugins/ai-select-chips';
+/** Multi-select for Tap & Speak / Talk-to-Select (part of `three-live-ai.min.js`). */
+export {
+  describeSelection,
+  getSelection,
+  parseSelectReply,
+  resolveSelection,
+  resolveSelectionWithModel,
+  sceneSelectEntries,
+  selectCamera,
+  selectMessages,
+  setSelection,
+} from './three-live/src/plugins/ai-select';
+export type {AIModelSelection, AISelectProvider} from './three-live/src/plugins/ai-select';
+/** Talk-to-Select tier-1 matcher and push-to-talk grammar (mirrors the Rust core). */
+export {
+  buildSelectIndex,
+  matchSelection,
+  parseVoiceCommand,
+} from './three-live/src/plugins/ai-select-match';
+export type {
+  SelectCamera,
+  SelectConfidence,
+  SelectIndexEntry,
+  SelectMatch,
+  SelectRawEntry,
+  VoiceCommand,
+} from './three-live/src/plugins/ai-select-match';
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './three-live/src/plugins/ai-select';
 export type {
   AIAudioSink,
   AIMicrophoneSource,
@@ -182,6 +220,7 @@ export type {
   AIVoiceEditResult,
   AIVoiceEventDetail,
   AIVoiceProviderName,
+  AIVoiceSelection,
   AIVoiceSessionOptions,
   AIVoiceState,
   AIVoiceTransport,
@@ -284,7 +323,7 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
-  /** `three-live-ai`: tapping a mesh sets `selected-mesh` (tap again to clear) for voice and text edits. */
+  /** `three-live-ai`: tapping a mesh selects it (tap again to clear; Shift/Ctrl/Cmd-tap or long-press adds to `el.selectedMeshes`). */
   'ai-select-on-tap'?: boolean | string;
   /** `three-live-ai`: show a mic button (push-to-talk, or a realtime session when `ai-voice-url` is set). */
   'ai-voice-button'?: boolean | string;

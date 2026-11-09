@@ -26,6 +26,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Talk-to-Select (B2b-4), multi-select:** `el.selectedMeshes` holds the
+    selection (`selected-mesh` stays its first entry); `setSelection(el,
+    names, {mode: 'replace' | 'add' | 'remove' | 'toggle' | 'clear'})` changes
+    it; the viewer highlights every selected mesh; `three-live-select` now
+    carries `{mesh, meshes, added, removed, source, query?}`. With
+    `ai-select-on-tap`, Shift / Ctrl / Cmd-tap or a long press adds to the
+    selection. `editScene` (web and the shared Rust core) accepts several
+    selected meshes and rejects edits that lose any of them. Removing
+    `selected-mesh` now also clears the highlight. `xr-live-viewer.min.js`
+    budget: `< 55 KB gz` (was `< 54`).
+
+-   **Talk-to-Select (B2b-4), voice selection without a model call:** say
+    "select the two red chairs on the left" and the tier-1 matcher resolves it
+    against the loaded scene: names (with synonyms and plurals), material
+    colors, camera-relative left / right / front / back, top / bottom,
+    biggest / smallest / tallest, ordinals ("the second mug"), counts
+    ("both", "three"), "all … except …", and lists ("the lamp and the sofa").
+    It also recognizes relations ("the cup next to the sofa") and leaves them
+    to a model. Push-to-talk (`startVoiceEdit`) understands "select / also
+    select / deselect … / clear the selection" and "select X and make it red",
+    which edits right away only when the reference was unambiguous; otherwise
+    it asks "Which one: A or B?" and changes nothing. New
+    `el.selectByVoice(query, {mode})`, `resolveSelection`, `matchSelection`,
+    `parseVoiceCommand`. The Rust core implements the same matcher
+    (`ai_call` ops `select` and `parse_command`); a shared fixture keeps the
+    two identical.
+
+-   **Talk-to-Select (B2b-4), model fallback, voice tool, and chips:** when
+    the local matcher can't resolve a reference (relations such as "the lamp
+    next to the sofa", unknown words, other languages), the configured code
+    model picks from a compact scene index (`SELECT_PROMPT`; tier 2) and either
+    selects or asks one short question. Realtime voice sessions get a
+    `select_meshes` tool (`query`, `names`, or `mode`) and instructions to
+    select first and read the selection back. Push-to-talk shows confirmation
+    chips (selected meshes with ×, candidate buttons for "Which one?", and
+    Apply for an edit waiting on a model-resolved selection) in an
+    `aria-live` region; `ai-select-chips="off"` or `{chips: false}` disables
+    them. The Rust core adds `select_messages` / `select_parse` and the
+    `select_meshes` tool. Budgets for B2b-4 as a whole:
+    `three-live-ai.min.js` `< 20 KB gz` (was `< 11`), `three-live-full.min.js`
+    `< 160 KB gz` (was `< 151`), `xr-live-full.min.js` `< 260 KB gz` (was
+    `< 251`).
+
+-   **Talk-to-Select on Android and iOS (B2b-4):** `ThreeLiveAIEditor` /
+    `AIEditor` hold several selected meshes (`selections`, `setSelection`,
+    `toggleSelection(name, additive)`, `onSelectionsChanged` with its source)
+    and add `selectByVoice(query, mode)`, `selectNames`, `parseCommand`, and
+    `camera` for camera-relative references. `VoiceEditController` handles
+    selection commands and "select X and make it red". `AIVoiceSession`
+    handles the `select_meshes` tool and no longer echoes voice selections back
+    as context. All wording (confirmations, questions, selection context) now
+    comes from the core (`select_say`, `select_context`), so every platform says
+    the same thing. The `selection` parameter of `editScene` is now a list.
+
 -   **Tap & Speak on Android and iOS (B2b-2/3):** `ThreeLiveAIEditor` (Android)
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;

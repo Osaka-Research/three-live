@@ -26,7 +26,8 @@ public enum AIVoiceState: String, Sendable {
 }
 
 /// Realtime voice editing for iOS / visionOS (B2b-3): the voice model talks and calls the
-/// `edit_scene` / `undo_edit` tools, which run `AIEditor.editScene` with the editor's code model.
+/// `edit_scene` / `undo_edit` / `select_meshes` tools, which run `AIEditor.editScene` /
+/// `AIEditor.selectByVoice` with the editor's code model.
 ///
 /// Protocols (built and parsed by the shared Rust core, identical to the web `connectVoice`):
 /// - `ai-realtime`: any server speaking the Realtime WebSocket event protocol (24 kHz audio).
@@ -64,6 +65,8 @@ public final class AIVoiceSession: @unchecked Sendable {
   public var onState: ((AIVoiceState) -> Void)?
   public var onTranscript: ((_ speaker: String, _ text: String, _ isFinal: Bool) -> Void)?
   public var onEdit: ((_ instruction: String, _ result: EditResult) -> Void)?
+  /// The voice model changed (or tried to change) the selection with `select_meshes`.
+  public var onSelection: ((AIVoiceSelection) -> Void)?
   public var onError: ((String) -> Void)?
 
   private let editor: AIEditor
@@ -78,7 +81,7 @@ public final class AIVoiceSession: @unchecked Sendable {
   private var userText = ""
   private var modelText = ""
   private var inputRate: Int
-  private var previousSelectionHandler: ((String?) -> Void)?
+  private var previousSelectionsHandler: (([String], String) -> Void)?
   /// Serializes server messages so audio chunks never reorder.
   private var inbox: AsyncStream<AIJSONBox>.Continuation?
   private var inboxTask: Task<Void, Never>?
@@ -131,13 +134,15 @@ public final class AIVoiceSession: @unchecked Sendable {
     transport.onMessage = { [weak self] message in self?.inbox?.yield(AIJSONBox(value: message)) }
     transport.onClose = { [weak self] in self?.shutdown() }
     sendAll(setup["messages"])
-    previousSelectionHandler = editor.onSelectionChanged
-    editor.onSelectionChanged = { [weak self] selection in
-      self?.previousSelectionHandler?(selection)
-      guard let self = self else { return }
-      Task { await self.sendContext(self.selectionText(selection)) }
+    previousSelectionsHandler = editor.onSelectionsChanged
+    editor.onSelectionsChanged = { [weak self] selections, source in
+      self?.previousSelectionsHandler?(selections, source)
+      // Voice selections come back in the select_meshes tool result instead.
+      guard let self = self, source != "voice" else { return }
+      Task { await self.sendContext(await self.editor.describeSelection(selections)) }
     }
-    if let sel = editor.selection { await sendContext(selectionText(sel)) }
+    let current = editor.selections
+    if !current.isEmpty { await sendContext(await editor.describeSelection(current)) }
     setState(.listening)
     return inputRate
   }
@@ -180,15 +185,8 @@ public final class AIVoiceSession: @unchecked Sendable {
     lock.unlock()
     inbox?.finish()
     sink?.close()
-    editor.onSelectionChanged = previousSelectionHandler
+    editor.onSelectionsChanged = previousSelectionsHandler
     setState(.closed)
-  }
-
-  private func selectionText(_ selection: String?) -> String {
-    if let s = selection {
-      return "The user selected the mesh \"\(s.prefix(200))\". \"This\" or \"it\" now refers to it."
-    }
-    return "The user cleared the selection."
   }
 
   private func sendContext(_ text: String) async {
@@ -281,6 +279,20 @@ public final class AIVoiceSession: @unchecked Sendable {
     case "undo_edit":
       let undone = (try? await editor.undo()) ?? false
       output = undone ? ["undone": true] : ["undone": false, "error": "nothing to undo"]
+    case "select_meshes":
+      let rawMode = args["mode"] as? String ?? ""
+      let mode = ["replace", "add", "remove", "clear"].contains(rawMode) ? rawMode : "replace"
+      let names = (args["names"] as? [Any] ?? []).compactMap { $0 as? String }
+      let sel =
+        !names.isEmpty && mode != "clear"
+        ? await editor.selectNames(names, mode: mode)
+        : await editor.selectByVoice(args["query"] as? String ?? "", mode: mode)
+      onSelection?(sel)
+      output = ["changed": sel.applied, "selected": Array(sel.meshes.prefix(AIEditor.maxSelection)), "say": sel.say]
+      if !sel.applied {
+        output["question"] = sel.say
+        output["candidates"] = sel.candidates
+      }
     default:
       output = ["error": "unknown tool \(name)"]
     }

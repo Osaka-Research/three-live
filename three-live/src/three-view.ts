@@ -1830,7 +1830,7 @@ export class ThreeView {
   private totalDragDist = 0;
 
   // Selected mesh name for visual highlight
-  private selectedMeshName = '';
+  private selectedMeshNames = new Set<string>();
 
   private pickFbo: WebGLFramebuffer | null = null;
   private pickTexture: WebGLTexture | null = null;
@@ -3020,11 +3020,16 @@ export class ThreeView {
   }
 
   public setSelectedMesh(meshName: string): void {
-    this.selectedMeshName = meshName || '';
+    this.setSelectedMeshes([meshName]);
+  }
+
+  /** Highlights every mesh named in `names` (multi-select). */
+  public setSelectedMeshes(names: readonly string[]): void {
+    this.selectedMeshNames = new Set(names.filter(Boolean));
   }
 
   getSelectedMesh(): string {
-    return this.selectedMeshName;
+    return [...this.selectedMeshNames][0] || '';
   }
 
   private setupEvents(): void {
@@ -3978,8 +3983,7 @@ export class ThreeView {
       for (let i = 0; i < renderList.length; i++) {
         const mesh = renderList[i];
         if ((mesh as any).visible === false) continue;
-        const isSelected =
-          this.selectedMeshName !== '' && mesh.name === this.selectedMeshName;
+        const isSelected = this.selectedMeshNames.has(mesh.name);
 
         if (
           i < numBackdrop ||

@@ -28,6 +28,8 @@ import {getSharedRegistry, type ThreeLivePlugin} from '../plugin';
 import {
   type AIVoiceEditOptions,
   type AIVoiceEditResult,
+  type AIVoiceSelection,
+  selectByVoice,
   type AIVoiceElement,
   type AIVoiceSession,
   type AIVoiceSessionOptions,
@@ -36,6 +38,7 @@ import {
   setSelectOnTap,
   startVoiceEdit,
 } from './ai-voice';
+import {type AISelectionMode, installSelectionState} from './ai-select';
 
 /** One chat message sent to an AI provider. */
 export interface AIChatMessage {
@@ -71,8 +74,11 @@ export interface AIChatProviderOptions {
 export interface EditSceneOptions {
   /** Provider override (defaults to `el.aiProvider`, then `ai-*` attributes). */
   readonly provider?: ThreeLiveAIProvider;
-  /** Mesh name the instruction refers to (defaults to `el.selectedMesh`). */
-  readonly selection?: string | null;
+  /**
+   * Mesh name(s) the instruction refers to (defaults to `el.selectedMeshes`, then
+   * `el.selectedMesh`). Pass `null` or `[]` for no selection.
+   */
+  readonly selection?: string | readonly string[] | null;
   /** Script to edit (defaults to the element's current scene script). */
   readonly source?: string;
   /** Automatic repair turns after a failed compile (0..3, default 1). */
@@ -102,6 +108,7 @@ export interface AIEditableElement {
   allowClientScripts?: boolean;
   sandbox?: string;
   selectedMesh?: string | null;
+  selectedMeshes?: readonly string[];
   aiProvider?: ThreeLiveAIProvider;
   getAttribute?(name: string): string | null;
   querySelector?(selector: string): {textContent: string | null} | null;
@@ -113,6 +120,7 @@ export interface AIEditableElement {
   ) => Promise<EditSceneResult>;
   undoEdit?: () => Promise<boolean>;
   startVoiceEdit?: (options?: AIVoiceEditOptions) => Promise<AIVoiceEditResult>;
+  selectByVoice?: (query: string, options?: {mode?: AISelectionMode}) => Promise<AIVoiceSelection>;
   connectVoice?: (options: AIVoiceSessionOptions) => Promise<AIVoiceSession>;
   setSelectOnTap?: (enabled: boolean) => void;
   hasAttribute?(name: string): boolean;
@@ -352,6 +360,32 @@ function dryRunCompile(
   });
 }
 
+/** Longest selection forwarded to a model. */
+const MAX_SELECTED = 50;
+
+/** Normalizes a selection to a de-duplicated list of non-empty mesh names. */
+export function normalizeSelection(
+  value: string | readonly string[] | null | undefined,
+): string[] {
+  const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+  const out: string[] = [];
+  for (const v of list) {
+    const name = typeof v === 'string' ? v.slice(0, 200) : '';
+    if (name && !out.includes(name)) out.push(name);
+    if (out.length >= MAX_SELECTED) break;
+  }
+  return out;
+}
+
+/** The prompt sentence describing the selection (shared wording with the Rust core). */
+export function selectionSentence(selected: readonly string[]): string {
+  if (selected.length === 0) return '';
+  if (selected.length === 1) {
+    return `The user selected the mesh named "${selected[0]}"; the instruction refers to it.\n`;
+  }
+  return `The user selected the meshes named ${selected.map((m) => `"${m}"`).join(', ')}; the instruction refers to them.\n`;
+}
+
 function resolveProvider(
   el: AIEditableElement,
   options: EditSceneOptions,
@@ -417,8 +451,13 @@ export async function editScene(
   options.signal?.addEventListener('abort', onOuterAbort, {once: true});
   const signal = ctrl.signal;
 
-  const selection =
-    options.selection === undefined ? el.selectedMesh : options.selection;
+  const selected = normalizeSelection(
+    options.selection === undefined
+      ? (el.selectedMeshes ?? el.selectedMesh)
+      : options.selection,
+  );
+  // Kept as a string for one mesh so events and prompts stay as before.
+  const selection = selected.length > 1 ? selected : (selected[0] ?? null);
   const maxRepairs = Math.max(
     0,
     Math.min(3, Math.floor(Number(options.maxRepairs ?? 1)) || 0),
@@ -429,9 +468,7 @@ export async function editScene(
       role: 'user',
       content:
         `Current scene script:\n\`\`\`js\n${source}\n\`\`\`\n` +
-        (selection
-          ? `The user selected the mesh named "${String(selection).slice(0, 200)}"; the instruction refers to it.\n`
-          : '') +
+        selectionSentence(selected) +
         `Instruction: ${text}`,
     },
   ];
@@ -458,11 +495,14 @@ export async function editScene(
           if (summary.meshes === 0) {
             error = 'The edited scene contains no meshes.';
           } else if (
-            selection &&
-            !summary.meshNames.has(String(selection)) &&
+            selected.some((m) => !summary.meshNames.has(m)) &&
             !/\b(remove|delete|rename)\b/i.test(text)
           ) {
-            error = `The edited scene no longer contains the selected mesh "${selection}".`;
+            const lost = selected.filter((m) => !summary.meshNames.has(m));
+            error =
+              lost.length === 1
+                ? `The edited scene no longer contains the selected mesh "${lost[0]}".`
+                : `The edited scene no longer contains the selected meshes ${lost.map((m) => `"${m}"`).join(', ')}.`;
           } else {
             error = '';
           }
@@ -549,9 +589,19 @@ export const aiPlugin: ThreeLivePlugin = {
     el.editScene = (instruction: string, options?: EditSceneOptions) =>
       editScene(el, instruction, options);
     el.undoEdit = () => undoEdit(el);
+    installSelectionState(el as never);
     const voiceEl = el as AIVoiceElement;
     el.startVoiceEdit = (options?: AIVoiceEditOptions) =>
       startVoiceEdit(voiceEl, options);
+    voiceEl.__tlSelectProvider = () => {
+      try {
+        return resolveProvider(el, {});
+      } catch {
+        return null;
+      }
+    };
+    el.selectByVoice = (query: string, options?: {mode?: AISelectionMode}) =>
+      selectByVoice(voiceEl, query, options);
     el.connectVoice = (options: AIVoiceSessionOptions) =>
       connectVoice(voiceEl, options);
     el.setSelectOnTap = (enabled: boolean) => setSelectOnTap(voiceEl, enabled);

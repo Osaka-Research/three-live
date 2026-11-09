@@ -30,8 +30,9 @@ enum class AIVoiceState { CONNECTING, LISTENING, THINKING, EDITING, SPEAKING, CL
 
 /**
  * Realtime voice editing for Android (B2b-2): a voice conversation where the voice model talks and
- * calls the `edit_scene` / `undo_edit` tools, which run [ThreeLiveAIEditor.editScene] with the
- * editor's code model, so edit quality never depends on the voice model.
+ * calls the `edit_scene` / `undo_edit` / `select_meshes` tools, which run
+ * [ThreeLiveAIEditor.editScene] / [ThreeLiveAIEditor.selectByVoice] with the editor's code model, so
+ * edit quality never depends on the voice model.
  *
  * Protocols (built and parsed by the shared Rust core, identical to the web `connectVoice`):
  * - `ai-realtime`: any server speaking the Realtime WebSocket event protocol (24 kHz audio).
@@ -73,6 +74,9 @@ constructor(
     fun onTranscript(speaker: String, text: String, isFinal: Boolean) {}
 
     fun onEdit(instruction: String, result: EditResult) {}
+
+    /** The voice model changed (or tried to change) the selection with `select_meshes`. */
+    fun onSelection(selection: AIVoiceSelection) {}
 
     fun onError(message: String) {}
   }
@@ -136,10 +140,15 @@ constructor(
 
         override fun onSelectionChanged(selection: String?) {
           previousEditorListener?.onSelectionChanged(selection)
-          scope.launch { sendContext(selectionText(selection)) }
+        }
+
+        override fun onSelectionsChanged(selections: List<String>, source: String) {
+          previousEditorListener?.onSelectionsChanged(selections, source)
+          // Voice selections come back in the select_meshes tool result instead.
+          if (source != "voice") scope.launch { sendContext(editor.describeSelection(selections)) }
         }
       }
-    editor.selection?.let { sendContext(selectionText(it)) }
+    if (editor.selections.isNotEmpty()) sendContext(editor.describeSelection(editor.selections))
     setState(AIVoiceState.LISTENING)
     return inputRate
   }
@@ -180,13 +189,6 @@ constructor(
     editor.listener = previousEditorListener
     setState(AIVoiceState.CLOSED)
   }
-
-  private fun selectionText(selection: String?): String =
-    if (selection != null) {
-      "The user selected the mesh \"${selection.take(200)}\". \"This\" or \"it\" now refers to it."
-    } else {
-      "The user cleared the selection."
-    }
 
   private suspend fun sendContext(text: String) {
     if (closed.get()) return
@@ -264,6 +266,23 @@ constructor(
             else mapOf("applied" to false, "error" to (result.error ?: "edit rejected"))
           }
           "undo_edit" -> if (editor.undo()) mapOf("undone" to true) else mapOf("undone" to false, "error" to "nothing to undo")
+          "select_meshes" -> {
+            val mode = (args["mode"] as? String)?.takeIf { it in SELECT_MODES } ?: "replace"
+            val names = MiniJson.asList(args["names"])?.filterIsInstance<String>().orEmpty()
+            val sel =
+              if (names.isNotEmpty() && mode != "clear") editor.selectNames(names, mode)
+              else editor.selectByVoice((args["query"] as? String).orEmpty(), mode)
+            listener?.onSelection(sel)
+            buildMap {
+              put("changed", sel.applied)
+              put("selected", sel.meshes.take(ThreeLiveAIEditor.MAX_SELECTION))
+              put("say", sel.say)
+              if (!sel.applied) {
+                put("question", sel.say)
+                put("candidates", sel.candidates)
+              }
+            }
+          }
           else -> mapOf("error" to "unknown tool $name")
         }
       } catch (e: kotlin.coroutines.cancellation.CancellationException) {
@@ -282,5 +301,6 @@ constructor(
   companion object {
     const val MAX_TEXT = 2000
     const val MAX_TOOL_CALLS = 8
+    private val SELECT_MODES = setOf("replace", "add", "remove", "clear")
   }
 }

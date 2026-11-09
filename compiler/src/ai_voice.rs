@@ -26,7 +26,7 @@
 use serde_json::{json, Map, Value};
 
 /// Voice-model instructions shared by all platforms (keep in sync with `ai-voice.ts`).
-pub const VOICE_INSTRUCTIONS: &str = "You are a voice assistant inside a live 3D scene editor. Keep spoken replies short: one sentence. To change the scene, call edit_scene with the request; never describe code. After a tool result, say briefly what changed, or why it could not be done.";
+pub const VOICE_INSTRUCTIONS: &str = "You are a voice assistant inside a live 3D scene editor. Keep spoken replies short: one sentence. To change the scene, call edit_scene with the request; never describe code. After a tool result, say briefly what changed, or why it could not be done. When the user refers to objects by name, color, or position, call select_meshes with their words first. If its result has a question, ask it and wait; otherwise say what is selected, and if they also asked for a change, call edit_scene.";
 
 /// Tools exposed to the voice model (keep in sync with `VOICE_TOOLS` in `ai-voice.ts`).
 pub fn voice_tools() -> Value {
@@ -49,6 +49,29 @@ pub fn voice_tools() -> Value {
             "name": "undo_edit",
             "description": "Undo the last scene change.",
             "parameters": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "select_meshes",
+            "description": "Select objects in the scene so the user can see what an edit will change. Call this when the user refers to objects by name, color, or position (\"the two red chairs on the left\"). Pass their words as query, or exact mesh names as names. The result lists the selection, or a question to ask when the reference was unclear.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The user's words for the objects, e.g. \"the lamp next to the sofa\"."
+                    },
+                    "names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Exact mesh names, when known."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "add", "remove", "clear"],
+                        "description": "replace (default), add, remove, or clear."
+                    }
+                }
+            }
         }
     ])
 }

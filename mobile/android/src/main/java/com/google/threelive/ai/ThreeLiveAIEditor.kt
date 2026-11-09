@@ -134,12 +134,36 @@ fun interface AICore {
 object NativeAICore : AICore {
   override suspend fun call(request: Map<String, Any?>): Map<String, Any?> {
     val text = MiniJson.stringify(request)
-    // `validate` compiles with the warm engine on the compiler thread; the other ops are pure and
-    // must not queue behind a compile (they run for every streamed audio message).
-    val reply = if (request["op"] == "validate") ThreeCompiler.aiCall(text) else ThreeCompiler.aiCallPure(text)
+    // `validate` (and `select` / `select_messages` with a `source`) run the scene on the warm engine
+    // on the compiler thread; the other ops are pure and must not queue behind a compile (they run
+    // for every streamed audio message).
+    val usesEngine = request["op"] == "validate" || (request["op"] in ENGINE_SELECT_OPS && request["source"] != null)
+    val reply = if (usesEngine) ThreeCompiler.aiCall(text) else ThreeCompiler.aiCallPure(text)
     return MiniJson.parseObjectOrNull(reply) ?: mapOf("error" to "invalid response from native core")
   }
 }
+
+private val ENGINE_SELECT_OPS = setOf("select", "select_messages")
+
+/** Camera that "left", "right", and "front" in spoken references are relative to (world space). */
+data class AICamera(val eye: List<Double>, val target: List<Double>)
+
+/** Outcome of a spoken selection request (Talk-to-Select). Mirrors `AIVoiceSelection` on the web. */
+data class AIVoiceSelection(
+  /** `replace`, `add`, `remove`, or `clear`. */
+  val mode: String,
+  val query: String,
+  /** Whether the selection changed to what was asked. */
+  val applied: Boolean,
+  /** 1: resolved locally; 2: the code model resolved (or asked about) it. */
+  val tier: Int,
+  /** The selection afterwards. */
+  val meshes: List<String>,
+  /** Meshes to offer when the reference was ambiguous. */
+  val candidates: List<String>,
+  /** What to say back: a confirmation, or a question when the reference was unclear. */
+  val say: String,
+)
 
 /** Result of [ThreeLiveAIEditor.editScene]. Mirrors `EditSceneResult` on the web. */
 data class EditResult(
@@ -168,7 +192,8 @@ data class EditResult(
  * renderer.listener = object : ThreeLiveRendererListener {
  *   override fun onPick(pick: ThreeLivePick) { editor.toggleSelection(sceneIndex.nodeName(pick.nodeIndex)) }
  * }
- * val result = editor.editScene("make the roof red")
+ * editor.selectByVoice("the two red chairs on the left") // Talk-to-Select
+ * val result = editor.editScene("make them blue")
  * ```
  *
  * @param applyScene loads an accepted script into the live scene (typically compile + render).
@@ -187,7 +212,11 @@ constructor(
 
     fun onEdit(instruction: String, result: EditResult) {}
 
+    /** The first selected mesh changed (single-selection listeners). */
     fun onSelectionChanged(selection: String?) {}
+
+    /** The selection changed; [source] is `tap`, `voice`, or `api`. */
+    fun onSelectionsChanged(selections: List<String>, source: String) {}
   }
 
   @Volatile var listener: Listener? = null
@@ -197,26 +226,178 @@ constructor(
   var source: String = initialSource
     private set
 
-  /** Mesh the next instruction refers to ("make *this* red"), usually set by a tap. */
-  @Volatile
-  var selection: String? = null
+  /** Meshes the next instruction refers to ("make *these* red"), set by taps or by voice. */
+  var selections: List<String>
+    get() = selectionsField
+    set(value) = assignSelection(value, "api")
+
+  /** The first selected mesh (single-selection compatibility). Setting it replaces the selection. */
+  var selection: String?
+    get() = selections.firstOrNull()
     set(value) {
-      val v = value?.takeIf { it.isNotEmpty() }
-      if (field != v) {
-        field = v
-        listener?.onSelectionChanged(v)
-      }
+      selections = listOfNotNull(value?.takeIf { it.isNotEmpty() })
     }
+
+  /** Camera for "left" / "right" / "front" in [selectByVoice] (default: the scene's camera). */
+  @Volatile var camera: AICamera? = null
+
+  /** Let [provider] resolve references the local matcher can't (tier 2; default true). */
+  @Volatile var selectWithModel: Boolean = true
+
+  private val selectionLock = Any()
+
+  private fun assignSelection(value: List<String>, source: String) {
+    val v = cleanSelection(value)
+    val previous: List<String>
+    synchronized(selectionLock) {
+      previous = selectionsField
+      if (previous == v) return
+      selectionsField = v
+    }
+    listener?.let {
+      it.onSelectionsChanged(v, source)
+      if (previous.firstOrNull() != v.firstOrNull()) it.onSelectionChanged(v.firstOrNull())
+    }
+  }
+
+  @Volatile private var selectionsField: List<String> = emptyList()
 
   private val history = ArrayDeque<String>()
   private val lock = Any()
   @Volatile private var generation = 0
 
-  /** Tap-to-select: selects [meshName], or clears the selection when it is already selected. */
-  fun toggleSelection(meshName: String?): String? {
-    selection = if (meshName.isNullOrEmpty() || meshName == selection) null else meshName
+  /**
+   * Tap-to-select: selects [meshName] (tapping the only selected mesh clears it). With [additive]
+   * (e.g. a long press), toggles [meshName] in the selection instead. Returns the first selected mesh.
+   */
+  @JvmOverloads
+  fun toggleSelection(meshName: String?, additive: Boolean = false): String? {
+    val current = selections
+    val next =
+      when {
+        meshName.isNullOrEmpty() -> if (additive) current else emptyList()
+        additive -> if (meshName in current) current - meshName else current + meshName
+        current == listOf(meshName) -> emptyList()
+        else -> listOf(meshName)
+      }
+    assignSelection(next, "tap")
     return selection
   }
+
+  /** Changes the selection: [mode] is `replace`, `add`, `remove`, `toggle`, or `clear`. */
+  @JvmOverloads
+  fun setSelection(names: List<String>, mode: String = "replace", source: String = "api"): List<String> {
+    val current = selections
+    val given = cleanSelection(names)
+    val next =
+      when (mode) {
+        "clear" -> emptyList()
+        "add" -> current + given
+        "remove" -> current - given.toSet()
+        "toggle" -> (current - given.toSet()) + given.filter { it !in current }
+        else -> given
+      }
+    assignSelection(next, source)
+    return selections
+  }
+
+  /**
+   * Talk-to-Select: changes the selection from a spoken reference ("the two red chairs on the left")
+   * with the shared matcher, falling back to [provider] for references it can't resolve ("the lamp
+   * next to the sofa"). Nothing changes unless the match is confident; [AIVoiceSelection.say] then
+   * asks which one was meant. `mode = "remove"` only looks inside the current selection.
+   */
+  @JvmOverloads
+  suspend fun selectByVoice(query: String, mode: String = "replace"): AIVoiceSelection {
+    val q = query.take(MAX_QUERY)
+    if (mode == "clear") {
+      setSelection(emptyList(), "clear", "voice")
+      return AIVoiceSelection(mode, q, true, 1, emptyList(), emptyList(), say(mode, null, emptyList(), q))
+    }
+    val within = if (mode == "remove") selections else null
+    if (within != null && within.isEmpty()) {
+      return AIVoiceSelection(mode, q, false, 1, emptyList(), emptyList(), "Nothing is selected.")
+    }
+    val scene = sceneArgs(within)
+    var match: Map<String, Any?> = core.call(scene + mapOf("op" to "select", "query" to q))
+    var tier = 1
+    var question = ""
+    val reason = match["reason"]
+    if (selectWithModel && q.isNotBlank() && match["confidence"] == "none" && (reason == "relation" || reason == "no_match")) {
+      try {
+        val built = core.call(scene + mapOf("op" to "select_messages", "query" to q, "selection" to selections))
+        val reply = provider.complete(toMessages(built))
+        val parsed = core.call(mapOf("op" to "select_parse", "reply" to reply, "names" to built["names"]))
+        val names = strings(parsed["names"])
+        tier = 2
+        question = parsed["question"] as? String ?: ""
+        match =
+          if (parsed["confidence"] == "high") {
+            mapOf("confidence" to "high", "reason" to "model", "names" to names, "candidates" to emptyList<String>())
+          } else {
+            mapOf(
+              "confidence" to if (names.isEmpty()) "none" else "ambiguous",
+              "reason" to "model",
+              "names" to emptyList<String>(),
+              "candidates" to names.take(10),
+            )
+          }
+      } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        // Tier 2 failed (network, quota): keep the tier-1 answer.
+      }
+    }
+    val names = strings(match["names"])
+    var applied = false
+    if (match["confidence"] == "high" && names.isNotEmpty()) {
+      setSelection(names, mode, "voice")
+      applied = true
+    }
+    val meshes = selections
+    val text = if (!applied && question.isNotEmpty()) question else say(mode, match, meshes, q)
+    return AIVoiceSelection(mode, q, applied, tier, meshes, strings(match["candidates"]), text)
+  }
+
+  /** Selects meshes by exact name (a voice model's `names`); names not in the scene are ignored. */
+  @JvmOverloads
+  suspend fun selectNames(names: List<String>, mode: String = "replace"): AIVoiceSelection {
+    val index = core.call(sceneArgs(null) + mapOf("op" to "select", "query" to "", "withIndex" to true))
+    val known = MiniJson.asList(index["index"])?.mapNotNull { MiniJson.asMap(it)?.get("name") as? String }?.toSet() ?: emptySet()
+    val valid = names.filter { it in known }.take(MAX_SELECTION)
+    val query = names.joinToString(", ").take(200)
+    if (valid.isEmpty()) {
+      val none = mapOf("confidence" to "none", "reason" to "no_match", "names" to emptyList<String>(), "candidates" to emptyList<String>())
+      return AIVoiceSelection(mode, query, false, 1, selections, emptyList(), say(mode, none, selections, query))
+    }
+    setSelection(valid, mode, "voice")
+    val matched = mapOf("confidence" to "high", "reason" to "exact", "names" to valid, "candidates" to emptyList<String>())
+    return AIVoiceSelection(mode, query, true, 1, selections, emptyList(), say(mode, matched, selections, query))
+  }
+
+  /** Parses a push-to-talk utterance (`{kind, mode?, query?, instruction?}`; see `parse_command`). */
+  suspend fun parseCommand(text: String): Map<String, Any?> = core.call(mapOf("op" to "parse_command", "text" to text))
+
+  /** Context sentence describing the selection for a voice model (shared wording with the web). */
+  suspend fun describeSelection(meshes: List<String> = selections): String =
+    core.call(mapOf("op" to "select_context", "meshes" to meshes))["text"] as? String
+      ?: if (meshes.isEmpty()) "The user cleared the selection." else "The user selected ${meshes.joinToString { "\"$it\"" }}."
+
+  private fun sceneArgs(within: List<String>?): Map<String, Any?> {
+    val args = mutableMapOf<String, Any?>("source" to source)
+    camera?.let { args["camera"] = mapOf("eye" to it.eye, "target" to it.target) }
+    if (within != null) args["within"] = within
+    return args
+  }
+
+  private suspend fun say(mode: String, match: Map<String, Any?>?, meshes: List<String>, query: String): String =
+    core.call(mapOf("op" to "select_say", "mode" to mode, "match" to match, "meshes" to meshes, "query" to query))["text"] as? String ?: ""
+
+  private fun toMessages(built: Map<String, Any?>): List<AIChatMessage> =
+    MiniJson.asList(built["messages"])?.mapNotNull { m ->
+      val map = MiniJson.asMap(m) ?: return@mapNotNull null
+      AIChatMessage(map["role"] as? String ?: return@mapNotNull null, map["content"] as? String ?: "")
+    } ?: throw AIEditException("core: ${built["error"] ?: "no messages"}")
 
   /** Replaces the base script (e.g. after the app loads a different scene); clears undo. */
   fun resetSource(script: String) {
@@ -232,7 +413,7 @@ constructor(
    */
   suspend fun editScene(
     instruction: String,
-    selection: String? = this.selection,
+    selection: List<String> = this.selections,
     maxRepairs: Int = 1,
     dryRun: Boolean = false,
   ): EditResult {
@@ -241,7 +422,7 @@ constructor(
     val myGen = synchronized(lock) { ++generation }
     val base = source
     val repairsAllowed = maxRepairs.coerceIn(0, 3)
-    listener?.onEditStart(text, selection)
+    listener?.onEditStart(text, selection.firstOrNull())
     var code = ""
     var error: String? = null
     var warnings = emptyList<String>()
@@ -249,11 +430,7 @@ constructor(
     fun superseded() = generation != myGen
     try {
       val built = core.call(mapOf("op" to "messages", "source" to base, "selection" to selection, "instruction" to text))
-      val messages =
-        MiniJson.asList(built["messages"])?.mapNotNull { m ->
-          val map = MiniJson.asMap(m) ?: return@mapNotNull null
-          AIChatMessage(map["role"] as? String ?: return@mapNotNull null, map["content"] as? String ?: "")
-        }?.toMutableList() ?: throw AIEditException("core: ${built["error"] ?: "no messages"}")
+      val messages = toMessages(built).toMutableList()
       for (turn in 0..repairsAllowed) {
         val reply = provider.complete(messages)
         if (superseded()) return finish(text, EditResult(false, code, repairs, warnings, SUPERSEDED))
@@ -318,5 +495,13 @@ constructor(
   companion object {
     const val MAX_HISTORY = 20
     const val SUPERSEDED = "editScene superseded by a newer call"
+    /** Most meshes one selection may hold (same as the web). */
+    const val MAX_SELECTION = 50
+    private const val MAX_QUERY = 2000
+
+    private fun cleanSelection(names: List<String>): List<String> =
+      names.asSequence().map { it.take(200) }.filter { it.isNotEmpty() }.distinct().take(MAX_SELECTION).toList()
+
+    private fun strings(v: Any?): List<String> = MiniJson.asList(v)?.filterIsInstance<String>() ?: emptyList()
   }
 }

@@ -24,10 +24,43 @@ import {
   createWebSpeechRecognizer,
   describeEditResult,
   geminiLiveAdapter,
+  describeVoiceSelection,
   realtimeAdapter,
+  selectByVoice,
+  selectNamesByVoice,
   setSelectOnTap,
+  speakableName,
   startVoiceEdit,
 } from './plugins/ai-voice';
+import {hideSelectionChips, showSelectionChips} from './plugins/ai-select-chips';
+export type {AISelectChipsState} from './plugins/ai-select-chips';
+export type {AIModelSelection, AISelectProvider} from './plugins/ai-select';
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './plugins/ai-select';
+
+import {
+  describeSelection,
+  getSelection,
+  parseSelectReply,
+  resolveSelection,
+  resolveSelectionWithModel,
+  sceneSelectEntries,
+  selectCamera,
+  selectMessages,
+  setSelection,
+} from './plugins/ai-select';
+import {buildSelectIndex, matchSelection, parseVoiceCommand} from './plugins/ai-select-match';
+export type {
+  SelectCamera,
+  SelectConfidence,
+  SelectIndexEntry,
+  SelectMatch,
+  SelectRawEntry,
+  VoiceCommand,
+} from './plugins/ai-select-match';
 
 registerPlugin(aiPlugin);
 
@@ -38,7 +71,25 @@ export {
   createAIChatProvider,
   createWebSpeechRecognizer,
   describeEditResult,
+  buildSelectIndex,
+  describeSelection,
+  describeVoiceSelection,
   editScene,
+  getSelection,
+  hideSelectionChips,
+  matchSelection,
+  parseSelectReply,
+  parseVoiceCommand,
+  resolveSelection,
+  resolveSelectionWithModel,
+  sceneSelectEntries,
+  selectByVoice,
+  selectCamera,
+  selectMessages,
+  selectNamesByVoice,
+  setSelection,
+  showSelectionChips,
+  speakableName,
   extractScript,
   geminiLiveAdapter,
   realtimeAdapter,
@@ -58,6 +109,7 @@ export type {
   AIMicrophoneSource,
   AISpeechRecognizer,
   AIVoiceAdapter,
+  AIVoiceSelection,
   AIVoiceEditOptions,
   AIVoiceEditResult,
   AIVoiceEventDetail,
@@ -66,3 +118,8 @@ export type {
   AIVoiceState,
   AIVoiceTransport,
 } from './plugins/ai-voice';
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './plugins/ai-select';
