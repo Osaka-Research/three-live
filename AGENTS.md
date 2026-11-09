@@ -28,7 +28,7 @@ This file provides high-signal context, architectural invariants, and authoring 
 Goal                                                                                                      | Element        | Recommended Bundle            | Enforced Budget
 :-------------------------------------------------------------------------------------------------------- | :------------- | :---------------------------- | :-------------:
 `.glb` / `.usdz` 3D viewer + 1-tap AR handoff (no scripting)                                              | `<three-live>` | `three-live-viewer.min.js`    | `< 30 KB gz`
-Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 72 KB gz`
+Procedural `<script type="text/three">` + `InstancedMesh` + `KHR_interactivity` + AR                      | `<three-live>` | `three-live.min.js`           | `< 73 KB gz`
 Add-on: PBR Next, HDRI/SH, `bloom`/`outline`, `KHR_materials_variants`, `meshopt`, `lod`, hotspots        | `<three-live>` | `three-live-studio.min.js`    | `< 29 KB gz`
 Add-on: 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` BSP Booleans, 3D stroke-font `TextGeometry`                | `<three-live>` | `three-live-cad.min.js`        | `< 10 KB gz`
 Add-on: `Box3`/`Sphere`, `CanvasTexture`, `Noise`, `Sprite`, 2D Curves (`SplineCurve`), Scene Helpers     | `<three-live>` | `three-live-procedural.min.js` | `< 26 KB gz`

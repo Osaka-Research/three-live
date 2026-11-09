@@ -136,7 +136,7 @@ $ claude mcp add three-live -- npx -y -p three-live three-live-cli mcp
 
 ### 4. Run on the Web (`<three-live>` and `<xr-live>`)
 
-On the web, `<three-live>` (`< 30 KB gz` viewer, `< 72 KB gz` with the live
+On the web, `<three-live>` (`< 30 KB gz` viewer, `< 73 KB gz` with the live
 Three.js compiler) and `<xr-live>` (`< 84 KB gz`) render the same Three.js
 scenes in WebGL2 and 6DoF WebXR with 1-tap mobile AR handoff:
 
@@ -317,7 +317,7 @@ The following table compares the two runtime tiers across Android, iOS, and Web:
 | **Three.js JIT compiler** | Yes (sandboxed Rust `Boa`/QuickJS VM on Android/iOS/CLI, Web Worker on Web) | Yes (inherits `three-author` JIT compiler plus `userData.xr` spatial traits) |
 | **Android & iOS runtime** | Google Filament (`FilamentHelper`), Apple RealityKit (`RealityKitHelper`), and `.glb`/`.usdz` export | Native Android (`Filament` + Jetpack XR `SceneCore` + `XRLiveRuntimeSession`) and native iOS/visionOS (`RealityKit` + `XRLiveRealityKitSession`) |
 | **Spatial interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`, `audioEmitter`), 15 spatial plugins, 6 `xr-live-sim` simulation plugins, 25-joint hands, and `KHR_interactivity` |
-| **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 72 KB gz`** (`three-live.min.js`) | **`< 54 KB gz`** (viewer), **`< 84 KB gz`** (`xr-live.min.js`), **`< 251 KB gz`** (`xr-live-full.min.js`) |
+| **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 73 KB gz`** (`three-live.min.js`) | **`< 54 KB gz`** (viewer), **`< 84 KB gz`** (`xr-live.min.js`), **`< 251 KB gz`** (`xr-live-full.min.js`) |
 <!-- mdformat on -->
 
 ### HTML attribute compatibility with `<model-viewer>`
@@ -345,7 +345,7 @@ custom element name when `@google/model-viewer` is not loaded.
 | **Target platforms** | Web Custom Element (`<model-viewer>`). | Native **Android** SDK (`ThreeCompiler` JNI + Google Filament / Jetpack XR), native **iOS / visionOS** SDK (`ThreeCompiler` XCFramework + RealityKit), **Rust CLI / MCP server** (`three-live-cli`), and **Web** Custom Elements (`<three-live>`, `<xr-live>`). |
 | **Post-processing & effects** | Provided via the companion `@google/model-viewer-effects` package (`<effect-composer>`, `<bloom-effect>`, `<outline-effect>`). | Built-in HTML attributes (`bloom`, `bloom-threshold`, `bloom-radius`, `outline`, `outline-selected`, `outline-color`, `tone-mapping`) with no external effect dependencies. |
 | **Interactivity & simulation** | Camera orbit/pan/zoom, animation playback, material variants, hotspots, and scene-graph material API. | Includes the above plus glTF `KHR_interactivity` behavior graphs, declarative `userData.xr` spatial traits (`grab`, `scale`, `anchor`, `snapTo`), and 60 Hz deterministic simulation plugins (`rigid-body`, `character-controller`, `navigation`, `objectives`). |
-| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 30 KB gz` (`three-live-viewer`), `< 72 KB gz` (`three-live`), `< 151 KB gz` (`three-live-full`), `< 251 KB gz` (`xr-live-full`). |
+| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 30 KB gz` (`three-live-viewer`), `< 73 KB gz` (`three-live`), `< 151 KB gz` (`three-live-full`), `< 251 KB gz` (`xr-live-full`). |
 <!-- mdformat on -->
 
 ### Modular plugins across Android, iOS, and Web
@@ -354,7 +354,7 @@ Every capability works on both prebuilt `.glb`, `.usdz`, and `.spz` assets and
 live Three.js scenes:
 
 *   **Compact core (`< 30 KB` to `< 84 KB gz` on Web):** The 3D viewer
-    (`three-live-viewer.min.js`) is `< 30 KB gz` (`< 72 KB gz` with the live
+    (`three-live-viewer.min.js`) is `< 30 KB gz` (`< 73 KB gz` with the live
     Three.js compiler in `three-live.min.js`), and the WebXR viewer
     (`xr-live-viewer.min.js`) is `< 54 KB gz` (`< 84 KB gz` with the live
     Three.js compiler in `xr-live.min.js`).
@@ -473,7 +473,7 @@ Every web bundle targets `es2020`, strips full license blocks
 | Family | Bundle file | Enforced budget (`.min.js.gz`) | Included capabilities |
 | :--------------- | :-------------------------------- | :------------: | :-------------------------- |
 | **`three-live`** | **`three-live-viewer.min.js`** | **`< 30 KB gz`** | Lean `.glb` and `.usdz` WebGL2 PBR viewer, TRS animations, orbit controls, and AR packager. |
-|  | **`three-live.min.js`** | **`< 72 KB gz`** | Standard `<three-live>` + **`three-author`** (live Three.js compiler, `InstancedMesh` GPU instancing, `KHR_interactivity` compiler, 5 tone-mapping modes, contact shadows) + AR packager. |
+|  | **`three-live.min.js`** | **`< 73 KB gz`** | Standard `<three-live>` + **`three-author`** (live Three.js compiler, `InstancedMesh` GPU instancing, `KHR_interactivity` compiler, 5 tone-mapping modes, contact shadows) + AR packager. |
 |  | **`three-live-studio.min.js`** | **`< 29 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
 |  | **`three-live-procedural.min.js`** | **`< 28 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |

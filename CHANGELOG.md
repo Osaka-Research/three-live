@@ -112,6 +112,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+-   **Inline `<script type="text/three">` scenes now load however the bundle
+    is included.** With a `defer`, `type="module"`, `async`, or end-of-`<body>`
+    bundle, elements already in the page upgraded before the bundle registered
+    its script runner and showed "Script execution requires three-live/full";
+    with a classic `<script>` in `<head>`, the element upgraded before its
+    inline script was parsed and rendered nothing. The inline scene now runs
+    after the bundle finishes evaluating (or on `DOMContentLoaded`), unless a
+    newer load (`src`, `executeScript`) started first. `three-live.min.js`
+    budget: `< 73 KB gz` (was `< 72`).
+
 -   **Warm-engine isolation:** top-level `var` and function declarations from
     one scene are no longer visible to the next scene compiled on the same
     reused engine (they are non-configurable globals that the sandbox reset

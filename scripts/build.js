@@ -942,7 +942,7 @@ function reportSizes() {
   console.log('------------------------------------------------------------------------------');
   const files = [
     {name: 'three-live-viewer.min.js', budgetKb: '30'},
-    {name: 'three-live.min.js', budgetKb: '72'},
+    {name: 'three-live.min.js', budgetKb: '73'},
     {name: 'three-live-studio.min.js', budgetKb: '29'},
     {name: 'three-live-cad.min.js', budgetKb: '10'},
     {name: 'three-live-procedural.min.js', budgetKb: '28'},

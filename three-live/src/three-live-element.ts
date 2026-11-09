@@ -391,19 +391,45 @@ export class ThreeLiveElement extends BaseElement {
     } else if (scriptSrc) {
       this.loadScriptFromSrc(scriptSrc).catch(() => {});
     } else {
-      // `text/three` is the documented form (README, LLM guide);
-      // `text/three-live` is accepted as an alias.
-      const inlineScript = this.querySelector(
-        'script[type="text/three"], script[type="text/three-live"]',
-      );
-      if (inlineScript && inlineScript.textContent) {
-        this.executeScript(inlineScript.textContent).catch(() => {});
-      }
+      this.scheduleInlineScript();
     }
 
     for (const plugin of ThreeView.getRegisteredPlugins()) {
       plugin.onElementConnected?.(this);
     }
+  }
+
+  /**
+   * Runs the inline `<script type="text/three">` scene once it can actually
+   * run. Two common setups used to skip it:
+   * - The bundle defines `<three-live>` before it registers its script runner
+   *   (the default and full bundles), so elements already in the page (a
+   *   `defer` / `type="module"` / end-of-body bundle) upgraded with no runner.
+   *   Waiting one microtask lets the bundle finish evaluating first.
+   * - A classic `<script>` in `<head>` upgrades the element when its start tag
+   *   is parsed, before its children exist. If the document is still loading
+   *   and no inline script is there yet, check again on `DOMContentLoaded`.
+   * A load started in the meantime (`src`, `executeScript`, ...) wins.
+   */
+  private scheduleInlineScript(): void {
+    const pending = this.loadController;
+    const run = () => {
+      // `text/three` is the documented form; `text/three-live` is an alias.
+      const inline = this.querySelector(
+        'script[type="text/three"], script[type="text/three-live"]',
+      );
+      // Disconnecting or any newer load replaces `loadController`.
+      if (this.loadController === pending && inline?.textContent) {
+        this.executeScript(inline.textContent).catch(() => {});
+        return true;
+      }
+      return false;
+    };
+    // If the script is not parsed yet, `DOMContentLoaded` is still to come
+    // (a listener added after it is simply never called).
+    queueMicrotask(
+      () => run() || document.addEventListener('DOMContentLoaded', run),
+    );
   }
 
   disconnectedCallback(): void {
