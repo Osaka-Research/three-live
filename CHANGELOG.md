@@ -26,6 +26,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Runtime Image → Scene (`compileFromImage`, B4):** Synthesizes procedural
+    Three.js scenes from photos, sketches, or blueprints across Web
+    (`el.compileFromImage(image, { prompt, priors, maxDimension, quality,
+    maxRepairs, dryRun, signal })`), Android
+    (`ThreeLiveAIEditor.compileFromImage(bitmap / jpegOrPngBytes / imageDataUrl,
+    ...)`), iOS/visionOS
+    (`AIEditor.compileFromImage(cgImage: / imageData: / imageDataUrl:, ...)`),
+    CLI (`three-live-cli from-image <input> [-o out.js] [--glb out.glb] [--usdz
+    out.usdz] [--render out.png] [--prompt ...] [--priors priors.json]`), and
+    MCP (`three_live_from_image`). Shared Rust core (`compiler/src/ai_image.rs`,
+    `ai_call` ops `from_image_messages`, `from_image_validate`, and
+    `from_image_repair_messages`) enforces spatial quality gates
+    (`meshCount >= 2`, finite non-degenerate bounds, `frustumCoverage >= 0.05`,
+    and zero critical overlap errors), performs one-turn auto-repair with exact
+    compiler/spatial diagnostics, preserves a compiling fallback candidate when
+    repair fails, supports optional metric spatial priors (`AISpatialPriors`:
+    `userHeight`, `floorNormal`, and detected 3D object boxes), and records undo
+    history so `undoEdit()` reverts to the previous scene. Multimodal
+    `AIChatMessage` support (`content: string | AIChatContentPart[]`) added
+    across Web, Android, iOS, and Rust.
+
 -   **Opt-in WebGPU `GPURenderBundle` scene accelerator
     (`three-live-webgpu.min.js`, `< 17 KB gz`):** Compiles multi-thousand-part
     CAD assemblies, `EXT_mesh_gpu_instancing` scenes, and glTF PBR models into

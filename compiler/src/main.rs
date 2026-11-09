@@ -217,6 +217,56 @@ enum Commands {
         #[command(subcommand)]
         command: GymCommands,
     },
+
+    /// Reconstruct a Three.js scene script from a reference image (PNG/JPEG/WebP file, data URI,
+    /// or https:// URL) via an OpenAI-compatible Chat Completions endpoint, with automatic
+    /// sandbox + spatial linter (TL100-TL402) repair
+    FromImage {
+        /// Input image path (.png, .jpg, .webp), data:image/...;base64 URI, or https:// URL
+        input: String,
+
+        /// Optional output path (.js) to write the generated Three.js script
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Optional output path (.glb) to also compile the generated scene to binary glTF 2.0
+        #[arg(long)]
+        glb: Option<PathBuf>,
+
+        /// Optional output path (.usdz) to also compile the generated scene to Apple USDZ
+        #[arg(long)]
+        usdz: Option<PathBuf>,
+
+        /// Optional output path (.png) to also render a reference comparison sheet (or 4-up
+        /// contact sheet)
+        #[arg(long)]
+        render: Option<PathBuf>,
+
+        /// Optional natural-language instructions (e.g. "Focus on the desk and lamp, make the lamp
+        /// grabbable")
+        #[arg(long, default_value = "")]
+        prompt: String,
+
+        /// Optional path to a JSON file containing metric spatial priors (`AISpatialPriors`)
+        #[arg(long)]
+        priors: Option<PathBuf>,
+
+        /// OpenAI-compatible Chat Completions endpoint URL (defaults to THREE_LIVE_AI_ENDPOINT or https://api.openai.com/v1/chat/completions)
+        #[arg(long)]
+        ai_endpoint: Option<String>,
+
+        /// Vision-capable model identifier (defaults to THREE_LIVE_AI_MODEL or gpt-4o-mini)
+        #[arg(long)]
+        ai_model: Option<String>,
+
+        /// Maximum error/warning repair turns after the initial draft (0..5)
+        #[arg(long, default_value_t = 1)]
+        max_repairs: usize,
+
+        /// Output a structured JSON report instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1242,6 +1292,176 @@ fn main() {
                     eprintln!("{e}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Commands::FromImage {
+            input,
+            output,
+            glb,
+            usdz,
+            render,
+            prompt,
+            priors,
+            ai_endpoint,
+            ai_model,
+            max_repairs,
+            json,
+        } => {
+            let priors_val = if let Some(ref priors_path) = priors {
+                let raw = match fs::read_to_string(priors_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error reading --priors {:?}: {}", priors_path, e);
+                        std::process::exit(1);
+                    }
+                };
+                match serde_json::from_str::<serde_json::Value>(&raw) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        eprintln!("Error parsing --priors JSON {:?}: {}", priors_path, e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            let endpoint = ai_endpoint
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("THREE_LIVE_AI_ENDPOINT").ok().filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| three_live_compiler::ai_image::DEFAULT_AI_ENDPOINT.to_string());
+            let model = ai_model
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("THREE_LIVE_AI_MODEL").ok().filter(|s| !s.trim().is_empty())
+                })
+                .unwrap_or_else(|| three_live_compiler::ai_image::DEFAULT_AI_MODEL.to_string());
+            let api_key = std::env::var("THREE_LIVE_AI_KEY")
+                .ok()
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+
+            let cfg = three_live_compiler::ai_image::FromImageConfig {
+                image_spec: input,
+                prompt,
+                priors: priors_val,
+                max_repairs: max_repairs.min(5),
+            };
+            let (report, ref_img) = match three_live_compiler::ai_image::compile_from_image_http(
+                &cfg,
+                &endpoint,
+                api_key.as_deref(),
+                &model,
+            ) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    eprintln!("from-image error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            if !report.applied {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+                } else {
+                    eprintln!(
+                        "from-image failed after {} turn(s): {}",
+                        report.turns,
+                        report.error.as_deref().unwrap_or("unknown error")
+                    );
+                }
+                std::process::exit(1);
+            }
+
+            if let Some(ref out_js) = output {
+                if let Err(e) = fs::write(out_js, &report.code) {
+                    eprintln!("Error writing output script {:?}: {}", out_js, e);
+                    std::process::exit(1);
+                }
+            }
+            if let Some(ref out_glb) = glb {
+                match transcode_three_to_glb(&report.code) {
+                    Ok(bytes) => {
+                        if let Err(e) = fs::write(out_glb, &bytes) {
+                            eprintln!("Error writing GLB {:?}: {}", out_glb, e);
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error compiling GLB: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            if let Some(ref out_usdz) = usdz {
+                match transcode_three_to_usdz(&report.code) {
+                    Ok(bytes) => {
+                        if let Err(e) = fs::write(out_usdz, &bytes) {
+                            eprintln!("Error writing USDZ {:?}: {}", out_usdz, e);
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error compiling USDZ: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            if let Some(ref out_png) = render {
+                if let Ok(scene) = three_live_compiler::validate_three_script(&report.code) {
+                    let png_res = if let Some(ref img) = ref_img {
+                        let cmp = three_live_compiler::compare_scene_to_reference(
+                            &scene,
+                            img,
+                            [img.width, img.height],
+                            RenderViewMode::Camera,
+                            384,
+                            false,
+                            false,
+                        );
+                        three_live_compiler::encode_png_rgba_compressed(
+                            cmp.width, cmp.height, &cmp.rgba,
+                        )
+                    } else {
+                        let opts = RenderOptions {
+                            width: 768,
+                            height: 768,
+                            view: RenderViewMode::Quad,
+                            show_grid: true,
+                            show_annotations: true,
+                            label_override: None,
+                        };
+                        let (w, h, rgba) = render_scene_rgba(&scene, &opts);
+                        encode_png_rgba(w, h, &rgba)
+                    };
+                    match png_res {
+                        Ok(bytes) => {
+                            if let Err(e) = fs::write(out_png, &bytes) {
+                                eprintln!("Error writing render PNG {:?}: {}", out_png, e);
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error encoding render PNG: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+            } else if output.is_some() {
+                println!(
+                    "Reconstructed scene in {} turn(s) ({} meshes: {:?}) -> {:?}",
+                    report.turns,
+                    report.mesh_count,
+                    report.mesh_names,
+                    output.as_ref().unwrap()
+                );
+            } else {
+                println!("{}", report.code);
             }
         }
     }

@@ -83,7 +83,8 @@ fn clean_label(raw: Option<&str>) -> String {
     out.trim().chars().take(MAX_PRIOR_LABEL_CHARS).collect()
 }
 
-/// JS-identical half-away-from-zero / positive-infinity rounding for 2 decimal places (`Math.round(v * 100) / 100`).
+/// JS-identical half-away-from-zero / positive-infinity rounding for 2 decimal places
+/// (`Math.round(v * 100) / 100`).
 fn js_round(v: f64) -> f64 {
     (v + 0.5).floor()
 }
@@ -251,7 +252,8 @@ pub fn format_spatial_priors(priors: Option<&Value>) -> String {
     format!("Metric spatial priors (world meters, +Y up):\n{}\n", body.join("\n"))
 }
 
-/// Checks whether `raw` is a permitted `data:image/(png|jpeg|jpg|webp);base64,...` or `https:` / loopback `http:` URL.
+/// Checks whether `raw` is a permitted `data:image/(png|jpeg|jpg|webp);base64,...` or `https:` /
+/// loopback `http:` URL.
 pub fn is_allowed_image_url(raw: &str) -> bool {
     let s = raw.trim();
     if s.is_empty() {
@@ -310,7 +312,8 @@ pub fn build_image_user_text(prompt: &str, priors: Option<&Value>) -> String {
     out
 }
 
-/// Builds the multimodal Chat Completions messages for converting `image_url` into a Three-Live script.
+/// Builds the multimodal Chat Completions messages for converting `image_url` into a Three-Live
+/// script.
 pub fn build_image_messages(
     image_url: &str,
     prompt: &str,
@@ -412,7 +415,7 @@ pub fn validate_image_scene(code: &str) -> ImageSceneValidation {
     if let Some(err_diag) = report.diagnostics.iter().find(|d| d.severity == "error") {
         return fail(format!("[{}] {}", err_diag.code, err_diag.message));
     }
-    let warnings: Vec<String> = report
+    let mut warnings: Vec<String> = report
         .diagnostics
         .iter()
         .filter(|d| d.severity == "warning")
@@ -425,10 +428,31 @@ pub fn validate_image_scene(code: &str) -> ImageSceneValidation {
             }
         })
         .collect();
+    let has_unnamed_xr = report.diagnostics.iter().any(|d| d.code == "TL205")
+        || if scene.nodes.is_empty() {
+            scene.meshes.iter().any(|m| {
+                m.name.trim().is_empty() && (m.xr_traits.is_some() || m.xr_normalized.is_some())
+            })
+        } else {
+            scene.nodes.iter().any(|n| {
+                n.name.trim().is_empty()
+                    && (n.xr_traits.is_some()
+                        || n.xr_normalized.is_some()
+                        || n.interactivity.is_some()
+                        || !n.interactivity_events.is_empty())
+            })
+        };
+    if has_unnamed_xr
+        && warnings.len() < MAX_WARNINGS
+        && !warnings.iter().any(|w| w.contains("TL204"))
+    {
+        warnings.push("[TL204] Node with userData.xr is missing a unique .name.".to_string());
+    }
     ImageSceneValidation { ok: true, error: None, warnings, mesh_names: names, mesh_count }
 }
 
-/// `ai_call` handler for `{"op": "image_messages", "imageUrl": "...", "prompt"?: "...", "priors"?: {...}}`.
+/// `ai_call` handler for `{"op": "image_messages", "imageUrl": "...", "prompt"?: "...", "priors"?:
+/// {...}}`.
 pub fn image_messages_call(req: &Value) -> Value {
     let image_url = req.get("imageUrl").and_then(Value::as_str).unwrap_or("");
     let prompt = req.get("prompt").and_then(Value::as_str).unwrap_or("");
@@ -455,6 +479,475 @@ pub fn image_repair_call(req: &Value) -> Value {
         .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
         .unwrap_or_default();
     json!({ "message": image_repair_message(error, &warnings) })
+}
+
+/// Default OpenAI-compatible Chat Completions endpoint for `three-live-cli from-image` and
+/// `three_live_from_image`.
+pub const DEFAULT_AI_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
+/// Default vision-capable model identifier.
+pub const DEFAULT_AI_MODEL: &str = "gpt-4o-mini";
+
+/// Options for [`compile_from_image_with_provider`] and [`compile_from_image_http`].
+#[derive(Debug, Clone)]
+pub struct FromImageConfig {
+    pub image_spec: String,
+    pub prompt: String,
+    pub priors: Option<Value>,
+    pub max_repairs: usize,
+}
+
+/// Structured result of [`compile_from_image_with_provider`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FromImageReport {
+    pub applied: bool,
+    pub code: String,
+    pub turns: usize,
+    pub mesh_names: Vec<String>,
+    pub mesh_count: usize,
+    pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_metrics: Option<crate::reference::ReferenceMetrics>,
+}
+
+/// Loads an image specification (local PNG/JPEG file path, `data:image/...;base64,` URI, or
+/// `https://` / loopback `http://` URL), downscales local/base64 PNG/JPEG images to at most
+/// 1024 px on their longest edge, and returns `(image_url, Option<ReferenceImage>)`.
+pub fn encode_image_spec_to_data_url(
+    spec: &str,
+) -> Result<(String, Option<crate::reference::ReferenceImage>), String> {
+    let s = spec.trim();
+    if s.is_empty() {
+        return Err(
+            "from-image: pass a PNG/JPEG file path, a data:image/...;base64 URI, or an https:// URL."
+                .to_string(),
+        );
+    }
+    let lower8 = s.get(..8).unwrap_or(s).to_ascii_lowercase();
+    if lower8.starts_with("https://") || lower8.starts_with("http://") {
+        if !is_allowed_image_url(s) {
+            return Err("from-image: remote image URLs must use https:// (or http://localhost)."
+                .to_string());
+        }
+        return Ok((s.to_string(), None));
+    }
+    if s.get(..23).map(|p| p.eq_ignore_ascii_case("data:image/webp;base64,")).unwrap_or(false) {
+        if !is_allowed_image_url(s) {
+            return Err("from-image: invalid data:image/webp;base64 URI.".to_string());
+        }
+        return Ok((s.to_string(), None));
+    }
+    let bytes = crate::reference::load_reference_bytes(s)?;
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        let b64 = crate::mcp::encode_base64(&bytes);
+        return Ok((format!("data:image/webp;base64,{}", b64), None));
+    }
+    let (ref_img, _orig_dims) = crate::reference::decode_reference_image(&bytes)?;
+    let png_bytes =
+        crate::render::encode_png_rgba_compressed(ref_img.width, ref_img.height, &ref_img.rgba)?;
+    let b64 = crate::mcp::encode_base64(&png_bytes);
+    Ok((format!("data:image/png;base64,{}", b64), Some(ref_img)))
+}
+
+fn compute_ref_metrics(
+    code: &str,
+    ref_img: Option<&crate::reference::ReferenceImage>,
+) -> Option<crate::reference::ReferenceMetrics> {
+    let img = ref_img?;
+    let scene = crate::validate_three_script(code).ok()?;
+    let cmp = crate::reference::compare_scene_to_reference(
+        &scene,
+        img,
+        [img.width, img.height],
+        crate::render::RenderViewMode::Camera,
+        256,
+        false,
+        false,
+    );
+    Some(cmp.metrics)
+}
+
+/// Runs the multimodal `build_image_messages` -> `provider` -> `validate_image_scene` ->
+/// auto-repair loop (repairing both compile errors and spatial/schema warnings, with fallback
+/// to the best compiling candidate if a warning-repair turn fails to compile).
+pub fn compile_from_image_with_provider<F>(
+    cfg: &FromImageConfig,
+    mut provider: F,
+) -> Result<(FromImageReport, Option<crate::reference::ReferenceImage>), String>
+where
+    F: FnMut(&Value) -> Result<String, String>,
+{
+    let (image_url, ref_img) = encode_image_spec_to_data_url(&cfg.image_spec)?;
+    let initial = build_image_messages(&image_url, &cfg.prompt, cfg.priors.as_ref())?;
+    let mut messages = initial.as_array().cloned().unwrap_or_default();
+    let max_repairs = cfg.max_repairs.min(5);
+
+    let mut best_candidate: Option<(String, ImageSceneValidation)> = None;
+    let mut last_code = String::new();
+    let mut last_val: Option<ImageSceneValidation> = None;
+    let mut turns = 0usize;
+
+    for attempt in 0..=max_repairs {
+        turns = attempt + 1;
+        let reply = match provider(&Value::Array(messages.clone())) {
+            Ok(r) => r,
+            Err(err) => {
+                if let Some((best_code, best_val)) = best_candidate {
+                    let reference_metrics = compute_ref_metrics(&best_code, ref_img.as_ref());
+                    return Ok((
+                        FromImageReport {
+                            applied: true,
+                            code: best_code,
+                            turns,
+                            mesh_names: best_val.mesh_names,
+                            mesh_count: best_val.mesh_count,
+                            warnings: best_val.warnings,
+                            error: None,
+                            reference_metrics,
+                        },
+                        ref_img,
+                    ));
+                }
+                return Ok((
+                    FromImageReport {
+                        applied: false,
+                        code: last_code,
+                        turns,
+                        mesh_names: Vec::new(),
+                        mesh_count: 0,
+                        warnings: Vec::new(),
+                        error: Some(err),
+                        reference_metrics: None,
+                    },
+                    ref_img,
+                ));
+            }
+        };
+
+        let code = crate::ai_edit::extract_script(&reply);
+        let val = validate_image_scene(&code);
+
+        if val.ok && val.warnings.is_empty() {
+            let reference_metrics = compute_ref_metrics(&code, ref_img.as_ref());
+            return Ok((
+                FromImageReport {
+                    applied: true,
+                    code,
+                    turns,
+                    mesh_names: val.mesh_names,
+                    mesh_count: val.mesh_count,
+                    warnings: val.warnings,
+                    error: None,
+                    reference_metrics,
+                },
+                ref_img,
+            ));
+        }
+
+        if val.ok && best_candidate.is_none() {
+            best_candidate = Some((code.clone(), val.clone()));
+        }
+        last_code = code;
+        last_val = Some(val.clone());
+
+        if attempt < max_repairs {
+            messages.push(json!({ "role": "assistant", "content": reply }));
+            messages.push(json!({
+                "role": "user",
+                "content": image_repair_message(val.error.as_deref(), &val.warnings),
+            }));
+        }
+    }
+
+    if let Some(val) = last_val.as_ref().filter(|v| v.ok) {
+        let reference_metrics = compute_ref_metrics(&last_code, ref_img.as_ref());
+        return Ok((
+            FromImageReport {
+                applied: true,
+                code: last_code,
+                turns,
+                mesh_names: val.mesh_names.clone(),
+                mesh_count: val.mesh_count,
+                warnings: val.warnings.clone(),
+                error: None,
+                reference_metrics,
+            },
+            ref_img,
+        ));
+    }
+
+    if let Some((best_code, best_val)) = best_candidate {
+        let reference_metrics = compute_ref_metrics(&best_code, ref_img.as_ref());
+        return Ok((
+            FromImageReport {
+                applied: true,
+                code: best_code,
+                turns,
+                mesh_names: best_val.mesh_names,
+                mesh_count: best_val.mesh_count,
+                warnings: best_val.warnings,
+                error: None,
+                reference_metrics,
+            },
+            ref_img,
+        ));
+    }
+
+    let err_msg =
+        last_val.and_then(|v| v.error).unwrap_or_else(|| "Scene failed validation.".to_string());
+    Ok((
+        FromImageReport {
+            applied: false,
+            code: last_code,
+            turns,
+            mesh_names: Vec::new(),
+            mesh_count: 0,
+            warnings: Vec::new(),
+            error: Some(err_msg),
+            reference_metrics: None,
+        },
+        ref_img,
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn extract_completion_content(resp_body: &str) -> Result<String, String> {
+    let parsed: Value = serde_json::from_str(resp_body).map_err(|e| {
+        let preview: String = resp_body.chars().take(240).collect();
+        format!("AI endpoint returned invalid JSON ({}): {}", e, preview)
+    })?;
+    if let Some(err_msg) = parsed
+        .get("error")
+        .and_then(|e| e.get("message").and_then(Value::as_str).or_else(|| e.as_str()))
+    {
+        return Err(format!("AI endpoint error: {}", err_msg));
+    }
+    let content = parsed
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"));
+    if let Some(s) = content.and_then(Value::as_str) {
+        return Ok(s.to_string());
+    }
+    if let Some(arr) = content.and_then(Value::as_array) {
+        let mut combined = String::new();
+        for part in arr {
+            if let Some(t) = part.get("text").and_then(Value::as_str) {
+                combined.push_str(t);
+            }
+        }
+        if !combined.is_empty() {
+            return Ok(combined);
+        }
+    }
+    Err("AI endpoint response did not include `choices[0].message.content`.".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_chunked_body(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos < raw.len() {
+        let Some(rel_end) = raw[pos..].windows(2).position(|w| w == b"\r\n") else {
+            break;
+        };
+        let size_line = std::str::from_utf8(&raw[pos..pos + rel_end]).unwrap_or("").trim();
+        let hex_part = size_line.split(';').next().unwrap_or("").trim();
+        let Ok(chunk_len) = usize::from_str_radix(hex_part, 16) else {
+            break;
+        };
+        pos += rel_end + 2;
+        if chunk_len == 0 || pos + chunk_len > raw.len() {
+            break;
+        }
+        out.extend_from_slice(&raw[pos..pos + chunk_len]);
+        pos += chunk_len;
+        if raw.get(pos..pos + 2) == Some(b"\r\n") {
+            pos += 2;
+        }
+    }
+    out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn post_http_plain(rest: &str, api_key: Option<&str>, body_bytes: &[u8]) -> Result<String, String> {
+    use std::io::{Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+
+    let (authority, path_cow) = match rest.find(&['/', '?'][..]) {
+        Some(idx) if rest.as_bytes()[idx] == b'?' => (&rest[..idx], format!("/{}", &rest[idx..])),
+        Some(idx) => (&rest[..idx], rest[idx..].to_string()),
+        None => (rest, "/".to_string()),
+    };
+    let path = path_cow.as_str();
+    if authority.is_empty() {
+        return Err("AI endpoint URL is missing host.".to_string());
+    }
+    let host_port = if authority.starts_with('[') {
+        if authority.contains("]:") {
+            authority.to_string()
+        } else {
+            format!("{}:80", authority)
+        }
+    } else if authority.contains(':') {
+        authority.to_string()
+    } else {
+        format!("{}:80", authority)
+    };
+
+    let addr = host_port
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed resolving AI endpoint {:?}: {}", host_port, e))?
+        .next()
+        .ok_or_else(|| format!("No socket address found for {:?}", host_port))?;
+
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(15))
+        .map_err(|e| format!("Failed connecting to AI endpoint {}: {}", host_port, e))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
+
+    let mut req_head = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+        path,
+        authority,
+        body_bytes.len()
+    );
+    if let Some(k) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        if !k.bytes().any(|b| b == b'\r' || b == b'\n') {
+            req_head.push_str(&format!("Authorization: Bearer {}\r\n", k));
+        }
+    }
+    req_head.push_str("\r\n");
+
+    let mut req_buf = Vec::with_capacity(req_head.len() + body_bytes.len());
+    req_buf.extend_from_slice(req_head.as_bytes());
+    req_buf.extend_from_slice(body_bytes);
+
+    stream
+        .write_all(&req_buf)
+        .and_then(|_| stream.flush())
+        .map_err(|e| format!("Failed sending request to AI endpoint: {}", e))?;
+
+    let mut resp_bytes = Vec::new();
+    if let Err(e) = stream.take(16 * 1024 * 1024).read_to_end(&mut resp_bytes) {
+        if e.kind() != std::io::ErrorKind::ConnectionReset || resp_bytes.is_empty() {
+            return Err(format!("Failed reading response from AI endpoint: {}", e));
+        }
+    }
+
+    let Some(hdr_end) = resp_bytes.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return Err("Malformed HTTP response from AI endpoint.".to_string());
+    };
+    let headers_str = String::from_utf8_lossy(&resp_bytes[..hdr_end]);
+    let status_line = headers_str.lines().next().unwrap_or("");
+    let status_code =
+        status_line.split_whitespace().nth(1).and_then(|s| s.parse::<u16>().ok()).unwrap_or(500);
+    let raw_body = &resp_bytes[hdr_end + 4..];
+    let is_chunked = headers_str.lines().any(|l| {
+        l.to_ascii_lowercase().starts_with("transfer-encoding:")
+            && l.to_ascii_lowercase().contains("chunked")
+    });
+    let decoded_body = if is_chunked { decode_chunked_body(raw_body) } else { raw_body.to_vec() };
+    let body_str = String::from_utf8_lossy(&decoded_body).to_string();
+    if !(200..300).contains(&status_code) {
+        let preview: String = body_str.chars().take(240).collect();
+        return Err(format!("AI endpoint HTTP {}: {}", status_code, preview));
+    }
+    extract_completion_content(&body_str)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn post_https_curl(
+    endpoint: &str,
+    api_key: Option<&str>,
+    body_bytes: &[u8],
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut cmd = Command::new("curl");
+    cmd.arg("-sS")
+        .arg("--max-time")
+        .arg("60")
+        .arg("-X")
+        .arg("POST")
+        .arg("-H")
+        .arg("Content-Type: application/json");
+    if let Some(k) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        if !k.bytes().any(|b| b == b'\r' || b == b'\n') {
+            cmd.arg("-H").arg(format!("Authorization: Bearer {}", k));
+        }
+    }
+    cmd.arg("--data-binary")
+        .arg("@-")
+        .arg("--")
+        .arg(endpoint)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child =
+        cmd.spawn().map_err(|e| format!("Failed spawning curl for HTTPS AI endpoint: {}", e))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(body_bytes)
+            .map_err(|e| format!("Failed writing request payload to curl stdin: {}", e))?;
+    }
+    let output =
+        child.wait_with_output().map_err(|e| format!("Failed waiting for curl response: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("HTTPS AI request failed: {}", stderr.trim()));
+    }
+    let body_str = String::from_utf8_lossy(&output.stdout).to_string();
+    extract_completion_content(&body_str)
+}
+
+/// Calls an OpenAI-compatible Chat Completions endpoint (`http://` via pure-Rust `TcpStream`
+/// or `https://` via `curl`) and returns the assistant message text.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn complete_ai_chat(
+    endpoint: &str,
+    api_key: Option<&str>,
+    model: &str,
+    messages: &Value,
+) -> Result<String, String> {
+    let ep = endpoint.trim();
+    if ep.is_empty() || ep.bytes().any(|b| b <= 0x20 || b == 0x7f) {
+        return Err("AI endpoint URL is empty or contains invalid characters.".to_string());
+    }
+    let payload = json!({
+        "model": if model.trim().is_empty() { DEFAULT_AI_MODEL } else { model.trim() },
+        "messages": messages,
+        "temperature": 0.2,
+    });
+    let body_bytes =
+        serde_json::to_vec(&payload).map_err(|e| format!("Failed serializing request: {}", e))?;
+    if let Some(rest) = ep.strip_prefix("http://").or_else(|| ep.strip_prefix("HTTP://")) {
+        return post_http_plain(rest, api_key, &body_bytes);
+    }
+    if ep.starts_with("https://") || ep.starts_with("HTTPS://") {
+        return post_https_curl(ep, api_key, &body_bytes);
+    }
+    Err("AI endpoint must start with http:// or https://.".to_string())
+}
+
+/// Runs [`compile_from_image_with_provider`] against an OpenAI-compatible HTTP/HTTPS endpoint.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn compile_from_image_http(
+    cfg: &FromImageConfig,
+    endpoint: &str,
+    api_key: Option<&str>,
+    model: &str,
+) -> Result<(FromImageReport, Option<crate::reference::ReferenceImage>), String> {
+    compile_from_image_with_provider(cfg, |messages| {
+        complete_ai_chat(endpoint, api_key, model, messages)
+    })
 }
 
 #[cfg(test)]
@@ -564,9 +1057,182 @@ mod tests {
         assert!(wres.ok);
         assert!(!wres.warnings.is_empty(), "expected spatial warnings for unlit/offscreen scene");
 
+        // Unnamed node with userData.xr emits TL204 warning matching web validateImageScene.
+        let unnamed_xr = "\
+            const light = new THREE.AmbientLight(0xffffff, 0.8);\n\
+            scene.add(light);\n\
+            const dir = new THREE.DirectionalLight(0xffffff, 1.0);\n\
+            dir.position.set(2, 4, 3);\n\
+            scene.add(dir);\n\
+            const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial());\n\
+            lamp.position.set(0, 0.2, 0);\n\
+            lamp.userData.xr = { grab: true };\n\
+            scene.add(lamp);\n\
+            camera.position.set(0, 1.2, 3);\n\
+            camera.lookAt(0, 0.2, 0);\n";
+        let xres = validate_image_scene(unnamed_xr);
+        assert!(xres.ok);
+        assert!(
+            xres.warnings.iter().any(|w| w.contains("[TL204]")),
+            "expected TL204 warning for unnamed XR node, got: {:?}",
+            xres.warnings
+        );
+
         // Empty or broken scenes fail with ok=false.
         assert!(!validate_image_scene("").ok);
         assert!(!validate_image_scene("const g = new THREE.Group(); scene.add(g);").ok);
         assert!(!validate_image_scene("scene.add(new THREE.Mesh(").ok);
+    }
+
+    #[test]
+    fn compile_from_image_with_provider_repairs_and_falls_back_to_compiling_candidate() {
+        let rgba = vec![200u8, 120, 60, 255];
+        let png = crate::render::encode_png_rgba_compressed(1, 1, &rgba).unwrap();
+        let data_url = format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png));
+
+        let clean_scene = "```js\n\
+            const light = new THREE.AmbientLight(0xffffff, 0.8);\n\
+            scene.add(light);\n\
+            const dir = new THREE.DirectionalLight(0xffffff, 1.0);\n\
+            dir.position.set(2, 4, 3);\n\
+            scene.add(dir);\n\
+            const desk = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.75, 0.6), new THREE.MeshStandardMaterial({ color: 0x8b5a2b }));\n\
+            desk.name = 'Desk';\n\
+            desk.position.set(0, 0.375, 0);\n\
+            scene.add(desk);\n\
+            camera.position.set(0, 1.2, 3);\n\
+            camera.lookAt(0, 0.4, 0);\n\
+            ```";
+
+        // 1. Broken turn 0 -> repaired turn 1.
+        let mut call_idx = 0usize;
+        let cfg = FromImageConfig {
+            image_spec: data_url.clone(),
+            prompt: "Add a desk".to_string(),
+            priors: Some(json!({ "floorY": 0.0 })),
+            max_repairs: 1,
+        };
+        let (rep, ref_img) = compile_from_image_with_provider(&cfg, |msgs| {
+            call_idx += 1;
+            if call_idx == 1 {
+                assert_eq!(msgs.as_array().unwrap().len(), 2);
+                Ok("```js\nconst g = new THREE.Group(); scene.add(g);\n```".to_string())
+            } else {
+                let last_msg =
+                    msgs.as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
+                assert!(last_msg.contains("rejected by the Three-Live sandbox"));
+                Ok(clean_scene.to_string())
+            }
+        })
+        .expect("compile_from_image_with_provider succeeded");
+        assert!(rep.applied);
+        assert_eq!(rep.turns, 2);
+        assert_eq!(rep.mesh_names, vec!["Desk".to_string()]);
+        assert!(rep.warnings.is_empty());
+        assert!(ref_img.is_some());
+        assert!(rep.reference_metrics.is_some());
+
+        // 2. Turn 0 compiles with spatial warnings, turn 1 fails to compile -> falls back to turn
+        //    0.
+        let warn_scene = "```js\n\
+            const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());\n\
+            box.name = 'FallbackBox';\n\
+            box.position.set(0, 0.5, 50);\n\
+            scene.add(box);\n\
+            camera.position.set(0, 1, 3);\n\
+            camera.lookAt(0, 0.5, 0);\n\
+            ```";
+        let mut call_idx2 = 0usize;
+        let (rep2, _) = compile_from_image_with_provider(&cfg, |_msgs| {
+            call_idx2 += 1;
+            if call_idx2 == 1 {
+                Ok(warn_scene.to_string())
+            } else {
+                Ok("```js\nscene.add(new THREE.Mesh(\n```".to_string())
+            }
+        })
+        .expect("fallback succeeded");
+        assert!(rep2.applied);
+        assert_eq!(rep2.turns, 2);
+        assert_eq!(rep2.mesh_names, vec!["FallbackBox".to_string()]);
+        assert!(!rep2.warnings.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn compile_from_image_http_round_trips_against_local_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut req_bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).expect("read request");
+                if n == 0 {
+                    break;
+                }
+                req_bytes.extend_from_slice(&chunk[..n]);
+                if let Some(hdr_end) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let hdr_str = String::from_utf8_lossy(&req_bytes[..hdr_end]);
+                    let content_len = hdr_str
+                        .lines()
+                        .find_map(|l| {
+                            let lower = l.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if req_bytes.len() >= hdr_end + 4 + content_len {
+                        break;
+                    }
+                }
+            }
+            let req_str = String::from_utf8_lossy(&req_bytes);
+            assert!(req_str.contains("POST /v1/chat/completions HTTP/1.1"));
+            assert!(req_str.contains("Authorization: Bearer test-secret"));
+            assert!(req_str.contains("\"image_url\""));
+
+            let reply_json = serde_json::to_string(&json!({
+                "choices": [{
+                    "message": {
+                        "content": "```js\nconst l = new THREE.AmbientLight(0xffffff, 0.8); scene.add(l);\nconst d = new THREE.DirectionalLight(0xffffff, 1.0); d.position.set(2, 4, 3); scene.add(d);\nconst m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x336699 }));\nm.name = 'Chair';\nm.position.set(0, 0.5, 0);\nscene.add(m);\ncamera.position.set(0, 1.2, 3);\ncamera.lookAt(0, 0.5, 0);\n```"
+                    }
+                }]
+            }))
+            .unwrap();
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply_json.len(),
+                reply_json
+            );
+            stream.write_all(http_resp.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.read(&mut chunk);
+        });
+
+        let rgba = vec![80u8, 140, 220, 255];
+        let png = crate::render::encode_png_rgba_compressed(1, 1, &rgba).unwrap();
+        let data_url = format!("data:image/png;base64,{}", crate::mcp::encode_base64(&png));
+        let cfg = FromImageConfig {
+            image_spec: data_url,
+            prompt: "Reconstruct chair".to_string(),
+            priors: None,
+            max_repairs: 0,
+        };
+        let endpoint = format!("http://{}/v1/chat/completions", addr);
+        let (rep, _) = compile_from_image_http(&cfg, &endpoint, Some("test-secret"), "test-vlm")
+            .expect("HTTP round-trip succeeded");
+        handle.join().unwrap();
+
+        assert!(rep.applied, "{:?}", rep.error);
+        assert_eq!(rep.turns, 1);
+        assert_eq!(rep.mesh_names, vec!["Chair".to_string()]);
     }
 }

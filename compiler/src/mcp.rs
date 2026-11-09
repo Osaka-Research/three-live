@@ -930,6 +930,58 @@ fn mcp_tool_definitions() -> Value {
                 "idempotentHint": true,
                 "openWorldHint": false
             }
+        },
+        {
+            "name": "three_live_from_image",
+            "description": "Reconstruct a Three.js scene script from a reference image (local PNG/JPEG/WebP file path, `data:image/...;base64` URI, or `https://` URL) using a multimodal Chat Completions endpoint, with automatic sandbox + spatial linter (`TL100-TL402`) repair and optional metric spatial priors (`AISpatialPriors`). Also returns a rendered `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF` comparison sheet (or 4-up contact sheet) when `includeContactSheet` is true.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "image": {
+                        "type": "string",
+                        "description": "Local PNG/JPEG/WebP image file path, `data:image/(png|jpeg|webp);base64,...` URI, or `https://` URL."
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Optional natural-language instructions (e.g. 'Focus on the desk and lamp, make the lamp grabbable')."
+                    },
+                    "priors": {
+                        "type": "object",
+                        "description": "Optional metric spatial priors (`AISpatialPriors`) in world meters (+Y up): `{ floorY?: number, camera?: { eye: [x,y,z], target: [x,y,z], fovDeg?: number }, planes?: [...], objects?: [...] }`."
+                    },
+                    "aiEndpoint": {
+                        "type": "string",
+                        "description": "Optional OpenAI-compatible Chat Completions URL (defaults to `THREE_LIVE_AI_ENDPOINT` or `https://api.openai.com/v1/chat/completions`)."
+                    },
+                    "aiModel": {
+                        "type": "string",
+                        "description": "Optional vision-capable model identifier (defaults to `THREE_LIVE_AI_MODEL` or `gpt-4o-mini`)."
+                    },
+                    "maxRepairs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5,
+                        "default": 1,
+                        "description": "Maximum error/warning repair turns after the initial draft (default 1, max 5)."
+                    },
+                    "outputPath": {
+                        "type": "string",
+                        "description": "Optional file path (.js) to save the generated Three.js scene script on disk."
+                    },
+                    "includeContactSheet": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "When true (default), renders a reference comparison sheet (or 4-up contact sheet) PNG and includes it as an image content block."
+                    }
+                },
+                "required": ["image"]
+            },
+            "annotations": {
+                "title": "Reconstruct Three.js Scene from Image",
+                "readOnlyHint": false,
+                "idempotentHint": false,
+                "openWorldHint": true
+            }
         }
     ])
 }
@@ -1065,6 +1117,7 @@ fn handle_tools_call(id: Value, params: &Value) -> Value {
         "three_live_gym_reset" => call_tool_gym_reset(&args),
         "three_live_gym_step" => call_tool_gym_step(&args),
         "three_live_gym_close" => call_tool_gym_close(&args),
+        "three_live_from_image" => call_tool_from_image(&args),
         _ => {
             return jsonrpc_error_response(
                 id,
@@ -1814,6 +1867,122 @@ fn call_tool_gym_close(args: &Value) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": false })
 }
 
+#[cfg(target_arch = "wasm32")]
+fn call_tool_from_image(_args: &Value) -> Value {
+    tool_error_result("three_live_from_image is not supported on wasm32.".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn call_tool_from_image(args: &Value) -> Value {
+    let image = args.get("image").and_then(Value::as_str).unwrap_or("").trim();
+    if image.is_empty() {
+        return tool_error_result(
+            "Missing required string parameter `image` (local PNG/JPEG/WebP path, data:image/...;base64 URI, or https:// URL)."
+                .to_string(),
+        );
+    }
+    let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or("").to_string();
+    let priors = args.get("priors").cloned();
+    let max_repairs =
+        args.get("maxRepairs").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(1).min(5);
+    let endpoint = args
+        .get("aiEndpoint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| std::env::var("THREE_LIVE_AI_ENDPOINT").ok().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| crate::ai_image::DEFAULT_AI_ENDPOINT.to_string());
+    let model = args
+        .get("aiModel")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| std::env::var("THREE_LIVE_AI_MODEL").ok().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| crate::ai_image::DEFAULT_AI_MODEL.to_string());
+    let api_key =
+        std::env::var("THREE_LIVE_AI_KEY").ok().or_else(|| std::env::var("OPENAI_API_KEY").ok());
+    let include_sheet = args.get("includeContactSheet").and_then(Value::as_bool).unwrap_or(true);
+    let output_path =
+        args.get("outputPath").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+
+    let cfg = crate::ai_image::FromImageConfig {
+        image_spec: image.to_string(),
+        prompt,
+        priors,
+        max_repairs,
+    };
+    let (report, ref_img) =
+        match crate::ai_image::compile_from_image_http(&cfg, &endpoint, api_key.as_deref(), &model)
+        {
+            Ok(pair) => pair,
+            Err(e) => return tool_error_result(e),
+        };
+
+    if report.applied {
+        if let Some(path) = output_path {
+            if let Err(e) = fs::write(path, &report.code) {
+                return tool_error_result(format!(
+                    "Failed writing generated script to {:?}: {}",
+                    path, e
+                ));
+            }
+        }
+    }
+
+    let mut content_blocks: Vec<Value> = Vec::new();
+    if report.applied && include_sheet {
+        if let Ok(scene) = crate::validate_three_script(&report.code) {
+            if let Some(ref img) = ref_img {
+                let cmp = compare_scene_to_reference(
+                    &scene,
+                    img,
+                    [img.width, img.height],
+                    RenderViewMode::Camera,
+                    384,
+                    false,
+                    false,
+                );
+                if let Ok(png) = encode_png_rgba_compressed(cmp.width, cmp.height, &cmp.rgba) {
+                    content_blocks.push(json!({
+                        "type": "image",
+                        "data": encode_base64(&png),
+                        "mimeType": "image/png",
+                    }));
+                }
+            } else {
+                let opts = RenderOptions {
+                    width: 768,
+                    height: 768,
+                    view: RenderViewMode::Quad,
+                    show_grid: true,
+                    show_annotations: true,
+                    label_override: None,
+                };
+                let (w, h, rgba) = render_scene_rgba(&scene, &opts);
+                if let Ok(png) = encode_png_rgba_compressed(w, h, &rgba) {
+                    content_blocks.push(json!({
+                        "type": "image",
+                        "data": encode_base64(&png),
+                        "mimeType": "image/png",
+                    }));
+                }
+            }
+        }
+    }
+
+    let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    content_blocks.push(json!({
+        "type": "text",
+        "text": text,
+    }));
+    json!({
+        "content": content_blocks,
+        "isError": !report.applied,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1986,9 +2155,95 @@ mod tests {
                 "three_live_link",
                 "three_live_gym_reset",
                 "three_live_gym_step",
-                "three_live_gym_close"
+                "three_live_gym_close",
+                "three_live_from_image"
             ]
         );
+    }
+
+    #[test]
+    fn test_mcp_from_image_tool_with_local_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut req_bytes = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req_bytes.extend_from_slice(&chunk[..n]);
+                if let Some(hdr_end) = req_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let hdr_str = String::from_utf8_lossy(&req_bytes[..hdr_end]);
+                    let content_len = hdr_str
+                        .lines()
+                        .find_map(|l| {
+                            let lower = l.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if req_bytes.len() >= hdr_end + 4 + content_len {
+                        break;
+                    }
+                }
+            }
+            let reply_json = serde_json::to_string(&json!({
+                "choices": [{
+                    "message": {
+                        "content": "```js\nconst l = new THREE.AmbientLight(0xffffff, 0.8); scene.add(l);\nconst d = new THREE.DirectionalLight(0xffffff, 1.0); d.position.set(2, 4, 3); scene.add(d);\nconst m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x336699 }));\nm.name = 'Lamp';\nm.position.set(0, 0.5, 0);\nscene.add(m);\ncamera.position.set(0, 1.2, 3);\ncamera.lookAt(0, 0.5, 0);\n```"
+                    }
+                }]
+            }))
+            .unwrap();
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply_json.len(),
+                reply_json
+            );
+            stream.write_all(http_resp.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.read(&mut chunk);
+        });
+
+        let rgba = vec![80u8, 140, 220, 255];
+        let png = encode_png_rgba_compressed(1, 1, &rgba).unwrap();
+        let data_url = format!("data:image/png;base64,{}", encode_base64(&png));
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {
+                "name": "three_live_from_image",
+                "arguments": {
+                    "image": data_url,
+                    "prompt": "Reconstruct lamp",
+                    "aiEndpoint": format!("http://{}/v1/chat/completions", addr),
+                    "aiModel": "test-vlm",
+                    "maxRepairs": 0,
+                    "includeContactSheet": true
+                }
+            }
+        });
+        let resp = handle_mcp_request(&req).unwrap();
+        handle.join().unwrap();
+
+        let result = &resp["result"];
+        assert_eq!(result["isError"], json!(false), "{result}");
+        let blocks = result["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["mimeType"], "image/png");
+        let report: Value = serde_json::from_str(blocks[1]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(report["applied"], json!(true));
+        assert_eq!(report["meshNames"], json!(["Lamp"]));
     }
 
     #[test]

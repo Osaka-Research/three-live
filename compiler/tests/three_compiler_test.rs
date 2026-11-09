@@ -3214,7 +3214,7 @@ fn test_mcp_server_end_to_end_jsonrpc_session() {
     assert_eq!(responses[0]["result"]["serverInfo"]["name"], "three-live-mcp");
 
     assert_eq!(responses[1]["id"], 2);
-    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 9);
 
     assert_eq!(responses[2]["id"], 3);
     assert_eq!(responses[2]["result"]["isError"], false);
@@ -3398,7 +3398,8 @@ fn test_canvas_texture_virtual_2d_context_glb_usdz_and_render() {
         let o = (y * 128 + x) * 4;
         [cam_rgba[o], cam_rgba[o + 1], cam_rgba[o + 2], cam_rgba[o + 3]]
     };
-    // Sample upper board region (x=16, y=36, avoiding centered white text) and lower region (x=64, y=92)
+    // Sample upper board region (x=16, y=36, avoiding centered white text) and lower region (x=64,
+    // y=92)
     let top_px = px(40, 24);
     let bot_px = px(64, 96);
     assert!(
@@ -3651,7 +3652,8 @@ fn test_full_pbr_material_maps_glb_usdz_and_software_render() {
         entry_count
     );
 
-    // Headless software rasterizer renders glowing orange emissive pixels despite dark baseColorTexture
+    // Headless software rasterizer renders glowing orange emissive pixels despite dark
+    // baseColorTexture
     let opts = three_live_compiler::render::RenderOptions {
         width: 128,
         height: 128,
@@ -3686,8 +3688,8 @@ fn test_full_pbr_material_maps_glb_usdz_and_software_render() {
 
 #[test]
 fn test_a5_hemisphere_light_and_sprite_parity() {
-    // 1. HemisphereLight: zero TL102 warnings, GLB round-trip preserves ground_color,
-    //    and software rasterizer shades upper hemisphere sky-blue and lower hemisphere warm-orange.
+    // 1. HemisphereLight: zero TL102 warnings, GLB round-trip preserves ground_color, and software
+    //    rasterizer shades upper hemisphere sky-blue and lower hemisphere warm-orange.
     let hemi_script = r#"
         const hemi = new THREE.HemisphereLight(0x0066ff, 0xff4400, 0.9);
         hemi.position.set(0, 1, 0);
@@ -3748,7 +3750,8 @@ fn test_a5_hemisphere_light_and_sprite_parity() {
         bot_px
     );
 
-    // 2. Sprite + SpriteMaterial: zero TL102/TL205 warnings, spherical billboard faces orthogonal cameras
+    // 2. Sprite + SpriteMaterial: zero TL102/TL205 warnings, spherical billboard faces orthogonal
+    //    cameras
     let sprite_script = r#"
         scene.add(new THREE.AmbientLight(0xffffff, 1.0));
         const c = document.createElement('canvas');
@@ -3788,8 +3791,9 @@ fn test_a5_hemisphere_light_and_sprite_parity() {
         Some("spherical")
     );
 
-    // Because Sprite billboards spherically toward the active camera, BOTH Front (+Z) AND Right (+X)
-    // views must see broad green coverage (whereas an un-billboarded XY quad would be edge-on from +X!).
+    // Because Sprite billboards spherically toward the active camera, BOTH Front (+Z) AND Right
+    // (+X) views must see broad green coverage (whereas an un-billboarded XY quad would be edge-on
+    // from +X!).
     for view in [
         three_live_compiler::render::RenderViewMode::Front,
         three_live_compiler::render::RenderViewMode::Right,
@@ -4066,7 +4070,8 @@ fn test_a7_mechanical_joints_glb_usdz_lint_and_sim() {
         "Expected GLB JSON chunk to preserve joint traits"
     );
 
-    // USDZ carries PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsDistanceJoint, PhysicsSphericalJoint.
+    // USDZ carries PhysicsRevoluteJoint, PhysicsPrismaticJoint, PhysicsDistanceJoint,
+    // PhysicsSphericalJoint.
     let usdz = three_live_compiler::transcode_three_to_usdz(script).expect("A7 USDZ export");
     let usdz_str = String::from_utf8_lossy(&usdz);
     for prim in [

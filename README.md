@@ -108,9 +108,10 @@ func loadSpatialScene(from threeJsCode: String, into arView: ARView) async throw
 
 Render a 4-up orthographic/camera contact sheet (zero GPU required), run the
 spatial linter for JSON frustum/overlap telemetry, compile `scene.js` to `.glb`
-/ `.usdz`, or attach `three-live-cli mcp` as a zero-dependency **Model Context
-Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
-`three_live_convert`, `three_live_sim`, `three_live_link`, and the
+/ `.usdz`, generate a scene from a reference image (`from-image`), or attach
+`three-live-cli mcp` as a zero-dependency **Model Context Protocol (MCP)** stdio
+server (`three_live_validate`, `three_live_render`, `three_live_convert`,
+`three_live_from_image`, `three_live_sim`, `three_live_link`, and the
 `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close` agent
 gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. The
 agent gym lets an agent play a scene step by step (act, observe, react) to check
@@ -122,11 +123,13 @@ command per step. `three-live-cli link scene.js --qr` prints a playground link
 (and a terminal QR code) that opens the scene on a phone, one tap from AR.
 Building from a photo, mockup, sketch, or blueprint? Pass `--reference` (or
 `reference` in MCP) to get a side-by-side + aligned-overlay + silhouette-diff
-sheet with IoU and proportion guidance:
+sheet with IoU and proportion guidance, or run `from-image` to synthesize and
+verify a procedural Three.js scene directly from an image:
 
 ```bash
 $ npx three-live-cli render scene.js --view=quad --grid --annotations -o contact_sheet.png
 $ npx three-live-cli render scene.js --reference=blueprint.png --view=front -o compare.png
+$ npx three-live-cli from-image photo.jpg -o scene.js --render compare.png
 $ npx three-live-cli validate scene.js --json
 $ npx three-live-cli link scene.js --qr
 $ npx three-live-cli convert scene.js -o model.usdz
@@ -220,6 +223,20 @@ check that the right objects are highlighted before an edit.
     Realtime voice sessions read the selection back instead, using the
     `select_meshes` tool.
 *   From code: `await el.selectByVoice('the red chairs', {mode: 'add'})`.
+
+**Image to Scene (`compileFromImage`):** turn a photo, sketch, or blueprint into
+a live procedural Three.js scene across Web
+(`await el.compileFromImage(image, {prompt, priors})`), Android
+(`editor.compileFromImage(bitmap, prompt, priors)`), iOS
+(`await editor.compileFromImage(imageData: ...)`), CLI
+(`three-live-cli from-image`), and MCP (`three_live_from_image`). Images are
+automatically downscaled and JPEG-normalized, compiled in the sandbox, verified
+against spatial quality gates (minimum 2 meshes, finite bounds, non-empty
+frustum coverage, and zero critical overlap errors) with one-turn auto-repair,
+and hot-swapped into the scene (`el.undoEdit()` reverts). Optional metric
+spatial priors (`userHeight`, `floorNormal`, and 3D detected object bounding
+boxes from ARCore / ARKit / `world-understanding`) anchor real-world scale and
+placement.
 
 --------------------------------------------------------------------------------
 
@@ -513,7 +530,7 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`three-live-studio.min.js`** | **`< 29 KB gz`** | Add-on plugin: PBR Next extensions, HDRI and SH irradiance, `bloom`/`outline` post-processing, `KHR_materials_variants`, `EXT_meshopt_compression`, `KHR_interactivity` VM, `lod` (`THREE.LOD` / `MSFT_lod`), 3D hotspots, and WebXR AR. |
 |  | **`three-live-cad.min.js`** | **`< 10 KB gz`** | Add-on plugin: 2D `Path`/`Shape` with ear-clipping hole triangulation, `ExtrudeGeometry` with beveling, 3D `CSG` BSP Booleans (`union`, `subtract`, `intersect`), and 3D stroke-font `TextGeometry`. |
 |  | **`three-live-procedural.min.js`** | **`< 28 KB gz`** | Add-on plugin: `Box3` & `Sphere` bounding-volume helpers, `CanvasTexture` + headless 2D `<canvas>` rasterizer, `ImprovedNoise`, `SimplexNoise`, `MathUtils.seededRandom`, `ProceduralTexture` PBR material presets (`wood`, `marble`, `brick`, `rust`, …), `Sprite` billboards, 2D curves (`SplineCurve`, `EllipseCurve`, `CurvePath`), and exportable scene helpers (`GridHelper`, `AxesHelper`, `ArrowHelper`, `BoxHelper`, `Box3Helper`). |
-|  | **`three-live-ai.min.js`** | **`< 24 KB gz`** | Opt-in bring-your-own-LLM scene editing: `el.editScene(instruction)` with sandbox validation, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak voice editing: tap-to-select, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. Also included in the full bundles. |
+|  | **`three-live-ai.min.js`** | **`< 24 KB gz`** | Opt-in bring-your-own-LLM scene editing & image-to-scene synthesis: `el.editScene(instruction)` and `el.compileFromImage(image, {prompt, priors})` with sandbox validation, spatial lint checks, one-turn auto-repair, hot-swap, and `el.undoEdit()`; `ai-chat` (Chat Completions-compatible) or custom providers. Tap & Speak and Talk-to-Select voice editing: tap/voice selection, push-to-talk, and `ai-realtime` / `gemini-live` voice sessions. Also included in the full bundles. |
 |  | **`three-live-animation.min.js`** | **`< 11 KB gz`** | Add-on plugin: 64-joint GPU skeletal skinning, morph targets, animation cross-fading, and two-bone / FABRIK inverse kinematics (`ik` / `THREE.IKSolver`). |
 |  | **`three-live-webgpu.min.js`** | **`< 17 KB gz`** | Opt-in WebGPU `GPURenderBundle` scene accelerator (`renderer="auto\|webgpu\|webgl2"`): compiles multi-thousand-part CAD and glTF assemblies into pre-recorded render bundles backed by storage buffers, with 1×1-scissor `pickMeshGPU` and automatic WebGL2 fallback for WebXR, `bloom`/`outline`, transmission, and custom shaders. |
 |  | **`three-live-full.min.js`** | **`< 180 KB gz`** | All-in-one 3D bundle (`three-live` + `studio` + `cad` + `procedural` + `animation` + `ai` + `webgpu`, all 18 plugins auto-registered). |
