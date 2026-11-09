@@ -40,10 +40,21 @@ import {
 } from './ai-voice';
 import {type AISelectionMode, installSelectionState} from './ai-select';
 
+/** One part of a multimodal chat message (`text` or `image_url`). */
+export type AIChatContentPart =
+  | {readonly type: 'text'; readonly text: string}
+  | {
+      readonly type: 'image_url';
+      readonly image_url: {
+        readonly url: string;
+        readonly detail?: 'auto' | 'low' | 'high';
+      };
+    };
+
 /** One chat message sent to an AI provider. */
 export interface AIChatMessage {
   readonly role: 'system' | 'user' | 'assistant';
-  readonly content: string;
+  readonly content: string | readonly AIChatContentPart[];
 }
 
 /** A pluggable LLM backend. */

@@ -53,6 +53,20 @@ import {
   setSelection,
 } from './plugins/ai-select';
 import {buildSelectIndex, matchSelection, parseVoiceCommand} from './plugins/ai-select-match';
+import {
+  buildImageMessages,
+  buildImageUserText,
+  formatSpatialPriors,
+  IMAGE_SYSTEM_PROMPT,
+  imageRepairMessage,
+  isAllowedImageUrl,
+} from './plugins/ai-image';
+export type {
+  AISpatialCamera,
+  AISpatialObject,
+  AISpatialPlane,
+  AISpatialPriors,
+} from './plugins/ai-image';
 export type {
   SelectCamera,
   SelectConfidence,
@@ -67,6 +81,8 @@ registerPlugin(aiPlugin);
 export {
   AIVoiceSession,
   aiPlugin,
+  buildImageMessages,
+  buildImageUserText,
   connectVoice,
   createAIChatProvider,
   createWebSpeechRecognizer,
@@ -75,8 +91,12 @@ export {
   describeSelection,
   describeVoiceSelection,
   editScene,
+  formatSpatialPriors,
   getSelection,
   hideSelectionChips,
+  IMAGE_SYSTEM_PROMPT,
+  imageRepairMessage,
+  isAllowedImageUrl,
   matchSelection,
   parseSelectReply,
   parseVoiceCommand,
@@ -98,6 +118,7 @@ export {
   undoEdit,
 };
 export type {
+  AIChatContentPart,
   AIChatMessage,
   AIChatProviderOptions,
   EditSceneOptions,

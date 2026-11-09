@@ -299,6 +299,9 @@ pub fn ai_call(request: &str) -> String {
         "parse_command" => {
             crate::ai_select::parse_voice_command(str_arg(&req, "text").unwrap_or("")).to_json()
         }
+        "image_messages" => crate::ai_image::image_messages_call(&req),
+        "image_validate" => crate::ai_image::image_validate_call(&req),
+        "image_repair" => crate::ai_image::image_repair_call(&req),
         _ if op.starts_with("voice_") => crate::ai_voice::voice_call(op, &req),
         _ => json!({"error": format!("unknown op '{}'", op)}),
     };
@@ -458,6 +461,23 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(r["names"], json!(["Lamp"]));
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "image_messages", "imageUrl": "data:image/png;base64,iVBORw0KGgo=", "prompt": "add chair"})
+                .to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["messages"].as_array().unwrap().len(), 2);
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "image_validate", "code": BASE}).to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["ok"], true);
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "image_repair", "warnings": ["[TL302] Scene contains no Light"]})
+                .to_string(),
+        ))
+        .unwrap();
+        assert!(r["message"].as_str().unwrap().contains("[TL302]"));
         assert!(ai_call("{").contains("invalid request JSON"));
         assert!(ai_call("{\"op\":\"nope\"}").contains("unknown op"));
     }
