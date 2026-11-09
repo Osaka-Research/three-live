@@ -235,6 +235,8 @@ export type {
 export * from './xr-live/src/plugins/index';
 /** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
 export * from './xr-live/src/sim/index';
+/** Optional WebGPU `GPURenderBundle` scene accelerator (`three-live/webgpu`, `three-live-webgpu.min.js`). */
+export * from './three-live/src/webgpu';
 /** Optional WebGPU Gaussian Splatting compute & render accelerator (`xr-live/webgpu`, `xr-live-webgpu.min.js`). */
 export * from './xr-live/src/webgpu';
 
@@ -331,6 +333,8 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
+  /** `three-live-webgpu`: scene rendering backend (`'auto'`, `'webgpu'`, or `'webgl2'`). */
+  renderer?: 'auto' | 'webgpu' | 'webgl2' | string;
   /** `xr-live-webgpu`: Gaussian splatting backend (`'auto'`, `'webgpu'`, `'hybrid'`, or `'webgl2'`). */
   'splat-renderer'?: 'auto' | 'webgpu' | 'hybrid' | 'webgl2' | string;
   /** `xr-live-spatial` / `xr-live-webgpu`: Spherical Harmonics view-dependent color quality (`'normal'` or `'high'`). */

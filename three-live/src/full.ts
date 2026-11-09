@@ -37,3 +37,4 @@ export * from './index';
 export * from './procedural';
 export * from './studio';
 export * from './three-author';
+export * from './webgpu';

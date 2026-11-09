@@ -27,7 +27,7 @@ import {
   CLIENT_SCRIPTS_DISABLED_ERROR,
   CLIENT_SCRIPTS_DISABLED_TOAST,
 } from './messages';
-import {getSharedRegistry} from './plugin';
+import {getSharedRegistry, type RendererPreference} from './plugin';
 import {
   normalizeToneMapping,
   SANDBOX_HOST_SCENE_LIMITS,
@@ -43,7 +43,13 @@ import {
   type ToneMappingMode,
 } from './three-view';
 
-export type {DecoderType, MeshDecoder, OrbitLimits, ToneMappingMode};
+export type {
+  DecoderType,
+  MeshDecoder,
+  OrbitLimits,
+  RendererPreference,
+  ToneMappingMode,
+};
 
 export type ARMode = 'quick-look' | 'webxr' | 'scene-viewer';
 
@@ -179,23 +185,8 @@ export class ThreeLiveElement extends BaseElement {
     'auto-rotate',
     'auto-rotate-delay',
     'rotation-per-second',
+    'renderer',
   ];
-
-  private static get arProvider(): ARProvider | undefined {
-    return getSharedRegistry().arProvider;
-  }
-
-  private static set arProvider(val: ARProvider | undefined) {
-    getSharedRegistry().arProvider = val;
-  }
-
-  private static get scriptRunner(): ScriptRunner | undefined {
-    return getSharedRegistry().scriptRunner;
-  }
-
-  private static set scriptRunner(val: ScriptRunner | undefined) {
-    getSharedRegistry().scriptRunner = val;
-  }
 
   /**
    * URL of the Three-Live IIFE bundle (e.g. `three-live.min.js`) that the
@@ -256,7 +247,7 @@ export class ThreeLiveElement extends BaseElement {
    * Registers a pluggable procedural script runner (e.g. from `three-live/full` or `three-author`).
    */
   public static registerScriptRunner(runner: ScriptRunner): void {
-    ThreeLiveElement.scriptRunner = runner;
+    getSharedRegistry().scriptRunner = runner;
   }
 
   /**
@@ -275,8 +266,7 @@ export class ThreeLiveElement extends BaseElement {
         existing.prototype instanceof ThreeLiveElement
       );
     }
-    class ThreeLiveModelViewerElement extends ThreeLiveElement {}
-    customElements.define(tagName, ThreeLiveModelViewerElement);
+    customElements.define(tagName, class extends ThreeLiveElement {});
     return true;
   }
 
@@ -303,14 +293,10 @@ export class ThreeLiveElement extends BaseElement {
       | ARProvider
       | ((options: ARLaunchOptions) => Promise<ARLaunchResult>),
   ): void {
-    if (typeof provider === 'function') {
-      ThreeLiveElement.arProvider = {activateAR: provider};
-    } else {
-      ThreeLiveElement.arProvider = provider;
-    }
+    getSharedRegistry().arProvider =
+      typeof provider === 'function' ? {activateAR: provider} : provider;
     if (typeof document !== 'undefined') {
-      const elements = document.querySelectorAll('three-live');
-      elements.forEach((el) => {
+      document.querySelectorAll('three-live').forEach((el) => {
         if (el instanceof ThreeLiveElement) {
           el.updateARButtonVisibility();
         }
@@ -322,7 +308,7 @@ export class ThreeLiveElement extends BaseElement {
    * Returns whether an AR provider is currently registered.
    */
   public static isARSupported(): boolean {
-    return !!ThreeLiveElement.arProvider;
+    return !!getSharedRegistry().arProvider;
   }
 
   public static registerPlugin = ThreeView.registerPlugin;
@@ -457,6 +443,7 @@ export class ThreeLiveElement extends BaseElement {
     newVal: string | null,
   ): void {
     if (oldVal === newVal) return;
+    const v = this.viewer;
 
     switch (name) {
       case 'src':
@@ -480,11 +467,6 @@ export class ThreeLiveElement extends BaseElement {
         if (newVal) this.loadScriptFromSrc(newVal).catch(() => {});
         break;
 
-      case 'sandbox':
-      case 'allow-client-scripts':
-      case 'ios-src':
-        break;
-
       case 'poster':
         this.updatePoster(newVal);
         break;
@@ -499,43 +481,33 @@ export class ThreeLiveElement extends BaseElement {
         break;
 
       case 'exposure':
-        if (this.viewer && newVal !== null) {
+        if (v && newVal !== null) {
           const val = parseFloat(newVal);
-          if (!isNaN(val)) {
-            this.viewer.setExposure(val);
-          }
+          if (!isNaN(val)) v.setExposure(val);
         }
         break;
 
       case 'shadow-intensity':
       case 'shadow-softness':
-        if (this.viewer) {
-          this.viewer.setShadow(this.shadowIntensity, this.shadowSoftness);
-        }
+        v?.setShadow(this.shadowIntensity, this.shadowSoftness);
         break;
 
       case 'tone-mapping':
         // Removing the attribute (newVal === null) restores `neutral`.
-        this.viewer?.setToneMapping(normalizeToneMapping(newVal));
+        v?.setToneMapping(normalizeToneMapping(newVal));
         break;
 
       case 'environment-image':
-        if (this.viewer) {
-          this.viewer.setEnvironmentImage(newVal).catch(() => {});
-        }
+        v?.setEnvironmentImage(newVal).catch(() => {});
         break;
 
       case 'skybox-image':
-        if (this.viewer) {
-          this.viewer.setSkyboxImage?.(newVal)?.catch?.(() => {});
-        }
+        v?.setSkyboxImage?.(newVal)?.catch?.(() => {});
         break;
 
       case 'camera-controls': {
         const interactive = this.cameraControls;
-        if (this.viewer) {
-          this.viewer.setInteractive?.(interactive);
-        }
+        v?.setInteractive?.(interactive);
         if (this.canvas) {
           this.canvas.style.touchAction = interactive ? 'none' : 'auto';
         }
@@ -543,43 +515,35 @@ export class ThreeLiveElement extends BaseElement {
       }
 
       case 'autoplay':
-        if (this.viewer) {
-          this.viewer.setAutoplay(newVal !== null && newVal !== 'false');
-        }
+        v?.setAutoplay(newVal !== null && newVal !== 'false');
         break;
 
       case 'animation-name':
-        if (this.viewer && newVal !== null) {
-          this.viewer.setAnimationName(newVal);
-        }
+        if (v && newVal !== null) v.setAnimationName(newVal);
         break;
 
       case 'variant-name':
-        if (this.viewer) {
-          this.selectVariant(newVal);
-        }
+        if (v) this.selectVariant(newVal);
         break;
 
       case 'auto-rotate':
-        if (this.viewer) {
-          this.viewer.setAutoRotate(newVal !== null && newVal !== 'false');
-        }
+        v?.setAutoRotate(newVal !== null && newVal !== 'false');
         break;
 
       case 'auto-rotate-delay':
-        if (this.viewer) {
-          this.viewer.setAutoRotateDelay(this.autoRotateDelay);
-        }
+        v?.setAutoRotateDelay(this.autoRotateDelay);
         break;
 
       case 'rotation-per-second':
-        if (this.viewer) {
-          this.viewer.setAutoRotateSpeed(this.parseRotationPerSecond(newVal));
-        }
+        v?.setAutoRotateSpeed(this.parseRotationPerSecond(newVal));
         break;
 
       case 'ar':
         this.updateARButtonVisibility();
+        break;
+
+      case 'renderer':
+        v?.render();
         break;
     }
 
@@ -886,6 +850,14 @@ export class ThreeLiveElement extends BaseElement {
     return this.viewer ? this.viewer.getAvailableVariants() : [];
   }
 
+  get renderer(): RendererPreference {
+    const raw = (this.getAttr('renderer') || 'auto').trim().toLowerCase();
+    return raw === 'webgpu' || raw === 'webgl2' ? raw : 'auto';
+  }
+  set renderer(val: RendererPreference | null) {
+    this.setAttr('renderer', val);
+  }
+
   protected fireEvent(type: string, detail?: unknown): void {
     this.dispatchEvent(
       new CustomEvent(type, {bubbles: true, composed: true, detail}),
@@ -943,15 +915,11 @@ export class ThreeLiveElement extends BaseElement {
   // -------------------------------------------------------------------------
 
   public play(): void {
-    if (this.viewer) {
-      this.viewer.playAnimation(this.animationName || undefined);
-    }
+    this.viewer?.playAnimation(this.animationName || undefined);
   }
 
   public pause(): void {
-    if (this.viewer) {
-      this.viewer.pauseAnimation();
-    }
+    this.viewer?.pauseAnimation();
   }
 
   public resetCamera(): void {
@@ -968,8 +936,7 @@ export class ThreeLiveElement extends BaseElement {
     distance?: number,
     zoom?: number,
   ): void {
-    if (!this.viewer) return;
-    this.viewer.setCamera(theta, phi, distance, zoom);
+    this.viewer?.setCamera(theta, phi, distance, zoom);
   }
 
   public getCameraOrbit(): {
@@ -978,17 +945,14 @@ export class ThreeLiveElement extends BaseElement {
     radius: number;
     toString(): string;
   } {
-    if (this.viewer) {
-      return this.viewer.getCameraOrbit();
-    }
-    return {
-      theta: 0,
-      phi: 0,
-      radius: 3,
-      toString() {
-        return '0rad 0rad 3m';
-      },
-    };
+    return (
+      this.viewer?.getCameraOrbit() ?? {
+        theta: 0,
+        phi: 0,
+        radius: 3,
+        toString: () => '0rad 0rad 3m',
+      }
+    );
   }
 
   public getCameraTarget(): {
@@ -1124,7 +1088,7 @@ export class ThreeLiveElement extends BaseElement {
       toast = document.createElement('div');
       toast.className = 'three-live-toast';
       toast.style.cssText =
-        'position:absolute;bottom:70px;left:50%;transform:translateX(-50%) translateY(10px);z-index:10;padding:10px 16px;background-color:rgba(15,23,42,0.94);color:#f8fafc;border:1px solid rgba(56,189,248,0.45);border-radius:14px;font:500 13px/1.35 system-ui,-apple-system,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,0.45);backdrop-filter:blur(12px);pointer-events:none;opacity:0;transition:opacity .25s ease,transform .25s ease;max-width:88%;text-align:center;white-space:normal;word-break:break-word';
+        'position:absolute;bottom:70px;left:50%;transform:translateX(-50%) translateY(10px);z-index:10;padding:10px 16px;background:rgba(15,23,42,.94);color:#f8fafc;border:1px solid rgba(56,189,248,.45);border-radius:14px;font:500 13px/1.35 system-ui,-apple-system,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,.45);backdrop-filter:blur(12px);pointer-events:none;opacity:0;transition:opacity .25s,transform .25s;max-width:88%;text-align:center;white-space:normal;word-break:break-word';
       this.appendChild(toast);
     }
     toast.textContent = message;
@@ -1163,7 +1127,8 @@ export class ThreeLiveElement extends BaseElement {
       failAR(new Error('No 3D model is loaded in <three-live>.'));
     }
 
-    if (!ThreeLiveElement.arProvider) {
+    const arProvider = getSharedRegistry().arProvider;
+    if (!arProvider) {
       failAR(
         new Error(
           "AR module not bundled. Use the default 'three-live' bundle or call ThreeLiveElement.registerAR().",
@@ -1178,7 +1143,7 @@ export class ThreeLiveElement extends BaseElement {
 
     try {
       this.fireEvent('ar-status', {status: 'session-started'});
-      const result = await ThreeLiveElement.arProvider.activateAR({
+      const result = await arProvider.activateAR({
         model: (iosSrc || this.currentModel) as any,
         glbUrl:
           typeof this.currentModel === 'string' ? this.currentModel : undefined,
@@ -1208,16 +1173,14 @@ export class ThreeLiveElement extends BaseElement {
           this.isDesktopMac() &&
           typeof document !== 'undefined' &&
           this.currentModel &&
-          ThreeLiveElement.arProvider.createUSDZBlob
+          arProvider.createUSDZBlob
         ) {
           try {
             const usdzBlob =
               this.currentModel instanceof Blob &&
               this.currentModel.type === 'model/vnd.usdz+zip'
                 ? this.currentModel
-                : ThreeLiveElement.arProvider.createUSDZBlob(
-                    this.currentModel as any,
-                  );
+                : arProvider.createUSDZBlob(this.currentModel);
             const url = URL.createObjectURL(usdzBlob);
             const a = document.createElement('a');
             a.href = url;
@@ -1245,13 +1208,13 @@ export class ThreeLiveElement extends BaseElement {
           this.activeXRSession = result.session;
         }
         const modeMsg =
-          result.mode === 'quick-look'
-            ? 'Opening Apple AR Quick Look...'
-            : result.mode === 'scene-viewer'
-              ? 'Opening Google Scene Viewer...'
-              : result.mode === 'webxr'
-                ? 'WebXR AR session started.'
-                : '';
+          (
+            {
+              'quick-look': 'Opening Apple AR Quick Look...',
+              'scene-viewer': 'Opening Google Scene Viewer...',
+              webxr: 'WebXR AR session started.',
+            } as Record<string, string | undefined>
+          )[result.mode || ''] || '';
         if (modeMsg) this.showToast(modeMsg);
       }
       return result;
@@ -1453,16 +1416,16 @@ export class ThreeLiveElement extends BaseElement {
       const svgNs = 'http://www.w3.org/2000/svg';
       if (typeof document.createElementNS === 'function') {
         const svg = document.createElementNS(svgNs, 'svg');
-        for (const [k, v] of [
-          ['width', '20'],
-          ['height', '20'],
-          ['viewBox', '0 0 24 24'],
-          ['fill', 'none'],
-          ['stroke', 'currentColor'],
-          ['stroke-width', '2'],
-          ['stroke-linecap', 'round'],
-          ['stroke-linejoin', 'round'],
-        ]) {
+        for (const [k, v] of Object.entries({
+          width: '20',
+          height: '20',
+          viewBox: '0 0 24 24',
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': '2',
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+        })) {
           svg.setAttribute(k, v);
         }
         svg.style.marginRight = '6px';
@@ -1480,16 +1443,17 @@ export class ThreeLiveElement extends BaseElement {
       this.syncARButtonLabel(btn);
 
       btn.style.cssText =
-        'position:absolute;right:16px;bottom:16px;z-index:2;align-items:center;justify-content:center;padding:8px 16px;background-color:rgba(15,23,42,0.85);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:9999px;font:600 13px system-ui,-apple-system,sans-serif;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 4px 12px rgba(0,0,0,0.25);transition:transform .15s ease,background-color .15s ease;display:none';
+        'position:absolute;right:16px;bottom:16px;z-index:2;align-items:center;justify-content:center;padding:8px 16px;background-color:rgba(15,23,42,.85);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:9999px;font:600 13px system-ui,-apple-system,sans-serif;cursor:pointer;backdrop-filter:blur(8px);box-shadow:0 4px 12px rgba(0,0,0,.25);transition:transform .15s,background-color .15s;display:none';
 
-      btn.addEventListener('mouseenter', () => {
-        btn.style.backgroundColor = 'rgba(30, 41, 59, 0.95)';
-        btn.style.transform = 'scale(1.04)';
-      });
-      btn.addEventListener('mouseleave', () => {
-        btn.style.backgroundColor = 'rgba(15, 23, 42, 0.85)';
-        btn.style.transform = 'scale(1)';
-      });
+      for (const [ev, bg, sc] of [
+        ['mouseenter', 'rgba(30, 41, 59, 0.95)', 'scale(1.04)'],
+        ['mouseleave', 'rgba(15, 23, 42, 0.85)', 'scale(1)'],
+      ] as const) {
+        btn.addEventListener(ev, () => {
+          btn.style.backgroundColor = bg;
+          btn.style.transform = sc;
+        });
+      }
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.activateAR();
@@ -1502,7 +1466,7 @@ export class ThreeLiveElement extends BaseElement {
   }
 
   public updateARButtonVisibility(): void {
-    const showAR = this.hasAttribute('ar') && !!ThreeLiveElement.arProvider;
+    const showAR = this.hasAttribute('ar') && ThreeLiveElement.isARSupported();
     const customBtn =
       typeof this.querySelector === 'function'
         ? this.querySelector<HTMLElement>('[slot="ar-button"]')
@@ -1655,7 +1619,7 @@ export class ThreeLiveElement extends BaseElement {
       callbacks: ScriptExecutionCallbacks,
     ) => Promise<ScriptExecutionHandle | void>,
   ): Promise<ArrayBuffer | GLBData | void> {
-    const runner = ThreeLiveElement.scriptRunner;
+    const runner = getSharedRegistry().scriptRunner;
     if (!runner) {
       const error = new Error(
         'Script execution requires "three-live/full" or registerScriptRunner().',
@@ -1730,7 +1694,7 @@ export class ThreeLiveElement extends BaseElement {
    * `ThreeLiveElement.allowClientScripts = true` or `allow-client-scripts`.
    */
   executeScript(script: string): Promise<ArrayBuffer | GLBData | void> {
-    if (!ThreeLiveElement.scriptRunner) {
+    if (!getSharedRegistry().scriptRunner) {
       return this.runWithScriptRunner(() => Promise.resolve());
     }
     if (!this.allowClientScripts) {

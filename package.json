@@ -130,6 +130,11 @@
       "import": "./three-live/dist/three-live-animation.js",
       "require": "./three-live/dist/three-live-animation.cjs"
     },
+    "./webgpu": {
+      "types": "./three-live/dist/three-live-webgpu.d.ts",
+      "import": "./three-live/dist/three-live-webgpu.js",
+      "require": "./three-live/dist/three-live-webgpu.cjs"
+    },
     "./element": {
       "types": "./three-live/dist/three-live-element.d.ts",
       "import": "./three-live/dist/three-live-element.js",

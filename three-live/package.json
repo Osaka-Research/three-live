@@ -108,6 +108,11 @@
       "import": "./dist/three-live-animation.js",
       "require": "./dist/three-live-animation.cjs"
     },
+    "./webgpu": {
+      "types": "./dist/three-live-webgpu.d.ts",
+      "import": "./dist/three-live-webgpu.js",
+      "require": "./dist/three-live-webgpu.cjs"
+    },
     "./element": {
       "types": "./dist/three-live-element.d.ts",
       "import": "./dist/three-live-element.js",

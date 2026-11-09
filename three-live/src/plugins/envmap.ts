@@ -89,6 +89,9 @@ export async function loadEnvironmentTexture(
   );
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.generateMipmap(gl.TEXTURE_2D);
+  if (texture) {
+    (texture as {__gpuImageSource?: unknown}).__gpuImageSource = bmp;
+  }
   return texture;
 }
 

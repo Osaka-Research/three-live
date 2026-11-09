@@ -176,10 +176,80 @@ export interface SharedThreeLiveRegistry {
    */
   workerExtensionInstallers?: Array<(threeNs: unknown, reg: unknown) => void>;
   /**
+   * Optional WebGPU `GPURenderBundle` scene accelerator installed by
+   * `three-live-webgpu.min.js` for multi-thousand-part CAD & glTF scenes.
+   */
+  gpuSceneAccelerator?: GPUSceneAccelerator;
+  /**
+   * Optional shared WebGPU device provider so multiple WebGPU add-ons on the
+   * same page reuse a single `GPUDevice`.
+   */
+  webgpuDeviceProvider?: SharedWebGPUDeviceProvider;
+  /**
    * Optional WebGPU Gaussian Splatting compute & render accelerator installed
    * by `xr-live-webgpu.min.js`. Pure TypeScript hook so core bundles add 0 B.
    */
   splatAccelerator?: SplatGPUAccelerator;
+}
+
+/** Host `<three-live>` / `<xr-live>` `renderer` attribute preference. */
+export type RendererPreference = 'auto' | 'webgpu' | 'webgl2';
+
+/** Per-pass parameters forwarded from `ThreeView.render` to `GPUSceneAccelerator`. */
+export interface GPUSceneRenderParams {
+  readonly viewer: object;
+  readonly vp: Float32Array;
+  readonly proj: Float32Array;
+  readonly view: Float32Array;
+  readonly eyePos: readonly [number, number, number];
+  readonly toneMappingIndex: number;
+  readonly viewport: readonly [number, number, number, number];
+  readonly eye: 'left' | 'right' | 'none';
+  readonly clear: boolean;
+  readonly isAR: boolean;
+}
+
+/** Optional WebGPU scene renderer registered on `SharedThreeLiveRegistry`. */
+export interface GPUSceneAccelerator {
+  /**
+   * Renders `viewer`'s scene via WebGPU (`GPURenderBundle` + storage matrix
+   * buffer). Returns `true` when the WebGPU layer drew the pass so `ThreeView`
+   * skips its per-mesh WebGL2 uniform/draw loop, or `false` to fall back
+   * seamlessly to WebGL2 for this frame.
+   */
+  renderScene(
+    viewer: object,
+    vp: Float32Array,
+    proj: Float32Array,
+    view: Float32Array,
+    eyePos: readonly [number, number, number],
+    toneMappingIndex: number,
+    viewport: readonly [number, number, number, number],
+    eye: 'left' | 'right' | 'none',
+    clear: boolean,
+    isAR: boolean,
+  ): boolean;
+  /**
+   * Optional coarse GPU Color-ID mesh pick (`>= 0` mesh index, `-1` miss, or
+   * `null` to fall back to WebGL2/CPU picking).
+   */
+  pickMesh?(
+    viewer: object,
+    canvasX: number,
+    canvasY: number,
+    vp: Float32Array,
+  ): number | null;
+  /** Hides any WebGPU scene layer associated with `viewer`. */
+  hideLayer?(viewer: object): void;
+  /** Releases all WebGPU buffers, textures, and canvas state for `viewer`. */
+  disposeViewer?(viewer: object): void;
+}
+
+/** Shared `GPUDevice` provider stored on `SharedThreeLiveRegistry`. */
+export interface SharedWebGPUDeviceProvider {
+  acquireDevice(): Promise<unknown>;
+  peekDevice(): unknown;
+  getCanvasFormat(): string;
 }
 
 /** Parameters passed from `XRSplatLoader` to an installed WebGPU splat accelerator. */
