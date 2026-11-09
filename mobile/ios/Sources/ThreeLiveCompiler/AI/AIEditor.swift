@@ -13,19 +13,28 @@
 // limitations under the License.
 
 import Foundation
+import simd
 
 #if canImport(FoundationNetworking)
   import FoundationNetworking
+#endif
+#if canImport(UIKit)
+  import UIKit
+#endif
+#if canImport(ARKit) && os(iOS)
+  import ARKit
 #endif
 
 /// One chat message sent to an AI provider.
 public struct AIChatMessage: Sendable, Equatable {
   public let role: String
   public let content: String
+  public let imageUrls: [String]
 
-  public init(role: String, content: String) {
+  public init(role: String, content: String, imageUrls: [String] = []) {
     self.role = role
     self.content = content
+    self.imageUrls = imageUrls
   }
 }
 
@@ -76,8 +85,19 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
   }
 
   public func complete(_ messages: [AIChatMessage]) async throws -> String {
+    let serializedMessages: [[String: Any]] = messages.map { msg in
+      let content: Any
+      if msg.imageUrls.isEmpty {
+        content = msg.content
+      } else {
+        content =
+          msg.imageUrls.map { ["type": "image_url", "image_url": ["url": $0]] }
+          + [["type": "text", "text": msg.content]]
+      }
+      return ["role": msg.role, "content": content]
+    }
     var body: [String: Any] = [
-      "messages": messages.map { ["role": $0.role, "content": $0.content] },
+      "messages": serializedMessages,
       "temperature": temperature,
       "stream": false,
     ]
@@ -103,12 +123,14 @@ public final class AIChatProvider: AIProvider, @unchecked Sendable {
     guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
       throw AIEditError("ai-chat: endpoint returned non-JSON content.")
     }
-    let message = ((root["choices"] as? [Any])?.first as? [String: Any])?["message"] as? [String: Any]
+    let message =
+      ((root["choices"] as? [Any])?.first as? [String: Any])?["message"] as? [String: Any]
     var text: String?
     if let s = message?["content"] as? String {
       text = s
     } else if let parts = message?["content"] as? [Any] {
-      text = parts.map { ($0 as? String) ?? (($0 as? [String: Any])?["text"] as? String ?? "") }.joined()
+      text = parts.map { ($0 as? String) ?? (($0 as? [String: Any])?["text"] as? String ?? "") }
+        .joined()
     }
     guard let out = text, !out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw AIEditError("ai-chat: response had no message content.")
@@ -132,10 +154,12 @@ public final class NativeAICore: AICore, @unchecked Sendable {
   public func call(_ request: [String: Any]) async throws -> [String: Any] {
     let data = try JSONSerialization.data(withJSONObject: request)
     let text = String(decoding: data, as: UTF8.self)
-    // `validate` (and `select` / `select_messages` with a `source`) run the scene on the compiler
-    // thread; the other ops are pure.
+    // `validate` / `image_validate` (and `select` / `select_messages` with a `source`) run the
+    // scene on the compiler thread; the other ops are pure.
     let op = request["op"] as? String ?? ""
-    let usesEngine = op == "validate" || ((op == "select" || op == "select_messages") && request["source"] != nil)
+    let usesEngine =
+      op == "validate" || op == "image_validate"
+      || ((op == "select" || op == "select_messages") && request["source"] != nil)
     let reply = try await ThreeCompiler.aiCall(text, onCompilerThread: usesEngine)
     guard let obj = (try? JSONSerialization.jsonObject(with: Data(reply.utf8))) as? [String: Any]
     else { throw AIEditError("invalid response from native core") }
@@ -152,6 +176,189 @@ public struct AICamera: Sendable, Equatable {
     self.eye = eye
     self.target = target
   }
+}
+
+/// One metric plane prior (`horizontal` or `vertical`) forwarded to `AIEditor.compileFromImage`.
+public struct AISpatialPlane: Sendable, Equatable {
+  public var label: String?
+  public var orientation: String
+  public var center: [Double]
+  public var extent: [Double]?
+  public var normal: [Double]?
+
+  public init(
+    orientation: String, center: [Double], extent: [Double]? = nil, normal: [Double]? = nil,
+    label: String? = nil
+  ) {
+    self.orientation = orientation
+    self.center = center
+    self.extent = extent
+    self.normal = normal
+    self.label = label
+  }
+
+  public func toDictionary() -> [String: Any] {
+    var out: [String: Any] = ["orientation": orientation, "center": center]
+    if let label, !label.isEmpty { out["label"] = label }
+    if let extent, extent.allSatisfy({ $0.isFinite }) { out["extent"] = extent }
+    if let normal, normal.allSatisfy({ $0.isFinite }) { out["normal"] = normal }
+    return out
+  }
+}
+
+/// One metric 3D object prior forwarded to `AIEditor.compileFromImage`.
+public struct AISpatialObject: Sendable, Equatable {
+  public var label: String
+  public var center: [Double]
+  public var size: [Double]?
+  public var yawDeg: Double?
+
+  public init(label: String, center: [Double], size: [Double]? = nil, yawDeg: Double? = nil) {
+    self.label = label
+    self.center = center
+    self.size = size
+    self.yawDeg = yawDeg
+  }
+
+  public func toDictionary() -> [String: Any] {
+    var out: [String: Any] = ["label": label, "center": center]
+    if let size, size.allSatisfy({ $0.isFinite }) { out["size"] = size }
+    if let yawDeg, yawDeg.isFinite { out["yawDeg"] = yawDeg }
+    return out
+  }
+}
+
+/// Optional metric spatial priors forwarded to `AIEditor.compileFromImage`.
+public struct AISpatialPriors: Sendable, Equatable {
+  public var floorY: Double?
+  public var camera: AICamera?
+  public var cameraFovDeg: Double?
+  public var planes: [AISpatialPlane]
+  public var objects: [AISpatialObject]
+
+  public init(
+    floorY: Double? = nil, camera: AICamera? = nil, cameraFovDeg: Double? = nil,
+    planes: [AISpatialPlane] = [], objects: [AISpatialObject] = []
+  ) {
+    self.floorY = floorY
+    self.camera = camera
+    self.cameraFovDeg = cameraFovDeg
+    self.planes = planes
+    self.objects = objects
+  }
+
+  public func toDictionary() -> [String: Any] {
+    var out: [String: Any] = [:]
+    if let floorY, floorY.isFinite { out["floorY"] = floorY }
+    if let camera, camera.eye.allSatisfy({ $0.isFinite }), camera.target.allSatisfy({ $0.isFinite })
+    {
+      var cam: [String: Any] = ["eye": camera.eye, "target": camera.target]
+      if let fov = cameraFovDeg, fov.isFinite { cam["fovDeg"] = fov }
+      out["camera"] = cam
+    }
+    let validPlanes = planes.filter { $0.center.count >= 3 && $0.center.allSatisfy { $0.isFinite } }
+      .map { $0.toDictionary() }
+    if !validPlanes.isEmpty { out["planes"] = validPlanes }
+    let validObjects = objects.filter {
+      $0.center.count >= 3 && $0.center.allSatisfy { $0.isFinite }
+    }.map { $0.toDictionary() }
+    if !validObjects.isEmpty { out["objects"] = validObjects }
+    return out
+  }
+
+  /// Builds `AISpatialPriors` from `WorldUnderstanding.TrackedPlane` and `WorldUnderstanding.Detection3D` snapshots.
+  public static func fromWorldUnderstanding(
+    planes: [WorldUnderstanding.TrackedPlane] = [],
+    detections: [WorldUnderstanding.Detection3D] = [],
+    camera: AICamera? = nil,
+    floorY: Double? = nil
+  ) -> AISpatialPriors {
+    let mappedPlanes: [AISpatialPlane] = planes.prefix(32).map { p in
+      let d = p.radius.isFinite && p.radius > 0 ? Double(p.radius) * 2.0 : nil
+      return AISpatialPlane(
+        orientation: p.orientation.rawValue,
+        center: [Double(p.center.x), Double(p.center.y), Double(p.center.z)],
+        extent: d.map { [$0, $0] },
+        normal: [Double(p.normal.x), Double(p.normal.y), Double(p.normal.z)]
+      )
+    }
+    let mappedObjects: [AISpatialObject] = detections.prefix(32).compactMap { det in
+      let lbl = det.label.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !lbl.isEmpty else { return nil }
+      let w = Double(det.widthMeters)
+      let h = Double(det.heightMeters)
+      let d = w.isFinite && w > 0 ? w : 0.3
+      return AISpatialObject(
+        label: lbl,
+        center: [Double(det.position.x), Double(det.position.y), Double(det.position.z)],
+        size: (w.isFinite && w > 0 && h.isFinite && h > 0) ? [w, h, d] : nil
+      )
+    }
+    return AISpatialPriors(
+      floorY: floorY, camera: camera, planes: mappedPlanes, objects: mappedObjects)
+  }
+
+  #if canImport(ARKit) && os(iOS)
+    /// Extracts metric planes (`ARPlaneAnchor`), lowest floor Y, camera pose, and 3D detections from an `ARFrame`.
+    public static func fromARFrame(
+      _ frame: ARFrame, detections: [WorldUnderstanding.Detection3D] = []
+    ) -> AISpatialPriors {
+      let camM = frame.camera.transform
+      let eye = SIMD3<Float>(camM.columns.3.x, camM.columns.3.y, camM.columns.3.z)
+      let fwd = SIMD3<Float>(-camM.columns.2.x, -camM.columns.2.y, -camM.columns.2.z)
+      let target = eye + fwd * 2.0
+      let cam = AICamera(
+        eye: [Double(eye.x), Double(eye.y), Double(eye.z)],
+        target: [Double(target.x), Double(target.y), Double(target.z)]
+      )
+      var floorY: Double?
+      var planes: [AISpatialPlane] = []
+      for anchor in frame.anchors {
+        guard let pa = anchor as? ARPlaneAnchor, planes.count < 32 else { continue }
+        let m = pa.transform
+        let localC = SIMD4<Float>(pa.center.x, pa.center.y, pa.center.z, 1)
+        let worldC = m * localC
+        let normal = SIMD3<Float>(m.columns.1.x, m.columns.1.y, m.columns.1.z)
+        let orientation = pa.alignment == .vertical ? "vertical" : "horizontal"
+        let w: Double
+        let h: Double
+        if #available(iOS 16.0, *) {
+          w = Double(pa.planeExtent.width)
+          h = Double(pa.planeExtent.height)
+        } else {
+          w = Double(pa.extent.x)
+          h = Double(pa.extent.z)
+        }
+        let extent: [Double]? = (w.isFinite && w > 0 && h.isFinite && h > 0) ? [w, h] : nil
+        let label: String?
+        switch pa.classification {
+        case .floor:
+          label = "floor"
+          let y = Double(worldC.y)
+          if y.isFinite, floorY == nil || y < floorY! { floorY = y }
+        case .table: label = "table"
+        case .wall: label = "wall"
+        case .ceiling: label = "ceiling"
+        case .seat: label = "seat"
+        case .door: label = "door"
+        case .window: label = "window"
+        default: label = nil
+        }
+        planes.append(
+          AISpatialPlane(
+            orientation: orientation,
+            center: [Double(worldC.x), Double(worldC.y), Double(worldC.z)],
+            extent: extent,
+            normal: [Double(normal.x), Double(normal.y), Double(normal.z)],
+            label: label
+          ))
+      }
+      let base = fromWorldUnderstanding(
+        planes: [], detections: detections, camera: cam, floorY: floorY)
+      return AISpatialPriors(
+        floorY: base.floorY, camera: base.camera, planes: planes, objects: base.objects)
+    }
+  #endif
 }
 
 /// Outcome of a spoken selection request (Talk-to-Select). Mirrors `AIVoiceSelection` on the web.
@@ -213,6 +420,8 @@ public struct EditResult: Sendable, Equatable {
 public final class AIEditor: @unchecked Sendable {
   public static let maxHistory = 20
   public static let superseded = "editScene superseded by a newer call"
+  public static let imageSuperseded = "compileFromImage superseded by a newer call"
+  public static let maxImageBytes = 32 * 1024 * 1024
   /// Most meshes one selection may hold (same as the web).
   public static let maxSelection = 50
 
@@ -228,6 +437,9 @@ public final class AIEditor: @unchecked Sendable {
   /// Called before (`instruction`, `selection`) and after (`instruction`, `result`) each edit.
   public var onEditStart: ((String, String?) -> Void)?
   public var onEdit: ((String, EditResult) -> Void)?
+  /// Called before (`prompt`) and after (`prompt`, `result`) each `compileFromImage` call.
+  public var onImageStart: ((String) -> Void)?
+  public var onImage: ((String, EditResult) -> Void)?
   /// Called when the first selected mesh changes (single-selection listeners).
   public var onSelectionChanged: ((String?) -> Void)?
   /// Called when the selection changes, with its source (`tap`, `voice`, or `api`).
@@ -238,7 +450,7 @@ public final class AIEditor: @unchecked Sendable {
   public var selectWithModel = true
 
   public init(
-    source: String, provider: AIProvider, core: AICore = NativeAICore.shared,
+    source: String = "", provider: AIProvider, core: AICore = NativeAICore.shared,
     applyScene: @escaping (String) async throws -> Void
   ) {
     self._source = source
@@ -318,7 +530,9 @@ public final class AIEditor: @unchecked Sendable {
 
   /// Changes the selection: `mode` is `replace`, `add`, `remove`, `toggle`, or `clear`.
   @discardableResult
-  public func setSelection(_ names: [String], mode: String = "replace", source: String = "api") -> [String] {
+  public func setSelection(_ names: [String], mode: String = "replace", source: String = "api")
+    -> [String]
+  {
     let current = selections
     let given = Self.clean(names)
     let next: [String]
@@ -326,7 +540,8 @@ public final class AIEditor: @unchecked Sendable {
     case "clear": next = []
     case "add": next = current + given
     case "remove": next = current.filter { !given.contains($0) }
-    case "toggle": next = current.filter { !given.contains($0) } + given.filter { !current.contains($0) }
+    case "toggle":
+      next = current.filter { !given.contains($0) } + given.filter { !current.contains($0) }
     default: next = given
     }
     assignSelection(next, source: source)
@@ -349,10 +564,12 @@ public final class AIEditor: @unchecked Sendable {
     let within: [String]? = mode == "remove" ? selections : nil
     if let within, within.isEmpty {
       return AIVoiceSelection(
-        mode: mode, query: q, applied: false, tier: 1, meshes: [], candidates: [], say: "Nothing is selected.")
+        mode: mode, query: q, applied: false, tier: 1, meshes: [], candidates: [],
+        say: "Nothing is selected.")
     }
     let scene = sceneArgs(within)
-    var match: [String: Any] = (try? await core.call(scene.merging(["op": "select", "query": q]) { $1 })) ?? [:]
+    var match: [String: Any] =
+      (try? await core.call(scene.merging(["op": "select", "query": q]) { $1 })) ?? [:]
     var tier = 1
     var question = ""
     let reason = match["reason"] as? String
@@ -363,15 +580,20 @@ public final class AIEditor: @unchecked Sendable {
         let built = try await core.call(
           scene.merging(["op": "select_messages", "query": q, "selection": selections]) { $1 })
         let reply = try await provider.complete(try Self.messages(built))
-        let parsed = try await core.call(["op": "select_parse", "reply": reply, "names": built["names"] ?? []])
+        let parsed = try await core.call([
+          "op": "select_parse", "reply": reply, "names": built["names"] ?? [],
+        ])
         let names = parsed["names"] as? [String] ?? []
         tier = 2
         question = parsed["question"] as? String ?? ""
         if (parsed["confidence"] as? String) == "high" {
-          match = ["confidence": "high", "reason": "model", "names": names, "candidates": [String]()]
+          match = [
+            "confidence": "high", "reason": "model", "names": names, "candidates": [String](),
+          ]
         } else {
           match = [
-            "confidence": names.isEmpty ? "none" : "ambiguous", "reason": "model", "names": [String](),
+            "confidence": names.isEmpty ? "none" : "ambiguous", "reason": "model",
+            "names": [String](),
             "candidates": Array(names.prefix(10)),
           ]
         }
@@ -395,19 +617,25 @@ public final class AIEditor: @unchecked Sendable {
   /// Selects meshes by exact name (a voice model's `names`); names not in the scene are ignored.
   @discardableResult
   public func selectNames(_ names: [String], mode: String = "replace") async -> AIVoiceSelection {
-    let index = (try? await core.call(sceneArgs(nil).merging(["op": "select", "query": "", "withIndex": true]) { $1 })) ?? [:]
+    let index =
+      (try? await core.call(
+        sceneArgs(nil).merging(["op": "select", "query": "", "withIndex": true]) { $1 })) ?? [:]
     let known = Set((index["index"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String })
     let valid = Array(names.filter { known.contains($0) }.prefix(Self.maxSelection))
     let query = String(names.joined(separator: ", ").prefix(200))
     guard !valid.isEmpty else {
-      let none: [String: Any] = ["confidence": "none", "reason": "no_match", "names": [String](), "candidates": [String]()]
+      let none: [String: Any] = [
+        "confidence": "none", "reason": "no_match", "names": [String](), "candidates": [String](),
+      ]
       let meshes = selections
       return AIVoiceSelection(
         mode: mode, query: query, applied: false, tier: 1, meshes: meshes, candidates: [],
         say: await say(mode, none, meshes, query))
     }
     setSelection(valid, mode: mode, source: "voice")
-    let matched: [String: Any] = ["confidence": "high", "reason": "exact", "names": valid, "candidates": [String]()]
+    let matched: [String: Any] = [
+      "confidence": "high", "reason": "exact", "names": valid, "candidates": [String](),
+    ]
     let meshes = selections
     return AIVoiceSelection(
       mode: mode, query: query, applied: true, tier: 1, meshes: meshes, candidates: [],
@@ -426,7 +654,9 @@ public final class AIEditor: @unchecked Sendable {
   public func describeSelection(_ meshes: [String]? = nil) async -> String {
     let m = meshes ?? selections
     return (try? await core.call(["op": "select_context", "meshes": m]))?["text"] as? String
-      ?? (m.isEmpty ? "The user cleared the selection." : "The user selected \(m.map { "\"\($0)\"" }.joined(separator: ", ")).")
+      ?? (m.isEmpty
+        ? "The user cleared the selection."
+        : "The user selected \(m.map { "\"\($0)\"" }.joined(separator: ", ")).")
   }
 
   private func sceneArgs(_ within: [String]?) -> [String: Any] {
@@ -436,7 +666,9 @@ public final class AIEditor: @unchecked Sendable {
     return args
   }
 
-  private func say(_ mode: String, _ match: [String: Any]?, _ meshes: [String], _ query: String) async -> String {
+  private func say(_ mode: String, _ match: [String: Any]?, _ meshes: [String], _ query: String)
+    async -> String
+  {
     var req: [String: Any] = ["op": "select_say", "mode": mode, "meshes": meshes, "query": query]
     if let match { req["match"] = match }
     return (try? await core.call(req))?["text"] as? String ?? ""
@@ -448,7 +680,29 @@ public final class AIEditor: @unchecked Sendable {
     }
     return raw.compactMap { m -> AIChatMessage? in
       guard let role = m["role"] as? String else { return nil }
-      return AIChatMessage(role: role, content: m["content"] as? String ?? "")
+      if let s = m["content"] as? String {
+        return AIChatMessage(role: role, content: s)
+      }
+      if let parts = m["content"] as? [[String: Any]] {
+        var urls: [String] = []
+        var texts = ""
+        for p in parts {
+          switch p["type"] as? String {
+          case "image_url":
+            if let u = (p["image_url"] as? [String: Any])?["url"] as? String, !u.isEmpty {
+              urls.append(u)
+            }
+          case "text":
+            if let t = p["text"] as? String, !t.isEmpty {
+              texts.append(t)
+            }
+          default:
+            break
+          }
+        }
+        return AIChatMessage(role: role, content: texts, imageUrls: urls)
+      }
+      return AIChatMessage(role: role, content: "")
     }
   }
 
@@ -477,7 +731,10 @@ public final class AIEditor: @unchecked Sendable {
     }
     let isSuperseded = { [self] () -> Bool in locked { generation != myGen } }
     guard !text.isEmpty else {
-      return finish(text, EditResult(applied: false, code: "", repairs: 0, warnings: [], error: "instruction is empty"))
+      return finish(
+        text,
+        EditResult(
+          applied: false, code: "", repairs: 0, warnings: [], error: "instruction is empty"))
     }
     onEditStart?(text, sel?.first)
     let allowed = min(3, max(0, maxRepairs))
@@ -493,28 +750,41 @@ public final class AIEditor: @unchecked Sendable {
       for turn in 0...allowed {
         let reply = try await provider.complete(messages)
         if isSuperseded() {
-          return finish(text, EditResult(applied: false, code: code, repairs: repairs, warnings: warnings, error: Self.superseded))
+          return finish(
+            text,
+            EditResult(
+              applied: false, code: code, repairs: repairs, warnings: warnings,
+              error: Self.superseded))
         }
         code = try await core.call(["op": "extract", "reply": reply])["code"] as? String ?? ""
         var vreq: [String: Any] = ["op": "validate", "code": code, "instruction": text]
         if let sel = sel { vreq["selection"] = sel }
         let v = try await core.call(vreq)
         if isSuperseded() {
-          return finish(text, EditResult(applied: false, code: code, repairs: repairs, warnings: warnings, error: Self.superseded))
+          return finish(
+            text,
+            EditResult(
+              applied: false, code: code, repairs: repairs, warnings: warnings,
+              error: Self.superseded))
         }
         warnings = v["warnings"] as? [String] ?? []
-        error = (v["ok"] as? Bool) == true ? nil : (v["error"] as? String ?? "The edit was rejected.")
+        error =
+          (v["ok"] as? Bool) == true ? nil : (v["error"] as? String ?? "The edit was rejected.")
         if error == nil { break }
         if turn < allowed {
           repairs += 1
-          let repair = try await core.call(["op": "repair", "error": error!])["message"] as? String ?? error!
+          let repair =
+            try await core.call(["op": "repair", "error": error!])["message"] as? String ?? error!
           messages.append(AIChatMessage(role: "assistant", content: reply))
           messages.append(AIChatMessage(role: "user", content: repair))
         }
       }
     } catch {
       let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-      return finish(text, EditResult(applied: false, code: code, repairs: repairs, warnings: warnings, error: message))
+      return finish(
+        text,
+        EditResult(applied: false, code: code, repairs: repairs, warnings: warnings, error: message)
+      )
     }
     if error == nil && !dryRun {
       do {
@@ -525,11 +795,216 @@ public final class AIEditor: @unchecked Sendable {
           _source = code
         }
       } catch let loadError {
-        error = "The edit compiled but failed to load: \((loadError as? LocalizedError)?.errorDescription ?? String(describing: loadError))"
+        error =
+          "The edit compiled but failed to load: \((loadError as? LocalizedError)?.errorDescription ?? String(describing: loadError))"
         try? await applyScene(base)
       }
     }
-    return finish(text, EditResult(applied: error == nil, code: code, repairs: repairs, warnings: warnings, error: error))
+    return finish(
+      text,
+      EditResult(
+        applied: error == nil, code: code, repairs: repairs, warnings: warnings, error: error))
+  }
+
+  /// Reconstructs a 3D scene from a reference image (`imageUrl` is a `data:image/(png|jpeg|webp);base64,...`
+  /// URI or an `https://` URL) using `provider`, validating the script and auto-repairing both
+  /// compile errors and spatial/schema warnings before calling `applyScene`.
+  public func compileFromImage(
+    _ imageUrl: String, prompt: String = "", priors: AISpatialPriors? = nil, maxRepairs: Int = 1,
+    dryRun: Bool = false
+  ) async -> EditResult {
+    let cleanPrompt = String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
+    let (myGen, base) = locked { () -> (Int, String) in
+      generation += 1
+      return (generation, _source)
+    }
+    let isSuperseded = { [self] () -> Bool in locked { generation != myGen } }
+    onImageStart?(cleanPrompt)
+    let allowed = min(3, max(0, maxRepairs))
+    var code = ""
+    var error: String?
+    var warnings: [String] = []
+    var repairs = 0
+    var bestCandidate: (code: String, warnings: [String])?
+    do {
+      var req: [String: Any] = [
+        "op": "image_messages",
+        "imageUrl": imageUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+        "prompt": cleanPrompt,
+      ]
+      if let priors {
+        let pDict = priors.toDictionary()
+        if !pDict.isEmpty { req["priors"] = pDict }
+      }
+      let built = try await core.call(req)
+      var messages = try Self.messages(built)
+      for turn in 0...allowed {
+        let reply = try await provider.complete(messages)
+        if isSuperseded() {
+          return finishImage(
+            cleanPrompt,
+            EditResult(
+              applied: false, code: code, repairs: repairs, warnings: warnings,
+              error: Self.imageSuperseded))
+        }
+        code = try await core.call(["op": "extract", "reply": reply])["code"] as? String ?? ""
+        let v = try await core.call(["op": "image_validate", "code": code])
+        if isSuperseded() {
+          return finishImage(
+            cleanPrompt,
+            EditResult(
+              applied: false, code: code, repairs: repairs, warnings: warnings,
+              error: Self.imageSuperseded))
+        }
+        warnings = v["warnings"] as? [String] ?? []
+        error =
+          (v["ok"] as? Bool) == true
+          ? nil : (v["error"] as? String ?? "The generated scene was rejected.")
+        if error == nil {
+          bestCandidate = (code: code, warnings: warnings)
+        }
+        if error == nil && warnings.isEmpty { break }
+        if turn < allowed {
+          repairs += 1
+          var repairReq: [String: Any] = ["op": "image_repair", "warnings": warnings]
+          if let error { repairReq["error"] = error }
+          let repair =
+            try await core.call(repairReq)["message"] as? String ?? (error ?? "Fix warnings.")
+          messages.append(AIChatMessage(role: "assistant", content: reply))
+          messages.append(AIChatMessage(role: "user", content: repair))
+        }
+      }
+    } catch let e {
+      error = (e as? LocalizedError)?.errorDescription ?? String(describing: e)
+    }
+
+    if error != nil, let best = bestCandidate {
+      code = best.code
+      warnings = best.warnings
+      error = nil
+    }
+
+    if error == nil && !dryRun {
+      do {
+        try await applyScene(code)
+        locked {
+          if !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            history.append(base)
+            if history.count > Self.maxHistory { history.removeFirst() }
+          }
+          _source = code
+        }
+        setSelection([], mode: "clear", source: "api")
+      } catch let loadError {
+        error =
+          "The generated scene compiled but failed to load: \((loadError as? LocalizedError)?.errorDescription ?? String(describing: loadError))"
+        if !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          try? await applyScene(base)
+        }
+      }
+    }
+    return finishImage(
+      cleanPrompt,
+      EditResult(
+        applied: error == nil, code: code, repairs: repairs, warnings: warnings, error: error))
+  }
+
+  /// Reconstructs a 3D scene from raw PNG, JPEG, or WebP `data` (validating magic bytes and the
+  /// 32 MB limit) via `compileFromImage`.
+  public func compileFromImageData(
+    _ data: Data, prompt: String = "", priors: AISpatialPriors? = nil, maxRepairs: Int = 1,
+    dryRun: Bool = false
+  ) async -> EditResult {
+    let cleanPrompt = String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
+    let dataUrl: String
+    do {
+      dataUrl = try Self.encodeImageDataToDataUrl(data)
+    } catch let e {
+      onImageStart?(cleanPrompt)
+      let msg = (e as? LocalizedError)?.errorDescription ?? String(describing: e)
+      return finishImage(
+        cleanPrompt, EditResult(applied: false, code: "", repairs: 0, warnings: [], error: msg))
+    }
+    return await compileFromImage(
+      dataUrl, prompt: prompt, priors: priors, maxRepairs: maxRepairs, dryRun: dryRun)
+  }
+
+  #if canImport(UIKit)
+    /// Downscales `image` so its longest edge is at most `maxEdge` (default `1024`), encodes it as
+    /// a JPEG `data:image/jpeg;base64,...` URI, and runs `compileFromImage`.
+    public func compileFromImage(
+      _ image: UIImage, prompt: String = "", priors: AISpatialPriors? = nil, maxEdge: Int = 1024,
+      maxRepairs: Int = 1, dryRun: Bool = false
+    ) async -> EditResult {
+      let cleanPrompt = String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
+      let dataUrl: String
+      do {
+        dataUrl = try Self.encodeUIImageToDataUrl(image, maxEdge: maxEdge)
+      } catch let e {
+        onImageStart?(cleanPrompt)
+        let msg = (e as? LocalizedError)?.errorDescription ?? String(describing: e)
+        return finishImage(
+          cleanPrompt, EditResult(applied: false, code: "", repairs: 0, warnings: [], error: msg))
+      }
+      return await compileFromImage(
+        dataUrl, prompt: prompt, priors: priors, maxRepairs: maxRepairs, dryRun: dryRun)
+    }
+
+    public static func encodeUIImageToDataUrl(_ image: UIImage, maxEdge: Int = 1024) throws
+      -> String
+    {
+      let clamped = min(4096, max(64, maxEdge))
+      let w = Int((image.size.width * image.scale).rounded())
+      let h = Int((image.size.height * image.scale).rounded())
+      let fitted = XRFrameCapture.fit(width: w, height: h, maxEdge: clamped)
+      guard fitted.width > 0, fitted.height > 0 else {
+        throw AIEditError("compileFromImage: image has invalid dimensions (\(w) x \(h)).")
+      }
+      let format = UIGraphicsImageRendererFormat.default()
+      format.scale = 1
+      let renderer = UIGraphicsImageRenderer(
+        size: CGSize(width: fitted.width, height: fitted.height), format: format)
+      let jpeg = renderer.jpegData(withCompressionQuality: 0.88) { _ in
+        image.draw(in: CGRect(x: 0, y: 0, width: fitted.width, height: fitted.height))
+      }
+      return try encodeImageDataToDataUrl(jpeg)
+    }
+  #endif
+
+  /// Detects `image/png`, `image/jpeg`, or `image/webp` magic bytes, or returns `nil`.
+  public static func detectImageMime(_ data: Data) -> String? {
+    let bytes = [UInt8](data.prefix(12))
+    if bytes.count >= 8,
+      bytes[0] == 0x89, bytes[1] == 0x50, bytes[2] == 0x4E, bytes[3] == 0x47,
+      bytes[4] == 0x0D, bytes[5] == 0x0A, bytes[6] == 0x1A, bytes[7] == 0x0A
+    {
+      return "image/png"
+    }
+    if bytes.count >= 3, bytes[0] == 0xFF, bytes[1] == 0xD8, bytes[2] == 0xFF {
+      return "image/jpeg"
+    }
+    if bytes.count >= 12,
+      bytes[0] == 0x52, bytes[1] == 0x49, bytes[2] == 0x46, bytes[3] == 0x46,
+      bytes[8] == 0x57, bytes[9] == 0x45, bytes[10] == 0x42, bytes[11] == 0x50
+    {
+      return "image/webp"
+    }
+    return nil
+  }
+
+  /// Validates and encodes PNG, JPEG, or WebP `data` into a `data:image/...;base64,...` URI.
+  public static func encodeImageDataToDataUrl(_ data: Data) throws -> String {
+    guard !data.isEmpty else {
+      throw AIEditError("compileFromImage: image buffer is empty.")
+    }
+    guard data.count <= maxImageBytes else {
+      throw AIEditError("compileFromImage: image exceeds the 32 MB limit.")
+    }
+    guard let mime = detectImageMime(data) else {
+      throw AIEditError(
+        "compileFromImage: unsupported image format (expected PNG, JPEG, or WebP magic bytes).")
+    }
+    return "data:\(mime);base64,\(data.base64EncodedString())"
   }
 
   /// Restores the script from before the last applied edit. Returns false when nothing to undo.
@@ -551,6 +1026,11 @@ public final class AIEditor: @unchecked Sendable {
 
   private func finish(_ instruction: String, _ result: EditResult) -> EditResult {
     onEdit?(instruction, result)
+    return result
+  }
+
+  private func finishImage(_ prompt: String, _ result: EditResult) -> EditResult {
+    onImage?(prompt, result)
     return result
   }
 }

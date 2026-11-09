@@ -17,6 +17,7 @@
 package com.google.threelive.ai
 
 import com.google.threelive.MiniJson
+import com.google.threelive.WorldUnderstanding
 import com.google.threelive.gemini.GeminiLiveTransport
 import com.google.threelive.gemini.PcmAudioSink
 import java.io.ByteArrayInputStream
@@ -64,67 +65,197 @@ class ThreeLiveAIEditorTest {
             "messages" to
               listOf(
                 mapOf("role" to "system", "content" to "SYS"),
-                mapOf("role" to "user", "content" to "src=${request["source"]} sel=${(request["selection"] as? List<*>)?.joinToString(",") ?: request["selection"]} ins=${request["instruction"]}"),
+                mapOf(
+                  "role" to "user",
+                  "content" to
+                    "src=${request["source"]} sel=${(request["selection"] as? List<*>)?.joinToString(",") ?: request["selection"]} ins=${request["instruction"]}",
+                ),
               )
           )
-        "extract" -> mapOf("code" to (request["reply"] as String).removePrefix("```js\n").removeSuffix("\n```"))
+        "extract" ->
+          mapOf(
+            "code" to (request["reply"] as String).removePrefix("```js\n").removeSuffix("\n```")
+          )
         "validate" -> {
           val code = request["code"] as String
           when {
-            code.isEmpty() -> mapOf("ok" to false, "error" to "The model reply did not contain a scene script.")
+            code.isEmpty() ->
+              mapOf("ok" to false, "error" to "The model reply did not contain a scene script.")
             "BROKEN" in code -> mapOf("ok" to false, "error" to "SyntaxError: unexpected token")
             else -> mapOf("ok" to true, "warnings" to listOf("w1"))
           }
         }
         "repair" -> mapOf("message" to "REPAIR: ${request["error"]}")
-        "describe" -> mapOf("text" to if (request["applied"] == true) "Done." else "Sorry: ${request["error"]}")
+        "describe" ->
+          mapOf("text" to if (request["applied"] == true) "Done." else "Sorry: ${request["error"]}")
         "voice_setup" ->
           mapOf(
-            "messages" to listOf(mapOf("type" to "session.update", "provider" to request["provider"])),
+            "messages" to
+              listOf(mapOf("type" to "session.update", "provider" to request["provider"])),
             "inputRate" to if (request["provider"] == "gemini-live") 16000.0 else 24000.0,
           )
-        "voice_text" -> mapOf("messages" to listOf(mapOf("type" to "text", "text" to request["text"], "respond" to request["respond"])))
-        "voice_tool_result" -> mapOf("messages" to listOf(mapOf("type" to "tool_result", "id" to request["id"], "output" to request["output"])))
-        "voice_parse" -> mapOf("events" to MiniJson.asList(MiniJson.asMap(request["message"])?.get("events")))
+        "voice_text" ->
+          mapOf(
+            "messages" to
+              listOf(
+                mapOf("type" to "text", "text" to request["text"], "respond" to request["respond"])
+              )
+          )
+        "voice_tool_result" ->
+          mapOf(
+            "messages" to
+              listOf(
+                mapOf("type" to "tool_result", "id" to request["id"], "output" to request["output"])
+              )
+          )
+        "voice_parse" ->
+          mapOf("events" to MiniJson.asList(MiniJson.asMap(request["message"])?.get("events")))
         // Talk-to-Select: canned answers for a scene of three chairs and a sofa.
         "select" -> {
           val query = request["query"] as String
           val within = (request["within"] as? List<*>)?.filterIsInstance<String>()
           fun scoped(vararg names: String) = names.filter { within == null || it in within }
           fun high(names: List<String>) =
-            if (names.isEmpty()) mapOf("confidence" to "none", "reason" to "no_match", "names" to emptyList<String>(), "candidates" to emptyList<String>())
-            else mapOf("confidence" to "high", "reason" to "match", "names" to names, "candidates" to emptyList<String>())
+            if (names.isEmpty())
+              mapOf(
+                "confidence" to "none",
+                "reason" to "no_match",
+                "names" to emptyList<String>(),
+                "candidates" to emptyList<String>(),
+              )
+            else
+              mapOf(
+                "confidence" to "high",
+                "reason" to "match",
+                "names" to names,
+                "candidates" to emptyList<String>(),
+              )
           when {
             request["withIndex"] == true -> mapOf("index" to SCENE.map { mapOf("name" to it) })
-            "next to" in query || "near" in query -> mapOf("confidence" to "none", "reason" to "relation", "names" to emptyList<String>(), "candidates" to emptyList<String>())
+            "next to" in query || "near" in query ->
+              mapOf(
+                "confidence" to "none",
+                "reason" to "relation",
+                "names" to emptyList<String>(),
+                "candidates" to emptyList<String>(),
+              )
             "red chairs" in query -> high(scoped("Chair_Left", "Chair_Right"))
             "red" in query && within != null -> high(scoped("Chair_Left", "Chair_Right"))
-            "red chair" in query -> mapOf("confidence" to "ambiguous", "reason" to "multiple", "names" to emptyList<String>(), "candidates" to listOf("Chair_Left", "Chair_Right"))
+            "red chair" in query ->
+              mapOf(
+                "confidence" to "ambiguous",
+                "reason" to "multiple",
+                "names" to emptyList<String>(),
+                "candidates" to listOf("Chair_Left", "Chair_Right"),
+              )
             "sofa" in query -> high(scoped("Sofa"))
             else -> high(emptyList())
           }
         }
-        "select_messages" -> mapOf("messages" to listOf(mapOf("role" to "system", "content" to "SELECT"), mapOf("role" to "user", "content" to "q=${request["query"]}")), "names" to SCENE)
+        "select_messages" ->
+          mapOf(
+            "messages" to
+              listOf(
+                mapOf("role" to "system", "content" to "SELECT"),
+                mapOf("role" to "user", "content" to "q=${request["query"]}"),
+              ),
+            "names" to SCENE,
+          )
         "select_parse" -> {
           val reply = MiniJson.parseObjectOrNull(request["reply"] as String) ?: emptyMap()
           val names = (request["names"] as List<*>).filterIsInstance<String>()
-          val picked = MiniJson.asList(reply["ids"])?.mapNotNull { (it as? Double)?.toInt()?.let(names::getOrNull) } ?: emptyList()
-          mapOf("names" to picked, "confidence" to if (reply["confidence"] == "high" && picked.isNotEmpty()) "high" else "low", "question" to (reply["question"] ?: ""))
+          val picked =
+            MiniJson.asList(reply["ids"])?.mapNotNull {
+              (it as? Double)?.toInt()?.let(names::getOrNull)
+            } ?: emptyList()
+          mapOf(
+            "names" to picked,
+            "confidence" to
+              if (reply["confidence"] == "high" && picked.isNotEmpty()) "high" else "low",
+            "question" to (reply["question"] ?: ""),
+          )
         }
         "select_say" -> {
           val m = MiniJson.asMap(request["match"])
-          mapOf("text" to "SAY ${request["mode"]} ${m?.get("confidence")} ${m?.get("names")} ${m?.get("candidates")} ${request["meshes"]}")
+          mapOf(
+            "text" to
+              "SAY ${request["mode"]} ${m?.get("confidence")} ${m?.get("names")} ${m?.get("candidates")} ${request["meshes"]}"
+          )
         }
-        "select_context" -> mapOf("text" to "CTX " + (request["meshes"] as List<*>).joinToString { "\"$it\"" })
+        "select_context" ->
+          mapOf("text" to "CTX " + (request["meshes"] as List<*>).joinToString { "\"$it\"" })
         "parse_command" -> {
           val t = request["text"] as String
           when {
             t == "clear the selection" -> mapOf("kind" to "clear", "mode" to "clear")
             t.startsWith("select ") && " and " in t ->
-              mapOf("kind" to "mixed", "mode" to "replace", "query" to t.removePrefix("select ").substringBefore(" and "), "instruction" to t.substringAfter(" and "))
-            t.startsWith("select ") -> mapOf("kind" to "select", "mode" to "replace", "query" to t.removePrefix("select "))
+              mapOf(
+                "kind" to "mixed",
+                "mode" to "replace",
+                "query" to t.removePrefix("select ").substringBefore(" and "),
+                "instruction" to t.substringAfter(" and "),
+              )
+            t.startsWith("select ") ->
+              mapOf("kind" to "select", "mode" to "replace", "query" to t.removePrefix("select "))
             else -> mapOf("kind" to "edit", "instruction" to t)
           }
+        }
+        "image_messages" -> {
+          val imageUrl = request["imageUrl"] as? String ?: ""
+          if (imageUrl.isEmpty()) {
+            mapOf("error" to "imageUrl must be a non-empty data:image/ or https:// URL.")
+          } else {
+            val prompt = request["prompt"] as? String ?: ""
+            val priors = request["priors"]?.toString() ?: ""
+            mapOf(
+              "messages" to
+                listOf(
+                  mapOf("role" to "system", "content" to "IMAGE_SYS"),
+                  mapOf(
+                    "role" to "user",
+                    "content" to
+                      listOf(
+                        mapOf("type" to "image_url", "image_url" to mapOf("url" to imageUrl)),
+                        mapOf(
+                          "type" to "text",
+                          "text" to "Reconstruct prompt=$prompt priors=$priors",
+                        ),
+                      ),
+                  ),
+                )
+            )
+          }
+        }
+        "image_validate" -> {
+          val code = request["code"] as String
+          when {
+            code.isEmpty() ->
+              mapOf(
+                "ok" to false,
+                "error" to "The model reply did not contain a scene script.",
+                "warnings" to emptyList<String>(),
+              )
+            "BROKEN" in code ->
+              mapOf(
+                "ok" to false,
+                "error" to "SyntaxError: unexpected token",
+                "warnings" to emptyList<String>(),
+              )
+            "WARN_SCENE" in code ->
+              mapOf("ok" to true, "warnings" to listOf("[TL204] Interactive node is unnamed."))
+            else ->
+              mapOf(
+                "ok" to true,
+                "warnings" to emptyList<String>(),
+                "meshNames" to listOf("Desk", "Lamp"),
+                "meshCount" to 2,
+              )
+          }
+        }
+        "image_repair" -> {
+          val err = request["error"] as? String
+          val warns = (request["warnings"] as? List<*>)?.joinToString(";") ?: ""
+          mapOf("message" to "IMAGE_REPAIR err=${err ?: ""} warns=$warns")
         }
         else -> mapOf("error" to "unknown op $op")
       }
@@ -160,7 +291,8 @@ class ThreeLiveAIEditorTest {
       closed = true
     }
 
-    fun server(vararg events: Map<String, Any?>) = listener?.onMessage(mapOf("events" to events.toList()))
+    fun server(vararg events: Map<String, Any?>) =
+      listener?.onMessage(mapOf("events" to events.toList()))
   }
 
   private class FakeSink : PcmAudioSink {
@@ -182,9 +314,7 @@ class ThreeLiveAIEditorTest {
   }
 
   private suspend fun waitFor(timeoutMs: Long = 2000, cond: () -> Boolean) {
-    withTimeout(timeoutMs) {
-      while (!cond()) delay(5)
-    }
+    withTimeout(timeoutMs) { while (!cond()) delay(5) }
   }
 
   @Test
@@ -219,13 +349,21 @@ class ThreeLiveAIEditorTest {
     assertEquals("assistant", repairTurn[2].role)
     assertEquals("REPAIR: SyntaxError: unexpected token", repairTurn[3].content)
 
-    val stillBroken = ThreeLiveAIEditor(base, Scripted(fenced("BROKEN"), fenced("BROKEN again")), { applied += it }, FakeCore())
+    val stillBroken =
+      ThreeLiveAIEditor(
+        base,
+        Scripted(fenced("BROKEN"), fenced("BROKEN again")),
+        { applied += it },
+        FakeCore(),
+      )
     val rejected = stillBroken.editScene("x")
     assertFalse(rejected.applied)
     assertEquals("SyntaxError: unexpected token", rejected.error)
     assertEquals(base, stillBroken.source)
 
-    val noRepair = ThreeLiveAIEditor(base, Scripted(fenced("BROKEN")), { applied += it }, FakeCore()).editScene("x", maxRepairs = 0)
+    val noRepair =
+      ThreeLiveAIEditor(base, Scripted(fenced("BROKEN")), { applied += it }, FakeCore())
+        .editScene("x", maxRepairs = 0)
     assertEquals(0, noRepair.repairs)
     assertFalse(noRepair.applied)
   }
@@ -238,20 +376,29 @@ class ThreeLiveAIEditorTest {
     val applied = CopyOnWriteArrayList<String>()
     var fail = true
     val editor =
-      ThreeLiveAIEditor(base, Scripted(fenced(red)), { code ->
-        applied += code
-        if (fail && code == red) {
-          fail = false
-          throw IllegalStateException("renderer limits exceeded")
-        }
-      }, FakeCore())
+      ThreeLiveAIEditor(
+        base,
+        Scripted(fenced(red)),
+        { code ->
+          applied += code
+          if (fail && code == red) {
+            fail = false
+            throw IllegalStateException("renderer limits exceeded")
+          }
+        },
+        FakeCore(),
+      )
     val result = editor.editScene("make it red")
     assertFalse(result.applied)
-    assertTrue(result.error!!.startsWith("The edit compiled but failed to load: renderer limits exceeded"))
+    assertTrue(
+      result.error!!.startsWith("The edit compiled but failed to load: renderer limits exceeded")
+    )
     assertEquals(base, editor.source)
     assertEquals(listOf(red, base), applied.toList())
 
-    val dry = ThreeLiveAIEditor(base, Scripted(fenced(red)), { fail("dry run must not apply") }, FakeCore()).editScene("x", dryRun = true)
+    val dry =
+      ThreeLiveAIEditor(base, Scripted(fenced(red)), { fail("dry run must not apply") }, FakeCore())
+        .editScene("x", dryRun = true)
     assertTrue(dry.applied)
     try {
       ThreeLiveAIEditor(base, Scripted(), {}, FakeCore()).editScene("   ")
@@ -266,7 +413,8 @@ class ThreeLiveAIEditorTest {
       object : AIProvider {
         var calls = 0
 
-        override suspend fun complete(messages: List<AIChatMessage>): String = if (calls++ == 0) gate.await() else fenced(red)
+        override suspend fun complete(messages: List<AIChatMessage>): String =
+          if (calls++ == 0) gate.await() else fenced(red)
       }
     val editor = ThreeLiveAIEditor(base, provider, {}, FakeCore())
     val first = async { editor.editScene("first") }
@@ -296,7 +444,8 @@ class ThreeLiveAIEditorTest {
   }
 
   /** In-memory HTTP exchange (Android unit tests have no JDK HTTP server). */
-  private class FakeConnection(url: URL, private val status: Int, private val reply: String) : HttpURLConnection(url) {
+  private class FakeConnection(url: URL, private val status: Int, private val reply: String) :
+    HttpURLConnection(url) {
     val body = ByteArrayOutputStream()
 
     override fun connect() {}
@@ -317,11 +466,15 @@ class ThreeLiveAIEditorTest {
   @Test
   fun chatProviderPostsAndParsesContent() = runBlocking {
     val opened = CopyOnWriteArrayList<FakeConnection>()
-    val ok = """{"choices":[{"message":{"content":[{"type":"text","text":"```js\n"},"scene.add(x)\n```"]}}]}"""
+    val ok =
+      """{"choices":[{"message":{"content":[{"type":"text","text":"```js\n"},"scene.add(x)\n```"]}}]}"""
     val provider =
-      AIChatProvider("https://proxy.example/chat", "m1", mapOf("Authorization" to "Bearer t"), openConnection = { url ->
-        FakeConnection(url, 200, ok).also { opened += it }
-      })
+      AIChatProvider(
+        "https://proxy.example/chat",
+        "m1",
+        mapOf("Authorization" to "Bearer t"),
+        openConnection = { url -> FakeConnection(url, 200, ok).also { opened += it } },
+      )
     val text = provider.complete(listOf(AIChatMessage("user", "hi")))
     assertEquals("```js\nscene.add(x)\n```", text)
     val conn = opened.single()
@@ -332,7 +485,11 @@ class ThreeLiveAIEditorTest {
     assertEquals(false, sent["stream"])
     assertEquals("hi", MiniJson.asMap(MiniJson.asList(sent["messages"])!![0])!!["content"])
 
-    val denied = AIChatProvider("https://proxy.example/chat", openConnection = { FakeConnection(it, 401, """{"error":"nope"}""") })
+    val denied =
+      AIChatProvider(
+        "https://proxy.example/chat",
+        openConnection = { FakeConnection(it, 401, """{"error":"nope"}""") },
+      )
     try {
       denied.complete(listOf(AIChatMessage("user", "hi")))
       fail("401 must throw")
@@ -386,7 +543,14 @@ class ThreeLiveAIEditorTest {
     assertEquals(listOf(4 to 24000), sink.chunks.toList())
     assertEquals("user:make it red", transcripts[0])
 
-    transport.server(mapOf("type" to "toolCall", "id" to "c1", "name" to "edit_scene", "args" to mapOf("instruction" to "make it red")))
+    transport.server(
+      mapOf(
+        "type" to "toolCall",
+        "id" to "c1",
+        "name" to "edit_scene",
+        "args" to mapOf("instruction" to "make it red"),
+      )
+    )
     waitFor { transport.sent.any { it["type"] == "tool_result" } }
     val result = transport.sent.first { it["type"] == "tool_result" }
     assertEquals("c1", result["id"])
@@ -394,10 +558,24 @@ class ThreeLiveAIEditorTest {
     assertEquals(red, editor.source)
     assertTrue(AIVoiceState.EDITING in states)
 
-    transport.server(mapOf("type" to "toolCall", "id" to "c2", "name" to "undo_edit", "args" to emptyMap<String, Any?>()))
+    transport.server(
+      mapOf(
+        "type" to "toolCall",
+        "id" to "c2",
+        "name" to "undo_edit",
+        "args" to emptyMap<String, Any?>(),
+      )
+    )
     waitFor { transport.sent.any { it["id"] == "c2" } }
     assertEquals(base, editor.source)
-    transport.server(mapOf("type" to "toolCall", "id" to "c3", "name" to "drop_tables", "args" to emptyMap<String, Any?>()))
+    transport.server(
+      mapOf(
+        "type" to "toolCall",
+        "id" to "c3",
+        "name" to "drop_tables",
+        "args" to emptyMap<String, Any?>(),
+      )
+    )
     waitFor { transport.sent.any { it["id"] == "c3" } }
     assertNotNull(MiniJson.asMap(transport.sent.first { it["id"] == "c3" }["output"])!!["error"])
 
@@ -423,7 +601,8 @@ class ThreeLiveAIEditorTest {
   fun geminiVoiceSessionUses16kAudio() = runBlocking {
     val editor = ThreeLiveAIEditor(base, Scripted(), {}, FakeCore())
     val transport = FakeTransport()
-    val session = AIVoiceSession(editor, transport, this, provider = "gemini-live", core = FakeCore())
+    val session =
+      AIVoiceSession(editor, transport, this, provider = "gemini-live", core = FakeCore())
     assertEquals(16000, session.start())
     session.sendAudio(byteArrayOf(0, 0))
     val audio = MiniJson.asMap(MiniJson.asMap(transport.sent.last()["realtimeInput"])!!["audio"])!!
@@ -452,7 +631,10 @@ class ThreeLiveAIEditorTest {
     assertEquals(listOf("Roof", "Door"), editor.selections)
     editor.toggleSelection("Roof", additive = true)
     assertEquals(listOf("Door"), editor.selections)
-    assertEquals(listOf("Door", "Chimney"), editor.setSelection(listOf("Chimney", "Chimney", ""), "add"))
+    assertEquals(
+      listOf("Door", "Chimney"),
+      editor.setSelection(listOf("Chimney", "Chimney", ""), "add"),
+    )
     assertEquals(listOf("Chimney"), editor.setSelection(listOf("Door"), "remove"))
     assertEquals(listOf("Door"), editor.setSelection(listOf("Chimney", "Door"), "toggle"))
     assertEquals(emptyList<String>(), editor.setSelection(emptyList(), "clear"))
@@ -468,7 +650,11 @@ class ThreeLiveAIEditorTest {
   @Test
   fun selectByVoiceTiers() = runBlocking {
     val core = FakeCore()
-    val provider = Scripted("""{"ids":[3],"confidence":"high"}""", """{"ids":[0,2],"confidence":"low","question":"Which chair?"}""")
+    val provider =
+      Scripted(
+        """{"ids":[3],"confidence":"high"}""",
+        """{"ids":[0,2],"confidence":"low","question":"Which chair?"}""",
+      )
     val editor = ThreeLiveAIEditor(base, provider, {}, core)
     editor.camera = AICamera(listOf(0.0, 1.6, 5.0), listOf(0.0, 0.8, 0.0))
 
@@ -535,21 +721,42 @@ class ThreeLiveAIEditorTest {
         }
       }
     session.start()
-    transport.server(mapOf("type" to "toolCall", "id" to "s1", "name" to "select_meshes", "args" to mapOf("query" to "the red chairs")))
+    transport.server(
+      mapOf(
+        "type" to "toolCall",
+        "id" to "s1",
+        "name" to "select_meshes",
+        "args" to mapOf("query" to "the red chairs"),
+      )
+    )
     waitFor { transport.sent.any { it["id"] == "s1" } }
     var out = MiniJson.asMap(transport.sent.first { it["id"] == "s1" }["output"])!!
     assertEquals(true, out["changed"])
     assertEquals(listOf("Chair_Left", "Chair_Right"), out["selected"])
     assertFalse(transport.sent.any { (it["text"] as? String)?.startsWith("CTX") == true })
 
-    transport.server(mapOf("type" to "toolCall", "id" to "s2", "name" to "select_meshes", "args" to mapOf("query" to "the red chair")))
+    transport.server(
+      mapOf(
+        "type" to "toolCall",
+        "id" to "s2",
+        "name" to "select_meshes",
+        "args" to mapOf("query" to "the red chair"),
+      )
+    )
     waitFor { transport.sent.any { it["id"] == "s2" } }
     out = MiniJson.asMap(transport.sent.first { it["id"] == "s2" }["output"])!!
     assertEquals(false, out["changed"])
     assertEquals(listOf("Chair_Left", "Chair_Right"), out["candidates"])
     assertNotNull(out["question"])
 
-    transport.server(mapOf("type" to "toolCall", "id" to "s3", "name" to "select_meshes", "args" to mapOf("names" to listOf("Sofa"), "mode" to "add")))
+    transport.server(
+      mapOf(
+        "type" to "toolCall",
+        "id" to "s3",
+        "name" to "select_meshes",
+        "args" to mapOf("names" to listOf("Sofa"), "mode" to "add"),
+      )
+    )
     waitFor { transport.sent.any { it["id"] == "s3" } }
     out = MiniJson.asMap(transport.sent.first { it["id"] == "s3" }["output"])!!
     assertEquals(listOf("Chair_Left", "Chair_Right", "Sofa"), out["selected"])
@@ -558,5 +765,146 @@ class ThreeLiveAIEditorTest {
     editor.toggleSelection("Sofa")
     waitFor { transport.sent.any { (it["text"] as? String) == "CTX \"Sofa\"" } }
     session.close()
+  }
+
+  @Test
+  fun compileFromImageAppliesValidatedSceneWithPriorsAndUndo() = runBlocking {
+    val applied = CopyOnWriteArrayList<String>()
+    val core = FakeCore()
+    val deskScene = "const desk = new THREE.Mesh(); desk.name = 'Desk'; scene.add(desk);"
+    val provider = Scripted(fenced(deskScene), fenced(red))
+    val editor = ThreeLiveAIEditor(provider = provider, applyScene = { applied += it }, core = core)
+    val events = mutableListOf<String>()
+    editor.listener =
+      object : ThreeLiveAIEditor.Listener {
+        override fun onImageStart(prompt: String) {
+          events += "start:$prompt"
+        }
+
+        override fun onImage(prompt: String, result: EditResult) {
+          events += "done:$prompt:${result.applied}"
+        }
+      }
+
+    val planes =
+      listOf(
+        WorldUnderstanding.TrackedPlane(
+          "horizontal",
+          doubleArrayOf(0.0, 0.0, 0.0),
+          doubleArrayOf(0.0, 1.0, 0.0),
+          1.5,
+        )
+      )
+    val detections =
+      listOf(
+        WorldUnderstanding.Detection3D(
+          "desk",
+          0.0,
+          0.37,
+          -1.2,
+          1.4,
+          0.74,
+          WorldUnderstanding.DepthSource.DEPTH,
+        )
+      )
+    val priors =
+      AISpatialPriors.fromWorldUnderstanding(
+        planes = planes,
+        detections = detections,
+        camera = AICamera(listOf(0.0, 1.5, 2.5), listOf(0.0, 0.5, 0.0)),
+        floorY = 0.0,
+      )
+    assertEquals(1, priors.planes.size)
+    assertEquals(listOf(3.0, 3.0), priors.planes[0].extent)
+    assertEquals(1, priors.objects.size)
+    assertEquals("desk", priors.objects[0].label)
+
+    val pngBytes =
+      byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0x03)
+    val res = editor.compileFromBytes(pngBytes, prompt = "  desk with lamp  ", priors = priors)
+    assertTrue(res.error, res.applied)
+    assertEquals(deskScene, editor.source)
+    assertEquals(listOf(deskScene), applied.toList())
+    assertEquals(listOf("start:desk with lamp", "done:desk with lamp:true"), events)
+    val userMsg = provider.requests[0][1]
+    assertEquals(1, userMsg.imageUrls.size)
+    assertTrue(userMsg.imageUrls[0].startsWith("data:image/png;base64,"))
+    assertTrue(userMsg.content.contains("prompt=desk with lamp"))
+    // Starting from a blank initialSource must not push "" onto undo history.
+    assertFalse(editor.undo())
+
+    // Now with a non-blank source and active selection, compileFromImage clears selection and
+    // records undo.
+    editor.selection = "Desk"
+    val res2 = editor.compileFromImage("data:image/png;base64,AAAA", prompt = "red roof")
+    assertTrue(res2.applied)
+    assertTrue(editor.selections.isEmpty())
+    assertEquals(red, editor.source)
+    assertTrue(editor.undo())
+    assertEquals(deskScene, editor.source)
+  }
+
+  @Test
+  fun compileFromImageRepairsErrorsAndWarningsWithFallback() = runBlocking {
+    // 1. Hard compile error on turn 0 -> repaired on turn 1.
+    val p1 = Scripted(fenced("BROKEN"), fenced(red))
+    val e1 = ThreeLiveAIEditor(provider = p1, applyScene = {}, core = FakeCore())
+    val r1 = e1.compileFromImage("data:image/png;base64,AAAA")
+    assertTrue(r1.applied)
+    assertEquals(1, r1.repairs)
+    assertEquals(red, e1.source)
+
+    // 2. Warning on turn 0 -> repaired cleanly on turn 1.
+    val warnScene = "const m = new THREE.Mesh(); /* WARN_SCENE */ scene.add(m);"
+    val p2 = Scripted(fenced(warnScene), fenced(red))
+    val e2 = ThreeLiveAIEditor(provider = p2, applyScene = {}, core = FakeCore())
+    val r2 = e2.compileFromImage("data:image/png;base64,AAAA")
+    assertTrue(r2.applied)
+    assertEquals(1, r2.repairs)
+    assertTrue(r2.warnings.isEmpty())
+    assertEquals(red, e2.source)
+
+    // 3. Warning on turn 0, broken repair on turn 1 -> falls back to turn 0's compiling candidate!
+    val p3 = Scripted(fenced(warnScene), fenced("BROKEN"))
+    val e3 = ThreeLiveAIEditor(provider = p3, applyScene = {}, core = FakeCore())
+    val r3 = e3.compileFromImage("data:image/png;base64,AAAA")
+    assertTrue(r3.applied)
+    assertEquals(1, r3.repairs)
+    assertEquals(warnScene, r3.code)
+    assertEquals(listOf("[TL204] Interactive node is unnamed."), r3.warnings)
+  }
+
+  @Test
+  fun detectImageMimeAndMultimodalChatProvider() = runBlocking {
+    val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    val jpg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte())
+    val webp = byteArrayOf(0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50)
+    assertEquals("image/png", ThreeLiveAIEditor.detectImageMime(png))
+    assertEquals("image/jpeg", ThreeLiveAIEditor.detectImageMime(jpg))
+    assertEquals("image/webp", ThreeLiveAIEditor.detectImageMime(webp))
+    assertNull(ThreeLiveAIEditor.detectImageMime(byteArrayOf(0x01, 0x02)))
+
+    val editor = ThreeLiveAIEditor(provider = Scripted(), applyScene = {}, core = FakeCore())
+    val bad = editor.compileFromBytes(byteArrayOf(0x01, 0x02))
+    assertFalse(bad.applied)
+    assertTrue(bad.error!!.contains("unsupported image format"))
+
+    // Verify AIChatProvider serializes imageUrls as multimodal content parts.
+    val opened = CopyOnWriteArrayList<FakeConnection>()
+    val ok = """{"choices":[{"message":{"content":"```js\nscene.add(x)\n```"}}]}"""
+    val chat =
+      AIChatProvider(
+        "https://proxy.example/chat",
+        openConnection = { url -> FakeConnection(url, 200, ok).also { opened += it } },
+      )
+    chat.complete(
+      listOf(AIChatMessage("user", "reconstruct", listOf("data:image/png;base64,AAAA")))
+    )
+    val sent = MiniJson.parseObjectOrNull(opened.single().body.toString(Charsets.UTF_8.name()))!!
+    val parts =
+      MiniJson.asList(MiniJson.asMap(MiniJson.asList(sent["messages"])!![0])!!["content"])!!
+    assertEquals(2, parts.size)
+    assertEquals("image_url", MiniJson.asMap(parts[0])!!["type"])
+    assertEquals("text", MiniJson.asMap(parts[1])!!["type"])
   }
 }

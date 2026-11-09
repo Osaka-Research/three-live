@@ -26,7 +26,10 @@ final class AIEditorTests: XCTestCase {
     roof.position.y = 2;
     scene.add(roof);
     """
-  private var red: String { base.replacingOccurrences(of: "MeshStandardMaterial()", with: "MeshStandardMaterial({ color: 0xff0000 })") }
+  private var red: String {
+    base.replacingOccurrences(
+      of: "MeshStandardMaterial()", with: "MeshStandardMaterial({ color: 0xff0000 })")
+  }
 
   private final class Scripted: AIProvider {
     var replies: [String]
@@ -87,7 +90,10 @@ final class AIEditorTests: XCTestCase {
   private func waitUntil(_ timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(timeout)
     while !cond() {
-      if Date() > deadline { XCTFail("timed out"); return }
+      if Date() > deadline {
+        XCTFail("timed out")
+        return
+      }
       try await Task.sleep(nanoseconds: 10_000_000)
     }
   }
@@ -118,16 +124,21 @@ final class AIEditorTests: XCTestCase {
     let ok = await editor.editScene("make it red")
     XCTAssertTrue(ok.applied, ok.error ?? "")
     XCTAssertEqual(ok.repairs, 1)
-    XCTAssertTrue(provider.requests[1][3].content.hasPrefix("That script was rejected by the Three-Live sandbox:"))
+    XCTAssertTrue(
+      provider.requests[1][3].content.hasPrefix(
+        "That script was rejected by the Three-Live sandbox:"))
 
     let lostSelection = base.replacingOccurrences(of: "'Roof'", with: "'Top'")
-    let strict = AIEditor(source: base, provider: Scripted([fenced(lostSelection), fenced(lostSelection)])) { _ in
+    let strict = AIEditor(
+      source: base, provider: Scripted([fenced(lostSelection), fenced(lostSelection)])
+    ) { _ in
       XCTFail("rejected edits must not be applied")
     }
     strict.selection = "Roof"
     let rejected = await strict.editScene("make it red")
     XCTAssertFalse(rejected.applied)
-    XCTAssertEqual(rejected.error, "The edited scene no longer contains the selected mesh \"Roof\".")
+    XCTAssertEqual(
+      rejected.error, "The edited scene no longer contains the selected mesh \"Roof\".")
     XCTAssertEqual(strict.source, base)
 
     let failing = await AIEditor(source: base, provider: Scripted([])) { _ in }.editScene("x")
@@ -140,7 +151,8 @@ final class AIEditorTests: XCTestCase {
     XCTAssertNotNil(AIChatProvider(endpoint: "https://example.com/chat"))
     XCTAssertNotNil(AIChatProvider(endpoint: "http://localhost:11434/v1/chat/completions"))
     XCTAssertNil(AIChatProvider(endpoint: "http://example.com/chat"))
-    let parts = Data(#"{"choices":[{"message":{"content":[{"type":"text","text":"a"},"b"]}}]}"#.utf8)
+    let parts = Data(
+      #"{"choices":[{"message":{"content":[{"type":"text","text":"a"},"b"]}}]}"#.utf8)
     XCTAssertEqual(try AIChatProvider.parseContent(parts), "ab")
     XCTAssertThrowsError(try AIChatProvider.parseContent(Data(#"{"choices":[]}"#.utf8)))
   }
@@ -156,7 +168,9 @@ final class AIEditorTests: XCTestCase {
     XCTAssertEqual(rate, 24_000)
     let setup = transport.sent[0]
     XCTAssertEqual(setup["type"] as? String, "session.update")
-    let tools = ((setup["session"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
+    let tools = ((setup["session"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap {
+      $0["name"] as? String
+    }
     XCTAssertEqual(tools, ["edit_scene", "undo_edit", "select_meshes"])
     XCTAssertTrue(
       transport.sent.contains { (($0["item"] as? [String: Any])?["role"] as? String) == "system" })
@@ -171,9 +185,13 @@ final class AIEditorTests: XCTestCase {
       "arguments": #"{"instruction":"make it red"}"#,
     ])
     try await waitUntil {
-      transport.sent.contains { (($0["item"] as? [String: Any])?["type"] as? String) == "function_call_output" }
+      transport.sent.contains {
+        (($0["item"] as? [String: Any])?["type"] as? String) == "function_call_output"
+      }
     }
-    let output = transport.sent.first { (($0["item"] as? [String: Any])?["type"] as? String) == "function_call_output" }!
+    let output = transport.sent.first {
+      (($0["item"] as? [String: Any])?["type"] as? String) == "function_call_output"
+    }!
     let item = output["item"] as! [String: Any]
     XCTAssertEqual(item["call_id"] as? String, "call_1")
     XCTAssertTrue((item["output"] as? String ?? "").contains("\"applied\":true"))
@@ -198,7 +216,8 @@ final class AIEditorTests: XCTestCase {
     XCTAssertEqual(rate, 16_000)
     XCTAssertNotNil(transport.sent[0]["setup"])
     session.close()
-    XCTAssertThrowsError(try AIVoiceSession(editor: editor, transport: transport, provider: "pigeon"))
+    XCTAssertThrowsError(
+      try AIVoiceSession(editor: editor, transport: transport, provider: "pigeon"))
   }
 
   private let chairs = """
@@ -256,12 +275,116 @@ final class AIEditorTests: XCTestCase {
     XCTAssertTrue(sources.contains("voice") && sources.contains("tap") && sources.contains("api"))
 
     let command = await editor.parseCommand("select the lamp and make it blue")
-    XCTAssertEqual(command, AIVoiceCommand(kind: "mixed", mode: "replace", query: "the lamp", instruction: "make it blue"))
+    XCTAssertEqual(
+      command,
+      AIVoiceCommand(kind: "mixed", mode: "replace", query: "the lamp", instruction: "make it blue")
+    )
 
     // Several selected meshes reach the edit prompt.
     let result = await editor.editScene("make them blue", dryRun: true)
     XCTAssertTrue(result.applied, result.error ?? "")
     let prompt = provider.requests.last?.last?.content ?? ""
-    XCTAssertTrue(prompt.contains(#"The user selected the meshes named "Chair_Left", "Chair_Right""#), prompt)
+    XCTAssertTrue(
+      prompt.contains(#"The user selected the meshes named "Chair_Left", "Chair_Right""#), prompt)
+  }
+
+  private let cleanDeskScene = """
+    const desk = new THREE.Mesh(
+      new THREE.BoxGeometry(1.4, 0.74, 0.7),
+      new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.7 })
+    );
+    desk.name = 'Desk';
+    desk.position.set(0, 0.37, 0);
+    scene.add(desk);
+    const lamp = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.16, 0.4, 16),
+      new THREE.MeshStandardMaterial({ color: 0xf4c430, roughness: 0.3 })
+    );
+    lamp.name = 'Lamp';
+    lamp.position.set(0.4, 0.94, 0);
+    lamp.userData.xr = { grab: true };
+    scene.add(lamp);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(2, 4, 3);
+    scene.add(dir);
+    camera.position.set(0, 1.4, 2.6);
+    camera.lookAt(0, 0.5, 0);
+    """
+
+  func testCompileFromImageWithNativeCoreAndSpatialPriors() async throws {
+    let applied = Applied()
+    let unnamedLampScene = cleanDeskScene.replacingOccurrences(
+      of: "lamp.name = 'Lamp';\n", with: "")
+    let blueLampScene = cleanDeskScene.replacingOccurrences(of: "0xf4c430", with: "0x1a73e8")
+
+    // Turn 0 emits unnamedLampScene ([TL204] warning) -> Turn 1 repairs it to cleanDeskScene -> Next call edits Lamp to blue.
+    let provider = Scripted([
+      fenced(unnamedLampScene), fenced(cleanDeskScene), fenced(blueLampScene),
+    ])
+    let editor = AIEditor(provider: provider) { applied.add($0) }
+
+    let planes = [
+      WorldUnderstanding.TrackedPlane(
+        orientation: .horizontal, center: SIMD3<Float>(0, 0, 0), normal: SIMD3<Float>(0, 1, 0),
+        radius: 1.5)
+    ]
+    let detections = [
+      WorldUnderstanding.Detection3D(
+        label: "desk", position: SIMD3<Float>(0, 0.37, 0), widthMeters: 1.4, heightMeters: 0.74,
+        depthSource: .depth)
+    ]
+    let priors = AISpatialPriors.fromWorldUnderstanding(
+      planes: planes, detections: detections,
+      camera: AICamera(eye: [0, 1.4, 2.6], target: [0, 0.5, 0]), floorY: 0.0)
+    XCTAssertEqual(priors.planes.count, 1)
+    XCTAssertEqual(priors.objects.count, 1)
+
+    let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0x03])
+    XCTAssertEqual(AIEditor.detectImageMime(pngBytes), "image/png")
+    XCTAssertNil(AIEditor.detectImageMime(Data([0x01, 0x02])))
+
+    let imgRes = await editor.compileFromImageData(
+      pngBytes, prompt: "interactive desk with a toggleable lamp", priors: priors)
+    XCTAssertTrue(imgRes.applied, imgRes.error ?? "")
+    XCTAssertEqual(imgRes.repairs, 1, "TL204 warning on turn 0 should trigger 1 auto-repair turn")
+    XCTAssertTrue(
+      imgRes.warnings.isEmpty, "Repaired scene should have 0 warnings: \(imgRes.warnings)")
+    XCTAssertEqual(editor.source, cleanDeskScene)
+    guard provider.requests.count >= 2, provider.requests[0].count >= 2,
+      provider.requests[1].count >= 4
+    else {
+      XCTFail("Expected 2 provider requests with repair turn, got: \(provider.requests.count)")
+      return
+    }
+    XCTAssertEqual(provider.requests[0][1].imageUrls.count, 1)
+    XCTAssertTrue(provider.requests[0][1].imageUrls[0].hasPrefix("data:image/png;base64,"))
+    XCTAssertTrue(
+      provider.requests[0][1].content.contains("Metric spatial priors (world meters, +Y up):"))
+    XCTAssertTrue(provider.requests[1][3].content.contains("[TL204]"))
+
+    // Starting from an empty initial source should not push "" onto undo history.
+    let undoEmpty = try await editor.undo()
+    XCTAssertFalse(undoEmpty)
+
+    // Chain into Talk-to-Select -> editScene -> undo!
+    let sel = await editor.selectByVoice("the lamp")
+    XCTAssertTrue(sel.applied)
+    XCTAssertEqual(editor.selections, ["Lamp"])
+    let editRes = await editor.editScene("make it blue")
+    XCTAssertTrue(editRes.applied, editRes.error ?? "")
+    XCTAssertEqual(editor.source, blueLampScene)
+    let undone = try await editor.undo()
+    XCTAssertTrue(undone)
+    XCTAssertEqual(editor.source, cleanDeskScene)
+
+    // Verify fallback to turn-0 compiling candidate when warning-repair turn fails to compile.
+    let fallbackProvider = Scripted([fenced(unnamedLampScene), fenced("scene.add(new THREE.Mesh(")])
+    let fallbackEditor = AIEditor(provider: fallbackProvider) { _ in }
+    let fbRes = await fallbackEditor.compileFromImage("data:image/png;base64,AAAA")
+    XCTAssertTrue(fbRes.applied)
+    XCTAssertEqual(fbRes.repairs, 1)
+    XCTAssertEqual(fbRes.code, unnamedLampScene)
+    XCTAssertFalse(fbRes.warnings.isEmpty)
   }
 }
