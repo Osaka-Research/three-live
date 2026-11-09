@@ -352,6 +352,13 @@ impl ThreeEngine {
                     for (const key of Reflect.ownKeys(globalThis)) {
                         if (!baselineKeys.has(key)) {
                             try { delete globalThis[key]; } catch (_) {}
+                            // Top-level `var` and function declarations create
+                            // non-configurable globals that `delete` cannot remove;
+                            // blank them so the next script on a reused engine never
+                            // sees a previous scene's values.
+                            if (Object.prototype.hasOwnProperty.call(globalThis, key)) {
+                                try { globalThis[key] = undefined; } catch (_) {}
+                            }
                         }
                     }
                 };

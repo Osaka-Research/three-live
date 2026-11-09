@@ -86,7 +86,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     orientation) from local paths or `data:` URIs; remote URLs are never
     fetched. Adds the `build_from_reference` MCP prompt.
 
+### Changed
+
+-   **Faster simulation, gym, and filmstrips (warm JS engine reuse):**
+    `three_live_sim`, `three-live-cli sim`, temporal `render --frames`, and the
+    agent gym now reuse the thread's warm JS engine (as GLB/USDZ conversion
+    already did) instead of building a new one per call, which took ~210 ms.
+    Gym steps on animated scenes drop from ~220 ms to ~18 ms and gym reset /
+    one-shot `sim` calls from ~0.45 s to ~0.25 s; output is unchanged.
+
 ### Fixed
+
+-   **Warm-engine isolation:** top-level `var` and function declarations from
+    one scene are no longer visible to the next scene compiled on the same
+    reused engine (they are non-configurable globals that the sandbox reset
+    could not delete; they are now blanked).
 
 -   **`validate` / `render` now report texture-quota overflows:** scenes whose
     materials reference more than `SECURITY_3D_MAX_TEXTURES` (16) unique images

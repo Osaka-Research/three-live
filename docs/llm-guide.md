@@ -409,9 +409,9 @@ tune enemy speed or jump heights, or test interactive scenes end to end.
 -   The reset observation lists the `events` and `audioCues` fired at `t = 0`
     (`onSpawn`, `onStart`, trait registrations).
 -   Episodes are deterministic: the same actions always give the same
-    observations. Steps on static scenes are near-instant; scenes with
-    `animate(t)` or `requestAnimationFrame` re-run their script once per step
-    (about 0.2 s), so prefer fewer, longer steps there. Close sessions you
+    observations. Steps on static scenes take well under a millisecond;
+    scenes with `animate(t)` or `requestAnimationFrame` re-run their script
+    once per step (tens of milliseconds for typical scenes). Close sessions you
     are done with (`three_live_gym_close`); beyond 16 the least recently used
     is evicted.
 

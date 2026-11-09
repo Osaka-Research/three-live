@@ -15,7 +15,6 @@
 //! Phase 4: Deterministic 60 Hz Scenario, `KHR_interactivity`, `orbit`/`explode`,
 //! and `xr-live-sim` Time-Stepper for `three-live-cli render` and `three-live-cli sim`.
 
-use crate::engine::ThreeEngine;
 use crate::glb::read_glb;
 use crate::scene::{SceneGraph, SceneNode};
 use serde::{Deserialize, Serialize};
@@ -263,8 +262,8 @@ pub fn simulate_scenario_from_source(
         let (script, _) = crate::extract_script_from_source(raw_text);
         let sample_times: Vec<f64> =
             sample_ticks.iter().map(|&tk| (tk as f64) * SIM_DT_SEC).collect();
-        let mut engine = ThreeEngine::new()?;
-        match engine.execute_time_series(&script, &sample_times) {
+        match crate::with_three_engine(|engine| engine.execute_time_series(&script, &sample_times))
+        {
             Ok(graphs) => sample_ticks.iter().copied().zip(graphs).collect(),
             Err(_) => Vec::new(),
         }
@@ -293,8 +292,7 @@ fn compile_sim_scene(source_bytes: &[u8], is_glb: bool) -> Result<SceneGraph, St
     if html_diags.iter().any(|d| d.severity == "error") {
         return Err(html_diags[0].message.clone());
     }
-    let mut engine = ThreeEngine::new()?;
-    engine.execute(&script)
+    crate::with_three_engine(|engine| engine.execute(&script))
 }
 
 /// A 60 Hz simulation advanced step by step, with actions added as it runs (the agent gym).
@@ -322,8 +320,8 @@ impl SimStepper {
         if !is_glb {
             let raw_text = std::str::from_utf8(source_bytes).unwrap_or("");
             let (src, _) = crate::extract_script_from_source(raw_text);
-            let mut engine = ThreeEngine::new()?;
-            if let Ok((mut graphs, time_varying)) = engine.execute_time_series_probed(&src, &[0.0])
+            if let Ok((mut graphs, time_varying)) =
+                crate::with_three_engine(|engine| engine.execute_time_series_probed(&src, &[0.0]))
             {
                 if let Some(g) = graphs.pop() {
                     js_sample.push((0, g));
@@ -357,10 +355,10 @@ impl SimStepper {
         }
         if let Some(script) = self.script.as_deref() {
             let t = to_tick as f64 * SIM_DT_SEC;
-            let sampled = ThreeEngine::new()
-                .and_then(|mut engine| engine.execute_time_series(script, &[t]))
-                .ok()
-                .and_then(|mut graphs| graphs.pop());
+            let sampled =
+                crate::with_three_engine(|engine| engine.execute_time_series(script, &[t]))
+                    .ok()
+                    .and_then(|mut graphs| graphs.pop());
             match sampled {
                 Some(g) => self.js_sample = vec![(to_tick, g)],
                 // A failing `animate` (e.g. a timeout) freezes procedural motion, as in

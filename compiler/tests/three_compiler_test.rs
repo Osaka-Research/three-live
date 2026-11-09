@@ -181,6 +181,80 @@ fn test_thread_local_engine_isolation_and_reusability() {
 }
 
 #[test]
+fn test_warm_engine_blanks_top_level_var_and_function_declarations() {
+    use three_live_compiler::{clear_thread_local_engine, set_thread_local_cache_enabled};
+
+    set_thread_local_cache_enabled(true);
+    clear_thread_local_engine();
+    // Top-level `var` / function declarations become non-configurable globals that `delete`
+    // cannot remove, so a reused engine used to show them to the next scene.
+    let polluter = r#"
+        var leakedVar = 5;
+        function leakedFn() { return 1; }
+        globalThis.leakedProp = 7;
+        scene.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial()));
+    "#;
+    validate_three_script(polluter).expect("polluter compiles");
+    let checker = r#"
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+        m.name = [typeof leakedVar, typeof leakedFn, typeof leakedProp].join(',');
+        scene.add(m);
+    "#;
+    let scene = validate_three_script(checker).expect("checker compiles");
+    assert_eq!(scene.nodes[0].name, "undefined,undefined,undefined");
+    // Re-declaring the same names on the warm engine still works.
+    validate_three_script(polluter).expect("re-declaring blanked globals compiles");
+
+    clear_thread_local_engine();
+    set_thread_local_cache_enabled(false);
+}
+
+#[test]
+fn test_simulation_is_identical_on_warm_and_fresh_engines() {
+    use three_live_compiler::{clear_thread_local_engine, set_thread_local_cache_enabled};
+
+    let scene = br#"
+        const floor = new THREE.Mesh(new THREE.BoxGeometry(10, 0.1, 10), new THREE.MeshStandardMaterial());
+        floor.name = 'Floor'; floor.position.y = -0.05; floor.userData.xr = { collidable: true };
+        scene.add(floor);
+        const hero = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1, 0.5), new THREE.MeshStandardMaterial());
+        hero.name = 'Hero'; hero.position.set(0, 0.5, 0); hero.userData.xr = { character: { speed: 3 } };
+        scene.add(hero);
+        const spinner = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshStandardMaterial());
+        spinner.name = 'Spinner'; spinner.position.set(2, 1, 0);
+        scene.add(spinner);
+        var phase = 0;
+        function animate(t) { phase += 1; spinner.position.x = 2 + Math.sin(t); }
+    "#;
+    let actions: Vec<three_live_compiler::SimAction> = serde_json::from_str(
+        r#"[{"at":0.1,"type":"moveCharacter","direction":[1,0,0],"duration":1.0}]"#,
+    )
+    .unwrap();
+    let run = || {
+        let (report, _) = three_live_compiler::simulate_scenario_from_source(
+            scene,
+            false,
+            2.0,
+            &actions,
+            &[0, 30, 60, 120],
+        )
+        .unwrap();
+        serde_json::to_string(&report).unwrap()
+    };
+    set_thread_local_cache_enabled(false);
+    let fresh = run();
+    set_thread_local_cache_enabled(true);
+    clear_thread_local_engine();
+    let warm1 = run();
+    let warm2 = run();
+    assert_eq!(fresh, warm1, "first warm run matches a fresh engine");
+    assert_eq!(warm1, warm2, "reusing the warm engine is deterministic");
+
+    clear_thread_local_engine();
+    set_thread_local_cache_enabled(false);
+}
+
+#[test]
 fn test_thread_local_prewarm_performance() {
     use three_live_compiler::{
         clear_thread_local_engine, prewarm_thread_local_engine, set_thread_local_cache_enabled,
