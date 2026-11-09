@@ -59,10 +59,6 @@ export {
   type TextGeometryOptions,
 } from './three-live/src/plugins/cad';
 export {
-  installProceduralExtension,
-  proceduralPlugin,
-} from './three-live/src/plugins/procedural';
-export {
   ikPlugin,
   IKSolver,
   quatFromUnitVectors,
@@ -123,6 +119,10 @@ export {
   resolveViewerBloom,
 } from './three-live/src/plugins/postprocessing';
 export {
+  installProceduralExtension,
+  proceduralPlugin,
+} from './three-live/src/plugins/procedural';
+export {
   extractMaterialVariants,
   extractPrimitiveVariantMappings,
   selectMaterialVariant,
@@ -164,12 +164,17 @@ export type {
 } from './three-live/src/plugins/ai';
 /** "Tap & Speak" voice editing (part of `three-live-ai.min.js`). */
 export {
+  hideSelectionChips,
+  showSelectionChips,
+} from './three-live/src/plugins/ai-select-chips';
+export type {AISelectChipsState} from './three-live/src/plugins/ai-select-chips';
+export {
   AIVoiceSession,
   connectVoice,
   createWebSpeechRecognizer,
   describeEditResult,
-  geminiLiveAdapter,
   describeVoiceSelection,
+  geminiLiveAdapter,
   realtimeAdapter,
   selectByVoice,
   selectNamesByVoice,
@@ -177,8 +182,6 @@ export {
   speakableName,
   startVoiceEdit,
 } from './three-live/src/plugins/ai-voice';
-export {hideSelectionChips, showSelectionChips} from './three-live/src/plugins/ai-select-chips';
-export type {AISelectChipsState} from './three-live/src/plugins/ai-select-chips';
 /** Multi-select for Tap & Speak / Talk-to-Select (part of `three-live-ai.min.js`). */
 export {
   describeSelection,
@@ -191,8 +194,16 @@ export {
   selectMessages,
   setSelection,
 } from './three-live/src/plugins/ai-select';
-export type {AIModelSelection, AISelectProvider} from './three-live/src/plugins/ai-select';
+export type {
+  AIModelSelection,
+  AISelectProvider,
+} from './three-live/src/plugins/ai-select';
 /** Talk-to-Select tier-1 matcher and push-to-talk grammar (mirrors the Rust core). */
+export type {
+  AISelectionEventDetail,
+  AISelectionMode,
+  AISelectionSource,
+} from './three-live/src/plugins/ai-select';
 export {
   buildSelectIndex,
   matchSelection,
@@ -206,11 +217,6 @@ export type {
   SelectRawEntry,
   VoiceCommand,
 } from './three-live/src/plugins/ai-select-match';
-export type {
-  AISelectionEventDetail,
-  AISelectionMode,
-  AISelectionSource,
-} from './three-live/src/plugins/ai-select';
 export type {
   AIAudioSink,
   AIMicrophoneSource,
@@ -229,6 +235,8 @@ export type {
 export * from './xr-live/src/plugins/index';
 /** Optional simulation plugins (`xr-live/sim`, `xr-live-sim.min.js`). */
 export * from './xr-live/src/sim/index';
+/** Optional WebGPU Gaussian Splatting compute & render accelerator (`xr-live/webgpu`, `xr-live-webgpu.min.js`). */
+export * from './xr-live/src/webgpu';
 
 /**
  * Declarative JSX / HTML attributes supported by the <three-live> custom element.
@@ -323,6 +331,12 @@ export interface ThreeLiveAttributes {
   'ai-model'?: string;
   /** `three-live-ai`: provider protocol for `ai-endpoint` (`'ai-chat'`, the default). */
   'ai-provider'?: 'ai-chat';
+  /** `xr-live-webgpu`: Gaussian splatting backend (`'auto'`, `'webgpu'`, `'hybrid'`, or `'webgl2'`). */
+  'splat-renderer'?: 'auto' | 'webgpu' | 'hybrid' | 'webgl2' | string;
+  /** `xr-live-spatial` / `xr-live-webgpu`: Spherical Harmonics view-dependent color quality (`'normal'` or `'high'`). */
+  'splat-quality'?: 'normal' | 'high' | string;
+  /** Allow cross-origin `.splat` / `.spz` URLs on `userData.xr.splatUrl`. */
+  'allow-remote-splats'?: boolean | string;
   /** `three-live-ai`: tapping a mesh selects it (tap again to clear; Shift/Ctrl/Cmd-tap or long-press adds to `el.selectedMeshes`). */
   'ai-select-on-tap'?: boolean | string;
   /** `three-live-ai`: show a mic button (push-to-talk, or a realtime session when `ai-voice-url` is set). */

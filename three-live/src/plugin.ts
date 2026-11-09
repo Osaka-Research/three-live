@@ -175,6 +175,49 @@ export interface SharedThreeLiveRegistry {
    * authoring extensions (`cadPlugin`, `ikPlugin`).
    */
   workerExtensionInstallers?: Array<(threeNs: unknown, reg: unknown) => void>;
+  /**
+   * Optional WebGPU Gaussian Splatting compute & render accelerator installed
+   * by `xr-live-webgpu.min.js`. Pure TypeScript hook so core bundles add 0 B.
+   */
+  splatAccelerator?: SplatGPUAccelerator;
+}
+
+/** Parameters passed from `XRSplatLoader` to an installed WebGPU splat accelerator. */
+export interface SplatGPUDrawParams {
+  readonly viewer: unknown;
+  readonly mesh: object;
+  readonly data: unknown;
+  readonly vp: Float32Array;
+  readonly mvp: Float32Array;
+  readonly model: Float32Array;
+  readonly modelView: Float32Array | null;
+  readonly cameraPos: readonly number[] | null;
+  readonly focalX: number;
+  readonly focalY: number;
+  readonly viewportWidth: number;
+  readonly viewportHeight: number;
+  readonly highQualitySH: boolean;
+  readonly eye: 'left' | 'right' | 'none';
+  readonly standalone?: boolean;
+}
+
+/** Pre-sorted indices / SH colors returned in hybrid WebGPU coprocessor mode. */
+export interface SplatGPUFrameOutput {
+  readonly order?: Uint32Array | null;
+  readonly colors?: Uint8Array | null;
+  readonly shHandled?: boolean;
+}
+
+/** Optional WebGPU Gaussian Splatting accelerator registered on `SharedThreeLiveRegistry`. */
+export interface SplatGPUAccelerator {
+  beginFrame?(viewer: object): void;
+  drawCloud(
+    params: SplatGPUDrawParams,
+  ): 'rendered' | SplatGPUFrameOutput | null;
+  endFrame?(viewer: object): void;
+  hideOverlay?(viewer: object): void;
+  disposeCloud?(data: unknown): void;
+  disposeViewer?(viewer: object): void;
 }
 
 const SHARED_REGISTRY_KEY = '__THREE_LIVE_REGISTRY__';

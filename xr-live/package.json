@@ -43,6 +43,11 @@
       "types": "./dist/xr-live-sim.d.ts",
       "import": "./dist/xr-live-sim.js",
       "require": "./dist/xr-live-sim.cjs"
+    },
+    "./webgpu": {
+      "types": "./dist/xr-live-webgpu.d.ts",
+      "import": "./dist/xr-live-webgpu.js",
+      "require": "./dist/xr-live-webgpu.cjs"
     }
   },
   "dependencies": {

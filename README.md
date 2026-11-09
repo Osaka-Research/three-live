@@ -113,15 +113,16 @@ Protocol (MCP)** stdio server (`three_live_validate`, `three_live_render`,
 `three_live_convert`, `three_live_sim`, `three_live_link`, and the
 `three_live_gym_reset` / `three_live_gym_step` / `three_live_gym_close` agent
 gym) in Gemini CLI, Google Antigravity, Claude Code, or any MCP client. The
-agent gym lets an agent play a scene step by step (act, observe, react) to
-check a level is winnable; "gym" is the reinforcement-learning term for such a
+agent gym lets an agent play a scene step by step (act, observe, react) to check
+a level is winnable; "gym" is the reinforcement-learning term for such a
 reset/step environment, and no ML is involved. Not using MCP?
 `three-live-cli gym reset level.js --session ep.json` and
 `three-live-cli gym step --session ep.json --actions '[...]'` do the same, one
-command per step. `three-live-cli link scene.js --qr` prints a playground link (and a terminal QR code) that opens the scene on a
-phone, one tap from AR. Building from a photo, mockup, sketch, or blueprint? Pass
-`--reference` (or `reference` in MCP) to get a side-by-side + aligned-overlay +
-silhouette-diff sheet with IoU and proportion guidance:
+command per step. `three-live-cli link scene.js --qr` prints a playground link
+(and a terminal QR code) that opens the scene on a phone, one tap from AR.
+Building from a photo, mockup, sketch, or blueprint? Pass `--reference` (or
+`reference` in MCP) to get a side-by-side + aligned-overlay + silhouette-diff
+sheet with IoU and proportion guidance:
 
 ```bash
 $ npx three-live-cli render scene.js --view=quad --grid --annotations -o contact_sheet.png
@@ -150,10 +151,10 @@ mesh.userData.xr = { grab: '1-hand', billboard: 'capsule' };
 scene.add(mesh);
 ```
 
-Add `three-live-ai.min.js` (`< 20 KB gz`; built into the full bundles) to let users reshape a scene
-with **any LLM**: every edit is compiled in the sandbox first, auto-repaired
-once on failure, and only then hot-swapped, so a bad generation never breaks the
-live scene.
+Add `three-live-ai.min.js` (`< 20 KB gz`; built into the full bundles) to let
+users reshape a scene with **any LLM**: every edit is compiled in the sandbox
+first, auto-repaired once on failure, and only then hot-swapped, so a bad
+generation never breaks the live scene.
 
 ```html
 <three-live allow-client-scripts
@@ -219,6 +220,30 @@ check that the right objects are highlighted before an edit.
     Realtime voice sessions read the selection back instead, using the
     `select_meshes` tool.
 *   From code: `await el.selectByVoice('the red chairs', {mode: 'add'})`.
+
+
+**Tap & Speak:** let users tap a mesh and say what to change. The voice model
+talks, and your code model writes the edit through an `edit_scene` tool, so edit
+quality never depends on the voice model.
+
+```html
+<three-live allow-client-scripts ai-endpoint="https://your-backend.example/chat"
+    ai-select-on-tap ai-voice-button
+    ai-voice-url="wss://your-backend.example/realtime">
+  <script type="text/three">/* your scene */</script>
+</three-live>
+```
+
+*   `ai-select-on-tap`: tapping a mesh sets `selected-mesh` (tap again to
+    clear), so "make this red" knows what "this" is.
+*   `ai-voice-button`: a mic button. With `ai-voice-url` it toggles a realtime
+    voice conversation (`ai-voice-provider="ai-realtime"`, the default, for any
+    server speaking the Realtime WebSocket protocol, or `"gemini-live"`).
+    Without it, it runs push-to-talk with the browser's speech recognizer
+    (`el.startVoiceEdit()`).
+*   From code: `await el.connectVoice({provider: 'gemini-live', url})` or
+    `await el.startVoiceEdit()`. Progress arrives as `three-live-voice` events
+    (`listening`, `editing`, transcripts, results).
 
 --------------------------------------------------------------------------------
 
@@ -341,7 +366,7 @@ The following table compares the two runtime tiers across Android, iOS, and Web:
 | **Three.js JIT compiler** | Yes (sandboxed Rust `Boa`/QuickJS VM on Android/iOS/CLI, Web Worker on Web) | Yes (inherits `three-author` JIT compiler plus `userData.xr` spatial traits) |
 | **Android & iOS runtime** | Google Filament (`FilamentHelper`), Apple RealityKit (`RealityKitHelper`), and `.glb`/`.usdz` export | Native Android (`Filament` + Jetpack XR `SceneCore` + `XRLiveRuntimeSession`) and native iOS/visionOS (`RealityKit` + `XRLiveRealityKitSession`) |
 | **Spatial interaction** | Orbit controls, mesh picking, 3D surface hotspots, `KHR_interactivity` | Declarative `userData.xr` traits (`grab`, `scale`, `billboard`, `anchor`, `handles`, `snapTo`, `gaze`, `explode`, `navigable`, `sync`, `audioEmitter`), 15 spatial plugins, 6 `xr-live-sim` simulation plugins, 25-joint hands, and `KHR_interactivity` |
-| **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 73 KB gz`** (`three-live.min.js`) | **`< 55 KB gz`** (viewer), **`< 84 KB gz`** (`xr-live.min.js`), **`< 260 KB gz`** (`xr-live-full.min.js`) |
+| **Web bundle budget** | **`< 30 KB gz`** (viewer), **`< 73 KB gz`** (`three-live.min.js`) | **`< 55 KB gz`** (viewer), **`< 84 KB gz`** (`xr-live.min.js`), **`< 268 KB gz`** (`xr-live-full.min.js`) |
 <!-- mdformat on -->
 
 ### HTML attribute compatibility with `<model-viewer>`
@@ -369,7 +394,7 @@ custom element name when `@google/model-viewer` is not loaded.
 | **Target platforms** | Web Custom Element (`<model-viewer>`). | Native **Android** SDK (`ThreeCompiler` JNI + Google Filament / Jetpack XR), native **iOS / visionOS** SDK (`ThreeCompiler` XCFramework + RealityKit), **Rust CLI / MCP server** (`three-live-cli`), and **Web** Custom Elements (`<three-live>`, `<xr-live>`). |
 | **Post-processing & effects** | Provided via the companion `@google/model-viewer-effects` package (`<effect-composer>`, `<bloom-effect>`, `<outline-effect>`). | Built-in HTML attributes (`bloom`, `bloom-threshold`, `bloom-radius`, `outline`, `outline-selected`, `outline-color`, `tone-mapping`) with no external effect dependencies. |
 | **Interactivity & simulation** | Camera orbit/pan/zoom, animation playback, material variants, hotspots, and scene-graph material API. | Includes the above plus glTF `KHR_interactivity` behavior graphs, declarative `userData.xr` spatial traits (`grab`, `scale`, `anchor`, `snapTo`), and 60 Hz deterministic simulation plugins (`rigid-body`, `character-controller`, `navigation`, `objectives`). |
-| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 30 KB gz` (`three-live-viewer`), `< 73 KB gz` (`three-live`), `< 160 KB gz` (`three-live-full`), `< 260 KB gz` (`xr-live-full`). |
+| **Web bundle size (gzipped)** | Full Three.js renderer + glTF pipeline (~250 KB gz). | Modular tiers: `< 30 KB gz` (`three-live-viewer`), `< 73 KB gz` (`three-live`), `< 160 KB gz` (`three-live-full`), `< 268 KB gz` (`xr-live-full`). |
 <!-- mdformat on -->
 
 ### Modular plugins across Android, iOS, and Web
@@ -382,13 +407,13 @@ live Three.js scenes:
     Three.js compiler in `three-live.min.js`), and the WebXR viewer
     (`xr-live-viewer.min.js`) is `< 55 KB gz` (`< 84 KB gz` with the live
     Three.js compiler in `xr-live.min.js`).
-*   **Core 3D, CAD, procedural, and animation plugins (`three-live`, 17 plugins):** Optional
-    domain bundles (`three-live-studio.min.js` at `< 29 KB gz`,
-    `three-live-cad.min.js` at `< 10 KB gz`, `three-live-procedural.min.js` at
-    `< 28 KB gz`, and `three-live-animation.min.js`
-    at `< 11 KB gz`, or `< 160 KB gz` combined in `three-live-full.min.js`) add
-    `KHR_interactivity` behavior graphs, PBR Next materials,
-    `KHR_materials_variants`, `EXT_meshopt_compression`, HDRI and
+*   **Core 3D, CAD, procedural, and animation plugins (`three-live`, 17
+    plugins):** Optional domain bundles (`three-live-studio.min.js` at
+    `< 29 KB gz`, `three-live-cad.min.js` at `< 10 KB gz`,
+    `three-live-procedural.min.js` at `< 28 KB gz`, and
+    `three-live-animation.min.js` at `< 11 KB gz`, or `< 160 KB gz` combined in
+    `three-live-full.min.js`) add `KHR_interactivity` behavior graphs, PBR Next
+    materials, `KHR_materials_variants`, `EXT_meshopt_compression`, HDRI and
     spherical-harmonics lighting, contact shadows, 3D hotspots, post-processing
     (`bloom` and `outline`), automatic multi-tier Level-of-Detail (`lod` /
     `THREE.LOD` / `MSFT_lod`), 2D `Shape`/`ExtrudeGeometry`, 3D `CSG` Booleans,
@@ -411,6 +436,13 @@ live Three.js scenes:
     `joint`: `hinge`, `slider`, `spring`, `ball`), integrity and trigger zones,
     checklist objectives with scoring and timers, and procedural audio cues
     across Android, iOS, and Web.
+*   **Opt-in WebGPU Gaussian Splatting accelerator (`xr-live-webgpu.min.js`,
+    `< 12 KB gz`):** Offloads `.splat` / `.spz` depth sorting (deterministic
+    2-pass 8-bit tiled radix sort) and Degree 1–3 fp16 Spherical Harmonics to
+    WGSL `@compute` shaders, rendering oriented anisotropic eigenvector quads
+    via `drawIndirect` (`splat-renderer="auto | webgpu | hybrid | webgl2"`) and
+    automatically switching to a double-buffered `mapAsync` WebGL2 coprocessor
+    during WebXR stereo sessions or mixed glTF + splat Z-occluded scenes.
 
 #### Core 3D, CAD, and animation plugins (`three-live`)
 
@@ -509,7 +541,8 @@ Every web bundle targets `es2020`, strips full license blocks
 |  | **`xr-live-sensors.min.js`** | **`< 10 KB gz`** | Add-on plugin: Hardware XR sensors (`XRDepthManager`, `XRHeightfieldPhysics`, 25-joint `XRHandGestureClassifier`), `XRDesktopSimulator`, Spatial Audio, Skybox, and WebMCP tools. |
 |  | **`xr-live-spatial.min.js`** | **`< 63 KB gz`** | Add-on plugin bundle registering all 15 spatial plugins (`head-follow`, `manipulation-handles`, `world-understanding`, `gemini-live`, `spatial-paint`, `depth-particles`, `splat-loader`, `spatial-measure`, `magnetic-snap`, `gaze-dwell`, `exploded-view`, `persistent-anchors`, `spatial-locomotion`, `shared-room`, `spatial-audio`). |
 |  | **`xr-live-sim.min.js`** | **`< 30 KB gz`** | Add-on simulation plugin bundle registering all six simulation plugins (`character-controller`, `steering-agents`, `rigid-body` + mechanical `joint` constraints, `hit-zones`, `objectives`, `synth-audio`). |
-|  | **`xr-live-full.min.js`** | **`< 260 KB gz`** | All-in-one 3D, XR, and simulation bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 15 spatial plugins + all 6 simulation plugins). |
+|  | **`xr-live-webgpu.min.js`** | **`< 12 KB gz`** | Opt-in WebGPU Gaussian Splatting compute and render accelerator (`splat-renderer="auto\|webgpu\|hybrid\|webgl2"`): WGSL 2-pass tiled radix sort, fp16 SH degrees 1–3, `drawIndirect` anisotropic quads, and WebXR / mixed-scene `mapAsync` coprocessor fallback. |
+|  | **`xr-live-full.min.js`** | **`< 268 KB gz`** | All-in-one 3D, XR, simulation, and WebGPU splat bundle (`three-live-full` + `xr-live` + `xr-live-sensors` + all 15 spatial plugins + all 6 simulation plugins + `xr-live-webgpu`). |
 <!-- mdformat on -->
 
 ### Safe execution for live, AI-generated Three.js

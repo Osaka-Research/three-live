@@ -817,6 +817,22 @@ function buildXRLive() {
     });
   }
 
+  // 4c. xr-live-webgpu (optional WebGPU Gaussian Splatting compute & render
+  // accelerator)
+  for (const [format, ext] of [
+           ['esm', 'js'], ['cjs', 'cjs'], ['iife', 'min.js']]) {
+    buildTarget({
+      entryPoints: [path.join(XR_LIVE_DIR, 'src/webgpu.ts')],
+      bundle: true,
+      format,
+      ...(format === 'iife' ? {globalName: 'XRLiveWebGPU'} : {}),
+      minify: true,
+      target: 'es2020',
+      define: {'IS_DEV': 'false'},
+      outfile: path.join(xrDist, `xr-live-webgpu.${ext}`),
+    });
+  }
+
   // 5. xr-live-full (All-in-One Kitchen Sink)
   buildTarget({
     entryPoints: [path.join(XR_LIVE_DIR, 'src/full.ts')],
@@ -855,6 +871,7 @@ function buildXRLive() {
   fs.writeFileSync(path.join(xrDist, 'xr-live-full.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-spatial.d.ts'), rootDts);
   fs.writeFileSync(path.join(xrDist, 'xr-live-sim.d.ts'), rootDts);
+  fs.writeFileSync(path.join(xrDist, 'xr-live-webgpu.d.ts'), rootDts);
 
   if (!fs.existsSync(DIST_DIR)) {
     fs.mkdirSync(DIST_DIR, {recursive: true});
@@ -877,6 +894,9 @@ function buildXRLive() {
   fs.copyFileSync(
       path.join(xrDist, 'xr-live-sim.min.js'),
       path.join(DIST_DIR, 'xr-live-sim.min.js'));
+  fs.copyFileSync(
+      path.join(xrDist, 'xr-live-webgpu.min.js'),
+      path.join(DIST_DIR, 'xr-live-webgpu.min.js'));
 
   const sandboxHtmlSrc =
       path.join(THREE_LIVE_DIR, 'src/three-live-sandbox.html');
@@ -896,6 +916,9 @@ function buildXRLive() {
     fs.copyFileSync(
         path.join(xrDist, 'xr-live-sim.min.js'),
         path.join(xrExampleDir, 'xr-live-sim.min.js'));
+    fs.copyFileSync(
+        path.join(xrDist, 'xr-live-webgpu.min.js'),
+        path.join(xrExampleDir, 'xr-live-webgpu.min.js'));
     fs.copyFileSync(
         path.join(DIST_DIR, 'three-live-studio.min.js'),
         path.join(xrExampleDir, 'three-live-studio.min.js'));
@@ -954,7 +977,8 @@ function reportSizes() {
     {name: 'xr-live-sensors.min.js', budgetKb: '10'},
     {name: 'xr-live-spatial.min.js', budgetKb: '63'},
     {name: 'xr-live-sim.min.js', budgetKb: '30'},
-    {name: 'xr-live-full.min.js', budgetKb: '260'},
+    {name: 'xr-live-webgpu.min.js', budgetKb: '12'},
+    {name: 'xr-live-full.min.js', budgetKb: '268'},
   ];
   const failures = [];
   for (const f of files) {
@@ -1051,12 +1075,12 @@ function testEvals() {
   if (!fs.existsSync(testDir)) return;
   console.log('--> Testing evals...');
   const outDir = path.join(THREE_LIVE_DIR, 'dist/tests');
-  const testFiles = fs.readdirSync(testDir).filter((f) => f.endsWith('_test.ts'));
+  const testFiles =
+      fs.readdirSync(testDir).filter((f) => f.endsWith('_test.ts'));
   for (const file of testFiles) {
     runTestFile(
-      path.join(testDir, file),
-      path.join(outDir, file.replace(/\.ts$/, '.cjs'))
-    );
+        path.join(testDir, file),
+        path.join(outDir, file.replace(/\.ts$/, '.cjs')));
   }
 }
 

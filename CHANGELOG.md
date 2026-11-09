@@ -26,16 +26,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+-   **Opt-in WebGPU Gaussian Splatting accelerator (`xr-live-webgpu.min.js`,
+    `< 12 KB gz`):** Offloads `.splat` and `.spz` depth sorting (deterministic
+    2-pass 8-bit tiled WGSL `@compute` radix sort matching `sortSplatsByDepth`
+    bit-for-bit) and Degree 1–3 fp16-packed Spherical Harmonics to WebGPU, with
+    zero byte overhead on `three-live-viewer`, `three-live`, `xr-live-viewer`,
+    and `xr-live`. Supports `splat-renderer="auto | webgpu | hybrid | webgl2"`
+    (default `"auto"`): renders oriented anisotropic eigenvector quads directly
+    from VRAM via `drawIndirect` onto a premultiplied
+    `<canvas class="three-live-webgpu-layer">` overlay for pure-splat desktop
+    scenes, and automatically switches to a double-buffered `GPUBuffer.mapAsync`
+    WebGL2 coprocessor during active WebXR `XRWebGLLayer` stereo sessions or
+    mixed glTF + splat Z-occluded scenes. Included in `xr-live-full` (budget
+    `< 259 KB gz`).
+
+-   **Bring-your-own-LLM scene editing (`three-live-ai.min.js`, `< 5 KB gz`):**
+    `el.editScene(instruction, { selection, maxRepairs, dryRun, signal })` sends
+    the current scene script and selected mesh to any LLM, compiles the reply in
+    the element's sandbox before touching the live scene, retries once with the
+    exact error, rejects edits that empty the scene or silently drop the
+    selected mesh, then hot-swaps (`el.undoEdit()` reverts). Providers:
+    `ai-chat` (any Chat Completions-compatible endpoint via `ai-endpoint` /
+    `ai-model`, or `createAIChatProvider()`) or any custom
+    `{ complete({ messages, signal }) }` object. Emits `three-live-edit-start`
+    and `three-live-edit` events. Included in `three-live-full` and
+    `xr-live-full` (budgets raised to `< 146 KB gz` and `< 246 KB gz`); core
+    bundles are unchanged.
+
 -   **Talk-to-Select (B2b-4), multi-select:** `el.selectedMeshes` holds the
-    selection (`selected-mesh` stays its first entry); `setSelection(el,
-    names, {mode: 'replace' | 'add' | 'remove' | 'toggle' | 'clear'})` changes
-    it; the viewer highlights every selected mesh; `three-live-select` now
-    carries `{mesh, meshes, added, removed, source, query?}`. With
-    `ai-select-on-tap`, Shift / Ctrl / Cmd-tap or a long press adds to the
-    selection. `editScene` (web and the shared Rust core) accepts several
-    selected meshes and rejects edits that lose any of them. Removing
-    `selected-mesh` now also clears the highlight. `xr-live-viewer.min.js`
-    budget: `< 55 KB gz` (was `< 54`).
+    selection (`selected-mesh` stays its first entry); `setSelection(el, names,
+    {mode: 'replace' | 'add' | 'remove' | 'toggle' | 'clear'})` changes it; the
+    viewer highlights every selected mesh; `three-live-select` now carries
+    `{mesh, meshes, added, removed, source, query?}`. With `ai-select-on-tap`,
+    Shift / Ctrl / Cmd-tap or a long press adds to the selection. `editScene`
+    (web and the shared Rust core) accepts several selected meshes and rejects
+    edits that lose any of them. Removing `selected-mesh` now also clears the
+    highlight. `xr-live-viewer.min.js` budget: `< 55 KB gz` (was `< 54`).
 
 -   **Talk-to-Select (B2b-4), voice selection without a model call:** say
     "select the two red chairs on the left" and the tier-1 matcher resolves it
@@ -66,8 +92,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     them. The Rust core adds `select_messages` / `select_parse` and the
     `select_meshes` tool. Budgets for B2b-4 as a whole:
     `three-live-ai.min.js` `< 20 KB gz` (was `< 11`), `three-live-full.min.js`
-    `< 160 KB gz` (was `< 151`), `xr-live-full.min.js` `< 260 KB gz` (was
-    `< 251`).
+    `< 160 KB gz` (was `< 151`), `xr-live-full.min.js` `< 268 KB gz` (was
+    `< 259`).
 
 -   **Talk-to-Select on Android and iOS (B2b-4):** `ThreeLiveAIEditor` /
     `AIEditor` hold several selected meshes (`selections`, `setSelection`,
@@ -84,12 +110,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     and `AIEditor` (iOS/visionOS) bring `editScene` / `undoEdit` to native apps
     with any `ai-chat` code model; tap-to-select via `toggleSelection`;
     push-to-talk `VoiceEditController` (platform speech recognition and TTS);
-    and `AIVoiceSession` realtime voice over `ai-realtime` or `gemini-live`
-    with `edit_scene` / `undo_edit` tools. The prompt, reply parsing, edit
+    and `AIVoiceSession` realtime voice over `ai-realtime` or `gemini-live` with
+    `edit_scene` / `undo_edit` tools. The prompt, reply parsing, edit
     validation, and voice protocols live in a new shared Rust core
-    (`ai_edit.rs`, `ai_voice.rs`) exposed as `three_live_ai_call` (C, freed
-    with `three_live_free_string`) and `ThreeCompiler.nativeAiCall` (JNI), with
-    tests that keep the prompt and tools identical to the web plugin.
+    (`ai_edit.rs`, `ai_voice.rs`) exposed as `three_live_ai_call` (C, freed with
+    `three_live_free_string`) and `ThreeCompiler.nativeAiCall` (JNI), with tests
+    that keep the prompt and tools identical to the web plugin.
     `MicrophoneStreamer` now takes any sample rate and callback (the
     `XRGeminiLiveController` constructor still works); on Android it records
     with `VOICE_COMMUNICATION` for echo cancellation while model audio plays.
@@ -105,7 +131,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     context, and a built-in `ai-voice-button` (or `slot="voice-button"`).
     Progress is reported as `three-live-voice` events and selection changes as
     `three-live-select`. Budgets: `three-live-ai` `< 10 KB gz`,
-    `three-live-full` `< 151 KB gz`, `xr-live-full` `< 251 KB gz`; core bundles
+    `three-live-full` `< 151 KB gz`, `xr-live-full` `< 259 KB gz`; core bundles
     are unchanged.
 
 -   **`three-live-cli gym` (closed-loop agent gym without MCP):**
@@ -115,54 +141,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     and every step and is replayed deterministically on each call);
     `gym play scene.js` is a JSON-lines stdin/stdout loop for scripts and RL
     harnesses. Both accept `--watch` and `--frame out.png`. Observation
-    positions are now rounded to 0.1 mm (rotations to 1e-5) in both the CLI
-    and the MCP tools.
+    positions are now rounded to 0.1 mm (rotations to 1e-5) in both the CLI and
+    the MCP tools.
 
 -   **Closed-loop agent gym (`three_live_gym_reset`, `three_live_gym_step`,
     `three_live_gym_close` MCP tools):** Agents can play a scene step by step
     instead of scripting it up front ("gym" as in the OpenAI Gym / Gymnasium
     reset/step pattern; no ML involved). Each step applies actions, advances the
-    deterministic 60 Hz simulation by `ticks`, and returns body states,
-    `reward` (score delta), the `events`, `audioCues`, and `newObjectives`
-    fired during the step, `done`, and an optional rendered frame. State
-    carries over between steps (a new resumable `SimStepper` in the compiler),
-    so a step on a static scene takes well under a millisecond; scenes with
-    `animate(t)` / `requestAnimationFrame` hooks are re-sampled once per step.
-
--   **Bring-your-own-LLM scene editing (`three-live-ai.min.js`, `< 5 KB gz`):**
-    `el.editScene(instruction, { selection, maxRepairs, dryRun, signal })`
-    sends the current scene script and selected mesh to any LLM, compiles the
-    reply in the element's sandbox before touching the live scene, retries once
-    with the exact error, rejects edits that empty the scene or silently drop
-    the selected mesh, then hot-swaps (`el.undoEdit()` reverts). Providers:
-    `ai-chat` (any Chat Completions-compatible endpoint via `ai-endpoint` /
-    `ai-model`, or `createAIChatProvider()`) or any custom
-    `{ complete({ messages, signal }) }` object. Emits `three-live-edit-start`
-    and `three-live-edit` events. Included in `three-live-full` and
-    `xr-live-full` (budgets raised to `< 146 KB gz` and `< 246 KB gz`); core
-    bundles are unchanged.
+    deterministic 60 Hz simulation by `ticks`, and returns body states, `reward`
+    (score delta), the `events`, `audioCues`, and `newObjectives` fired during
+    the step, `done`, and an optional rendered frame. State carries over between
+    steps (a new resumable `SimStepper` in the compiler), so a step on a static
+    scene takes well under a millisecond; scenes with `animate(t)` /
+    `requestAnimationFrame` hooks are re-sampled once per step.
 
 -   **Deterministic PBR material presets (`THREE.ProceduralTexture`,
     `userData.xr.material`):** 11 seamlessly tiling presets (`wood`, `marble`,
     `brick`, `concrete`, `brushedMetal`, `rust`, `leather`, `fabric`,
-    `carbonFiber`, `checkerboard`, `grid`) return `{ map, normalMap,
-    roughnessMap, metalnessMap }` to spread into `MeshStandardMaterial`, with
-    `color`, `color2`, `scale`, `seed`, `roughness`, `normalStrength`, and
-    `size` options. `mesh.userData.xr = { material: 'wood' }` bakes a preset
-    tinted by the mesh's material color. Identical options share textures and
+    `carbonFiber`, `checkerboard`, `grid`) return
+    `{ map, normalMap, roughnessMap, metalnessMap }` to spread into
+    `MeshStandardMaterial`, with `color`, `color2`, `scale`, `seed`,
+    `roughness`, `normalStrength`, and `size` options.
+    `mesh.userData.xr = { material: 'wood' }` bakes a preset tinted by the
+    mesh's material color. Identical options share textures and
     `normalStrength: 0` skips the normal map (each preset otherwise uses 3 of
-    the 16 scene textures). Native Rust kernels (CLI, MCP,
-    Android, iOS) and the JS kernels (Web workers) are byte-identical, pinned by
-    cross-language hash tests; each preset generates in under 20 ms at
-    256 px. `three-live-procedural.min.js` budget raised to `< 28 KB gz`
+    the 16 scene textures). Native Rust kernels (CLI, MCP, Android, iOS) and the
+    JS kernels (Web workers) are byte-identical, pinned by cross-language hash
+    tests; each preset generates in under 20 ms at 256 px.
+    `three-live-procedural.min.js` budget raised to `< 28 KB gz`
     (`three-live-full` `< 142 KB gz`, `xr-live-full` `< 242 KB gz`); core
     bundles are unchanged.
 
--   **Reference-driven authoring (`three_live_render` `reference`, `three-live-cli
-    render --reference`):** renders the scene at a reference image's aspect
-    ratio into a `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF` comparison
-    sheet (auto-aligned overlay on plain/transparent backgrounds) with
-    scale/translation-invariant `silhouetteIou`, `aspectError`,
+-   **Reference-driven authoring (`three_live_render` `reference`,
+    `three-live-cli render --reference`):** renders the scene at a reference
+    image's aspect ratio into a `REFERENCE | RENDER | OVERLAY | SILHOUETTE DIFF`
+    comparison sheet (auto-aligned overlay on plain/transparent backgrounds)
+    with scale/translation-invariant `silhouetteIou`, `aspectError`,
     `silhouetteReliable`, and actionable `guidance`, so agents can match photos,
     mockups, sketches, and blueprints in a few turns. Accepts PNG (all color
     types, bit depths, `tRNS`, Adam7) and JPEG (baseline/progressive, EXIF
@@ -174,14 +188,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 -   **Faster simulation, gym, and filmstrips (warm JS engine reuse):**
     `three_live_sim`, `three-live-cli sim`, temporal `render --frames`, and the
     agent gym now reuse the thread's warm JS engine (as GLB/USDZ conversion
-    already did) instead of building a new one per call, which took ~210 ms.
-    Gym steps on animated scenes drop from ~220 ms to ~18 ms and gym reset /
+    already did) instead of building a new one per call, which took ~210 ms. Gym
+    steps on animated scenes drop from ~220 ms to ~18 ms and gym reset /
     one-shot `sim` calls from ~0.45 s to ~0.25 s; output is unchanged.
 
 ### Fixed
 
--   **Inline `<script type="text/three">` scenes now load however the bundle
-    is included.** With a `defer`, `type="module"`, `async`, or end-of-`<body>`
+-   **Inline `<script type="text/three">` scenes now load however the bundle is
+    included.** With a `defer`, `type="module"`, `async`, or end-of-`<body>`
     bundle, elements already in the page upgraded before the bundle registered
     its script runner and showed "Script execution requires three-live/full";
     with a classic `<script>` in `<head>`, the element upgraded before its
@@ -211,10 +225,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `#p=<preset>` for built-in and gallery scenes, and `#s=z:<payload>` for any
     scene script (raw DEFLATE, unpadded base64url; decoded client-side via
     `DecompressionStream('deflate-raw')` so scene code never touches a server).
-    Added **🔗 Share**, a centered **📱 Run on phone** QR code modal, a
-    persistent **Compiled in X ms** header badge, a 3-tab **Camera / Mesh /
-    Spatial & AR** inspector, and **🏯 AI Pagoda** (`#p=pagoda`) and **🚜 AI
-    Forklift Drill** (`#p=forklift`) gallery presets.
+    Added **🔗 Share**, a centered **📱 Run on phone** QR code modal, a persistent
+    **Compiled in X ms** header badge, a 3-tab **Camera / Mesh / Spatial & AR**
+    inspector, and **🏯 AI Pagoda** (`#p=pagoda`) and **🚜 AI Forklift Drill**
+    (`#p=forklift`) gallery presets.
 -   **Native Outputs Panel:** Live mesh count, `.glb` and `.usdz` byte sizes,
     and copyable Android (Kotlin), iOS (Swift), and Web HTML snippets for the
     active scene in `/three/`.
@@ -244,8 +258,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 -   **XR Collect Game Drone Patrols:** Updated `Drone_Patrol` and `Drone_Chaser`
     routes so enemy drones circulate continuously around inner walls instead of
     stopping at the far corners.
--   **macOS Quick Look (`.usdz`) Button Label:** Clarified the desktop Safari
-    AR button label and tooltip when downloading `.usdz` for Finder Quick Look.
+-   **macOS Quick Look (`.usdz`) Button Label:** Clarified the desktop Safari AR
+    button label and tooltip when downloading `.usdz` for Finder Quick Look.
 
 --------------------------------------------------------------------------------
 

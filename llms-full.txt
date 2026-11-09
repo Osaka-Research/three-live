@@ -1995,9 +1995,11 @@ XRLiveElement.registerPlugin(explodedViewPlugin);
 ```
 
 To load all 15 spatial plugins without a bundler, import
-`/dist/xr-live-spatial.min.js` (`< 61 KB gz`) or `/dist/xr-live-full.min.js`
-(`< 193 KB gz`, which also includes `xr-live-sensors` and the 6 `xr-live-sim`
-simulation plugins).
+`/dist/xr-live-spatial.min.js` (`< 63 KB gz`) or `/dist/xr-live-full.min.js`
+(`< 254 KB gz`, which also includes `xr-live-sensors`, the 6 `xr-live-sim`
+simulation plugins, and `xr-live-webgpu`). For WebGPU-accelerated 3D Gaussian
+Splatting without the full bundle, add `/dist/xr-live-webgpu.min.js`
+(`< 12 KB gz`).
 
 --------------------------------------------------------------------------------
 
@@ -2040,6 +2042,8 @@ spatial attributes listed in the following table:
 | `<xr-live>` | `bloom` | `boolean \| string` | — | Enables HDR emissive bloom (`bloom`, `bloom="1.4"`, or `bloom="strength:1.2 threshold:0.75 radius:0.5"`). |
 | `<xr-live>` | `outline` | `boolean \| string` | — | Enables silhouette outlines on `selected-mesh` or nodes with `userData.xr.outline` (`outline="#38bdf8 0.03"`). |
 | `<xr-live>` | `variant-name` | `string` | — | Active `KHR_materials_variants` product material variant name. |
+| `<xr-live>` | `splat-renderer` | `'auto' \| 'webgpu' \| 'hybrid' \| 'webgl2'` | `'auto'` | Gaussian Splatting execution mode when `xr-live-webgpu` is loaded (`'auto'` uses a 100% VRAM WebGPU `drawIndirect` overlay for pure-splat desktop scenes and a double-buffered `mapAsync` WebGL2 coprocessor during WebXR stereo sessions or mixed glTF + splat scenes). |
+| `<xr-live>` | `splat-quality` | `'normal' \| 'high'` | `'normal'` | Enables view-dependent Spherical Harmonics (degrees 1–3) on `.spz` Gaussian Splat clouds. |
 | `<xr-live>` | `webmcp` | `boolean` | `false` | Registers spatial AI tools (`inspect_xr_scene`, `place_xr_object_at_gaze`, `capture_xr_view`) on `navigator.modelContext`. |
 | `<xr-live>` | `webmcp-allow-depth` | `boolean` | `false` | Opt-in gate required before `capture_xr_view` exposes the 8×8 metric `depthGridMeters` array. |
 | `<xr-live>` | `webmcp-omit-pose` | `boolean` | `false` | Omits `headPosition` from `inspect_xr_scene` responses. |
@@ -2146,7 +2150,15 @@ and iOS or visionOS (`mobile/ios/Sources/ThreeLiveCompiler/`):
     sort with cached unchanged depth orders. Moving views refresh every fourth
     draw cycle; parallel stereo eyes with identical depth rows share one GPU
     order, while divergent eyes retain independent orders (at most two).
-    Spherical-harmonic color refresh remains independent of index uploads.
+    Spherical-harmonic color refresh remains independent of index uploads. When
+    the optional `xr-live-webgpu.min.js` (`< 12 KB gz`) accelerator is loaded,
+    `splat-loader` automatically offloads depth sorting (deterministic 2-pass
+    8-bit tiled WGSL `@compute` radix sort) and fp16 Spherical Harmonics to
+    WebGPU—either rendering oriented anisotropic eigenvector quads directly via
+    `drawIndirect` (`splat-renderer="auto"` / `"webgpu"`) or streaming sorted
+    indices and SH colors into WebGL2 via a double-buffered `mapAsync` ring
+    during WebXR stereo sessions and mixed glTF + splat Z-occluded scenes
+    (`"hybrid"`).
 *   **`spatial-measure` (`xr-live-spatial-measure`):** Renders live `W × H × D`
     bounding-box dimension callout bars and procedural 3D vector-glyph labels
     (`userData.xr.dimensions` or `spatial-measure="bounds"`), plus an
