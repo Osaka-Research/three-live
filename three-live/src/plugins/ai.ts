@@ -39,6 +39,11 @@ import {
   startVoiceEdit,
 } from './ai-voice';
 import {type AISelectionMode, installSelectionState} from './ai-select';
+import {
+  type AIImageInput,
+  type CompileFromImageOptions,
+  compileFromImage,
+} from './ai-image';
 
 /** One part of a multimodal chat message (`text` or `image_url`). */
 export type AIChatContentPart =
@@ -129,6 +134,10 @@ export interface AIEditableElement {
     instruction: string,
     options?: EditSceneOptions,
   ) => Promise<EditSceneResult>;
+  compileFromImage?: (
+    image: AIImageInput,
+    options?: CompileFromImageOptions,
+  ) => Promise<EditSceneResult>;
   undoEdit?: () => Promise<boolean>;
   startVoiceEdit?: (options?: AIVoiceEditOptions) => Promise<AIVoiceEditResult>;
   selectByVoice?: (query: string, options?: {mode?: AISelectionMode}) => Promise<AIVoiceSelection>;
@@ -142,8 +151,8 @@ export interface AIEditableElement {
   __tlAiInstalled?: boolean;
 }
 
-const MAX_SCRIPT_BYTES = 1048576;
-const MAX_HISTORY = 20;
+export const MAX_SCRIPT_BYTES = 1048576;
+export const MAX_HISTORY = 20;
 const DRY_RUN_TIMEOUT_MS = 15000;
 
 const SYSTEM_PROMPT = [
@@ -272,9 +281,10 @@ export function extractScript(reply: string): string {
   return /\bscene\b/.test(text) ? text.trim() : '';
 }
 
-function sceneSummary(model: unknown): {
+export function sceneSummary(model: unknown): {
   meshNames: Set<string>;
   meshes: number;
+  unnamedXrNodes: number;
 } {
   const meshNames = new Set<string>();
   // tslint:disable-next-line:no-any Untyped glTF JSON.
@@ -291,24 +301,32 @@ function sceneSummary(model: unknown): {
     }
   }
   let meshes = 0;
+  let unnamedXrNodes = 0;
   for (const n of gltf?.nodes ?? []) {
-    if (typeof n?.name === 'string') meshNames.add(n.name);
+    const rawName = typeof n?.name === 'string' ? n.name.trim() : '';
+    const isAutoNodeName = /^Node_\d+$/.test(rawName);
+    const hasName = rawName.length > 0 && !isAutoNodeName;
+    if (hasName) meshNames.add(rawName);
     if (n?.mesh !== undefined) meshes++;
+    if (!hasName && (n?.extras?.xr != null || n?.extras?.interactivity != null)) {
+      unnamedXrNodes++;
+    }
   }
-  return {meshNames, meshes};
+  return {meshNames, meshes, unnamedXrNodes};
 }
 
 /** Compiles `script` in the element's sandbox without touching the live scene. */
-function dryRunCompile(
+export function dryRunCompile(
   el: AIEditableElement,
   script: string,
   signal?: AbortSignal,
+  caller = 'editScene',
 ): Promise<{model: unknown; warnings: string[]}> {
   const runner = getSharedRegistry().scriptRunner;
   if (!runner || typeof runner.execute !== 'function') {
     return Promise.reject(
       new Error(
-        'editScene needs a script runner (load three-live.min.js or three-live-full.min.js).',
+        `${caller} needs a script runner (load three-live.min.js or three-live-full.min.js).`,
       ),
     );
   }
@@ -397,22 +415,23 @@ export function selectionSentence(selected: readonly string[]): string {
   return `The user selected the meshes named ${selected.map((m) => `"${m}"`).join(', ')}; the instruction refers to them.\n`;
 }
 
-function resolveProvider(
+export function resolveProvider(
   el: AIEditableElement,
-  options: EditSceneOptions,
+  options: {readonly provider?: ThreeLiveAIProvider},
+  caller = 'editScene',
 ): ThreeLiveAIProvider {
   const explicit = options.provider ?? el.aiProvider;
   if (explicit && typeof explicit.complete === 'function') return explicit;
   const endpoint = el.getAttribute?.('ai-endpoint');
   if (!endpoint) {
     throw new Error(
-      'editScene: no AI provider. Set el.aiProvider, or the ai-endpoint (and ai-model) attributes.',
+      `${caller}: no AI provider. Set el.aiProvider, or the ai-endpoint (and ai-model) attributes.`,
     );
   }
   const kind = (el.getAttribute?.('ai-provider') || 'ai-chat').toLowerCase();
   if (kind !== 'ai-chat') {
     throw new Error(
-      `editScene: unknown ai-provider '${kind}' (supported: ai-chat, or set el.aiProvider).`,
+      `${caller}: unknown ai-provider '${kind}' (supported: ai-chat, or set el.aiProvider).`,
     );
   }
   return createAIChatProvider({
@@ -421,7 +440,7 @@ function resolveProvider(
   });
 }
 
-function currentSource(el: AIEditableElement): string {
+export function currentSource(el: AIEditableElement): string {
   if (typeof el.__tlAiSource === 'string') return el.__tlAiSource;
   const inline = el.querySelector?.(
     'script[type="text/three"], script[type="text/three-live"]',
@@ -599,6 +618,10 @@ export const aiPlugin: ThreeLivePlugin = {
     el.__tlAiInstalled = true;
     el.editScene = (instruction: string, options?: EditSceneOptions) =>
       editScene(el, instruction, options);
+    el.compileFromImage = (
+      image: AIImageInput,
+      options?: CompileFromImageOptions,
+    ) => compileFromImage(el, image, options);
     el.undoEdit = () => undoEdit(el);
     installSelectionState(el as never);
     const voiceEl = el as AIVoiceElement;

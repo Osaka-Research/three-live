@@ -56,16 +56,21 @@ import {buildSelectIndex, matchSelection, parseVoiceCommand} from './plugins/ai-
 import {
   buildImageMessages,
   buildImageUserText,
+  compileFromImage,
+  detectImageMime,
   formatSpatialPriors,
   IMAGE_SYSTEM_PROMPT,
   imageRepairMessage,
   isAllowedImageUrl,
+  normalizeImageInput,
 } from './plugins/ai-image';
 export type {
+  AIImageInput,
   AISpatialCamera,
   AISpatialObject,
   AISpatialPlane,
   AISpatialPriors,
+  CompileFromImageOptions,
 } from './plugins/ai-image';
 export type {
   SelectCamera,
@@ -83,6 +88,7 @@ export {
   aiPlugin,
   buildImageMessages,
   buildImageUserText,
+  compileFromImage,
   connectVoice,
   createAIChatProvider,
   createWebSpeechRecognizer,
@@ -90,6 +96,7 @@ export {
   buildSelectIndex,
   describeSelection,
   describeVoiceSelection,
+  detectImageMime,
   editScene,
   formatSpatialPriors,
   getSelection,
@@ -98,6 +105,7 @@ export {
   imageRepairMessage,
   isAllowedImageUrl,
   matchSelection,
+  normalizeImageInput,
   parseSelectReply,
   parseVoiceCommand,
   resolveSelection,

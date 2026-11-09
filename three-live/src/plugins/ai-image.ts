@@ -15,7 +15,21 @@
  * and verified against `three-live/tests/fixtures/image_cases.json`.
  */
 
-import type {AIChatContentPart, AIChatMessage} from './ai';
+import {
+  type AIChatContentPart,
+  type AIChatMessage,
+  type AIEditableElement,
+  currentSource,
+  dryRunCompile,
+  type EditSceneResult,
+  extractScript,
+  MAX_HISTORY,
+  MAX_SCRIPT_BYTES,
+  resolveProvider,
+  sceneSummary,
+  type ThreeLiveAIProvider,
+} from './ai';
+import {setSelection} from './ai-select';
 
 /** One tracked plane in world meters (+Y up). */
 export interface AISpatialPlane {
@@ -69,6 +83,45 @@ export const MAX_PRIOR_OBJECTS = 32;
 export const MAX_PRIOR_LABEL_CHARS = 80;
 /** Maximum characters in a user prompt instruction. */
 export const MAX_IMAGE_PROMPT_CHARS = 2000;
+/** Maximum raw image byte size (32 MB). */
+export const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+/** Default longest-edge downscale target in pixels. */
+export const DEFAULT_IMAGE_MAX_EDGE = 1024;
+/** Minimum allowed `maxEdge` in pixels. */
+export const MIN_IMAGE_MAX_EDGE = 256;
+/** Maximum allowed `maxEdge` in pixels. */
+export const MAX_IMAGE_MAX_EDGE = 2048;
+
+/** Supported image sources for {@link compileFromImage} and {@link normalizeImageInput}. */
+export type AIImageInput =
+  | string
+  | Blob
+  | HTMLImageElement
+  | HTMLVideoElement
+  | HTMLCanvasElement
+  | ImageBitmap
+  | ArrayBuffer
+  | ArrayBufferView;
+
+/** Options for {@link compileFromImage}. */
+export interface CompileFromImageOptions {
+  /** Provider override (defaults to `el.aiProvider`, then `ai-*` attributes). */
+  readonly provider?: ThreeLiveAIProvider;
+  /** Optional text guidance (e.g. `'reconstruct this desk and make the lamp brass'`). */
+  readonly prompt?: string;
+  /** Optional metric spatial priors from AR / WorldUnderstanding / RoomPlan. */
+  readonly priors?: AISpatialPriors | null;
+  /** Downscale longest image edge to at most `maxEdge` px before encoding (256..2048, default 1024). */
+  readonly maxEdge?: number;
+  /** Automatic repair turns on compile error or linter warning (0..3, default 1). */
+  readonly maxRepairs?: number;
+  /** Validate only; do not hot-swap the live scene. */
+  readonly dryRun?: boolean;
+  /** Aborts the request (a newer `compileFromImage` or `editScene` call also aborts older ones). */
+  readonly signal?: AbortSignal;
+  /** Optional `fetch` implementation used when normalizing remote or relative image URLs. */
+  readonly fetch?: typeof fetch;
+}
 
 /**
  * System prompt for reconstructing a 3D scene from a reference image.
@@ -332,4 +385,447 @@ export function imageRepairMessage(
     );
   }
   return 'Return the complete corrected script in a single ```js code block.';
+}
+
+/** Detects PNG, JPEG, or WebP magic bytes from a binary buffer. */
+export function detectImageMime(
+  bytes: Uint8Array,
+): 'image/png' | 'image/jpeg' | 'image/webp' | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  ) {
+    return 'image/jpeg';
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const g = globalThis as unknown as {
+    Buffer?: {
+      from(
+        buf: ArrayBufferLike,
+        offset: number,
+        length: number,
+      ): {toString(enc: string): string};
+    };
+  };
+  if (g.Buffer && typeof g.Buffer.from === 'function') {
+    return g.Buffer.from(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength,
+    ).toString('base64');
+  }
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const sub = bytes.subarray(i, Math.min(i + chunk, bytes.length));
+    binary += String.fromCharCode(...sub);
+  }
+  return btoa(binary);
+}
+
+function clampMaxEdge(raw: number | undefined): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_IMAGE_MAX_EDGE;
+  return Math.max(
+    MIN_IMAGE_MAX_EDGE,
+    Math.min(MAX_IMAGE_MAX_EDGE, Math.round(n)),
+  );
+}
+
+function encodeBytesToDataUrl(bytes: Uint8Array): string {
+  if (bytes.byteLength === 0) {
+    throw new Error('compileFromImage: image buffer is empty.');
+  }
+  if (bytes.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error('compileFromImage: image exceeds the 32 MB limit.');
+  }
+  const mime = detectImageMime(bytes);
+  if (!mime) {
+    throw new Error(
+      'compileFromImage: unsupported image format (expected PNG, JPEG, or WebP magic bytes).',
+    );
+  }
+  return `data:${mime};base64,${bytesToBase64(bytes)}`;
+}
+
+function downscaleDrawableToDataUrl(
+  source: unknown,
+  width: number,
+  height: number,
+  maxEdge: number,
+): string | null {
+  const longest = Math.max(width, height);
+  const scale = longest > maxEdge ? maxEdge / longest : 1;
+  const targetW = Math.max(1, Math.round(width * scale));
+  const targetH = Math.max(1, Math.round(height * scale));
+  const srcWithDataUrl = source as {
+    toDataURL?: (type?: string, quality?: number) => string;
+  };
+  if (scale === 1 && typeof srcWithDataUrl.toDataURL === 'function') {
+    try {
+      const direct = srcWithDataUrl.toDataURL('image/jpeg', 0.88);
+      if (isAllowedImageUrl(direct)) return direct;
+    } catch {}
+  }
+  if (
+    typeof document !== 'undefined' &&
+    typeof document.createElement === 'function'
+  ) {
+    try {
+      const canvas = document.createElement('canvas');
+      if (canvas && typeof canvas.getContext === 'function') {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (ctx && typeof ctx.drawImage === 'function') {
+          ctx.drawImage(source as CanvasImageSource, 0, 0, targetW, targetH);
+          if (typeof canvas.toDataURL === 'function') {
+            const out = canvas.toDataURL('image/jpeg', 0.88);
+            if (isAllowedImageUrl(out)) return out;
+          }
+        }
+      }
+    } catch {}
+  }
+  if (typeof srcWithDataUrl.toDataURL === 'function') {
+    try {
+      const fallback = srcWithDataUrl.toDataURL('image/jpeg', 0.88);
+      if (isAllowedImageUrl(fallback)) return fallback;
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Normalizes any {@link AIImageInput} (`data:` URI, `https://` URL, `Blob`,
+ * `HTMLImageElement`, `HTMLVideoElement`, `HTMLCanvasElement`, `ImageBitmap`,
+ * `ArrayBuffer`, or `Uint8Array`) into a validated `data:image/...;base64,...`
+ * or `https://` URL ready for {@link buildImageMessages}.
+ */
+export async function normalizeImageInput(
+  input: AIImageInput,
+  options: {
+    readonly maxEdge?: number;
+    readonly signal?: AbortSignal;
+    readonly fetch?: typeof fetch;
+  } = {},
+): Promise<string> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason ?? new Error('compileFromImage aborted');
+  }
+  if (input == null) {
+    throw new Error('compileFromImage: image input is required.');
+  }
+  const maxEdge = clampMaxEdge(options.maxEdge);
+
+  if (typeof input === 'string') {
+    const s = input.trim();
+    if (!s) {
+      throw new Error('compileFromImage: image input is empty.');
+    }
+    if (/^data:/i.test(s)) {
+      if (!isAllowedImageUrl(s)) {
+        throw new Error(
+          'compileFromImage: data URI must be a base64-encoded image/png, image/jpeg, or image/webp.',
+        );
+      }
+      const commaIdx = s.indexOf(',');
+      const header = s
+        .slice(0, commaIdx)
+        .toLowerCase()
+        .replace('image/jpg', 'image/jpeg');
+      const b64 = s.slice(commaIdx + 1).replace(/\s+/g, '');
+      const approxBytes = Math.floor((b64.length * 3) / 4);
+      if (approxBytes > MAX_IMAGE_BYTES) {
+        throw new Error('compileFromImage: image exceeds the 32 MB limit.');
+      }
+      return `${header},${b64}`;
+    }
+    if (/^(javascript|vbscript|file|ftp|ws|wss):/i.test(s)) {
+      throw new Error('compileFromImage: unsupported or unsafe image URL scheme.');
+    }
+    if (/^http:/i.test(s) && !isAllowedImageUrl(s)) {
+      throw new Error(
+        'compileFromImage: remote image URLs must use https:// (or http:// on localhost).',
+      );
+    }
+    const isDirectRemote = /^https?:/i.test(s) && isAllowedImageUrl(s);
+    if (isDirectRemote && !options.fetch) {
+      return s;
+    }
+    let resolvedUrl = s;
+    if (!/^https?:|^blob:/i.test(s)) {
+      const base = (globalThis as {location?: {href?: string}}).location?.href;
+      if (!base) {
+        throw new Error(
+          'compileFromImage: imageUrl must be a base64 data:image/(png|jpeg|webp) URI or an https:// URL.',
+        );
+      }
+      resolvedUrl = new URL(s, base).href;
+      if (!/^blob:/i.test(resolvedUrl) && !isAllowedImageUrl(resolvedUrl)) {
+        throw new Error(
+          'compileFromImage: resolved image URL must use https:// (or http:// on localhost).',
+        );
+      }
+    }
+    const doFetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
+    if (typeof doFetch !== 'function') {
+      if (isDirectRemote) return s;
+      throw new Error('compileFromImage: no fetch() implementation is available.');
+    }
+    const res = await doFetch(resolvedUrl, {
+      mode: 'cors',
+      credentials: 'omit',
+      signal: options.signal,
+    });
+    if (!res.ok) {
+      throw new Error(
+        `compileFromImage: failed to fetch image (HTTP ${res.status}).`,
+      );
+    }
+    const contentLen = Number(res.headers?.get?.('content-length'));
+    if (Number.isFinite(contentLen) && contentLen > MAX_IMAGE_BYTES) {
+      throw new Error('compileFromImage: image exceeds the 32 MB limit.');
+    }
+    const ab = await res.arrayBuffer();
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new Error('compileFromImage aborted');
+    }
+    return encodeBytesToDataUrl(new Uint8Array(ab));
+  }
+
+  if (
+    input instanceof ArrayBuffer ||
+    Object.prototype.toString.call(input) === '[object ArrayBuffer]'
+  ) {
+    return encodeBytesToDataUrl(new Uint8Array(input as ArrayBuffer));
+  }
+
+  if (ArrayBuffer.isView(input)) {
+    return encodeBytesToDataUrl(
+      new Uint8Array(input.buffer, input.byteOffset, input.byteLength),
+    );
+  }
+
+  if (
+    (typeof Blob !== 'undefined' && input instanceof Blob) ||
+    typeof (input as Blob).arrayBuffer === 'function'
+  ) {
+    const blob = input as Blob;
+    if (typeof blob.size === 'number' && blob.size > MAX_IMAGE_BYTES) {
+      throw new Error('compileFromImage: image exceeds the 32 MB limit.');
+    }
+    const ab = await blob.arrayBuffer();
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new Error('compileFromImage aborted');
+    }
+    return encodeBytesToDataUrl(new Uint8Array(ab));
+  }
+
+  const drawable = input as {
+    videoWidth?: number;
+    videoHeight?: number;
+    naturalWidth?: number;
+    naturalHeight?: number;
+    width?: number;
+    height?: number;
+    toDataURL?: (type?: string, quality?: number) => string;
+    src?: string;
+  };
+  const w = Number(
+    drawable.videoWidth || drawable.naturalWidth || drawable.width || 0,
+  );
+  const h = Number(
+    drawable.videoHeight || drawable.naturalHeight || drawable.height || 0,
+  );
+  if (w > 0 && h > 0) {
+    const scaled = downscaleDrawableToDataUrl(input, w, h, maxEdge);
+    if (scaled) return scaled;
+  }
+  if (typeof drawable.toDataURL === 'function') {
+    const dataUrl = drawable.toDataURL('image/jpeg', 0.88);
+    if (isAllowedImageUrl(dataUrl)) return dataUrl;
+  }
+  if (typeof drawable.src === 'string' && drawable.src.trim()) {
+    return normalizeImageInput(drawable.src, options);
+  }
+  throw new Error('compileFromImage: unsupported or unloaded image source.');
+}
+
+/**
+ * Reconstructs a 3D scene from a reference image (`Blob`, `HTMLImageElement`,
+ * `HTMLVideoElement`, `HTMLCanvasElement`, `ImageBitmap`, `ArrayBuffer`,
+ * `Uint8Array`, `data:image/...` URI, or `https://` URL) using an LLM,
+ * validating the generated script in the sandbox and auto-repairing both
+ * compile errors and linter warnings before hot-swapping the live scene.
+ */
+export async function compileFromImage(
+  el: AIEditableElement,
+  image: AIImageInput,
+  options: CompileFromImageOptions = {},
+): Promise<EditSceneResult> {
+  if (!el?.allowClientScripts) {
+    throw new Error(
+      'compileFromImage requires client scripts: add the allow-client-scripts attribute.',
+    );
+  }
+  const provider = resolveProvider(el, options, 'compileFromImage');
+  const prevSource = currentSource(el);
+
+  // A newer compileFromImage or editScene call supersedes an in-flight one.
+  el.__tlAiAbort?.abort(
+    new Error('compileFromImage superseded by a newer call'),
+  );
+  const ctrl = new AbortController();
+  el.__tlAiAbort = ctrl;
+  const onOuterAbort = () => ctrl.abort(options.signal?.reason);
+  if (options.signal?.aborted) onOuterAbort();
+  options.signal?.addEventListener('abort', onOuterAbort, {once: true});
+  const signal = ctrl.signal;
+
+  const prompt = Array.from(String(options.prompt ?? '').trim())
+    .slice(0, MAX_IMAGE_PROMPT_CHARS)
+    .join('');
+  const hasPriors = formatSpatialPriors(options.priors).length > 0;
+  const maxRepairs = Math.max(
+    0,
+    Math.min(3, Math.floor(Number(options.maxRepairs ?? 1)) || 0),
+  );
+
+  let code = '';
+  let error = '';
+  let warnings: string[] = [];
+  let repairs = 0;
+  let bestCandidate: {code: string; warnings: string[]} | null = null;
+
+  try {
+    const imageUrl = await normalizeImageInput(image, {
+      maxEdge: options.maxEdge,
+      signal,
+      fetch: options.fetch,
+    });
+    if (signal.aborted) throw signal.reason;
+    const messages = buildImageMessages(imageUrl, prompt, options.priors);
+
+    el.fireEvent?.('three-live-image-start', {prompt, hasPriors});
+
+    for (let turn = 0; turn <= maxRepairs; turn++) {
+      const reply = await provider.complete({messages, signal});
+      if (signal.aborted) throw signal.reason;
+      code = extractScript(reply);
+      warnings = [];
+      if (!code) {
+        error = 'The model reply did not contain a scene script.';
+      } else if (new TextEncoder().encode(code).length > MAX_SCRIPT_BYTES) {
+        error = 'The generated script exceeds the 1 MB script limit.';
+      } else {
+        try {
+          const res = await dryRunCompile(el, code, signal, 'compileFromImage');
+          warnings = [...res.warnings];
+          const summary = sceneSummary(res.model);
+          if (
+            summary.unnamedXrNodes > 0 &&
+            !warnings.some((w) => w.includes('TL204'))
+          ) {
+            warnings.push(
+              '[TL204] Node with userData.xr is missing a unique .name.',
+            );
+          }
+          if (summary.meshes === 0) {
+            error = 'The generated scene contains no meshes.';
+          } else {
+            error = '';
+            bestCandidate = {code, warnings: [...warnings]};
+          }
+        } catch (caught: unknown) {
+          if (signal.aborted) throw signal.reason;
+          const e = caught as {name?: string; message?: string} | null;
+          const msg = String(e?.message || caught);
+          error =
+            e?.name && e.name !== 'Error' && !msg.startsWith(e.name)
+              ? `${e.name}: ${msg}`
+              : msg;
+        }
+      }
+      if (!error && warnings.length === 0) break;
+      if (turn < maxRepairs) {
+        repairs++;
+        messages.push(
+          {role: 'assistant', content: reply},
+          {role: 'user', content: imageRepairMessage(error, warnings)},
+        );
+      }
+    }
+  } finally {
+    options.signal?.removeEventListener('abort', onOuterAbort);
+    if (el.__tlAiAbort === ctrl) el.__tlAiAbort = null;
+  }
+
+  // If a warning-repair turn failed to compile, fall back to the earlier compiling candidate.
+  if (error && bestCandidate) {
+    code = bestCandidate.code;
+    warnings = bestCandidate.warnings;
+    error = '';
+  }
+
+  if (!error && !options.dryRun) {
+    try {
+      await el.executeScript(code);
+      if (prevSource.trim()) {
+        const history: string[] = (el.__tlAiHistory ??= []);
+        history.push(prevSource);
+        if (history.length > MAX_HISTORY) history.shift();
+      }
+      el.__tlAiSource = code;
+      setSelection(el as never, [], {mode: 'clear', source: 'api'});
+    } catch (e: unknown) {
+      error = `The generated scene compiled but failed to load: ${(e as Error)?.message || String(e)}`;
+      el.__tlAiSource = prevSource;
+      if (prevSource.trim()) {
+        el.executeScript(prevSource).catch(() => {});
+      }
+    }
+  }
+
+  const applied = !error;
+  const result: EditSceneResult = {
+    applied,
+    code,
+    repairs,
+    warnings,
+    ...(error ? {error} : {}),
+  };
+  el.fireEvent?.('three-live-image', {prompt, ...result});
+  return result;
 }

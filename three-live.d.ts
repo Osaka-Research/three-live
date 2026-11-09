@@ -156,12 +156,32 @@ export {
   undoEdit,
 } from './three-live/src/plugins/ai';
 export type {
+  AIChatContentPart,
   AIChatMessage,
   AIChatProviderOptions,
   EditSceneOptions,
   EditSceneResult,
   ThreeLiveAIProvider,
 } from './three-live/src/plugins/ai';
+export {
+  buildImageMessages,
+  buildImageUserText,
+  compileFromImage,
+  detectImageMime,
+  formatSpatialPriors,
+  IMAGE_SYSTEM_PROMPT,
+  imageRepairMessage,
+  isAllowedImageUrl,
+  normalizeImageInput,
+} from './three-live/src/plugins/ai-image';
+export type {
+  AIImageInput,
+  AISpatialCamera,
+  AISpatialObject,
+  AISpatialPlane,
+  AISpatialPriors,
+  CompileFromImageOptions,
+} from './three-live/src/plugins/ai-image';
 /** "Tap & Speak" voice editing (part of `three-live-ai.min.js`). */
 export {
   hideSelectionChips,
