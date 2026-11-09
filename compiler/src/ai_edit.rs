@@ -49,16 +49,44 @@ fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
+/// Most meshes one selection may hold (matches `MAX_SELECTION` in `ai-select.ts`).
+pub const MAX_SELECTED: usize = 50;
+
+/// De-duplicated, non-empty, length-limited mesh names (matches `normalizeSelection`).
+pub fn normalize_selection<S: AsRef<str>>(names: &[S]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        let name = truncate_chars(n.as_ref(), MAX_SELECTION_CHARS);
+        if !name.is_empty() && !out.contains(&name) {
+            out.push(name);
+        }
+        if out.len() >= MAX_SELECTED {
+            break;
+        }
+    }
+    out
+}
+
+/// The prompt sentence for a selection (matches `selectionSentence` in `ai.ts`).
+pub fn selection_sentence(selected: &[String]) -> String {
+    match selected.len() {
+        0 => String::new(),
+        1 => format!(
+            "The user selected the mesh named \"{}\"; the instruction refers to it.\n",
+            selected[0]
+        ),
+        _ => format!(
+            "The user selected the meshes named {}; the instruction refers to them.\n",
+            selected.iter().map(|m| format!("\"{}\"", m)).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
 /// Builds the chat messages for one edit (same wording as the web plugin).
-pub fn build_messages(source: &str, selection: Option<&str>, instruction: &str) -> Value {
+pub fn build_messages(source: &str, selection: &[String], instruction: &str) -> Value {
     let instruction = truncate_chars(instruction.trim(), MAX_INSTRUCTION_CHARS);
     let mut user = format!("Current scene script:\n```js\n{}\n```\n", source);
-    if let Some(sel) = selection.filter(|s| !s.is_empty()) {
-        user.push_str(&format!(
-            "The user selected the mesh named \"{}\"; the instruction refers to it.\n",
-            truncate_chars(sel, MAX_SELECTION_CHARS)
-        ));
-    }
+    user.push_str(&selection_sentence(&normalize_selection(selection)));
     user.push_str(&format!("Instruction: {}", instruction));
     json!([
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -136,9 +164,9 @@ pub struct EditValidation {
 }
 
 /// Compiles `code` with the warm sandboxed engine and applies the web plugin's acceptance
-/// rules: the script must compile, contain at least one mesh, and keep the selected mesh
+/// rules: the script must compile, contain at least one mesh, and keep every selected mesh
 /// (unless the instruction removes or renames something).
-pub fn validate_edit(code: &str, selection: Option<&str>, instruction: &str) -> EditValidation {
+pub fn validate_edit(code: &str, selection: &[String], instruction: &str) -> EditValidation {
     let fail = |error: String| EditValidation {
         ok: false,
         error: Some(error),
@@ -173,14 +201,21 @@ pub fn validate_edit(code: &str, selection: Option<&str>, instruction: &str) -> 
     } else {
         scene.nodes.iter().filter(|n| n.mesh.is_some()).count()
     };
+    let lost: Vec<String> = normalize_selection(selection)
+        .into_iter()
+        .filter(|sel| !names.iter().any(|n| n == sel))
+        .collect();
     let error = if mesh_count == 0 {
         Some("The edited scene contains no meshes.".to_string())
-    } else if let Some(sel) = selection.filter(|s| !s.is_empty()) {
-        if !names.iter().any(|n| n == sel) && !mentions_removal(instruction) {
-            Some(format!("The edited scene no longer contains the selected mesh \"{}\".", sel))
+    } else if !lost.is_empty() && !mentions_removal(instruction) {
+        Some(if lost.len() == 1 {
+            format!("The edited scene no longer contains the selected mesh \"{}\".", lost[0])
         } else {
-            None
-        }
+            format!(
+                "The edited scene no longer contains the selected meshes {}.",
+                lost.iter().map(|m| format!("\"{}\"", m)).collect::<Vec<_>>().join(", ")
+            )
+        })
     } else {
         None
     };
@@ -201,6 +236,17 @@ fn str_arg<'a>(req: &'a Value, key: &str) -> Option<&'a str> {
     req.get(key).and_then(Value::as_str)
 }
 
+/// `selection` as a string (one mesh), an array of strings, or absent.
+fn selection_arg(req: &Value) -> Vec<String> {
+    match req.get("selection") {
+        Some(Value::String(s)) => normalize_selection(&[s.as_str()]),
+        Some(Value::Array(a)) => {
+            normalize_selection(&a.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// One JSON request → one JSON response; the single entry point mobile apps call.
 ///
 /// Ops: `messages`, `repair`, `extract`, `validate`, `describe`, plus the voice ops handled by
@@ -216,7 +262,7 @@ pub fn ai_call(request: &str) -> String {
         "messages" => json!({
             "messages": build_messages(
                 str_arg(&req, "source").unwrap_or(""),
-                str_arg(&req, "selection"),
+                &selection_arg(&req),
                 str_arg(&req, "instruction").unwrap_or(""),
             )
         }),
@@ -225,7 +271,7 @@ pub fn ai_call(request: &str) -> String {
         "validate" => {
             let v = validate_edit(
                 str_arg(&req, "code").unwrap_or(""),
-                str_arg(&req, "selection"),
+                &selection_arg(&req),
                 str_arg(&req, "instruction").unwrap_or(""),
             );
             let mut out = json!({
@@ -245,6 +291,17 @@ pub fn ai_call(request: &str) -> String {
                 str_arg(&req, "error"),
             )
         }),
+        "select" => crate::ai_select::select_call(&req),
+        "select_messages" => crate::ai_select::select_messages_call(&req),
+        "select_parse" => crate::ai_select::select_parse_call(&req),
+        "select_say" => crate::ai_select::select_say_call(&req),
+        "select_context" => crate::ai_select::select_context_call(&req),
+        "parse_command" => {
+            crate::ai_select::parse_voice_command(str_arg(&req, "text").unwrap_or("")).to_json()
+        }
+        "image_messages" => crate::ai_image::image_messages_call(&req),
+        "image_validate" => crate::ai_image::image_validate_call(&req),
+        "image_repair" => crate::ai_image::image_repair_call(&req),
         _ if op.starts_with("voice_") => crate::ai_voice::voice_call(op, &req),
         _ => json!({"error": format!("unknown op '{}'", op)}),
     };
@@ -268,15 +325,15 @@ mod tests {
 
     #[test]
     fn messages_include_source_selection_and_instruction() {
-        let m = build_messages(BASE, Some("Roof"), "  make it red  ");
+        let m = build_messages(BASE, &["Roof".to_string()], "  make it red  ");
         assert_eq!(m[0]["role"], "system");
         let user = m[1]["content"].as_str().unwrap();
         assert!(user.contains("```js\nconst roof"));
         assert!(user.contains("The user selected the mesh named \"Roof\""));
         assert!(user.ends_with("Instruction: make it red"));
-        let no_sel = build_messages(BASE, Some(""), "x");
+        let no_sel = build_messages(BASE, &["".to_string()], "x");
         assert!(!no_sel[1]["content"].as_str().unwrap().contains("selected"));
-        let long = build_messages(BASE, None, &"a".repeat(5000));
+        let long = build_messages(BASE, &[], &"a".repeat(5000));
         assert!(long[1]["content"].as_str().unwrap().len() < BASE.len() + 2100);
     }
 
@@ -301,27 +358,62 @@ mod tests {
     fn validate_accepts_good_edits_and_rejects_bad_ones() {
         let red =
             BASE.replace("MeshStandardMaterial()", "MeshStandardMaterial({ color: 0xff0000 })");
-        let ok = validate_edit(&red, Some("Roof"), "make it red");
+        let ok = validate_edit(&red, &["Roof".to_string()], "make it red");
         assert!(ok.ok, "{:?}", ok.error);
         assert_eq!(ok.mesh_count, 1);
         assert!(ok.mesh_names.contains(&"Roof".to_string()));
 
-        let broken = validate_edit("scene.add(new THREE.Mesh(", None, "x");
+        let broken = validate_edit("scene.add(new THREE.Mesh(", &[], "x");
         assert!(!broken.ok && broken.error.unwrap().to_lowercase().contains("syntax"));
 
-        let empty = validate_edit("const g = new THREE.Group(); scene.add(g);", None, "x");
+        let empty = validate_edit("const g = new THREE.Group(); scene.add(g);", &[], "x");
         assert_eq!(empty.error.as_deref(), Some("The edited scene contains no meshes."));
 
         let renamed = BASE.replace("'Roof'", "'Top'");
-        let lost = validate_edit(&renamed, Some("Roof"), "make it red");
+        let lost = validate_edit(&renamed, &["Roof".to_string()], "make it red");
         assert!(lost.error.unwrap().contains("no longer contains the selected mesh \"Roof\""));
-        assert!(validate_edit(&renamed, Some("Roof"), "Rename the roof to Top").ok);
+        assert!(validate_edit(&renamed, &["Roof".to_string()], "Rename the roof to Top").ok);
 
-        assert!(!validate_edit("", None, "x").ok);
-        assert!(validate_edit(&"x".repeat(MAX_SCRIPT_BYTES + 1), None, "x")
+        assert!(!validate_edit("", &[], "x").ok);
+        assert!(validate_edit(&"x".repeat(MAX_SCRIPT_BYTES + 1), &[], "x")
             .error
             .unwrap()
             .contains("1 MB"));
+    }
+
+    #[test]
+    fn multi_selection_prompt_and_validation() {
+        let sel = vec!["Roof".to_string(), "Door".to_string(), "Roof".to_string(), String::new()];
+        let m = build_messages(BASE, &sel, "paint them");
+        let user = m[1]["content"].as_str().unwrap();
+        assert!(user.contains("The user selected the meshes named \"Roof\", \"Door\"; the instruction refers to them."));
+        let two = format!("{}\nconst door = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 0.1), new THREE.MeshStandardMaterial());\ndoor.name = 'Door';\nscene.add(door);", BASE);
+        assert!(validate_edit(&two, &sel, "paint them").ok);
+        let lost = validate_edit(
+            BASE,
+            &["Roof".to_string(), "Door".to_string(), "Gate".to_string()],
+            "paint them",
+        );
+        assert_eq!(
+            lost.error.as_deref(),
+            Some("The edited scene no longer contains the selected meshes \"Door\", \"Gate\".")
+        );
+        let many: Vec<String> = (0..80).map(|i| format!("M{}", i)).collect();
+        assert_eq!(normalize_selection(&many).len(), MAX_SELECTED);
+        let r: Value = serde_json::from_str(&ai_call(&json!({"op": "messages", "source": BASE, "selection": ["Roof", "Door"], "instruction": "x"}).to_string())).unwrap();
+        assert!(r["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("meshes named \"Roof\", \"Door\""));
+    }
+
+    #[test]
+    fn selection_sentence_matches_the_web_plugin() {
+        let ts = include_str!("../../three-live/src/plugins/ai.ts");
+        assert!(ts.contains(
+            "The user selected the mesh named \"${selected[0]}\"; the instruction refers to it."
+        ));
+        assert!(ts.contains("The user selected the meshes named ${selected.map((m) => `\"${m}\"`).join(', ')}; the instruction refers to them."));
     }
 
     #[test]
@@ -356,6 +448,36 @@ mod tests {
             serde_json::from_str(&ai_call(&json!({"op": "repair", "error": "E"}).to_string()))
                 .unwrap();
         assert!(r["message"].as_str().unwrap().starts_with("That script was rejected"));
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "parse_command", "text": "select the lamp and make it red"}).to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["kind"], "mixed");
+        assert_eq!(r["instruction"], "make it red");
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "select", "query": "the lamp",
+                    "entries": [{"name": "Lamp", "min": [0, 0, 0], "max": [1, 1, 1]}]})
+            .to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["names"], json!(["Lamp"]));
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "image_messages", "imageUrl": "data:image/png;base64,iVBORw0KGgo=", "prompt": "add chair"})
+                .to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["messages"].as_array().unwrap().len(), 2);
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "image_validate", "code": BASE}).to_string(),
+        ))
+        .unwrap();
+        assert_eq!(r["ok"], true);
+        let r: Value = serde_json::from_str(&ai_call(
+            &json!({"op": "image_repair", "warnings": ["[TL302] Scene contains no Light"]})
+                .to_string(),
+        ))
+        .unwrap();
+        assert!(r["message"].as_str().unwrap().contains("[TL302]"));
         assert!(ai_call("{").contains("invalid request JSON"));
         assert!(ai_call("{\"op\":\"nope\"}").contains("unknown op"));
     }

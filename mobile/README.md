@@ -83,16 +83,25 @@ Both Android and iOS include complete sample applications featuring an on-device
 The same bring-your-own-LLM editing as `el.editScene()` / `el.connectVoice()` on the web, with
 the prompt, reply parsing, edit validation, and voice protocols shared through the Rust core
 (`three_live_ai_call`), so every platform accepts and rejects the same edits. A text/code model
-writes each edit; the voice model only talks and calls the `edit_scene` / `undo_edit` tools.
+writes each edit; the voice model only talks and calls the `edit_scene` / `undo_edit` /
+`select_meshes` tools.
 Keep API keys on your server: point endpoints at your own proxy or a local model.
 
 | | Android (`com.google.threelive.ai`) | iOS / visionOS |
 |---|---|---|
 | Text edits + undo | `ThreeLiveAIEditor` | `AIEditor` |
 | Code model (`ai-chat`) | `AIChatProvider` | `AIChatProvider` |
-| Tap to select | `editor.toggleSelection(name)` from `ThreeLiveRendererListener.onPick` | `editor.toggleSelection(entity.name)` from your tap handler |
+| Tap to select | `editor.toggleSelection(name, additive)` from `ThreeLiveRendererListener.onPick` | `editor.toggleSelection(entity.name, additive:)` from your tap handler |
+| Talk-to-Select | `editor.selectByVoice("the red chairs", mode)`, `editor.selections`, `editor.camera` | `editor.selectByVoice("the red chairs", mode:)`, `editor.selections`, `editor.camera` |
 | Push-to-talk | `VoiceEditController` (`SpeechRecognizer` + `TextToSpeech`) | `VoiceEditController` (`SFSpeechRecognizer` + `AVSpeechSynthesizer`) |
 | Realtime voice (`ai-realtime` / `gemini-live`) | `AIVoiceSession` + `WebSocketLiveTransport` + `MicrophoneStreamer(rate)` + `AudioTrackPcmSink` | `AIVoiceSession` + `URLSessionLiveTransport` + `MicrophoneStreamer(sampleRate:)` + `AVAudioPcmSink` |
+
+Talk-to-Select uses the same matcher as the web (`select`, `parse_command`, and the other
+`select_*` ops in the core). Push-to-talk understands "select … / also select … / deselect … /
+clear the selection" and "select X and make it red". The latter edits right away only when the
+reference was unambiguous; otherwise it asks which one was meant. Set `editor.camera` to your
+camera's eye and target so "left" and "front" match what the user sees. References the matcher
+can't resolve go to the editor's code model; set `selectWithModel = false` to turn that off.
 
 ```kotlin
 val editor = ThreeLiveAIEditor(script, AIChatProvider("https://your-backend.example/chat")) { code ->

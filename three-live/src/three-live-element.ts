@@ -476,7 +476,8 @@ export class ThreeLiveElement extends BaseElement {
         break;
 
       case 'selected-mesh':
-        if (v && newVal !== null) v.setSelectedMesh(newVal);
+        // Removing the attribute clears the highlight too.
+        this.viewer?.setSelectedMesh(newVal ?? '');
         break;
 
       case 'exposure':

@@ -347,7 +347,7 @@ jobs:
           (cd web-bundle && zip -r ../dist-release/three-live-web-dist.zip .)
           cp dist/three-live.min.js dist/three-live-viewer.min.js dist/three-live-studio.min.js dist/three-live-cad.min.js dist/three-live-animation.min.js dist/three-live-sandbox.html dist-release/
           cp three-live/dist/three-live-full.min.js dist-release/
-          cp xr-live/dist/xr-live.min.js xr-live/dist/xr-live-viewer.min.js xr-live/dist/xr-live-sensors.min.js xr-live/dist/xr-live-spatial.min.js xr-live/dist/xr-live-sim.min.js xr-live/dist/xr-live-full.min.js dist-release/
+          cp xr-live/dist/xr-live.min.js xr-live/dist/xr-live-viewer.min.js xr-live/dist/xr-live-sensors.min.js xr-live/dist/xr-live-spatial.min.js xr-live/dist/xr-live-sim.min.js xr-live/dist/xr-live-webgpu.min.js xr-live/dist/xr-live-full.min.js dist-release/
           ls -la dist-release
 
       - name: Publish GitHub Release

@@ -360,8 +360,8 @@ async function run(): Promise<void> {
     assert(
       t.sent[0].type === 'session.update' &&
         t.sent[0].session.instructions.includes('Use metric units.') &&
-        t.sent[0].session.tools.map((x: any) => x.name).join() === 'edit_scene,undo_edit',
-      'connectVoice sends the session setup with edit_scene and undo_edit',
+        t.sent[0].session.tools.map((x: any) => x.name).join() === 'edit_scene,undo_edit,select_meshes',
+      'connectVoice sends the session setup with edit_scene, undo_edit, and select_meshes',
     );
     assert(
       t.sent.some(

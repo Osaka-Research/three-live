@@ -100,6 +100,11 @@
       "import": "./xr-live/dist/xr-live-sim.js",
       "require": "./xr-live/dist/xr-live-sim.cjs"
     },
+    "./xr-live-webgpu": {
+      "types": "./xr-live/dist/xr-live-webgpu.d.ts",
+      "import": "./xr-live/dist/xr-live-webgpu.js",
+      "require": "./xr-live/dist/xr-live-webgpu.cjs"
+    },
     "./xr-live-full": {
       "types": "./xr-live/dist/xr-live-full.d.ts",
       "import": "./xr-live/dist/xr-live-full.js",

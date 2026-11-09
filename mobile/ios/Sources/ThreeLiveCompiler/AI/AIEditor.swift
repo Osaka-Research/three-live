@@ -132,12 +132,55 @@ public final class NativeAICore: AICore, @unchecked Sendable {
   public func call(_ request: [String: Any]) async throws -> [String: Any] {
     let data = try JSONSerialization.data(withJSONObject: request)
     let text = String(decoding: data, as: UTF8.self)
-    let reply = try await ThreeCompiler.aiCall(
-      text, onCompilerThread: (request["op"] as? String) == "validate")
+    // `validate` (and `select` / `select_messages` with a `source`) run the scene on the compiler
+    // thread; the other ops are pure.
+    let op = request["op"] as? String ?? ""
+    let usesEngine = op == "validate" || ((op == "select" || op == "select_messages") && request["source"] != nil)
+    let reply = try await ThreeCompiler.aiCall(text, onCompilerThread: usesEngine)
     guard let obj = (try? JSONSerialization.jsonObject(with: Data(reply.utf8))) as? [String: Any]
     else { throw AIEditError("invalid response from native core") }
     return obj
   }
+}
+
+/// Camera that "left", "right", and "front" in spoken references are relative to (world space).
+public struct AICamera: Sendable, Equatable {
+  public var eye: [Double]
+  public var target: [Double]
+
+  public init(eye: [Double], target: [Double]) {
+    self.eye = eye
+    self.target = target
+  }
+}
+
+/// Outcome of a spoken selection request (Talk-to-Select). Mirrors `AIVoiceSelection` on the web.
+public struct AIVoiceSelection: Sendable, Equatable {
+  /// `replace`, `add`, `remove`, or `clear`.
+  public let mode: String
+  public let query: String
+  /// Whether the selection changed to what was asked.
+  public let applied: Bool
+  /// 1: resolved locally; 2: the code model resolved (or asked about) it.
+  public let tier: Int
+  /// The selection afterwards.
+  public let meshes: [String]
+  /// Meshes to offer when the reference was ambiguous.
+  public let candidates: [String]
+  /// What to say back: a confirmation, or a question when the reference was unclear.
+  public let say: String
+}
+
+/// A parsed push-to-talk utterance (`parse_command` in the shared core).
+public struct AIVoiceCommand: Sendable, Equatable {
+  /// `clear`, `select`, `mixed` (select, then edit), or `edit`.
+  public let kind: String
+  /// `replace`, `add`, `remove`, or `clear`.
+  public let mode: String
+  /// The spoken reference (`select` / `mixed`).
+  public let query: String
+  /// The edit (`mixed` / `edit`).
+  public let instruction: String
 }
 
 /// Result of `AIEditor.editScene`. Mirrors `EditSceneResult` on the web.
@@ -164,26 +207,35 @@ public struct EditResult: Sendable, Equatable {
 ///   try await session.reload(glb)
 /// }
 /// // Tap-to-select: in your tap handler, `editor.toggleSelection(entity.name)`.
-/// let result = await editor.editScene("make the roof red")
+/// await editor.selectByVoice("the two red chairs on the left")  // Talk-to-Select
+/// let result = await editor.editScene("make them blue")
 /// ```
 public final class AIEditor: @unchecked Sendable {
   public static let maxHistory = 20
   public static let superseded = "editScene superseded by a newer call"
+  /// Most meshes one selection may hold (same as the web).
+  public static let maxSelection = 50
 
   public var provider: AIProvider
   private let applyScene: (String) async throws -> Void
   private let core: AICore
   private let lock = NSLock()
   private var _source: String
-  private var _selection: String?
+  private var _selections: [String] = []
   private var history: [String] = []
   private var generation = 0
 
   /// Called before (`instruction`, `selection`) and after (`instruction`, `result`) each edit.
   public var onEditStart: ((String, String?) -> Void)?
   public var onEdit: ((String, EditResult) -> Void)?
-  /// Called when the selection changes.
+  /// Called when the first selected mesh changes (single-selection listeners).
   public var onSelectionChanged: ((String?) -> Void)?
+  /// Called when the selection changes, with its source (`tap`, `voice`, or `api`).
+  public var onSelectionsChanged: (([String], String) -> Void)?
+  /// Camera for "left" / "right" / "front" in `selectByVoice` (default: the scene's camera).
+  public var camera: AICamera?
+  /// Let `provider` resolve references the local matcher can't (tier 2; default true).
+  public var selectWithModel = true
 
   public init(
     source: String, provider: AIProvider, core: AICore = NativeAICore.shared,
@@ -210,28 +262,194 @@ public final class AIEditor: @unchecked Sendable {
     return _source
   }
 
-  /// Mesh the next instruction refers to ("make *this* red"), usually set by a tap.
-  public var selection: String? {
-    get {
-      lock.lock()
-      defer { lock.unlock() }
-      return _selection
-    }
-    set {
-      let v = (newValue?.isEmpty ?? true) ? nil : newValue
-      lock.lock()
-      let changed = _selection != v
-      _selection = v
-      lock.unlock()
-      if changed { onSelectionChanged?(v) }
-    }
+  /// Meshes the next instruction refers to ("make *these* red"), set by taps or by voice.
+  public var selections: [String] {
+    get { locked { _selections } }
+    set { assignSelection(newValue, source: "api") }
   }
 
-  /// Tap-to-select: selects `meshName`, or clears the selection when it is already selected.
+  /// The first selected mesh (single-selection compatibility). Setting it replaces the selection.
+  public var selection: String? {
+    get { selections.first }
+    set { selections = newValue.map { [$0] } ?? [] }
+  }
+
+  private static func clean(_ names: [String]) -> [String] {
+    var out: [String] = []
+    for n in names {
+      let name = String(n.prefix(200))
+      if !name.isEmpty && !out.contains(name) { out.append(name) }
+      if out.count >= maxSelection { break }
+    }
+    return out
+  }
+
+  private func assignSelection(_ names: [String], source: String) {
+    let v = Self.clean(names)
+    let previous: [String]? = locked {
+      if _selections == v { return nil }
+      let p = _selections
+      _selections = v
+      return p
+    }
+    guard let previous else { return }
+    onSelectionsChanged?(v, source)
+    if previous.first != v.first { onSelectionChanged?(v.first) }
+  }
+
+  /// Tap-to-select: selects `meshName` (tapping the only selected mesh clears it). With `additive`
+  /// (e.g. a long press), toggles `meshName` in the selection instead. Returns the first selected mesh.
   @discardableResult
-  public func toggleSelection(_ meshName: String?) -> String? {
-    selection = (meshName == nil || meshName == "" || meshName == selection) ? nil : meshName
+  public func toggleSelection(_ meshName: String?, additive: Bool = false) -> String? {
+    let current = selections
+    let next: [String]
+    if let name = meshName, !name.isEmpty {
+      if additive {
+        next = current.contains(name) ? current.filter { $0 != name } : current + [name]
+      } else {
+        next = current == [name] ? [] : [name]
+      }
+    } else {
+      next = additive ? current : []
+    }
+    assignSelection(next, source: "tap")
     return selection
+  }
+
+  /// Changes the selection: `mode` is `replace`, `add`, `remove`, `toggle`, or `clear`.
+  @discardableResult
+  public func setSelection(_ names: [String], mode: String = "replace", source: String = "api") -> [String] {
+    let current = selections
+    let given = Self.clean(names)
+    let next: [String]
+    switch mode {
+    case "clear": next = []
+    case "add": next = current + given
+    case "remove": next = current.filter { !given.contains($0) }
+    case "toggle": next = current.filter { !given.contains($0) } + given.filter { !current.contains($0) }
+    default: next = given
+    }
+    assignSelection(next, source: source)
+    return selections
+  }
+
+  /// Talk-to-Select: changes the selection from a spoken reference ("the two red chairs on the
+  /// left") with the shared matcher, falling back to `provider` for references it can't resolve
+  /// ("the lamp next to the sofa"). Nothing changes unless the match is confident; `say` then asks
+  /// which one was meant. `mode: "remove"` only looks inside the current selection.
+  @discardableResult
+  public func selectByVoice(_ query: String, mode: String = "replace") async -> AIVoiceSelection {
+    let q = String(query.prefix(2000))
+    if mode == "clear" {
+      setSelection([], mode: "clear", source: "voice")
+      return AIVoiceSelection(
+        mode: mode, query: q, applied: true, tier: 1, meshes: [], candidates: [],
+        say: await say(mode, nil, [], q))
+    }
+    let within: [String]? = mode == "remove" ? selections : nil
+    if let within, within.isEmpty {
+      return AIVoiceSelection(
+        mode: mode, query: q, applied: false, tier: 1, meshes: [], candidates: [], say: "Nothing is selected.")
+    }
+    let scene = sceneArgs(within)
+    var match: [String: Any] = (try? await core.call(scene.merging(["op": "select", "query": q]) { $1 })) ?? [:]
+    var tier = 1
+    var question = ""
+    let reason = match["reason"] as? String
+    if selectWithModel, !q.trimmingCharacters(in: .whitespaces).isEmpty,
+      (match["confidence"] as? String) == "none", reason == "relation" || reason == "no_match"
+    {
+      do {
+        let built = try await core.call(
+          scene.merging(["op": "select_messages", "query": q, "selection": selections]) { $1 })
+        let reply = try await provider.complete(try Self.messages(built))
+        let parsed = try await core.call(["op": "select_parse", "reply": reply, "names": built["names"] ?? []])
+        let names = parsed["names"] as? [String] ?? []
+        tier = 2
+        question = parsed["question"] as? String ?? ""
+        if (parsed["confidence"] as? String) == "high" {
+          match = ["confidence": "high", "reason": "model", "names": names, "candidates": [String]()]
+        } else {
+          match = [
+            "confidence": names.isEmpty ? "none" : "ambiguous", "reason": "model", "names": [String](),
+            "candidates": Array(names.prefix(10)),
+          ]
+        }
+      } catch {
+        // Tier 2 failed (network, quota): keep the tier-1 answer.
+      }
+    }
+    let names = match["names"] as? [String] ?? []
+    var applied = false
+    if (match["confidence"] as? String) == "high", !names.isEmpty {
+      setSelection(names, mode: mode, source: "voice")
+      applied = true
+    }
+    let meshes = selections
+    let text = !applied && !question.isEmpty ? question : await say(mode, match, meshes, q)
+    return AIVoiceSelection(
+      mode: mode, query: q, applied: applied, tier: tier, meshes: meshes,
+      candidates: match["candidates"] as? [String] ?? [], say: text)
+  }
+
+  /// Selects meshes by exact name (a voice model's `names`); names not in the scene are ignored.
+  @discardableResult
+  public func selectNames(_ names: [String], mode: String = "replace") async -> AIVoiceSelection {
+    let index = (try? await core.call(sceneArgs(nil).merging(["op": "select", "query": "", "withIndex": true]) { $1 })) ?? [:]
+    let known = Set((index["index"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String })
+    let valid = Array(names.filter { known.contains($0) }.prefix(Self.maxSelection))
+    let query = String(names.joined(separator: ", ").prefix(200))
+    guard !valid.isEmpty else {
+      let none: [String: Any] = ["confidence": "none", "reason": "no_match", "names": [String](), "candidates": [String]()]
+      let meshes = selections
+      return AIVoiceSelection(
+        mode: mode, query: query, applied: false, tier: 1, meshes: meshes, candidates: [],
+        say: await say(mode, none, meshes, query))
+    }
+    setSelection(valid, mode: mode, source: "voice")
+    let matched: [String: Any] = ["confidence": "high", "reason": "exact", "names": valid, "candidates": [String]()]
+    let meshes = selections
+    return AIVoiceSelection(
+      mode: mode, query: query, applied: true, tier: 1, meshes: meshes, candidates: [],
+      say: await say(mode, matched, meshes, query))
+  }
+
+  /// Parses a push-to-talk utterance into a selection change, a mixed select-and-edit, or an edit.
+  public func parseCommand(_ text: String) async -> AIVoiceCommand {
+    let r = (try? await core.call(["op": "parse_command", "text": text])) ?? [:]
+    return AIVoiceCommand(
+      kind: r["kind"] as? String ?? "edit", mode: r["mode"] as? String ?? "replace",
+      query: r["query"] as? String ?? "", instruction: r["instruction"] as? String ?? text)
+  }
+
+  /// Context sentence describing the selection for a voice model (shared wording with the web).
+  public func describeSelection(_ meshes: [String]? = nil) async -> String {
+    let m = meshes ?? selections
+    return (try? await core.call(["op": "select_context", "meshes": m]))?["text"] as? String
+      ?? (m.isEmpty ? "The user cleared the selection." : "The user selected \(m.map { "\"\($0)\"" }.joined(separator: ", ")).")
+  }
+
+  private func sceneArgs(_ within: [String]?) -> [String: Any] {
+    var args: [String: Any] = ["source": source]
+    if let camera { args["camera"] = ["eye": camera.eye, "target": camera.target] }
+    if let within { args["within"] = within }
+    return args
+  }
+
+  private func say(_ mode: String, _ match: [String: Any]?, _ meshes: [String], _ query: String) async -> String {
+    var req: [String: Any] = ["op": "select_say", "mode": mode, "meshes": meshes, "query": query]
+    if let match { req["match"] = match }
+    return (try? await core.call(req))?["text"] as? String ?? ""
+  }
+
+  private static func messages(_ built: [String: Any]) throws -> [AIChatMessage] {
+    guard let raw = built["messages"] as? [[String: Any]] else {
+      throw AIEditError("core: \(built["error"] as? String ?? "no messages")")
+    }
+    return raw.compactMap { m -> AIChatMessage? in
+      guard let role = m["role"] as? String else { return nil }
+      return AIChatMessage(role: role, content: m["content"] as? String ?? "")
+    }
   }
 
   /// Replaces the base script (e.g. after loading a different scene); clears undo.
@@ -245,13 +463,14 @@ public final class AIEditor: @unchecked Sendable {
   /// Edits the scene. A newer call supersedes an in-flight one (which then returns
   /// `applied == false`). Model and compile failures come back as `EditResult.error`.
   ///
-  /// - Parameter selection: the mesh the instruction refers to; defaults to `self.selection`.
-  ///   Pass `.some(nil)` to edit with no selection.
+  /// - Parameter selection: the meshes the instruction refers to; defaults to `self.selections`.
+  ///   Pass `[]` to edit with no selection.
   public func editScene(
-    _ instruction: String, selection: String?? = nil, maxRepairs: Int = 1, dryRun: Bool = false
+    _ instruction: String, selection: [String]? = nil, maxRepairs: Int = 1, dryRun: Bool = false
   ) async -> EditResult {
     let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-    let sel: String? = selection ?? self.selection
+    let chosen = selection ?? self.selections
+    let sel: [String]? = chosen.isEmpty ? nil : chosen
     let (myGen, base) = locked { () -> (Int, String) in
       generation += 1
       return (generation, _source)
@@ -260,7 +479,7 @@ public final class AIEditor: @unchecked Sendable {
     guard !text.isEmpty else {
       return finish(text, EditResult(applied: false, code: "", repairs: 0, warnings: [], error: "instruction is empty"))
     }
-    onEditStart?(text, sel)
+    onEditStart?(text, sel?.first)
     let allowed = min(3, max(0, maxRepairs))
     var code = ""
     var error: String?
@@ -270,13 +489,7 @@ public final class AIEditor: @unchecked Sendable {
       var req: [String: Any] = ["op": "messages", "source": base, "instruction": text]
       if let sel = sel { req["selection"] = sel }
       let built = try await core.call(req)
-      guard let raw = built["messages"] as? [[String: Any]] else {
-        throw AIEditError("core: \(built["error"] as? String ?? "no messages")")
-      }
-      var messages = raw.compactMap { m -> AIChatMessage? in
-        guard let role = m["role"] as? String else { return nil }
-        return AIChatMessage(role: role, content: m["content"] as? String ?? "")
-      }
+      var messages = try Self.messages(built)
       for turn in 0...allowed {
         let reply = try await provider.complete(messages)
         if isSuperseded() {

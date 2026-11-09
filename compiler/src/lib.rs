@@ -15,6 +15,8 @@
 //! three-live-compiler: In-process Pure Rust Three.js to binary GLB compiler.
 
 pub mod ai_edit;
+pub mod ai_image;
+pub mod ai_select;
 pub mod ai_voice;
 pub mod constants;
 pub mod engine;
@@ -622,7 +624,7 @@ pub fn validate_scene_source(
 /// Flags scenes whose materials reference more unique texture images than
 /// `SECURITY_3D_MAX_TEXTURES`, so `validate` / `render` report the same quota failure that
 /// `.glb` / `.usdz` export would hit (identical images are shared, matching the GLB writer).
-fn push_texture_quota_diagnostic(scene: &mut SceneGraph) {
+pub(crate) fn push_texture_quota_diagnostic(scene: &mut SceneGraph) {
     let mut uris = std::collections::HashSet::new();
     for m in &scene.materials {
         for t in [

@@ -1,0 +1,103 @@
+{
+  "priors": [
+    {
+      "name": "empty priors object produces empty string",
+      "priors": {},
+      "expected": ""
+    },
+    {
+      "name": "invalid non-finite values are ignored",
+      "priors": {
+        "planes": [{"orientation": "horizontal", "center": [0, 1]}],
+        "objects": [{"label": "   ", "center": [0, 0, 0]}]
+      },
+      "expected": ""
+    },
+    {
+      "name": "floor camera planes and objects format deterministically",
+      "priors": {
+        "floorY": -0.0,
+        "camera": {
+          "eye": [0, 1.45, 2.2],
+          "target": [0, 0.75, 0],
+          "fovDeg": 50.4
+        },
+        "planes": [
+          {
+            "label": "table\n surface",
+            "orientation": "horizontal",
+            "center": [0, 0.75, -0.4],
+            "extent": [1.4, 0.8],
+            "normal": [0, 1, 0]
+          },
+          {
+            "orientation": "vertical",
+            "center": [0, 1.2, -1.5]
+          }
+        ],
+        "objects": [
+          {
+            "label": "mug",
+            "center": [-0.2, 0.82, -0.5],
+            "size": [0.09, 0.11, 0.09]
+          },
+          {
+            "label": "laptop",
+            "center": [0.15, 0.77, -0.35],
+            "size": [0.32, 0.02, 0.22],
+            "yawDeg": -14.6
+          }
+        ]
+      },
+      "expected": "Metric spatial priors (world meters, +Y up):\n- Floor height: y = 0.00 m\n- Camera: eye [0.00, 1.45, 2.20], target [0.00, 0.75, 0.00], fov 50 deg\n- Planes:\n  1. horizontal \"table surface\" at [0.00, 0.75, -0.40], extent 1.40m x 0.80m, normal [0.00, 1.00, 0.00]\n  2. vertical at [0.00, 1.20, -1.50]\n- Detected 3D objects (place meshes at these metric bounds):\n  1. \"mug\" at [-0.20, 0.82, -0.50], size 0.09m x 0.11m x 0.09m\n  2. \"laptop\" at [0.15, 0.77, -0.35], size 0.32m x 0.02m x 0.22m, yaw -15 deg\n"
+    }
+  ],
+  "messages": [
+    {
+      "name": "image only without prompt or priors",
+      "imageUrl": "data:image/png;base64,iVBORw0KGgo=",
+      "prompt": "",
+      "priors": null,
+      "expectedUserText": "Reconstruct the 3D scene shown in this reference image as a complete Three-Live script.\nReturn only the complete script in a single ```js code block."
+    },
+    {
+      "name": "image with priors and prompt",
+      "imageUrl": "data:image/jpeg;base64,/9j/4AAQ",
+      "prompt": "  make the mug red and grabbable  ",
+      "priors": {
+        "floorY": 0,
+        "objects": [
+          {
+            "label": "mug",
+            "center": [0, 0.8, -0.5],
+            "size": [0.1, 0.12, 0.1]
+          }
+        ]
+      },
+      "expectedUserText": "Reconstruct the 3D scene shown in this reference image as a complete Three-Live script.\nMetric spatial priors (world meters, +Y up):\n- Floor height: y = 0.00 m\n- Detected 3D objects (place meshes at these metric bounds):\n  1. \"mug\" at [0.00, 0.80, -0.50], size 0.10m x 0.12m x 0.10m\nAdditional instructions: make the mug red and grabbable\nReturn only the complete script in a single ```js code block."
+    }
+  ],
+  "repairs": [
+    {
+      "name": "compile error only",
+      "error": "SyntaxError: Unexpected token ')'",
+      "warnings": [],
+      "expected": "That script was rejected by the Three-Live sandbox: SyntaxError: Unexpected token ')'\nReturn the complete corrected script in a single ```js code block."
+    },
+    {
+      "name": "compile error with warnings",
+      "error": "The generated scene contains no meshes.",
+      "warnings": ["[TL102] THREE.OrbitControls is unsupported"],
+      "expected": "That script was rejected by the Three-Live sandbox: The generated scene contains no meshes.\nAdditional diagnostics:\n- [TL102] THREE.OrbitControls is unsupported\nReturn the complete corrected script in a single ```js code block."
+    },
+    {
+      "name": "warnings only",
+      "error": "",
+      "warnings": [
+        "[TL205] Interactive node has no name",
+        "[TL303] 1 of 2 meshes are outside the camera frustum"
+      ],
+      "expected": "The script compiled, but the Three-Live linter reported warnings that should be fixed:\n- [TL205] Interactive node has no name\n- [TL303] 1 of 2 meshes are outside the camera frustum\nFix every warning above (assign unique `.name` values before attaching `userData.xr`, use only canonical `userData.xr` traits, replace unsupported classes with supported Three-Live primitives, and frame `camera.position` and `camera.lookAt` so all meshes are inside the frustum) while keeping the full scene intact.\nReturn the complete corrected script in a single ```js code block."
+    }
+  ]
+}

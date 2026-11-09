@@ -31,6 +31,11 @@ import kotlinx.coroutines.launch
  * platform [SpeechRecognizer] turns one utterance into an instruction for
  * [ThreeLiveAIEditor.editScene] (applied to the current selection), and the result is spoken
  * with [TextToSpeech]. Needs the `RECORD_AUDIO` permission. Main thread only.
+ *
+ * Talk-to-Select (B2b-4): "select the red chairs", "also select the lamp", "deselect the left
+ * one", and "clear the selection" change the selection instead of editing; "select the lamp and
+ * make it blue" selects, then edits right away when the reference was unambiguous. Otherwise it
+ * asks which one was meant and changes nothing.
  */
 class VoiceEditController(
   private val context: Context,
@@ -38,6 +43,8 @@ class VoiceEditController(
   private val scope: CoroutineScope,
   /** Speak the result (default true). */
   private val speakResults: Boolean = true,
+  /** Treat "select …" / "deselect …" / "clear the selection" as selection commands (default true). */
+  private val talkToSelect: Boolean = true,
 ) {
   /** Progress callbacks (main thread). */
   interface Listener {
@@ -46,6 +53,9 @@ class VoiceEditController(
     fun onEditing(transcript: String) {}
 
     fun onResult(transcript: String, result: EditResult) {}
+
+    /** The utterance changed (or tried to change) the selection. */
+    fun onSelection(transcript: String, selection: AIVoiceSelection) {}
 
     fun onError(message: String) {}
   }
@@ -134,11 +144,29 @@ class VoiceEditController(
       speakAndReport("I didn't catch that.")
       return
     }
-    listener?.onEditing(text)
     scope.launch {
-      val result = editor.editScene(text)
-      listener?.onResult(text, result)
-      if (speakResults) speak(editor.describe(result))
+      var instruction = text
+      var prefix = ""
+      val command = if (talkToSelect) editor.parseCommand(text) else emptyMap()
+      val kind = command["kind"] as? String ?: "edit"
+      if (kind != "edit") {
+        val selection =
+          editor.selectByVoice(if (kind == "clear") "" else (command["query"] as? String).orEmpty(), command["mode"] as? String ?: "replace")
+        listener?.onSelection(text, selection)
+        val pending = if (kind == "mixed") command["instruction"] as? String else null
+        // Edit right away only when the reference was resolved locally (tier 1) and confidently.
+        if (pending == null || !selection.applied || selection.tier != 1) {
+          val hint = if (pending != null && selection.applied) " Say the change again to apply it." else ""
+          if (speakResults) speak(selection.say + hint)
+          return@launch
+        }
+        instruction = pending
+        prefix = selection.say + " "
+      }
+      listener?.onEditing(instruction)
+      val result = editor.editScene(instruction)
+      listener?.onResult(instruction, result)
+      if (speakResults) speak(prefix + editor.describe(result))
     }
   }
 

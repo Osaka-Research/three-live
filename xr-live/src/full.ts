@@ -30,3 +30,4 @@ export * from './bundle';
 export * from './plugins/index';
 export * from './sensors';
 export * from './sim/index';
+export * from './webgpu';

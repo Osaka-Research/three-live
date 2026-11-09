@@ -26,7 +26,11 @@
 
 import {createProgram} from '../../../three-live/src/gl-program';
 import {mat3NormalFromMat4, mat4Multiply} from '../../../three-live/src/math';
-import type {ThreeLivePlugin} from '../../../three-live/src/plugin';
+import {
+  getSharedRegistry,
+  type SplatGPUFrameOutput,
+  type ThreeLivePlugin,
+} from '../../../three-live/src/plugin';
 import {getMeshXRTraits} from '../xr-traits';
 import {cacheXRFrame, type PluginViewer, resolveProjection} from './common';
 
@@ -815,7 +819,11 @@ function createSplatSortCache(
   const order = new Uint32Array(data.count);
   const scratch = createSplatSortScratch(data.count);
   return {
-    update(matrix: Float32Array, eye: string): SortedSplatView | undefined {
+    update(
+      matrix: Float32Array,
+      eye: string,
+      externalOrder?: Uint32Array | null,
+    ): SortedSplatView | undefined {
       const row = matrix[3] === 0 && matrix[7] === 0 && matrix[11] === 0 ? 2 : 3;
       if (current?.eye !== eye) {
         const next = previous?.eye === eye ? previous :
@@ -828,7 +836,12 @@ function createSplatSortCache(
       // Repeating an eye starts the next draw cycle. The second eye shares
       // the first eye's cooldown instead of advancing it a second time.
       if (view.seen && previous) previous.seen = false;
-      if (previous?.seen && previous.order && sameSplatDepth(previous.key, view.key)) {
+      if (
+        !externalOrder &&
+        previous?.seen &&
+        previous.order &&
+        sameSplatDepth(previous.key, view.key)
+      ) {
         view.order = previous.order;
       } else {
         // A first eye may update a shared buffer. A divergent second eye
@@ -850,7 +863,11 @@ function createSplatSortCache(
       }
       const storage = view.order;
       gl.bindBuffer(target, storage.buffer);
-      if (storage.age >= 4 && !sameSplatDepth(storage.depth, view.key)) {
+      if (externalOrder && externalOrder.length === data.count) {
+        gl.bufferSubData(target, 0, externalOrder);
+        storage.depth.set(view.key);
+        storage.age = 0;
+      } else if (storage.age >= 4 && !sameSplatDepth(storage.depth, view.key)) {
         sortSplatsByDepth(data, matrix, order, scratch);
         gl.bufferSubData(target, 0, order);
         storage.depth.set(view.key);
@@ -882,6 +899,7 @@ export class SplatRenderer {
   private uAntialias: WebGLUniformLocation | null = null;
   private readonly mvp = new Float32Array(16);
   private shColors: Uint8Array | null = null;
+  private shDirty = false;
   private framesSinceColor = Infinity;
 
   constructor(
@@ -972,6 +990,7 @@ export class SplatRenderer {
     );
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, out);
+    this.shDirty = true;
   }
 
   /**
@@ -988,6 +1007,7 @@ export class SplatRenderer {
     cameraPos?: ArrayLike<number> | null,
     highQualitySH = false,
     eye: 'left' | 'right' | 'none' = 'none',
+    externalGpu?: SplatGPUFrameOutput | null,
   ): void {
     const gl = this.gl;
     if (
@@ -1002,19 +1022,32 @@ export class SplatRenderer {
     // Bind our VAO *before* touching ELEMENT_ARRAY_BUFFER: that binding is VAO
     // state, and the renderer leaves its last mesh VAO bound.
     gl.bindVertexArray(this.vao);
-    if (!this.sorter.update(mvp, eye)) {
+    if (!this.sorter.update(mvp, eye, externalGpu?.order)) {
       gl.bindVertexArray(null);
       return;
     }
     // SH changes on lateral camera moves even when the depth order is cached.
-    if (++this.framesSinceColor >= 4) {
+    if (
+      highQualitySH &&
+      externalGpu?.colors &&
+      this.colorBuffer &&
+      externalGpu.colors.length === this.data.count * 4
+    ) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, externalGpu.colors);
+      this.shDirty = true;
+      this.framesSinceColor = 0;
+    } else if (highQualitySH && externalGpu?.shHandled) {
+      this.framesSinceColor = 0;
+    } else if (++this.framesSinceColor >= 4) {
       if (highQualitySH && cameraPos) {
         this.updateViewColors(cameraPos, model);
-      } else if (this.shColors && this.colorBuffer) {
+      } else if (this.shDirty && this.colorBuffer) {
         // Quality dropped back to normal: restore the base (DC) colors.
         gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.data.colors);
         this.shColors = null;
+        this.shDirty = false;
       }
       this.framesSinceColor = 0;
     }
@@ -1051,6 +1084,7 @@ export class SplatRenderer {
 
 interface SplatEntry {
   readonly url: string;
+  data?: SplatData | null;
   renderer: SplatRenderer | null;
   failed: boolean;
 }
@@ -1077,14 +1111,21 @@ export class XRSplatLoader {
       live.add(mesh);
       const existing = this.entries.get(mesh);
       if (existing?.url === url) continue;
+      const prevData = existing?.data ?? existing?.renderer?.data;
+      if (prevData) {
+        getSharedRegistry().splatAccelerator?.disposeCloud?.(prevData);
+      }
       existing?.renderer?.dispose();
-      const entry: SplatEntry = {url, renderer: null, failed: false};
+      const entry: SplatEntry = {url, data: null, renderer: null, failed: false};
       this.entries.set(mesh, entry);
       if (!gl) continue;
       loadSplat(url, this.fetchFn, allowRemote).then(
         (data) => {
           if (this.entries.get(mesh) === entry) {
-            entry.renderer = new SplatRenderer(gl, data);
+            entry.data = data;
+            if (!getSharedRegistry().splatAccelerator) {
+              entry.renderer = new SplatRenderer(gl, data);
+            }
           }
         },
         () => {
@@ -1094,6 +1135,10 @@ export class XRSplatLoader {
     }
     for (const [mesh, entry] of [...this.entries]) {
       if (live.has(mesh)) continue;
+      const prevData = entry.data ?? entry.renderer?.data;
+      if (prevData) {
+        getSharedRegistry().splatAccelerator?.disposeCloud?.(prevData);
+      }
       entry.renderer?.dispose();
       this.entries.delete(mesh);
     }
@@ -1108,41 +1153,99 @@ export class XRSplatLoader {
     projection?: Float32Array,
   ): void {
     const gl = viewer.gl;
-    if (!gl || this.entries.size === 0) return;
-    // Per-eye viewport and projection while presenting; desktop otherwise.
-    const heightPx = viewport?.[3] ?? gl.drawingBufferHeight;
-    const focalPx =
-      (((projection ?? resolveProjection(viewer))?.[5] ?? 1.7) * heightPx) / 2;
-    const model = new Float32Array(16);
-    // Covariance must be projected with the view actually being drawn (per-eye
-    // in WebXR / stereo), not the desktop orbit camera.
-    const view = viewer.activeViewMatrix ?? viewer.viewMatrix;
-    const modelView = view ? new Float32Array(16) : null;
-    const cameraPos = frameEye.get(viewer) ?? null;
-    for (const [mesh, entry] of this.entries) {
-      if (!entry.renderer || (mesh as {visible?: boolean}).visible === false) {
-        continue;
+    if (!gl) return;
+    const accel = getSharedRegistry().splatAccelerator;
+    if (this.entries.size === 0) {
+      accel?.beginFrame?.(viewer);
+      accel?.endFrame?.(viewer);
+      return;
+    }
+    accel?.beginFrame?.(viewer);
+    try {
+      // Per-eye viewport and projection while presenting; desktop otherwise.
+      const widthPx = viewport?.[2] ?? gl.drawingBufferWidth;
+      const heightPx = viewport?.[3] ?? gl.drawingBufferHeight;
+      const proj = projection ?? resolveProjection(viewer);
+      const focalPx = (Math.abs(proj?.[5] ?? 1.7) * heightPx) / 2;
+      const focalXPx = proj?.[0] ? (Math.abs(proj[0]) * widthPx) / 2 : focalPx;
+      const model = new Float32Array(16);
+      const mvp = accel ? new Float32Array(16) : null;
+      // Covariance must be projected with the view actually being drawn (per-eye
+      // in WebXR / stereo), not the desktop orbit camera.
+      const view = viewer.activeViewMatrix ?? viewer.viewMatrix;
+      const modelView = view ? new Float32Array(16) : null;
+      const cameraPos = frameEye.get(viewer) ?? null;
+      for (const [mesh, entry] of this.entries) {
+        const data = entry.data ?? entry.renderer?.data ?? null;
+        if (
+          !data ||
+          data.count === 0 ||
+          (mesh as {visible?: boolean}).visible === false
+        ) {
+          continue;
+        }
+        const transform = (mesh as {transform: Float32Array}).transform;
+        if (viewer.modelRootMatrix) {
+          mat4Multiply(model, viewer.modelRootMatrix, transform);
+        } else {
+          model.set(transform);
+        }
+        if (modelView && view) {
+          mat4Multiply(modelView, view, model);
+        }
+        const traits = getMeshXRTraits(mesh) as {splatQuality?: string} | null;
+        const highQualitySH =
+          traits?.splatQuality === 'high' ||
+          viewer.container?.getAttribute?.('splat-quality') === 'high';
+        let accelOut: SplatGPUFrameOutput | null = null;
+        if (accel && mvp) {
+          mat4Multiply(mvp, vp, model);
+          const res = accel.drawCloud({
+            viewer,
+            mesh,
+            data,
+            vp,
+            mvp,
+            model,
+            modelView,
+            cameraPos,
+            focalX: focalXPx,
+            focalY: focalPx,
+            viewportWidth: widthPx,
+            viewportHeight: heightPx,
+            highQualitySH,
+            eye,
+          });
+          if (res === 'rendered') continue;
+          accelOut = res;
+        }
+        if (!entry.renderer) {
+          entry.renderer = new SplatRenderer(gl, data);
+        }
+        entry.renderer.draw(
+          vp,
+          model,
+          focalPx,
+          modelView,
+          cameraPos,
+          highQualitySH,
+          eye,
+          accelOut,
+        );
       }
-      const transform = (mesh as {transform: Float32Array}).transform;
-      if (viewer.modelRootMatrix) {
-        mat4Multiply(model, viewer.modelRootMatrix, transform);
-      } else {
-        model.set(transform);
-      }
-      if (modelView && view) {
-        mat4Multiply(modelView, view, model);
-      }
-      const traits = getMeshXRTraits(mesh) as {splatQuality?: string} | null;
-      const highQualitySH =
-        traits?.splatQuality === 'high' ||
-        viewer.container?.getAttribute?.('splat-quality') === 'high';
-      entry.renderer.draw(vp, model, focalPx, modelView, cameraPos, highQualitySH, eye);
+    } finally {
+      accel?.endFrame?.(viewer);
     }
   }
 
   /** Disposes every renderer. */
   dispose(): void {
-    for (const e of this.entries.values()) e.renderer?.dispose();
+    const accel = getSharedRegistry().splatAccelerator;
+    for (const e of this.entries.values()) {
+      const d = e.data ?? e.renderer?.data;
+      if (d) accel?.disposeCloud?.(d);
+      e.renderer?.dispose();
+    }
     this.entries.clear();
   }
 }
@@ -1150,6 +1253,14 @@ export class XRSplatLoader {
 const loaders = new WeakMap<object, XRSplatLoader>();
 /** Eye position of the view being drawn, captured in `onBeforeDrawScene`. */
 const frameEye = new WeakMap<object, [number, number, number]>();
+
+/** Records the active world-space camera position for `viewer`'s splat SH pass. */
+export function setSplatViewerEye(
+  viewer: object,
+  cameraPos: readonly [number, number, number],
+): void {
+  frameEye.set(viewer, [cameraPos[0], cameraPos[1], cameraPos[2]]);
+}
 
 /** Returns (creating on first use) the splat loader for `viewer`. */
 export function getSplatLoader(viewer: object): XRSplatLoader {
@@ -1164,6 +1275,12 @@ export function getSplatLoader(viewer: object): XRSplatLoader {
 /** `ThreeLivePlugin` that renders `splatUrl` traits after the main pass. */
 export const splatLoaderPlugin: ThreeLivePlugin = {
   name: 'xr-live-splat-loader',
+  onClearScene(viewer: PluginViewer): void {
+    if (viewer) {
+      loaders.get(viewer)?.sync(viewer);
+      getSharedRegistry().splatAccelerator?.hideOverlay?.(viewer);
+    }
+  },
   onUpdate(viewer: PluginViewer): void {
     if (viewer && Array.isArray(viewer.meshes)) {
       getSplatLoader(viewer).sync(viewer);
@@ -1185,8 +1302,11 @@ export const splatLoaderPlugin: ThreeLivePlugin = {
     _vp: Float32Array,
     cameraPos: [number, number, number],
   ): void {
-    if (viewer && cameraPos) {
-      frameEye.set(viewer, [cameraPos[0], cameraPos[1], cameraPos[2]]);
+    if (viewer) {
+      if (cameraPos) {
+        frameEye.set(viewer, [cameraPos[0], cameraPos[1], cameraPos[2]]);
+      }
+      getSharedRegistry().splatAccelerator?.beginFrame?.(viewer);
     }
   },
   onAfterRender(
@@ -1197,10 +1317,18 @@ export const splatLoaderPlugin: ThreeLivePlugin = {
     viewport?: readonly number[],
     projection?: Float32Array,
   ): void {
-    loaders.get(viewer)?.draw(viewer, vpMatrix, eye, viewport, projection);
+    const l = loaders.get(viewer);
+    if (l) {
+      l.draw(viewer, vpMatrix, eye, viewport, projection);
+    } else if (viewer) {
+      const accel = getSharedRegistry().splatAccelerator;
+      accel?.beginFrame?.(viewer);
+      accel?.endFrame?.(viewer);
+    }
   },
   onDestroy(_gl: WebGL2RenderingContext, viewer: PluginViewer): void {
     loaders.get(viewer)?.dispose();
     loaders.delete(viewer);
+    if (viewer) getSharedRegistry().splatAccelerator?.disposeViewer?.(viewer);
   },
 };
